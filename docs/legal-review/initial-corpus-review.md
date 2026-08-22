@@ -49,8 +49,7 @@ selection-ревизия того же проверенного PDF содерж
 ответственность. Она всё ещё `REVIEW_REQUIRED` и требует отдельной дословной проверки
 редактором. Hash нормализованного текста:
 `e5f63ec49084b88ad05e192269486adadfbd2e241f2c9f40f0c3112aec43d2b1`; hash новой выборки
-определяется Legal Core при загрузке manifest
-`services/legal_core/corpus/official/pp659-substantive-selection.json`.
+`ff9c7b06c43ae3c84439a062697da047134b1c18a5355617421a5f0f746ca899`.
 
 ## Безопасное решение
 
