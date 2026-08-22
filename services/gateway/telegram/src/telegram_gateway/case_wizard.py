@@ -46,6 +46,7 @@ class CaseDraft:
     lawyer_contact: SignalAnswer = False
     representative_authority: SignalAnswer | None = None
     regulator_threat: SignalAnswer = False
+    primary_incident_type: str | None = None
 
 
 def parse_iso_date(
@@ -157,6 +158,11 @@ def facts_from_draft(draft: CaseDraft) -> list[dict[str, Any]]:
 
     facts = [
         _fact("INCIDENT_TYPES", "ENUM_SET", {"values": [draft.incident_type]}),
+        _fact(
+            "PRIMARY_INCIDENT_TYPE",
+            "ENUM",
+            {"value": draft.primary_incident_type or draft.incident_type},
+        ),
         _fact("SERVICE_TYPE", "TEXT", {"text": draft.service_type}),
         _fact("SERVICE_DATE", "DATE", _date_fact(draft.service_date)),
         _fact("INCIDENT_DATE", "DATE", _date_fact(draft.incident_date)),

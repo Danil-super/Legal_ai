@@ -174,7 +174,10 @@ def test_complete_draft_maps_to_legal_core_contract_without_clinic_id() -> None:
     payload = facts_from_draft(draft)
 
     assert payload[0]["factKey"] == "INCIDENT_TYPES"
-    assert len(payload) == 13
+    assert next(item for item in payload if item["factKey"] == "PRIMARY_INCIDENT_TYPE")[
+        "value"
+    ] == {"value": "QUALITY_COMPLAINT"}
+    assert len(payload) == 14
     documents = next(item for item in payload if item["factKey"] == "CLINIC_DOCUMENTS")
     assert set(documents["value"].values()) == {"UNKNOWN"}
     assert not any("clinic" in key.lower() for item in payload for key in item)

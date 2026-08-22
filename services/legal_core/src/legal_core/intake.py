@@ -6,6 +6,7 @@ from legal_core.contracts import FactKey, MissingFact, MissingFactSeverity
 
 _ALWAYS_REQUIRED: tuple[tuple[FactKey, str], ...] = (
     (FactKey.INCIDENT_TYPES, "incident"),
+    (FactKey.PRIMARY_INCIDENT_TYPE, "primary_incident"),
     (FactKey.SERVICE_TYPE, "service_type"),
     (FactKey.SERVICE_DATE, "service_date"),
     (FactKey.INCIDENT_DATE, "incident_date"),

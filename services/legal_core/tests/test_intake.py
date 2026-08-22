@@ -7,6 +7,7 @@ from legal_core.intake import missing_facts_for
 def complete_synthetic_facts() -> dict[FactKey, object]:
     return {
         FactKey.INCIDENT_TYPES: ["CROWN_PROBLEM", "REFUND_DEMAND"],
+        FactKey.PRIMARY_INCIDENT_TYPE: "CROWN_PROBLEM",
         FactKey.SERVICE_TYPE: "Установка коронки",
         FactKey.SERVICE_DATE: {"date": date(2026, 6, 1), "precision": "EXACT"},
         FactKey.INCIDENT_DATE: {"date": date(2026, 7, 1), "precision": "EXACT"},
