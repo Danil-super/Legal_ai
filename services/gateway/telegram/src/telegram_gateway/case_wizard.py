@@ -1,0 +1,374 @@
+"""Validated Case Core client and deterministic Telegram intake mapping."""
+
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal, InvalidOperation
+from typing import Any
+from uuid import UUID
+
+import httpx2
+
+INTAKE_SCHEMA_VERSION = "dental-case-intake.v1"
+MAX_PDF_BYTES = 8 * 1024 * 1024
+
+
+class LegalCoreApiError(Exception):
+    """Safe error raised at the trusted Legal Core boundary."""
+
+    def __init__(self, status_code: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+
+
+@dataclass(frozen=True, slots=True)
+class CaseDraft:
+    incident_type: str
+    service_type: str
+    service_date: str
+    incident_date: str
+    claim_date: str
+    problem_summary: str
+    patient_demand: str
+    formal_claim: bool
+    harm_claimed: bool
+    regulator_or_court: bool
+    documents_status: str
+    demand_amount_kopecks: int | None = None
+    claim_received_at: str | None = None
+    response_deadline: str | None = None
+    hospitalization: bool | None = None
+    authority_kind: str | None = None
+    authority_document_date: str | None = None
+
+
+def parse_iso_date(
+    value: str, *, today: str | None = None, allow_future: bool = False
+) -> str | None:
+    """Accept a real ISO date that is not in the future."""
+
+    try:
+        parsed = date.fromisoformat(value.strip())
+        upper_bound = date.today() if today is None else date.fromisoformat(today)
+    except ValueError:
+        return None
+    return parsed.isoformat() if allow_future or parsed <= upper_bound else None
+
+
+def parse_ruble_amount_to_kopecks(value: str) -> int | None:
+    """Parse at most two decimal places and return a bounded integer number of kopecks."""
+
+    normalized = value.strip().replace(" ", "").replace(",", ".")
+    try:
+        amount = Decimal(normalized)
+    except InvalidOperation:
+        return None
+    if not amount.is_finite() or not Decimal("0.01") <= amount <= Decimal("1000000000"):
+        return None
+    try:
+        rounded = amount.quantize(Decimal("0.01"))
+    except InvalidOperation:
+        return None
+    if rounded != amount:
+        return None
+    return int(rounded * 100)
+
+
+def _fact(key: str, value_type: str, value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "factKey": key,
+        "valueType": value_type,
+        "value": value,
+        "sourceType": "USER_STATEMENT",
+    }
+
+
+def facts_from_draft(draft: CaseDraft) -> list[dict[str, Any]]:
+    """Map the pseudonymous wizard draft to the versioned Legal Core contract."""
+
+    documents = {
+        "COMPLETE": {
+            "CONTRACT": "AVAILABLE",
+            "MEDICAL_RECORD": "AVAILABLE",
+            "INFORMED_CONSENT": "AVAILABLE",
+        },
+        "PARTIAL": {
+            "CONTRACT": "UNKNOWN",
+            "MEDICAL_RECORD": "UNKNOWN",
+            "INFORMED_CONSENT": "UNKNOWN",
+        },
+        "NONE": {
+            "CONTRACT": "MISSING",
+            "MEDICAL_RECORD": "MISSING",
+            "INFORMED_CONSENT": "MISSING",
+        },
+    }
+    if draft.documents_status not in documents:
+        raise ValueError("unsupported documents status")
+
+    facts = [
+        _fact("INCIDENT_TYPES", "ENUM_SET", {"values": [draft.incident_type]}),
+        _fact("SERVICE_TYPE", "TEXT", {"text": draft.service_type}),
+        _fact("SERVICE_DATE", "DATE", {"date": draft.service_date, "precision": "EXACT"}),
+        _fact(
+            "INCIDENT_DATE",
+            "DATE",
+            {"date": draft.incident_date, "precision": "EXACT"},
+        ),
+        _fact("CLAIM_DATE", "DATE", {"date": draft.claim_date, "precision": "EXACT"}),
+        _fact("PROBLEM_SUMMARY", "TEXT", {"text": draft.problem_summary}),
+        _fact("PATIENT_DEMAND", "ENUM_SET", {"values": [draft.patient_demand]}),
+        _fact("FORMAL_CLAIM", "BOOLEAN", {"boolean": draft.formal_claim}),
+        _fact("HARM_CLAIMED", "BOOLEAN", {"boolean": draft.harm_claimed}),
+        _fact(
+            "REGULATOR_OR_COURT",
+            "BOOLEAN",
+            {"boolean": draft.regulator_or_court},
+        ),
+        _fact("CLINIC_DOCUMENTS", "DOCUMENT_INVENTORY", documents[draft.documents_status]),
+    ]
+    if draft.demand_amount_kopecks is not None:
+        facts.append(
+            _fact(
+                "DEMAND_AMOUNT",
+                "MONEY",
+                {"amountKopecks": draft.demand_amount_kopecks, "currency": "RUB"},
+            )
+        )
+    if draft.formal_claim:
+        if draft.claim_received_at is None or draft.response_deadline is None:
+            raise ValueError("formal claim dates are required")
+        facts.extend(
+            [
+                _fact(
+                    "CLAIM_RECEIVED_AT",
+                    "DATE",
+                    {"date": draft.claim_received_at, "precision": "EXACT"},
+                ),
+                _fact(
+                    "RESPONSE_DEADLINE",
+                    "DATE",
+                    {"date": draft.response_deadline, "precision": "EXACT"},
+                ),
+            ]
+        )
+    if draft.harm_claimed:
+        if draft.hospitalization is None:
+            raise ValueError("hospitalization status is required")
+        facts.append(
+            _fact("HOSPITALIZATION", "BOOLEAN", {"boolean": draft.hospitalization})
+        )
+    if draft.regulator_or_court:
+        if (
+            draft.authority_kind is None
+            or draft.authority_document_date is None
+            or draft.response_deadline is None
+        ):
+            raise ValueError("authority details are required")
+        facts.extend(
+            [
+                _fact("AUTHORITY_KIND", "TEXT", {"text": draft.authority_kind}),
+                _fact(
+                    "DOCUMENT_DATE",
+                    "DATE",
+                    {"date": draft.authority_document_date, "precision": "EXACT"},
+                ),
+            ]
+        )
+        if not draft.formal_claim:
+            facts.append(
+                _fact(
+                    "RESPONSE_DEADLINE",
+                    "DATE",
+                    {"date": draft.response_deadline, "precision": "EXACT"},
+                )
+            )
+    return facts
+
+
+def telegram_summary_from_report(report: dict[str, Any]) -> str:
+    """Render the Telegram card only from a validated canonical report response."""
+
+    try:
+        if report.get("schemaVersion") != "dental-case-report.v1":
+            raise ValueError
+        case = report["case"]
+        summary = report["summary"]
+        public_number = case["publicNumber"]
+        status = case["status"]
+        neutral_description = summary["neutralDescription"]
+        missing_facts = report["missingFacts"]
+        recommendations_status = report["recommendations"]["status"]
+        draft_status = report["draftResponse"]["status"]
+        legal_status = report["legalBasis"]["status"]
+        disclaimer = report["disclaimer"]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("invalid canonical report") from exc
+
+    scalar_values = (
+        public_number,
+        status,
+        neutral_description,
+        recommendations_status,
+        draft_status,
+        legal_status,
+        disclaimer,
+    )
+    if not all(isinstance(value, str) for value in scalar_values):
+        raise ValueError("invalid canonical report")
+    if not isinstance(missing_facts, list) or len(missing_facts) > 30:
+        raise ValueError("invalid canonical report")
+    if len(neutral_description) > 1_500 or len(disclaimer) > 500:
+        raise ValueError("invalid canonical report")
+
+    missing_count = len(missing_facts)
+    analysis_label = (
+        "АНАЛИЗ ЗАБЛОКИРОВАН"
+        if {recommendations_status, draft_status, legal_status} == {"NOT_AVAILABLE"}
+        else "ТРЕБУЕТ ПРОВЕРКИ"
+    )
+    rendered = (
+        f"📋 {public_number}\n"
+        f"Статус: {status}\n\n"
+        f"Что произошло:\n{neutral_description}\n\n"
+        f"Недостающих фактов: {missing_count}\n"
+        f"⚖️ {analysis_label}\n\n"
+        f"{disclaimer}"
+    )
+    if len(rendered) > 4_000:
+        raise ValueError("invalid canonical report")
+    return rendered
+
+
+class LegalCoreClient:
+    """Small typed facade around one application-scoped ``AsyncClient``."""
+
+    def __init__(self, http: httpx2.AsyncClient) -> None:
+        self._http = http
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
+
+    @staticmethod
+    def _headers(telegram_user_id: int, idempotency_key: UUID | None = None) -> dict[str, str]:
+        headers = {"X-Telegram-User-Id": str(telegram_user_id)}
+        if idempotency_key is not None:
+            headers["Idempotency-Key"] = str(idempotency_key)
+        return headers
+
+    async def _json_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        telegram_user_id: int,
+        payload: dict[str, Any] | None = None,
+        idempotency_key: UUID | None = None,
+    ) -> dict[str, Any]:
+        try:
+            response = await self._http.request(
+                method,
+                path,
+                headers=self._headers(telegram_user_id, idempotency_key),
+                json=payload,
+            )
+        except httpx2.HTTPError as exc:
+            raise LegalCoreApiError(
+                503, "LEGAL_CORE_UNAVAILABLE", "Legal Core unavailable"
+            ) from exc
+        if response.status_code >= 400:
+            code = "LEGAL_CORE_ERROR"
+            try:
+                body = response.json()
+                if isinstance(body, dict) and isinstance(body.get("error"), dict):
+                    candidate = body["error"].get("code")
+                    if isinstance(candidate, str) and candidate:
+                        code = candidate
+            except ValueError:
+                pass
+            raise LegalCoreApiError(response.status_code, code, "Legal Core rejected request")
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response") from exc
+        if not isinstance(body, dict):
+            raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response")
+        return body
+
+    async def get_actor(self, telegram_user_id: int) -> dict[str, Any]:
+        return await self._json_request(
+            "GET",
+            "/v1/actor",
+            telegram_user_id=telegram_user_id,
+        )
+
+    async def create_case(self, telegram_user_id: int, idempotency_key: UUID) -> dict[str, Any]:
+        return await self._json_request(
+            "POST",
+            "/v1/cases",
+            telegram_user_id=telegram_user_id,
+            idempotency_key=idempotency_key,
+            payload={"intakeSchemaVersion": INTAKE_SCHEMA_VERSION, "channel": "TELEGRAM"},
+        )
+
+    async def add_facts(
+        self,
+        case_id: UUID,
+        facts: list[dict[str, Any]],
+        telegram_user_id: int,
+        idempotency_key: UUID,
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "POST",
+            f"/v1/cases/{case_id}/facts",
+            telegram_user_id=telegram_user_id,
+            idempotency_key=idempotency_key,
+            payload={
+                "questionId": "telegram_complete_intake",
+                "intakeSchemaVersion": INTAKE_SCHEMA_VERSION,
+                "facts": facts,
+            },
+        )
+
+    async def finalize_case(
+        self, case_id: UUID, telegram_user_id: int, idempotency_key: UUID
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "POST",
+            f"/v1/cases/{case_id}/intake-finalizations",
+            telegram_user_id=telegram_user_id,
+            idempotency_key=idempotency_key,
+            payload={},
+        )
+
+    async def create_report(
+        self, case_id: UUID, telegram_user_id: int, idempotency_key: UUID
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "POST",
+            f"/v1/cases/{case_id}/reports",
+            telegram_user_id=telegram_user_id,
+            idempotency_key=idempotency_key,
+            payload={"locale": "ru-RU"},
+        )
+
+    async def download_pdf(self, report_id: UUID, telegram_user_id: int) -> bytes:
+        try:
+            response = await self._http.get(
+                f"/v1/reports/{report_id}/pdf",
+                headers=self._headers(telegram_user_id),
+            )
+        except httpx2.HTTPError as exc:
+            raise LegalCoreApiError(
+                503, "LEGAL_CORE_UNAVAILABLE", "Legal Core unavailable"
+            ) from exc
+        if response.status_code >= 400:
+            raise LegalCoreApiError(response.status_code, "PDF_NOT_AVAILABLE", "PDF unavailable")
+        content = response.content
+        if (
+            response.headers.get("content-type", "").split(";", 1)[0] != "application/pdf"
+            or not content.startswith(b"%PDF-")
+            or len(content) > MAX_PDF_BYTES
+        ):
+            raise LegalCoreApiError(502, "INVALID_PDF_RESPONSE", "Invalid PDF response")
+        return content

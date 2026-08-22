@@ -29,6 +29,19 @@ curl --fail http://127.0.0.1:8000/health/ready
 docker compose down
 ```
 
+The Legal Core startup applies migrations and idempotently ingests the checksum-locked first
+corpus manifest as `REVIEW_REQUIRED`. Ingestion never approves law for production retrieval.
+
+To connect the first clinic administrator securely:
+
+1. Open the bot and send `/whoami`.
+2. Put the returned numeric ID into `BOOTSTRAP_TELEGRAM_ADMIN_ID` in `.env` and set
+   `BOOTSTRAP_CLINIC_NAME`.
+3. Run `docker compose up -d --force-recreate legal-core`.
+4. Open `/menu` and choose `📝 Создать кейс`.
+
+The bootstrap is idempotent and does not register unknown Telegram users automatically.
+
 Apply the bot name, descriptions, commands and avatar as an explicit one-off operation:
 
 ```bash
@@ -41,6 +54,7 @@ every polling restart.
 `docker compose down` keeps the named data volumes. Add `--volumes` only when intentionally deleting local PostgreSQL, Redis and MinIO data.
 
 The Telegram gateway uses long polling and exposes no host port. `/start` and `/menu` open a
-branded, image-based inline menu with project, workflow, preparation and privacy sections.
-Until authentication and Case Core are implemented, free text receives a safety notice and is
-not processed.
+branded, image-based inline menu. A mapped `CLINIC_ADMIN` can fill a pseudonymous case card,
+confirm it and receive the canonical PDF. Cancelling before confirmation creates no database
+case. The PDF remains an intake record: legal recommendations and a patient-response draft are
+explicitly blocked until an approved evidence corpus and verifier gate are available.

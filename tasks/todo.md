@@ -85,19 +85,19 @@
 **Acceptance criteria:**
 - [x] Intake, missing-facts and report contracts are fixed in a versioned specification.
 - [x] Canonical report and legal-corpus lifecycle decisions are recorded in ADRs.
-- [ ] Alembic creates identity, case, report, audit and legal-corpus tables.
-- [ ] Tenant identity is resolved by Legal Core and cannot be supplied in a request body.
-- [ ] Cross-tenant and idempotency contract tests pass.
+- [x] Alembic creates identity, case, report, audit and legal-corpus tables.
+- [x] Tenant identity is resolved by Legal Core and cannot be supplied in a request body.
+- [x] Cross-tenant and idempotency contract tests pass.
 
 **Dependencies:** Task 0.4
 
 ## Task 1.2: Case Core and blocked intake report
 
 **Acceptance criteria:**
-- [ ] Case/fact/finalisation endpoints implement the stable error envelope.
-- [ ] Critical missing facts deterministically produce the next question.
-- [ ] One canonical JSON creates both the Telegram summary and PDF.
-- [ ] Legal sections remain explicitly unavailable before evidence gates.
+- [x] Case/fact/finalisation endpoints implement the stable error envelope.
+- [x] Critical missing facts deterministically produce the next question.
+- [x] One canonical JSON creates both the Telegram summary and PDF.
+- [x] Legal sections remain explicitly unavailable before evidence gates.
 
 **Dependencies:** Task 1.1
 
@@ -106,18 +106,18 @@
 **Acceptance criteria:**
 - [ ] Official raw artifacts and metadata are ingested reproducibly with SHA-256.
 - [ ] Approval is separate from ingestion and audited.
-- [ ] Retrieval exposes only approved versions applicable on `as_of_date`.
-- [ ] The 2026-09-01 Decree 736/659 boundary is covered by regression tests.
+- [x] Retrieval exposes only approved versions applicable on `as_of_date`.
+- [ ] The 2026-09-01 Decree 736/659 boundary is covered by corpus regression tests.
 
 **Dependencies:** Task 1.1
 
 ## Task 2.2: Telegram administrator workflow
 
 **Acceptance criteria:**
-- [ ] `Создать кейс` is available only to a mapped `CLINIC_ADMIN`.
-- [ ] The bot collects only the minimum pseudonymous intake data in steps.
+- [x] `Создать кейс` is available only to a mapped `CLINIC_ADMIN`.
+- [x] The bot collects only the minimum pseudonymous intake data in steps.
 - [ ] Restart/cancel/retry do not duplicate cases or facts.
-- [ ] `/whoami` gives the administrator the identifier needed for secure bootstrap.
+- [x] `/whoami` gives the administrator the identifier needed for secure bootstrap.
 
 **Dependencies:** Tasks 1.2 and 2.1
 

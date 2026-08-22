@@ -17,6 +17,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 from legal_core import __version__
 from legal_core.case_api import ApiError, create_case_router
 from legal_core.database import create_engine, create_session_factory
+from legal_core.legal_api import create_legal_router
 
 SERVICE_NAME = "legal-core"
 ReadinessChecks = dict[str, bool]
@@ -154,6 +155,7 @@ def create_app(
         )
 
     app.include_router(create_case_router(sessions))
+    app.include_router(create_legal_router(sessions))
 
     return app
 

@@ -1,7 +1,7 @@
 """Validated REST contracts for Case Core."""
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -21,6 +21,35 @@ class CaseResponse(ContractModel):
     status: CaseStatus
     intake_schema_version: str = Field(alias="intakeSchemaVersion")
     created_at: datetime = Field(alias="createdAt")
+
+
+class ActorResponse(ContractModel):
+    role: Literal["CLINIC_ADMIN"]
+
+
+class LegalFragmentResponse(ContractModel):
+    fragment_id: UUID = Field(alias="fragmentId")
+    version_id: UUID = Field(alias="versionId")
+    document_id: UUID = Field(alias="documentId")
+    article: str | None
+    part: str | None
+    point: str | None
+    structural_path: str = Field(alias="structuralPath")
+    fragment_text: str = Field(alias="fragmentText")
+    text_sha256: str = Field(alias="textSha256")
+    effective_from: date = Field(alias="effectiveFrom")
+    effective_to: date | None = Field(alias="effectiveTo")
+    source_url: str = Field(alias="sourceUrl")
+    raw_sha256: str = Field(alias="rawSha256")
+    document_title: str = Field(alias="documentTitle")
+    issuer: str
+    official_number: str | None = Field(alias="officialNumber")
+    version_date: date | None = Field(alias="versionDate")
+    publication_date: date | None = Field(alias="publicationDate")
+
+
+class LegalFragmentSearchResponse(ContractModel):
+    items: list[LegalFragmentResponse]
 
 
 class FactInput(ContractModel):

@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.api_contracts import (
+    ActorResponse,
     AddFactsRequest,
     CaseResponse,
     CreateCaseRequest,
@@ -83,7 +84,7 @@ def _case_response(case: Case) -> CaseResponse:
     )
 
 
-async def _resolve_actor(session: AsyncSession, telegram_user_id: int) -> ActorContext:
+async def resolve_actor(session: AsyncSession, telegram_user_id: int) -> ActorContext:
     result = await session.execute(
         select(User.id, ClinicUser.id, ClinicUser.clinic_id, ClinicUser.role)
         .join(ClinicUser, ClinicUser.user_id == User.id)
@@ -255,6 +256,14 @@ def create_case_router(
 
     Session = Annotated[AsyncSession, Depends(get_session)]
 
+    @router.get("/actor", response_model=ActorResponse)
+    async def get_actor(
+        telegram_user_id: TelegramUserId,
+        session: Session,
+    ) -> ActorResponse:
+        await resolve_actor(session, telegram_user_id)
+        return ActorResponse(role="CLINIC_ADMIN")
+
     @router.post("/cases", response_model=CaseResponse, status_code=status.HTTP_201_CREATED)
     async def create_case(
         payload: CreateCaseRequest,
@@ -263,7 +272,7 @@ def create_case_router(
         idempotency_key: IdempotencyKey,
         session: Session,
     ) -> CaseResponse:
-        actor = await _resolve_actor(session, telegram_user_id)
+        actor = await resolve_actor(session, telegram_user_id)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         replay = await _idempotency_replay(
             session,
@@ -316,7 +325,7 @@ def create_case_router(
         telegram_user_id: TelegramUserId,
         session: Session,
     ) -> CaseResponse:
-        actor = await _resolve_actor(session, telegram_user_id)
+        actor = await resolve_actor(session, telegram_user_id)
         case = await _tenant_case(session, actor, case_id)
         return _case_response(case)
 
@@ -326,7 +335,7 @@ def create_case_router(
         telegram_user_id: TelegramUserId,
         session: Session,
     ) -> IntakeResponse:
-        actor = await _resolve_actor(session, telegram_user_id)
+        actor = await resolve_actor(session, telegram_user_id)
         case = await _tenant_case(session, actor, case_id)
         return _intake_response(case, _domain_facts(await _current_fact_rows(session, case.id)))
 
@@ -338,7 +347,7 @@ def create_case_router(
         idempotency_key: IdempotencyKey,
         session: Session,
     ) -> IntakeResponse:
-        actor = await _resolve_actor(session, telegram_user_id)
+        actor = await resolve_actor(session, telegram_user_id)
         case = await _tenant_case(session, actor, case_id)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         scope = f"cases:{case_id}:facts"
@@ -416,7 +425,7 @@ def create_case_router(
         idempotency_key: IdempotencyKey,
         session: Session,
     ) -> CaseResponse:
-        actor = await _resolve_actor(session, telegram_user_id)
+        actor = await resolve_actor(session, telegram_user_id)
         case = await _tenant_case(session, actor, case_id)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         scope = f"cases:{case_id}:finalize"
@@ -483,7 +492,7 @@ def create_case_router(
         idempotency_key: IdempotencyKey,
         session: Session,
     ) -> ReportResponse:
-        actor = await _resolve_actor(session, telegram_user_id)
+        actor = await resolve_actor(session, telegram_user_id)
         case = await _tenant_case(session, actor, case_id)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         scope = f"cases:{case_id}:reports"
@@ -584,7 +593,7 @@ def create_case_router(
         telegram_user_id: TelegramUserId,
         session: Session,
     ) -> StreamingResponse:
-        actor = await _resolve_actor(session, telegram_user_id)
+        actor = await resolve_actor(session, telegram_user_id)
         report = await session.scalar(
             select(CaseReport).where(
                 CaseReport.id == report_id,

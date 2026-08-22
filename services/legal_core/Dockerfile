@@ -15,6 +15,7 @@ RUN apt-get update \
 
 COPY requirements.lock ./
 COPY alembic.ini ./
+COPY services/legal_core/corpus ./services/legal_core/corpus
 COPY services/legal_core/migrations ./services/legal_core/migrations
 COPY services/legal_core/src ./services/legal_core/src
 
@@ -24,4 +25,4 @@ USER app
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn legal_core.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "alembic upgrade head && python -m legal_core.corpus_loader services/legal_core/corpus/initial_pp736.json && python -m legal_core.bootstrap_admin --if-configured && exec uvicorn legal_core.main:app --host 0.0.0.0 --port 8000"]

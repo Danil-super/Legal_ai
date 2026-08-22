@@ -11,8 +11,9 @@ requires-python = ">=3.11"
 dependencies = [
   "alembic>=1.19.1,<2",
   "fastapi>=0.116,<1",
+  "httpx2>=2.12,<3",
   "psycopg[binary]>=3.3.4,<4",
-  "python-telegram-bot>=22.8,<23",
+  "python-telegram-bot[job-queue]>=22.8,<23",
   "reportlab>=5.0.1,<6",
   "sqlalchemy>=2.0.52,<2.1",
   "uvicorn[standard]>=0.35,<1",
@@ -20,7 +21,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "httpx2>=2.12,<3",
   "mypy>=1.17,<2",
   "pytest>=8.4,<9",
   "ruff>=0.12,<1",

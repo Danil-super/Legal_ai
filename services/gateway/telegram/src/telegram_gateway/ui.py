@@ -6,7 +6,6 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 WELCOME_IMAGE = Path(__file__).with_name("assets") / "welcome.png"
 AVATAR_IMAGE = Path(__file__).with_name("assets") / "avatar.jpg"
-AVATAR_IMAGE = Path(__file__).with_name("assets") / "avatar.jpg"
 
 BOT_NAME = "Dental Legal AI"
 BOT_SHORT_DESCRIPTION = (
@@ -50,22 +49,19 @@ SCREENS = {
         "5. Клиника получает структуру рисков и черновик для проверки юристом.\n\n"
         "Бот не подменяет профессиональную юридическую оценку."
     ),
-    "prepare": (
-        "📝  ПОДГОТОВИТЬ КЕЙС\n\n"
-        "До запуска защищённого Case Core не отправляйте материалы в этот чат.\n\n"
-        "Локально, без персональных данных, можно подготовить:\n\n"
-        "1. хронологию ключевых событий;\n"
-        "2. перечень имеющихся документов;\n"
-        "3. позицию пациента и позицию клиники;\n"
-        "4. сроки для ответа или иных действий;\n"
-        "5. вопросы, которые нужно решить."
+    "case:start": (
+        "📝  СОЗДАТЬ КЕЙС\n\n"
+        "Бот проверит доступ администратора и соберёт обезличенные факты "
+        "по шагам. Не отправляйте ФИО, телефоны, адреса, номера медкарт "
+        "и файлы пациента."
     ),
     "privacy": (
         "🛡  КОНФИДЕНЦИАЛЬНОСТЬ\n\n"
         "Медицинские сведения и данные пациента требуют особой защиты.\n\n"
         "На текущем этапе:\n"
-        "• текст и документы кейса не принимаются;\n"
-        "• введённое содержание не анализируется и не повторяется в ответе;\n"
+        "• принимается только краткое обезличенное описание ситуации;\n"
+        "• файлы, ФИО, контакты и идентификаторы пациента не принимаются;\n"
+        "• введённые факты сохраняются в карточке и повторяются в вашем PDF;\n"
         "• бот не ведёт диагностику и не выдаёт юридических заключений.\n\n"
         "До отдельного уведомления не отправляйте информацию, по которой можно определить пациента."
     ),
@@ -87,8 +83,9 @@ HELP_MESSAGE = (
     "/start — открыть приветствие\n"
     "/menu — показать главное меню\n"
     "/help — показать эту справку\n\n"
-    "Юридический анализ и черновики будут доступны после запуска авторизации "
-    "и защищённого Case Core."
+    "/whoami — показать Telegram ID\n"
+    "/cancel — остановить заполнение кейса\n\n"
+    "Юридические рекомендации и черновики не формируются без проверенной правовой базы."
 )
 
 TEXT_INPUT_DISABLED_MESSAGE = (
@@ -96,7 +93,7 @@ TEXT_INPUT_DISABLED_MESSAGE = (
     "Не отправляйте данные пациента или документы. Откройте /menu, чтобы продолжить."
 )
 
-MAIN_MENU_CALLBACKS = {"features", "workflow", "prepare", "privacy", "about"}
+MAIN_MENU_CALLBACKS = {"features", "workflow", "case:start", "privacy", "about"}
 
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
@@ -107,7 +104,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("🧭 Как это работает", callback_data="workflow"),
             ],
             [
-                InlineKeyboardButton("📝 Подготовить кейс", callback_data="prepare"),
+                InlineKeyboardButton("📝 Создать кейс", callback_data="case:start"),
                 InlineKeyboardButton("🛡 Конфиденциальность", callback_data="privacy"),
             ],
             [InlineKeyboardButton("ℹ️ О проекте", callback_data="about")],

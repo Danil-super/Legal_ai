@@ -64,6 +64,8 @@ services:
       REDIS_PORT: 6379
       MINIO_HOST: minio
       MINIO_PORT: 9000
+      BOOTSTRAP_TELEGRAM_ADMIN_ID: ${BOOTSTRAP_TELEGRAM_ADMIN_ID:-}
+      BOOTSTRAP_CLINIC_NAME: ${BOOTSTRAP_CLINIC_NAME:-Моя стоматология}
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,6 +94,7 @@ services:
       dockerfile: services/gateway/telegram/Dockerfile
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Set TELEGRAM_BOT_TOKEN in .env}
+      LEGAL_CORE_URL: http://legal-core:8000
     healthcheck:
       test:
         - CMD
@@ -110,7 +113,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    networks: [edge]
+    depends_on:
+      legal-core:
+        condition: service_healthy
+    networks: [backend, edge]
     restart: unless-stopped
     stop_grace_period: 20s
 

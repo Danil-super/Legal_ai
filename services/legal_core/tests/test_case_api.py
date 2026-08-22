@@ -129,6 +129,50 @@ def complete_fact_batch() -> dict[str, object]:
     }
 
 
+def test_actor_probe_authorizes_only_mapped_clinic_admin() -> None:
+    admin = 6_000_000_001 + uuid4().int % 100_000_000
+    unknown = 5_000_000_001 + uuid4().int % 100_000_000
+    seed_admin(admin)
+
+    with application_client() as client:
+        allowed = client.get("/v1/actor", headers=actor_headers(admin))
+        denied = client.get("/v1/actor", headers=actor_headers(unknown))
+
+    assert allowed.status_code == 200
+    assert allowed.json() == {"role": "CLINIC_ADMIN"}
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "ACTOR_NOT_AUTHORIZED"
+
+
+def test_legal_fragment_search_is_authenticated_validated_and_approved_only() -> None:
+    admin = 4_000_000_001 + uuid4().int % 100_000_000
+    unknown = 3_000_000_001 + uuid4().int % 100_000_000
+    seed_admin(admin)
+
+    with application_client() as client:
+        pending_is_hidden = client.get(
+            "/v1/legal/fragments",
+            headers=actor_headers(admin),
+            params={"query": "медицинских услуг", "as_of_date": "2026-08-22"},
+        )
+        invalid = client.get(
+            "/v1/legal/fragments",
+            headers=actor_headers(admin),
+            params={"query": " ", "as_of_date": "2026-08-22"},
+        )
+        denied = client.get(
+            "/v1/legal/fragments",
+            headers=actor_headers(unknown),
+            params={"query": "медицинских услуг", "as_of_date": "2026-08-22"},
+        )
+
+    assert pending_is_hidden.status_code == 200
+    assert pending_is_hidden.json() == {"items": []}
+    assert invalid.status_code == 422
+    assert invalid.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert denied.status_code == 403
+
+
 def test_case_intake_report_and_cross_tenant_boundary() -> None:
     admin_a = 7_000_000_001 + uuid4().int % 100_000_000
     admin_b = 8_000_000_001 + uuid4().int % 100_000_000
