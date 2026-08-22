@@ -9,8 +9,12 @@ description = "Evidence-grounded legal assistant core for dental clinics"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "alembic>=1.19.1,<2",
   "fastapi>=0.116,<1",
+  "psycopg[binary]>=3.3.4,<4",
   "python-telegram-bot>=22.8,<23",
+  "reportlab>=5.0.1,<6",
+  "sqlalchemy>=2.0.52,<2.1",
   "uvicorn[standard]>=0.35,<1",
 ]
 
@@ -38,6 +42,8 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "services/gateway/telegram/src/telegram_gateway/ui.py" = ["RUF001"]
+"services/legal_core/src/legal_core/reports.py" = ["RUF001"]
+"services/legal_core/tests/*" = ["RUF001"]
 
 [tool.mypy]
 python_version = "3.11"

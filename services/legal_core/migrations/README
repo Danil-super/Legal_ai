@@ -1,0 +1,4 @@
+Single-database Alembic migrations for Dental Legal AI Legal Core.
+
+The environment is versioned with the application, as recommended by the Alembic tutorial:
+https://alembic.sqlalchemy.org/en/latest/tutorial.html#the-migration-environment
