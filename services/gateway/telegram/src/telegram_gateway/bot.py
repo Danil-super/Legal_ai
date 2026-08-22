@@ -26,10 +26,12 @@ from telegram.ext import (
 
 from telegram_gateway.case_wizard import (
     CaseDraft,
+    DateFactValue,
     LegalCoreApiError,
     LegalCoreClient,
+    SignalAnswer,
     facts_from_draft,
-    parse_iso_date,
+    parse_date_answer,
     parse_ruble_amount_to_kopecks,
     telegram_summary_from_report,
 )
@@ -75,6 +77,10 @@ class WizardState(IntEnum):
     AUTHORITY_DEADLINE = 17
     DOCUMENTS = 18
     CONFIRM = 19
+    LAWYER = 20
+    REPRESENTATIVE_AUTHORITY = 21
+    LAWYER_DEADLINE = 22
+    REGULATOR_THREAT = 23
 
 
 def load_token(environment: Mapping[str, str] | None = None) -> str:
@@ -164,7 +170,13 @@ DEMAND_KEYBOARD = _keyboard(
 )
 YES_NO_KEYBOARDS = {
     name: _keyboard(
-        [[("✅ Да", f"case:{name}:yes"), ("❌ Нет", f"case:{name}:no")]]
+        [
+            [
+                ("✅ Да", f"case:{name}:yes"),
+                ("❌ Нет", f"case:{name}:no"),
+            ],
+            [("❔ Неизвестно", f"case:{name}:unknown")],
+        ]
     )
     for name in ("formal", "harm", "hospital", "authority")
 }
@@ -175,6 +187,14 @@ DOCUMENTS_KEYBOARD = _keyboard(
         [("❌ Документов пока нет", "case:documents:NONE")],
     ]
 )
+
+
+def _signal_answer(callback: str, name: str) -> str | None:
+    prefix = f"case:{name}:"
+    if not callback.startswith(prefix):
+        return None
+    value = callback.removeprefix(prefix).upper()
+    return value if value in {"YES", "NO", "UNKNOWN"} else None
 def confirm_keyboard(workflow_id: UUID) -> InlineKeyboardMarkup:
     callback = f"case:confirm:{workflow_id}"
     if len(callback.encode()) > 64:
@@ -306,10 +326,13 @@ async def _record_date(
     prompt: str,
     allow_future: bool = False,
 ) -> int:
-    value = parse_iso_date(_message_text(update), allow_future=allow_future)
+    value = parse_date_answer(_message_text(update), allow_future=allow_future)
     if value is None:
         qualifier = "" if allow_future else " не позднее сегодняшней"
-        await _reply(update, f"Нужна существующая дата{qualifier}: ГГГГ-ММ-ДД.")
+        await _reply(
+            update,
+            f"Нужна существующая дата{qualifier}: ГГГГ-ММ-ДД, либо «неизвестно».",
+        )
         return current
     _wizard_data(context)[field] = value
     await _reply(update, prompt)
@@ -408,11 +431,11 @@ async def _ask_formal_claim(update: Update) -> None:
 
 async def choose_formal_claim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     data = await _answer_callback(update)
-    if data not in {"case:formal:yes", "case:formal:no"}:
+    formal = None if data is None else _signal_answer(data, "formal")
+    if formal is None:
         return WizardState.FORMAL_CLAIM
-    formal = data.endswith(":yes")
     _wizard_data(context)["formal_claim"] = formal
-    if formal:
+    if formal == "YES":
         await _reply(update, "Дата получения письменной претензии, ГГГГ-ММ-ДД:")
         return WizardState.CLAIM_RECEIVED_AT
     await _ask_harm(update)
@@ -458,27 +481,88 @@ async def _ask_harm(update: Update) -> None:
 
 async def choose_harm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     data = await _answer_callback(update)
-    if data not in {"case:harm:yes", "case:harm:no"}:
+    harm = None if data is None else _signal_answer(data, "harm")
+    if harm is None:
         return WizardState.HARM
-    harm = data.endswith(":yes")
     _wizard_data(context)["harm_claimed"] = harm
-    if harm:
+    if harm in {"YES", "UNKNOWN"}:
         message = update.effective_message
         if message is not None:
             await message.reply_text(
                 "Была госпитализация?", reply_markup=YES_NO_KEYBOARDS["hospital"]
             )
         return WizardState.HOSPITALIZATION
-    await _ask_authority(update)
-    return WizardState.AUTHORITY
+    await _ask_lawyer(update)
+    return WizardState.LAWYER
 
 
 async def choose_hospitalization(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     data = await _answer_callback(update)
-    if data not in {"case:hospital:yes", "case:hospital:no"}:
+    hospitalization = None if data is None else _signal_answer(data, "hospital")
+    if hospitalization is None:
         return WizardState.HOSPITALIZATION
-    _wizard_data(context)["hospitalization"] = data.endswith(":yes")
+    _wizard_data(context)["hospitalization"] = hospitalization
+    await _ask_lawyer(update)
+    return WizardState.LAWYER
+
+
+async def _ask_lawyer(update: Update) -> None:
+    message = update.effective_message
+    if message is not None:
+        await message.reply_text(
+            "9/12. Связывался ли с клиникой представитель или юрист пациента?",
+            reply_markup=YES_NO_KEYBOARDS["lawyer"],
+        )
+
+
+async def choose_lawyer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    data = await _answer_callback(update)
+    lawyer = None if data is None else _signal_answer(data, "lawyer")
+    if lawyer is None:
+        return WizardState.LAWYER
+    _wizard_data(context)["lawyer_contact"] = lawyer
+    if lawyer == "YES":
+        message = update.effective_message
+        if message is not None:
+            await message.reply_text(
+                "Подтверждены полномочия представителя?",
+                reply_markup=YES_NO_KEYBOARDS["representative"],
+            )
+        return WizardState.REPRESENTATIVE_AUTHORITY
     await _ask_authority(update)
+    return WizardState.AUTHORITY
+
+
+async def choose_representative_authority(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    data = await _answer_callback(update)
+    authority = None if data is None else _signal_answer(data, "representative")
+    if authority is None:
+        return WizardState.REPRESENTATIVE_AUTHORITY
+    _wizard_data(context)["representative_authority"] = authority
+    await _reply(update, "Срок ответа представителю, ГГГГ-ММ-ДД или «неизвестно»:")
+    return WizardState.LAWYER_DEADLINE
+
+
+async def record_lawyer_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    value = parse_date_answer(_message_text(update), allow_future=True)
+    if value is None:
+        await _reply(update, "Нужна существующая дата: ГГГГ-ММ-ДД, либо «неизвестно».")
+        return WizardState.LAWYER_DEADLINE
+    data = _wizard_data(context)
+    selected, changed = _earliest_known_deadline(data.get("response_deadline"), value)
+    data["response_deadline"] = selected
+    if changed:
+        await _reply(
+            update,
+            "У претензии и обращения представителя разные сроки. "
+            f"В карточке учтён ближайший: {selected['date']}.",
+        )
+    await _reply(update, "10/12. Есть обращение в суд или контролирующий орган?")
+    message = update.effective_message
+    if message is not None:
+        await message.reply_text("Выберите вариант:", reply_markup=YES_NO_KEYBOARDS["authority"])
     return WizardState.AUTHORITY
 
 
@@ -486,22 +570,22 @@ async def _ask_authority(update: Update) -> None:
     message = update.effective_message
     if message is not None:
         await message.reply_text(
-            "9/10. Есть обращение в суд или контролирующий орган?",
+            "10/12. Есть обращение в суд или контролирующий орган?",
             reply_markup=YES_NO_KEYBOARDS["authority"],
         )
 
 
 async def choose_authority(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     data = await _answer_callback(update)
-    if data not in {"case:authority:yes", "case:authority:no"}:
+    authority = None if data is None else _signal_answer(data, "authority")
+    if authority is None:
         return WizardState.AUTHORITY
-    authority = data.endswith(":yes")
     _wizard_data(context)["regulator_or_court"] = authority
-    if authority:
+    if authority == "YES":
         await _reply(update, "Какой орган или суд направил документ? Без персональных данных.")
         return WizardState.AUTHORITY_KIND
-    await _ask_documents(update)
-    return WizardState.DOCUMENTS
+    await _ask_regulator_threat(update)
+    return WizardState.REGULATOR_THREAT
 
 
 async def record_authority_kind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -526,20 +610,39 @@ async def record_authority_date(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def record_authority_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    value = parse_iso_date(_message_text(update), allow_future=True)
+    value = parse_date_answer(_message_text(update), allow_future=True)
     if value is None:
-        await _reply(update, "Нужна существующая дата: ГГГГ-ММ-ДД.")
+        await _reply(update, "Нужна существующая дата: ГГГГ-ММ-ДД, либо «неизвестно».")
         return WizardState.AUTHORITY_DEADLINE
     data = _wizard_data(context)
     existing = data.get("response_deadline")
-    if isinstance(existing, str) and existing != value:
-        value = min(existing, value)
+    value, changed = _earliest_known_deadline(existing, value)
+    if changed:
         await _reply(
             update,
             "У претензии и документа органа разные сроки. "
-            f"В карточке учтён ближайший: {value}.",
+            f"В карточке учтён ближайший: {value['date']}.",
         )
     data["response_deadline"] = value
+    await _ask_regulator_threat(update)
+    return WizardState.REGULATOR_THREAT
+
+
+async def _ask_regulator_threat(update: Update) -> None:
+    message = update.effective_message
+    if message is not None:
+        await message.reply_text(
+            "11/12. Есть угроза обращения в суд или контролирующий орган?",
+            reply_markup=YES_NO_KEYBOARDS["regulator_threat"],
+        )
+
+
+async def choose_regulator_threat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    data = await _answer_callback(update)
+    threat = None if data is None else _signal_answer(data, "regulator_threat")
+    if threat is None:
+        return WizardState.REGULATOR_THREAT
+    _wizard_data(context)["regulator_threat"] = threat
     await _ask_documents(update)
     return WizardState.DOCUMENTS
 
@@ -548,31 +651,88 @@ async def _ask_documents(update: Update) -> None:
     message = update.effective_message
     if message is not None:
         await message.reply_text(
-            "10/10. Есть договор, медкарта и информированное согласие?\n"
+            "12/12. Есть договор, медкарта и информированное согласие?\n"
             "Сами файлы сюда не загружайте.",
             reply_markup=DOCUMENTS_KEYBOARD,
         )
+
+
+def _draft_date_value(data: dict[str, Any], field: str) -> str | DateFactValue:
+    value = data[field]
+    if isinstance(value, str):
+        return value
+    if (
+        isinstance(value, dict)
+        and set(value) == {"date", "precision"}
+        and (value["date"] is None or isinstance(value["date"], str))
+        and isinstance(value["precision"], str)
+    ):
+        return {"date": value["date"], "precision": value["precision"]}
+    raise ValueError(f"invalid wizard date: {field}")
+
+
+def _known_date_value(value: object) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        candidate = value.get("date")
+        if isinstance(candidate, str):
+            return candidate
+    return None
+
+
+def _earliest_known_deadline(
+    existing: object, candidate: DateFactValue
+) -> tuple[DateFactValue, bool]:
+    existing_date = _known_date_value(existing)
+    candidate_date = _known_date_value(candidate)
+    if existing_date is None:
+        return candidate, False
+    if candidate_date is None:
+        return {"date": existing_date, "precision": "EXACT"}, False
+    selected_date = min(existing_date, candidate_date)
+    return {"date": selected_date, "precision": "EXACT"}, existing_date != candidate_date
+
+
+def _draft_signal_value(data: dict[str, Any], field: str) -> SignalAnswer:
+    value = data[field]
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value in {"YES", "NO", "UNKNOWN"}:
+        return cast(SignalAnswer, value)
+    raise ValueError(f"invalid wizard signal: {field}")
+
+
+def _optional_draft_date_value(data: dict[str, Any], field: str) -> str | DateFactValue | None:
+    return None if field not in data else _draft_date_value(data, field)
+
+
+def _optional_draft_signal_value(data: dict[str, Any], field: str) -> SignalAnswer | None:
+    return None if field not in data else _draft_signal_value(data, field)
 
 
 def _draft_from_data(data: dict[str, Any]) -> CaseDraft:
     return CaseDraft(
         incident_type=str(data["incident_type"]),
         service_type=str(data["service_type"]),
-        service_date=str(data["service_date"]),
-        incident_date=str(data["incident_date"]),
-        claim_date=str(data["claim_date"]),
+        service_date=_draft_date_value(data, "service_date"),
+        incident_date=_draft_date_value(data, "incident_date"),
+        claim_date=_draft_date_value(data, "claim_date"),
         problem_summary=str(data["problem_summary"]),
         patient_demand=str(data["patient_demand"]),
-        formal_claim=bool(data["formal_claim"]),
-        harm_claimed=bool(data["harm_claimed"]),
-        regulator_or_court=bool(data["regulator_or_court"]),
+        formal_claim=_draft_signal_value(data, "formal_claim"),
+        harm_claimed=_draft_signal_value(data, "harm_claimed"),
+        regulator_or_court=_draft_signal_value(data, "regulator_or_court"),
         documents_status=str(data["documents_status"]),
         demand_amount_kopecks=data.get("demand_amount_kopecks"),
-        claim_received_at=data.get("claim_received_at"),
-        response_deadline=data.get("response_deadline"),
-        hospitalization=data.get("hospitalization"),
+        claim_received_at=_optional_draft_date_value(data, "claim_received_at"),
+        response_deadline=_optional_draft_date_value(data, "response_deadline"),
+        hospitalization=_optional_draft_signal_value(data, "hospitalization"),
         authority_kind=data.get("authority_kind"),
-        authority_document_date=data.get("authority_document_date"),
+        authority_document_date=_optional_draft_date_value(data, "authority_document_date"),
+        lawyer_contact=_optional_draft_signal_value(data, "lawyer_contact") or False,
+        representative_authority=_optional_draft_signal_value(data, "representative_authority"),
+        regulator_threat=_optional_draft_signal_value(data, "regulator_threat") or False,
     )
 
 
@@ -841,6 +1001,17 @@ def build_application(token: str) -> TelegramApplication:
                 WizardState.HOSPITALIZATION: [
                     CallbackQueryHandler(choose_hospitalization, pattern=r"^case:hospital:")
                 ],
+                WizardState.LAWYER: [
+                    CallbackQueryHandler(choose_lawyer, pattern=r"^case:lawyer:")
+                ],
+                WizardState.REPRESENTATIVE_AUTHORITY: [
+                    CallbackQueryHandler(
+                        choose_representative_authority, pattern=r"^case:representative:"
+                    )
+                ],
+                WizardState.LAWYER_DEADLINE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, record_lawyer_deadline)
+                ],
                 WizardState.AUTHORITY: [
                     CallbackQueryHandler(choose_authority, pattern=r"^case:authority:")
                 ],
@@ -852,6 +1023,11 @@ def build_application(token: str) -> TelegramApplication:
                 ],
                 WizardState.AUTHORITY_DEADLINE: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, record_authority_deadline)
+                ],
+                WizardState.REGULATOR_THREAT: [
+                    CallbackQueryHandler(
+                        choose_regulator_threat, pattern=r"^case:regulator_threat:"
+                    )
                 ],
                 WizardState.DOCUMENTS: [
                     CallbackQueryHandler(choose_documents, pattern=r"^case:documents:")

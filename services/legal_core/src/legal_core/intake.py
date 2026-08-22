@@ -14,7 +14,9 @@ _ALWAYS_REQUIRED: tuple[tuple[FactKey, str], ...] = (
     (FactKey.PATIENT_DEMAND, "patient_demand"),
     (FactKey.FORMAL_CLAIM, "formal_claim"),
     (FactKey.HARM_CLAIMED, "harm_claimed"),
+    (FactKey.LAWYER_CONTACT, "lawyer_contact"),
     (FactKey.REGULATOR_OR_COURT, "regulator_or_court"),
+    (FactKey.REGULATOR_THREAT, "regulator_threat"),
     (FactKey.CLINIC_DOCUMENTS, "documents"),
 )
 
@@ -117,4 +119,3 @@ def missing_facts_for(facts: Mapping[FactKey, object]) -> list[MissingFact]:
                 )
 
     return missing
-

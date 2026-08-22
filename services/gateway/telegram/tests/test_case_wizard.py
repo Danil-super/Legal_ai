@@ -11,10 +11,13 @@ from telegram.ext import ConversationHandler
 from telegram_gateway.bot import (
     LEGAL_CORE_CLIENT_KEY,
     WizardState,
+    _draft_from_data,
     build_application,
     cancel_case,
     case_start,
+    choose_lawyer,
     confirm_case,
+    record_lawyer_deadline,
     resume_workflow,
     whoami,
 )
@@ -23,6 +26,7 @@ from telegram_gateway.case_wizard import (
     LegalCoreApiError,
     LegalCoreClient,
     facts_from_draft,
+    parse_date_answer,
     parse_iso_date,
     parse_ruble_amount_to_kopecks,
     telegram_summary_from_report,
@@ -104,6 +108,18 @@ def test_parse_iso_date_accepts_only_real_non_future_iso_dates() -> None:
     assert parse_iso_date("2026-08-23", today="2026-08-22") is None
 
 
+def test_parse_date_answer_preserves_explicit_unknown_without_making_up_a_date() -> None:
+    assert parse_date_answer("неизвестно", today="2026-08-22") == {
+        "date": None,
+        "precision": "UNKNOWN",
+    }
+    assert parse_date_answer("2026-08-21", today="2026-08-22") == {
+        "date": "2026-08-21",
+        "precision": "EXACT",
+    }
+    assert parse_date_answer("завтра", today="2026-08-22") is None
+
+
 def test_ruble_amount_is_finite_and_converted_to_integer_kopecks() -> None:
     assert parse_ruble_amount_to_kopecks("12,34") == 1_234
     assert parse_ruble_amount_to_kopecks("0.01") == 1
@@ -158,7 +174,7 @@ def test_complete_draft_maps_to_legal_core_contract_without_clinic_id() -> None:
     payload = facts_from_draft(draft)
 
     assert payload[0]["factKey"] == "INCIDENT_TYPES"
-    assert len(payload) == 11
+    assert len(payload) == 13
     documents = next(item for item in payload if item["factKey"] == "CLINIC_DOCUMENTS")
     assert set(documents["value"].values()) == {"UNKNOWN"}
     assert not any("clinic" in key.lower() for item in payload for key in item)
@@ -198,6 +214,95 @@ def test_authority_deadline_maps_without_a_formal_patient_claim() -> None:
             "sourceType": "USER_STATEMENT",
         }
     ]
+
+
+def test_draft_maps_unknown_dates_and_signals_without_converting_them_to_no() -> None:
+    draft = CaseDraft(
+        incident_type="QUALITY_COMPLAINT",
+        service_type="Лечение кариеса",
+        service_date={"date": None, "precision": "UNKNOWN"},
+        incident_date={"date": None, "precision": "UNKNOWN"},
+        claim_date={"date": None, "precision": "UNKNOWN"},
+        problem_summary="Администратор пока не получил подтверждающие сведения от врача.",
+        patient_demand="NO_SPECIFIC_DEMAND",
+        formal_claim="UNKNOWN",
+        harm_claimed="UNKNOWN",
+        regulator_or_court="UNKNOWN",
+        hospitalization="UNKNOWN",
+        documents_status="PARTIAL",
+    )
+
+    payload = facts_from_draft(draft)
+
+    service_date = next(item for item in payload if item["factKey"] == "SERVICE_DATE")
+    formal_claim = next(item for item in payload if item["factKey"] == "FORMAL_CLAIM")
+    harm = next(item for item in payload if item["factKey"] == "HARM_CLAIMED")
+    hospital = next(item for item in payload if item["factKey"] == "HOSPITALIZATION")
+    authority = next(item for item in payload if item["factKey"] == "REGULATOR_OR_COURT")
+
+    assert service_date["value"] == {"date": None, "precision": "UNKNOWN"}
+    assert formal_claim["value"] == {"state": "UNKNOWN"}
+    assert harm["value"] == {"state": "UNKNOWN"}
+    assert hospital["value"] == {"state": "UNKNOWN"}
+    assert authority["value"] == {"state": "UNKNOWN"}
+    assert not any(item["factKey"] == "CLAIM_RECEIVED_AT" for item in payload)
+
+
+def test_wizard_data_keeps_unknown_date_shape_until_submission() -> None:
+    draft = _draft_from_data(
+        {
+            "incident_type": "QUALITY_COMPLAINT",
+            "service_type": "Лечение кариеса",
+            "service_date": {"date": None, "precision": "UNKNOWN"},
+            "incident_date": "2026-07-01",
+            "claim_date": "2026-07-02",
+            "problem_summary": "Администратор ожидает уточнения даты оказания услуги.",
+            "patient_demand": "NO_SPECIFIC_DEMAND",
+            "formal_claim": "NO",
+            "harm_claimed": "NO",
+            "regulator_or_court": "NO",
+            "documents_status": "PARTIAL",
+        }
+    )
+
+    payload = facts_from_draft(draft)
+
+    assert next(item for item in payload if item["factKey"] == "SERVICE_DATE")["value"] == {
+        "date": None,
+        "precision": "UNKNOWN",
+    }
+
+
+def test_draft_maps_lawyer_and_regulator_threat_signals() -> None:
+    draft = CaseDraft(
+        incident_type="QUALITY_COMPLAINT",
+        service_type="Лечение кариеса",
+        service_date="2026-06-01",
+        incident_date="2026-07-01",
+        claim_date="2026-07-02",
+        problem_summary="Клиника получила сообщение от представителя пациента.",
+        patient_demand="NO_SPECIFIC_DEMAND",
+        formal_claim="NO",
+        harm_claimed="NO",
+        regulator_or_court="NO",
+        lawyer_contact="YES",
+        representative_authority="UNKNOWN",
+        regulator_threat="UNKNOWN",
+        response_deadline="2026-07-20",
+        documents_status="PARTIAL",
+    )
+
+    payload = facts_from_draft(draft)
+
+    assert next(item for item in payload if item["factKey"] == "LAWYER_CONTACT")["value"] == {
+        "state": "YES"
+    }
+    assert next(
+        item for item in payload if item["factKey"] == "REPRESENTATIVE_AUTHORITY"
+    )["value"] == {"state": "UNKNOWN"}
+    assert next(item for item in payload if item["factKey"] == "REGULATOR_THREAT")["value"] == {
+        "state": "UNKNOWN"
+    }
 
 
 def test_workflow_client_uses_durable_uuid_and_never_sends_clinic_context() -> None:
@@ -319,6 +424,40 @@ def test_case_start_checks_access_without_creating_case_and_opens_incident_quest
     assert "case_id" not in context.user_data["case_wizard"]
     assert UUID(context.user_data["case_wizard"]["workflow_id"])
     assert "без ФИО" in message.text_replies[0]
+
+
+def test_lawyer_unknown_is_preserved_and_does_not_become_a_negative_answer() -> None:
+    message = FakeMessage()
+    query = FakeQuery("case:lawyer:unknown")
+    update = SimpleNamespace(callback_query=query, effective_message=message)
+    context = SimpleNamespace(bot_data={}, user_data={"case_wizard": {}})
+
+    result = asyncio.run(choose_lawyer(update, context))
+
+    assert result == WizardState.AUTHORITY
+    assert context.user_data["case_wizard"]["lawyer_contact"] == "UNKNOWN"
+    assert "суд" in message.text_replies[0].lower()
+
+
+def test_lawyer_deadline_does_not_overwrite_an_earlier_claim_deadline() -> None:
+    message = FakeMessage()
+    message.text = "2026-07-20"
+    update = SimpleNamespace(effective_message=message)
+    context = SimpleNamespace(
+        user_data={
+            "case_wizard": {
+                "response_deadline": {"date": "2026-07-15", "precision": "EXACT"}
+            }
+        }
+    )
+
+    result = asyncio.run(record_lawyer_deadline(update, context))
+
+    assert result == WizardState.AUTHORITY
+    assert context.user_data["case_wizard"]["response_deadline"] == {
+        "date": "2026-07-15",
+        "precision": "EXACT",
+    }
 
 
 def test_application_serializes_conversation_updates_and_registers_wizard() -> None:

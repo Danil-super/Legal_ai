@@ -3,13 +3,16 @@
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Literal, TypeAlias
 from uuid import UUID
 
 import httpx2
 
 INTAKE_SCHEMA_VERSION = "dental-case-intake.v1"
 MAX_PDF_BYTES = 8 * 1024 * 1024
+DateFactValue: TypeAlias = dict[str, str | None]
+SignalAnswer: TypeAlias = bool | Literal["YES", "NO", "UNKNOWN"]
+_UNKNOWN_DATE_ANSWERS = frozenset({"неизвестно", "не известно", "не знаю", "unknown"})
 
 
 class LegalCoreApiError(Exception):
@@ -25,21 +28,24 @@ class LegalCoreApiError(Exception):
 class CaseDraft:
     incident_type: str
     service_type: str
-    service_date: str
-    incident_date: str
-    claim_date: str
+    service_date: str | DateFactValue
+    incident_date: str | DateFactValue
+    claim_date: str | DateFactValue
     problem_summary: str
     patient_demand: str
-    formal_claim: bool
-    harm_claimed: bool
-    regulator_or_court: bool
+    formal_claim: SignalAnswer
+    harm_claimed: SignalAnswer
+    regulator_or_court: SignalAnswer
     documents_status: str
     demand_amount_kopecks: int | None = None
-    claim_received_at: str | None = None
-    response_deadline: str | None = None
-    hospitalization: bool | None = None
+    claim_received_at: str | DateFactValue | None = None
+    response_deadline: str | DateFactValue | None = None
+    hospitalization: SignalAnswer | None = None
     authority_kind: str | None = None
-    authority_document_date: str | None = None
+    authority_document_date: str | DateFactValue | None = None
+    lawyer_contact: SignalAnswer = False
+    representative_authority: SignalAnswer | None = None
+    regulator_threat: SignalAnswer = False
 
 
 def parse_iso_date(
@@ -53,6 +59,19 @@ def parse_iso_date(
     except ValueError:
         return None
     return parsed.isoformat() if allow_future or parsed <= upper_bound else None
+
+
+def parse_date_answer(
+    value: str, *, today: str | None = None, allow_future: bool = False
+) -> DateFactValue | None:
+    """Return an exact date or preserve an administrator's explicit unknown answer."""
+
+    if value.strip().casefold() in _UNKNOWN_DATE_ANSWERS:
+        return {"date": None, "precision": "UNKNOWN"}
+    parsed = parse_iso_date(value, today=today, allow_future=allow_future)
+    if parsed is None:
+        return None
+    return {"date": parsed, "precision": "EXACT"}
 
 
 def parse_ruble_amount_to_kopecks(value: str) -> int | None:
@@ -83,6 +102,36 @@ def _fact(key: str, value_type: str, value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _date_fact(value: str | DateFactValue) -> DateFactValue:
+    if isinstance(value, str):
+        return {"date": value, "precision": "EXACT"}
+    if set(value) != {"date", "precision"}:
+        raise ValueError("unsupported date value")
+    date_value = value["date"]
+    precision = value["precision"]
+    if precision == "UNKNOWN" and date_value is None:
+        return {"date": None, "precision": "UNKNOWN"}
+    if precision in {"EXACT", "APPROXIMATE"} and isinstance(date_value, str):
+        return {"date": date_value, "precision": precision}
+    raise ValueError("unsupported date value")
+
+
+def _signal_fact(key: str, value: SignalAnswer) -> dict[str, Any]:
+    if isinstance(value, bool):
+        return _fact(key, "BOOLEAN", {"boolean": value})
+    if value in {"YES", "NO", "UNKNOWN"}:
+        return _fact(key, "BOOLEAN", {"state": value})
+    raise ValueError("unsupported signal answer")
+
+
+def _is_yes(value: SignalAnswer) -> bool:
+    return value is True or value == "YES"
+
+
+def _requires_hospitalization(value: SignalAnswer) -> bool:
+    return _is_yes(value) or value == "UNKNOWN"
+
+
 def facts_from_draft(draft: CaseDraft) -> list[dict[str, Any]]:
     """Map the pseudonymous wizard draft to the versioned Legal Core contract."""
 
@@ -109,22 +158,16 @@ def facts_from_draft(draft: CaseDraft) -> list[dict[str, Any]]:
     facts = [
         _fact("INCIDENT_TYPES", "ENUM_SET", {"values": [draft.incident_type]}),
         _fact("SERVICE_TYPE", "TEXT", {"text": draft.service_type}),
-        _fact("SERVICE_DATE", "DATE", {"date": draft.service_date, "precision": "EXACT"}),
-        _fact(
-            "INCIDENT_DATE",
-            "DATE",
-            {"date": draft.incident_date, "precision": "EXACT"},
-        ),
-        _fact("CLAIM_DATE", "DATE", {"date": draft.claim_date, "precision": "EXACT"}),
+        _fact("SERVICE_DATE", "DATE", _date_fact(draft.service_date)),
+        _fact("INCIDENT_DATE", "DATE", _date_fact(draft.incident_date)),
+        _fact("CLAIM_DATE", "DATE", _date_fact(draft.claim_date)),
         _fact("PROBLEM_SUMMARY", "TEXT", {"text": draft.problem_summary}),
         _fact("PATIENT_DEMAND", "ENUM_SET", {"values": [draft.patient_demand]}),
-        _fact("FORMAL_CLAIM", "BOOLEAN", {"boolean": draft.formal_claim}),
-        _fact("HARM_CLAIMED", "BOOLEAN", {"boolean": draft.harm_claimed}),
-        _fact(
-            "REGULATOR_OR_COURT",
-            "BOOLEAN",
-            {"boolean": draft.regulator_or_court},
-        ),
+        _signal_fact("FORMAL_CLAIM", draft.formal_claim),
+        _signal_fact("HARM_CLAIMED", draft.harm_claimed),
+        _signal_fact("LAWYER_CONTACT", draft.lawyer_contact),
+        _signal_fact("REGULATOR_OR_COURT", draft.regulator_or_court),
+        _signal_fact("REGULATOR_THREAT", draft.regulator_threat),
         _fact("CLINIC_DOCUMENTS", "DOCUMENT_INVENTORY", documents[draft.documents_status]),
     ]
     if draft.demand_amount_kopecks is not None:
@@ -135,7 +178,7 @@ def facts_from_draft(draft: CaseDraft) -> list[dict[str, Any]]:
                 {"amountKopecks": draft.demand_amount_kopecks, "currency": "RUB"},
             )
         )
-    if draft.formal_claim:
+    if _is_yes(draft.formal_claim):
         if draft.claim_received_at is None or draft.response_deadline is None:
             raise ValueError("formal claim dates are required")
         facts.extend(
@@ -143,22 +186,26 @@ def facts_from_draft(draft: CaseDraft) -> list[dict[str, Any]]:
                 _fact(
                     "CLAIM_RECEIVED_AT",
                     "DATE",
-                    {"date": draft.claim_received_at, "precision": "EXACT"},
+                    _date_fact(draft.claim_received_at),
                 ),
                 _fact(
                     "RESPONSE_DEADLINE",
                     "DATE",
-                    {"date": draft.response_deadline, "precision": "EXACT"},
+                    _date_fact(draft.response_deadline),
                 ),
             ]
         )
-    if draft.harm_claimed:
+    if _requires_hospitalization(draft.harm_claimed):
         if draft.hospitalization is None:
             raise ValueError("hospitalization status is required")
+        facts.append(_signal_fact("HOSPITALIZATION", draft.hospitalization))
+    if _is_yes(draft.lawyer_contact):
+        if draft.representative_authority is None or draft.response_deadline is None:
+            raise ValueError("lawyer contact details are required")
         facts.append(
-            _fact("HOSPITALIZATION", "BOOLEAN", {"boolean": draft.hospitalization})
+            _signal_fact("REPRESENTATIVE_AUTHORITY", draft.representative_authority)
         )
-    if draft.regulator_or_court:
+    if _is_yes(draft.regulator_or_court):
         if (
             draft.authority_kind is None
             or draft.authority_document_date is None
@@ -171,16 +218,16 @@ def facts_from_draft(draft: CaseDraft) -> list[dict[str, Any]]:
                 _fact(
                     "DOCUMENT_DATE",
                     "DATE",
-                    {"date": draft.authority_document_date, "precision": "EXACT"},
+                    _date_fact(draft.authority_document_date),
                 ),
             ]
         )
-        if not draft.formal_claim:
+        if not _is_yes(draft.formal_claim):
             facts.append(
                 _fact(
                     "RESPONSE_DEADLINE",
                     "DATE",
-                    {"date": draft.response_deadline, "precision": "EXACT"},
+                    _date_fact(draft.response_deadline),
                 )
             )
     return facts

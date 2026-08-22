@@ -20,7 +20,9 @@ def complete_synthetic_facts() -> dict[FactKey, object]:
         },
         FactKey.FORMAL_CLAIM: False,
         FactKey.HARM_CLAIMED: False,
+        FactKey.LAWYER_CONTACT: False,
         FactKey.REGULATOR_OR_COURT: False,
+        FactKey.REGULATOR_THREAT: False,
         FactKey.CLINIC_DOCUMENTS: {"CONTRACT": "AVAILABLE"},
     }
 
@@ -60,3 +62,14 @@ def test_unknown_harm_signal_requires_hospitalisation_answer() -> None:
 
     assert [item.fact_key for item in missing] == [FactKey.HOSPITALIZATION]
 
+
+def test_lawyer_contact_requires_authority_and_a_deadline() -> None:
+    facts = complete_synthetic_facts()
+    facts[FactKey.LAWYER_CONTACT] = "YES"
+
+    missing = missing_facts_for(facts)
+
+    assert {item.fact_key for item in missing} == {
+        FactKey.REPRESENTATIVE_AUTHORITY,
+        FactKey.RESPONSE_DEADLINE,
+    }
