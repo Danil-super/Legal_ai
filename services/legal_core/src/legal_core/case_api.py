@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Header, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.api_contracts import (
@@ -21,6 +22,8 @@ from legal_core.api_contracts import (
     FinalizeRequest,
     IntakeResponse,
     ReportResponse,
+    TelegramWorkflowResponse,
+    TelegramWorkflowSubmissionRequest,
 )
 from legal_core.contracts import CanonicalReport, CaseStatus, FactKey
 from legal_core.intake import missing_facts_for
@@ -31,6 +34,7 @@ from legal_core.models import (
     CaseReport,
     ClinicUser,
     IdempotencyRecord,
+    TelegramCaseWorkflow,
     User,
 )
 from legal_core.reports import build_intake_report, render_report_pdf
@@ -233,6 +237,51 @@ def _domain_value(fact: CaseFact) -> object:
 
 def _domain_facts(rows: list[CaseFact]) -> dict[FactKey, object]:
     return {FactKey(row.fact_key): _domain_value(row) for row in rows}
+
+
+def _input_value(value_type: str, value: dict[str, Any]) -> object:
+    if value_type == "TEXT":
+        return value.get("text")
+    if value_type == "BOOLEAN":
+        return value.get("boolean")
+    if value_type == "ENUM":
+        return value.get("value")
+    if value_type == "ENUM_SET":
+        return value.get("values")
+    return value
+
+
+async def _workflow_response(
+    session: AsyncSession, workflow: TelegramCaseWorkflow
+) -> TelegramWorkflowResponse:
+    case = await session.scalar(
+        select(Case).where(
+            Case.id == workflow.case_id,
+            Case.clinic_id == workflow.clinic_id,
+        )
+    )
+    report = await session.scalar(
+        select(CaseReport).where(
+            CaseReport.id == workflow.report_id,
+            CaseReport.clinic_id == workflow.clinic_id,
+            CaseReport.case_id == workflow.case_id,
+        )
+    )
+    if case is None or report is None:
+        raise RuntimeError("durable workflow references are inconsistent")
+    return TelegramWorkflowResponse(
+        workflowId=workflow.id,
+        state="SUCCEEDED",
+        case=_case_response(case),
+        report=ReportResponse(
+            id=report.id,
+            caseId=report.case_id,
+            reportVersion=report.report_version,
+            reportJson=report.report_json,
+            pdfSha256=report.pdf_sha256,
+            createdAt=report.created_at,
+        ),
+    )
 
 
 def _intake_response(case: Case, facts: dict[FactKey, object]) -> IntakeResponse:
@@ -586,6 +635,219 @@ def create_case_router(
         )
         await session.commit()
         return result
+
+    @router.post(
+        "/telegram-case-workflows/{workflow_id}/submissions",
+        response_model=TelegramWorkflowResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def submit_telegram_workflow(
+        workflow_id: UUID,
+        payload: TelegramWorkflowSubmissionRequest,
+        response: Response,
+        telegram_user_id: TelegramUserId,
+        session: Session,
+    ) -> TelegramWorkflowResponse:
+        actor = await resolve_actor(session, telegram_user_id)
+        request_json = payload.model_dump(mode="json", by_alias=True)
+        request_hash = _canonical_hash(request_json)
+
+        # A transaction-scoped PostgreSQL advisory lock serializes simultaneous retries
+        # before the workflow row exists. Sequential retries then replay the stored result.
+        lock_key = workflow_id.int & ((1 << 64) - 1)
+        if lock_key >= 1 << 63:
+            lock_key -= 1 << 64
+        await session.execute(select(func.pg_advisory_xact_lock(lock_key)))
+        existing = await session.scalar(
+            select(TelegramCaseWorkflow).where(
+                TelegramCaseWorkflow.id == workflow_id,
+                TelegramCaseWorkflow.clinic_id == actor.clinic_id,
+                TelegramCaseWorkflow.actor_membership_id == actor.membership_id,
+            )
+        )
+        if existing is not None:
+            if existing.request_sha256 != request_hash:
+                raise ApiError(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    code="WORKFLOW_PAYLOAD_MISMATCH",
+                    message="Workflow identifier was already submitted with other facts",
+                )
+            response.status_code = status.HTTP_200_OK
+            return await _workflow_response(session, existing)
+
+        facts = {
+            item.fact_key: _input_value(item.value_type, item.value) for item in payload.facts
+        }
+        missing = missing_facts_for(facts)
+        if missing:
+            raise ApiError(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                code="INSUFFICIENT_FACTS",
+                message="Карточку пока нельзя подтвердить",
+                details={"missingFactKeys": [item.fact_key.value for item in missing]},
+            )
+
+        case = Case(
+            clinic_id=actor.clinic_id,
+            created_by_membership_id=actor.membership_id,
+            status=CaseStatus.ANALYSIS_BLOCKED.value,
+            intake_schema_version=payload.intake_schema_version,
+        )
+        session.add(case)
+        await session.flush()
+
+        fact_rows = [
+            CaseFact(
+                clinic_id=actor.clinic_id,
+                case_id=case.id,
+                fact_key=item.fact_key.value,
+                revision=1,
+                value_type=item.value_type,
+                value_json=item.value,
+                source_type=item.source_type,
+                source_ref_json={"workflowId": str(workflow_id)},
+                evidence_status="UNVERIFIED",
+                recorded_by_membership_id=actor.membership_id,
+                supersedes_fact_id=None,
+            )
+            for item in payload.facts
+        ]
+        report_id = uuid4()
+        canonical = build_intake_report(
+            report_id=report_id,
+            case_id=case.id,
+            public_number=_case_response(case).public_number,
+            case_status=CaseStatus.ANALYSIS_BLOCKED,
+            report_version=1,
+            generated_at=datetime.now(UTC),
+            facts=facts,
+            missing_facts=[],
+        )
+        report_json = canonical.model_dump(mode="json", by_alias=True)
+        pdf = render_report_pdf(canonical)
+        report_row = CaseReport(
+            id=report_id,
+            clinic_id=actor.clinic_id,
+            case_id=case.id,
+            report_version=1,
+            schema_version=canonical.schema_version,
+            status="ANALYSIS_BLOCKED",
+            report_json=report_json,
+            content_sha256=_canonical_hash(report_json),
+            pdf_bytes=pdf,
+            pdf_sha256=hashlib.sha256(pdf).hexdigest(),
+            pdf_size_bytes=len(pdf),
+            facts_snapshot_sha256=canonical.fact_snapshot_sha256,
+            created_by_membership_id=actor.membership_id,
+        )
+        session.add_all([*fact_rows, report_row])
+        await session.flush()
+
+        result = TelegramWorkflowResponse(
+            workflowId=workflow_id,
+            state="SUCCEEDED",
+            case=_case_response(case),
+            report=ReportResponse(
+                id=report_row.id,
+                caseId=report_row.case_id,
+                reportVersion=report_row.report_version,
+                reportJson=report_row.report_json,
+                pdfSha256=report_row.pdf_sha256,
+                createdAt=report_row.created_at,
+            ),
+        )
+        workflow = TelegramCaseWorkflow(
+            id=workflow_id,
+            clinic_id=actor.clinic_id,
+            actor_membership_id=actor.membership_id,
+            request_sha256=request_hash,
+            state="SUCCEEDED",
+            case_id=case.id,
+            report_id=report_row.id,
+        )
+        session.add_all(
+            [
+                workflow,
+                _audit(
+                    actor=actor,
+                    action="CASE_CREATED",
+                    resource_type="CASE",
+                    resource_id=case.id,
+                    metadata={"channel": "TELEGRAM", "schema": payload.intake_schema_version},
+                ),
+                _audit(
+                    actor=actor,
+                    action="CASE_FACTS_RECORDED",
+                    resource_type="CASE",
+                    resource_id=case.id,
+                    metadata={"factKeys": [item.fact_key.value for item in payload.facts]},
+                ),
+                _audit(
+                    actor=actor,
+                    action="CASE_INTAKE_FINALIZED",
+                    resource_type="CASE",
+                    resource_id=case.id,
+                    metadata={"analysisStatus": "LEGAL_CORPUS_NOT_READY"},
+                ),
+                _audit(
+                    actor=actor,
+                    action="CASE_REPORT_CREATED",
+                    resource_type="CASE_REPORT",
+                    resource_id=report_row.id,
+                    metadata={"reportVersion": 1, "schemaVersion": canonical.schema_version},
+                ),
+                _audit(
+                    actor=actor,
+                    action="TELEGRAM_WORKFLOW_SUCCEEDED",
+                    resource_type="TELEGRAM_WORKFLOW",
+                    resource_id=workflow_id,
+                    metadata={
+                        "caseId": str(case.id),
+                        "reportId": str(report_row.id),
+                        "schema": payload.intake_schema_version,
+                    },
+                ),
+            ]
+        )
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+            await session.rollback()
+            if constraint_name == "telegram_case_workflows_pkey":
+                raise ApiError(
+                    status_code=status.HTTP_409_CONFLICT,
+                    code="WORKFLOW_ID_UNAVAILABLE",
+                    message="Workflow identifier is unavailable",
+                ) from exc
+            raise
+        await session.commit()
+        return result
+
+    @router.get(
+        "/telegram-case-workflows/{workflow_id}",
+        response_model=TelegramWorkflowResponse,
+    )
+    async def get_telegram_workflow(
+        workflow_id: UUID,
+        telegram_user_id: TelegramUserId,
+        session: Session,
+    ) -> TelegramWorkflowResponse:
+        actor = await resolve_actor(session, telegram_user_id)
+        workflow = await session.scalar(
+            select(TelegramCaseWorkflow).where(
+                TelegramCaseWorkflow.id == workflow_id,
+                TelegramCaseWorkflow.clinic_id == actor.clinic_id,
+                TelegramCaseWorkflow.actor_membership_id == actor.membership_id,
+            )
+        )
+        if workflow is None:
+            raise ApiError(
+                status_code=status.HTTP_404_NOT_FOUND,
+                code="WORKFLOW_NOT_FOUND",
+                message="Workflow not found",
+            )
+        return await _workflow_response(session, workflow)
 
     @router.get("/reports/{report_id}/pdf")
     async def get_report_pdf(

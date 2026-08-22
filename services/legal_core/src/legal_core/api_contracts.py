@@ -5,9 +5,59 @@ from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from legal_core.contracts import CaseStatus, ContractModel, FactKey, MissingFact
+
+_TEXT_FACT_KEYS = frozenset(
+    {FactKey.SERVICE_TYPE, FactKey.PROBLEM_SUMMARY, FactKey.AUTHORITY_KIND}
+)
+_DATE_FACT_KEYS = frozenset(
+    {
+        FactKey.SERVICE_DATE,
+        FactKey.INCIDENT_DATE,
+        FactKey.CLAIM_DATE,
+        FactKey.CLAIM_RECEIVED_AT,
+        FactKey.RESPONSE_DEADLINE,
+        FactKey.DOCUMENT_DATE,
+    }
+)
+_BOOLEAN_FACT_KEYS = frozenset(
+    {
+        FactKey.FORMAL_CLAIM,
+        FactKey.HARM_CLAIMED,
+        FactKey.HOSPITALIZATION,
+        FactKey.LAWYER_CONTACT,
+        FactKey.REPRESENTATIVE_AUTHORITY,
+        FactKey.REGULATOR_OR_COURT,
+        FactKey.REGULATOR_THREAT,
+    }
+)
+_ENUM_SET_FACT_KEYS = frozenset({FactKey.INCIDENT_TYPES, FactKey.PATIENT_DEMAND})
+_ENUM_FACT_KEYS = frozenset({FactKey.PRIMARY_INCIDENT_TYPE})
+_DOCUMENT_STATUSES = frozenset(
+    {"AVAILABLE", "MISSING", "UNKNOWN", "REQUESTED", "NOT_APPLICABLE"}
+)
+_DOCUMENT_KEYS = frozenset(
+    {"CONTRACT", "MEDICAL_RECORD", "INFORMED_CONSENT", "GUARANTEE"}
+)
+
+
+def _exact_keys(value: dict[str, Any], keys: set[str], fact_key: FactKey) -> None:
+    if set(value) != keys:
+        raise ValueError(f"{fact_key.value} has an invalid value shape")
+
+
+def _nonempty_token(value: object, fact_key: FactKey) -> None:
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 80
+        or any(
+            not (character.isupper() or character.isdigit() or character == "_")
+            for character in value
+        )
+    ):
+        raise ValueError(f"{fact_key.value} requires an uppercase enum token")
 
 
 class CreateCaseRequest(ContractModel):
@@ -74,6 +124,76 @@ class FactInput(ContractModel):
             raise ValueError("fact value exceeds 4096 bytes")
         return value
 
+    @model_validator(mode="after")
+    def validate_fact_semantics(self) -> "FactInput":
+        expected_type: str
+        if self.fact_key in _TEXT_FACT_KEYS:
+            expected_type = "TEXT"
+            _exact_keys(self.value, {"text"}, self.fact_key)
+            text = self.value["text"]
+            if not isinstance(text, str) or not 1 <= len(text.strip()) <= 1_500:
+                raise ValueError(
+                    f"{self.fact_key.value} requires non-empty text up to 1500 characters"
+                )
+        elif self.fact_key in _DATE_FACT_KEYS:
+            expected_type = "DATE"
+            _exact_keys(self.value, {"date", "precision"}, self.fact_key)
+            date_value = self.value["date"]
+            if not isinstance(date_value, str):
+                raise ValueError(f"{self.fact_key.value} requires an ISO date")
+            try:
+                date.fromisoformat(date_value)
+            except ValueError as exc:
+                raise ValueError(f"{self.fact_key.value} requires a valid ISO date") from exc
+            if self.value["precision"] not in {"EXACT", "APPROXIMATE"}:
+                raise ValueError(f"{self.fact_key.value} has an invalid date precision")
+        elif self.fact_key in _BOOLEAN_FACT_KEYS:
+            expected_type = "BOOLEAN"
+            _exact_keys(self.value, {"boolean"}, self.fact_key)
+            if not isinstance(self.value["boolean"], bool):
+                raise ValueError(f"{self.fact_key.value} requires a boolean value")
+        elif self.fact_key in _ENUM_SET_FACT_KEYS:
+            expected_type = "ENUM_SET"
+            _exact_keys(self.value, {"values"}, self.fact_key)
+            values = self.value["values"]
+            if not isinstance(values, list) or not 1 <= len(values) <= 10:
+                raise ValueError(f"{self.fact_key.value} requires one to ten enum tokens")
+            for value in values:
+                _nonempty_token(value, self.fact_key)
+            if len(values) != len(set(values)):
+                raise ValueError(f"{self.fact_key.value} enum tokens must be unique")
+        elif self.fact_key in _ENUM_FACT_KEYS:
+            expected_type = "ENUM"
+            _exact_keys(self.value, {"value"}, self.fact_key)
+            _nonempty_token(self.value["value"], self.fact_key)
+        elif self.fact_key == FactKey.DEMAND_AMOUNT:
+            expected_type = "MONEY"
+            _exact_keys(self.value, {"amountKopecks", "currency"}, self.fact_key)
+            amount = self.value["amountKopecks"]
+            if (
+                isinstance(amount, bool)
+                or not isinstance(amount, int)
+                or not 1 <= amount <= 100_000_000_000
+            ):
+                raise ValueError("DEMAND_AMOUNT requires a positive integer number of kopecks")
+            if self.value["currency"] != "RUB":
+                raise ValueError("DEMAND_AMOUNT currency must be RUB")
+        elif self.fact_key == FactKey.CLINIC_DOCUMENTS:
+            expected_type = "DOCUMENT_INVENTORY"
+            if not 1 <= len(self.value) <= len(_DOCUMENT_KEYS):
+                raise ValueError("CLINIC_DOCUMENTS requires a non-empty document inventory")
+            if (
+                not set(self.value) <= _DOCUMENT_KEYS
+                or not set(self.value.values()) <= _DOCUMENT_STATUSES
+            ):
+                raise ValueError("CLINIC_DOCUMENTS contains an unsupported document key or status")
+        else:  # pragma: no cover - FactKey exhaustiveness is protected by the tests above.
+            raise ValueError(f"Unsupported fact key: {self.fact_key.value}")
+
+        if self.value_type != expected_type:
+            raise ValueError(f"{self.fact_key.value} requires valueType {expected_type}")
+        return self
+
 
 class AddFactsRequest(ContractModel):
     question_id: str = Field(alias="questionId", min_length=1, max_length=80)
@@ -103,3 +223,26 @@ class ReportResponse(ContractModel):
     report_json: dict[str, Any] = Field(alias="reportJson")
     pdf_sha256: str = Field(alias="pdfSha256")
     created_at: datetime = Field(alias="createdAt")
+
+
+class TelegramWorkflowSubmissionRequest(ContractModel):
+    intake_schema_version: Literal["dental-case-intake.v1"] = Field(
+        alias="intakeSchemaVersion"
+    )
+    locale: Literal["ru-RU"] = "ru-RU"
+    facts: list[FactInput] = Field(min_length=1, max_length=20)
+
+    @field_validator("facts")
+    @classmethod
+    def fact_keys_are_unique(cls, facts: list[FactInput]) -> list[FactInput]:
+        keys = [fact.fact_key for fact in facts]
+        if len(keys) != len(set(keys)):
+            raise ValueError("fact keys must be unique")
+        return facts
+
+
+class TelegramWorkflowResponse(ContractModel):
+    workflow_id: UUID = Field(alias="workflowId")
+    state: Literal["SUCCEEDED"]
+    case: CaseResponse
+    report: ReportResponse

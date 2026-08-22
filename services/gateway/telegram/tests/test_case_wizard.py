@@ -15,6 +15,7 @@ from telegram_gateway.bot import (
     cancel_case,
     case_start,
     confirm_case,
+    resume_workflow,
     whoami,
 )
 from telegram_gateway.case_wizard import (
@@ -69,31 +70,26 @@ class FakeReportPipeline:
     def __init__(self) -> None:
         self.steps: list[str] = []
 
-    async def create_case(self, telegram_user_id: int, idempotency_key: UUID) -> dict[str, Any]:
-        del telegram_user_id, idempotency_key
-        self.steps.append("create")
+    def workflow_response(self) -> dict[str, Any]:
         return {
-            "id": "de39f825-a3ec-47ed-a18a-745334b0eaf2",
-            "publicNumber": "DL-2026-000001",
+            "workflowId": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
+            "state": "SUCCEEDED",
+            "case": {"publicNumber": "DL-2026-000001"},
+            "report": {
+                "id": "a50b755e-6a51-4939-ae03-fb17c9c07719",
+                "reportJson": canonical_report(),
+            },
         }
 
-    async def add_facts(self, *args: object) -> dict[str, Any]:
+    async def submit_workflow(self, *args: object) -> dict[str, Any]:
         del args
-        self.steps.append("facts")
-        return {"missingFacts": []}
+        self.steps.append("submit")
+        return self.workflow_response()
 
-    async def finalize_case(self, *args: object) -> dict[str, Any]:
+    async def get_workflow(self, *args: object) -> dict[str, Any]:
         del args
-        self.steps.append("finalize")
-        return {"status": "ANALYSIS_BLOCKED"}
-
-    async def create_report(self, *args: object) -> dict[str, Any]:
-        del args
-        self.steps.append("report")
-        return {
-            "id": "a50b755e-6a51-4939-ae03-fb17c9c07719",
-            "reportJson": canonical_report(),
-        }
+        self.steps.append("recover")
+        return self.workflow_response()
 
     async def download_pdf(self, *args: object) -> bytes:
         del args
@@ -171,7 +167,40 @@ def test_complete_draft_maps_to_legal_core_contract_without_clinic_id() -> None:
     assert "clinic_id" not in encoded
 
 
-def test_legal_core_client_uses_actor_header_idempotency_and_never_clinic_header() -> None:
+def test_authority_deadline_maps_without_a_formal_patient_claim() -> None:
+    draft = CaseDraft(
+        incident_type="QUALITY_COMPLAINT",
+        service_type="Лечение кариеса",
+        service_date="2026-06-01",
+        incident_date="2026-07-01",
+        claim_date="2026-07-02",
+        problem_summary="Клиника получила обезличенное обращение контролирующего органа.",
+        patient_demand="NO_SPECIFIC_DEMAND",
+        formal_claim=False,
+        harm_claimed=False,
+        regulator_or_court=True,
+        documents_status="COMPLETE",
+        authority_kind="Территориальный орган Росздравнадзора",
+        authority_document_date="2026-07-03",
+        response_deadline="2026-07-20",
+    )
+
+    payload = facts_from_draft(draft)
+
+    response_deadlines = [
+        item for item in payload if item["factKey"] == "RESPONSE_DEADLINE"
+    ]
+    assert response_deadlines == [
+        {
+            "factKey": "RESPONSE_DEADLINE",
+            "valueType": "DATE",
+            "value": {"date": "2026-07-20", "precision": "EXACT"},
+            "sourceType": "USER_STATEMENT",
+        }
+    ]
+
+
+def test_workflow_client_uses_durable_uuid_and_never_sends_clinic_context() -> None:
     requests: list[httpx2.Request] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -179,11 +208,8 @@ def test_legal_core_client_uses_actor_header_idempotency_and_never_clinic_header
         return httpx2.Response(
             201,
             json={
-                "id": "de39f825-a3ec-47ed-a18a-745334b0eaf2",
-                "publicNumber": "DL-2026-000001",
-                "status": "COLLECTING",
-                "intakeSchemaVersion": "dental-case-intake.v1",
-                "createdAt": "2026-08-22T00:00:00Z",
+                "workflowId": "00a55604-acbd-4a26-9252-102f25cfa9c6",
+                "state": "SUCCEEDED",
             },
         )
 
@@ -194,16 +220,20 @@ def test_legal_core_client_uses_actor_header_idempotency_and_never_clinic_header
             base_url="http://legal-core:8000", transport=transport
         ) as http:
             client = LegalCoreClient(http)
-            await client.create_case(
+            await client.submit_workflow(
+                UUID("00a55604-acbd-4a26-9252-102f25cfa9c6"),
+                [],
                 telegram_user_id=7_000_000_001,
-                idempotency_key=UUID("00a55604-acbd-4a26-9252-102f25cfa9c6"),
             )
 
     asyncio.run(scenario())
 
     request = requests[0]
     assert request.headers["x-telegram-user-id"] == "7000000001"
-    assert request.headers["idempotency-key"] == "00a55604-acbd-4a26-9252-102f25cfa9c6"
+    assert request.url.path == (
+        "/v1/telegram-case-workflows/00a55604-acbd-4a26-9252-102f25cfa9c6/submissions"
+    )
+    assert "idempotency-key" not in request.headers
     assert "x-clinic-id" not in request.headers
     assert "clinicId" not in request.content.decode()
 
@@ -287,7 +317,7 @@ def test_case_start_checks_access_without_creating_case_and_opens_incident_quest
 
     assert result == WizardState.INCIDENT
     assert "case_id" not in context.user_data["case_wizard"]
-    assert "create_key" in context.user_data["case_wizard"]
+    assert UUID(context.user_data["case_wizard"]["workflow_id"])
     assert "без ФИО" in message.text_replies[0]
 
 
@@ -302,7 +332,7 @@ def test_application_serializes_conversation_updates_and_registers_wizard() -> N
 
 def test_confirmation_finalizes_case_builds_report_and_returns_pdf() -> None:
     message = FakeMessage()
-    query = FakeQuery("case:confirm")
+    query = FakeQuery("case:confirm:9d0dd02f-cfd9-498a-85e4-c30b53abca88")
     pipeline = FakeReportPipeline()
     update = SimpleNamespace(
         callback_query=query,
@@ -313,10 +343,7 @@ def test_confirmation_finalizes_case_builds_report_and_returns_pdf() -> None:
         bot_data={LEGAL_CORE_CLIENT_KEY: pipeline},
         user_data={
             "case_wizard": {
-                "create_key": "8d582656-d20b-40c7-b9a0-b37631be2db1",
-                "facts_key": "f6bedc16-03ec-4bcc-bea4-5c37a684c041",
-                "finalize_key": "42132740-938a-4f3c-8015-7e729d8eb8db",
-                "report_key": "d423943a-1428-49a7-a0e2-fd1338d203ee",
+                "workflow_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
                 "incident_type": "QUALITY_COMPLAINT",
                 "service_type": "Установка коронки",
                 "service_date": "2026-06-01",
@@ -335,21 +362,44 @@ def test_confirmation_finalizes_case_builds_report_and_returns_pdf() -> None:
     result = asyncio.run(confirm_case(update, context))
 
     assert result == ConversationHandler.END
-    assert pipeline.steps == ["create", "facts", "finalize", "report", "pdf"]
+    assert pipeline.steps == ["submit", "pdf"]
     assert any("АНАЛИЗ ЗАБЛОКИРОВАН" in text for text in message.text_replies)
     assert message.documents[0]["caption"].startswith("✅ Отчёт по кейсу DL-2026-000001")
     assert context.user_data == {}
 
 
-def test_cancel_does_not_claim_a_partially_created_backend_case_was_deleted() -> None:
+def test_confirmation_callback_recovers_same_report_after_process_state_loss() -> None:
+    message = FakeMessage()
+    workflow_id = "9d0dd02f-cfd9-498a-85e4-c30b53abca88"
+    query = FakeQuery(f"case:confirm:{workflow_id}")
+    pipeline = FakeReportPipeline()
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+    context = SimpleNamespace(
+        bot_data={LEGAL_CORE_CLIENT_KEY: pipeline},
+        user_data={},
+    )
+
+    result = asyncio.run(resume_workflow(update, context))
+
+    assert result is None
+    assert pipeline.steps == ["recover", "pdf"]
+    assert message.documents[0]["caption"].startswith("✅ Отчёт по кейсу DL-2026-000001")
+    assert len(query.data.encode()) <= 64
+
+
+def test_cancel_does_not_create_or_claim_deletion_of_backend_case() -> None:
     message = FakeMessage()
     update = SimpleNamespace(callback_query=None, effective_message=message)
     context = SimpleNamespace(
-        user_data={"case_wizard": {"case_id": "de39f825-a3ec-47ed-a18a-745334b0eaf2"}}
+        user_data={"case_wizard": {"workflow_id": str(UUID(int=1))}}
     )
 
     result = asyncio.run(cancel_case(update, context))
 
     assert result == ConversationHandler.END
-    assert "сохранён" in message.text_replies[0].lower()
+    assert "остановлен" in message.text_replies[0].lower()
     assert "удален" not in message.text_replies[0].lower()

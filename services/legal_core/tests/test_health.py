@@ -59,7 +59,13 @@ def test_openapi_is_generated_but_not_exposed_without_authentication() -> None:
 
     app = create_app(readiness_probe=available_dependencies)
 
-    assert {"/health/live", "/health/ready", "/v1/cases"} <= set(app.openapi()["paths"])
+    assert {
+        "/health/live",
+        "/health/ready",
+        "/v1/cases",
+        "/v1/telegram-case-workflows/{workflow_id}",
+        "/v1/telegram-case-workflows/{workflow_id}/submissions",
+    } <= set(app.openapi()["paths"])
     with TestClient(app) as client:
         response = client.get("/openapi.json")
 

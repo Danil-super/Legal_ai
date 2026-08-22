@@ -164,6 +164,7 @@ class CaseReport(Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("clinic_id", "case_id", "report_version"),
+        UniqueConstraint("clinic_id", "case_id", "id"),
         CheckConstraint("report_version > 0"),
         CheckConstraint("pdf_size_bytes > 0"),
         Index("ix_case_reports_latest", "clinic_id", "case_id", "report_version"),
@@ -234,6 +235,43 @@ class IdempotencyRecord(Base):
     resource_type: Mapped[str | None] = mapped_column(String(40))
     resource_id: Mapped[UUID | None] = mapped_column(UUID_PK)
     response_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
+class TelegramCaseWorkflow(Base):
+    """Durable idempotency boundary for one Telegram intake submission."""
+
+    __tablename__ = "telegram_case_workflows"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["clinic_id", "actor_membership_id"],
+            ["clinic_users.clinic_id", "clinic_users.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "case_id"],
+            ["cases.clinic_id", "cases.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("state = 'SUCCEEDED'"),
+        CheckConstraint("char_length(request_sha256) = 64"),
+        ForeignKeyConstraint(
+            ["clinic_id", "case_id", "report_id"],
+            ["case_reports.clinic_id", "case_reports.case_id", "case_reports.id"],
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("case_id"),
+        UniqueConstraint("report_id"),
+        Index("ix_telegram_case_workflows_tenant", "clinic_id", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUID_PK, primary_key=True)
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    actor_membership_id: Mapped[UUID] = mapped_column(UUID_PK)
+    request_sha256: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(20))
+    case_id: Mapped[UUID] = mapped_column(UUID_PK)
+    report_id: Mapped[UUID] = mapped_column(UUID_PK)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 

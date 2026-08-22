@@ -302,54 +302,30 @@ class LegalCoreClient:
             telegram_user_id=telegram_user_id,
         )
 
-    async def create_case(self, telegram_user_id: int, idempotency_key: UUID) -> dict[str, Any]:
-        return await self._json_request(
-            "POST",
-            "/v1/cases",
-            telegram_user_id=telegram_user_id,
-            idempotency_key=idempotency_key,
-            payload={"intakeSchemaVersion": INTAKE_SCHEMA_VERSION, "channel": "TELEGRAM"},
-        )
-
-    async def add_facts(
+    async def submit_workflow(
         self,
-        case_id: UUID,
+        workflow_id: UUID,
         facts: list[dict[str, Any]],
         telegram_user_id: int,
-        idempotency_key: UUID,
     ) -> dict[str, Any]:
         return await self._json_request(
             "POST",
-            f"/v1/cases/{case_id}/facts",
+            f"/v1/telegram-case-workflows/{workflow_id}/submissions",
             telegram_user_id=telegram_user_id,
-            idempotency_key=idempotency_key,
             payload={
-                "questionId": "telegram_complete_intake",
                 "intakeSchemaVersion": INTAKE_SCHEMA_VERSION,
+                "locale": "ru-RU",
                 "facts": facts,
             },
         )
 
-    async def finalize_case(
-        self, case_id: UUID, telegram_user_id: int, idempotency_key: UUID
+    async def get_workflow(
+        self, workflow_id: UUID, telegram_user_id: int
     ) -> dict[str, Any]:
         return await self._json_request(
-            "POST",
-            f"/v1/cases/{case_id}/intake-finalizations",
+            "GET",
+            f"/v1/telegram-case-workflows/{workflow_id}",
             telegram_user_id=telegram_user_id,
-            idempotency_key=idempotency_key,
-            payload={},
-        )
-
-    async def create_report(
-        self, case_id: UUID, telegram_user_id: int, idempotency_key: UUID
-    ) -> dict[str, Any]:
-        return await self._json_request(
-            "POST",
-            f"/v1/cases/{case_id}/reports",
-            telegram_user_id=telegram_user_id,
-            idempotency_key=idempotency_key,
-            payload={"locale": "ru-RU"},
         )
 
     async def download_pdf(self, report_id: UUID, telegram_user_id: int) -> bytes:

@@ -129,6 +129,40 @@ def complete_fact_batch() -> dict[str, object]:
     }
 
 
+def workflow_submission() -> dict[str, object]:
+    batch = complete_fact_batch()
+    return {
+        "intakeSchemaVersion": batch["intakeSchemaVersion"],
+        "locale": "ru-RU",
+        "facts": batch["facts"],
+    }
+
+
+def count_workflow_resources(telegram_user_id: int) -> tuple[int, int, int, int]:
+    engine = create_engine(database_url().set(drivername="postgresql+psycopg"))
+    try:
+        with engine.connect() as connection:
+            clinic_id = connection.execute(
+                text(
+                    "SELECT cu.clinic_id FROM clinic_users cu "
+                    "JOIN users u ON u.id=cu.user_id WHERE u.telegram_user_id=:telegram_user_id"
+                ),
+                {"telegram_user_id": telegram_user_id},
+            ).scalar_one()
+            values = [
+                int(
+                    connection.execute(
+                        text(f"SELECT count(*) FROM {table} WHERE clinic_id=:clinic_id"),
+                        {"clinic_id": clinic_id},
+                    ).scalar_one()
+                )
+                for table in ("telegram_case_workflows", "cases", "case_facts", "case_reports")
+            ]
+    finally:
+        engine.dispose()
+    return values[0], values[1], values[2], values[3]
+
+
 def test_actor_probe_authorizes_only_mapped_clinic_admin() -> None:
     admin = 6_000_000_001 + uuid4().int % 100_000_000
     unknown = 5_000_000_001 + uuid4().int % 100_000_000
@@ -249,3 +283,116 @@ def test_unknown_telegram_user_is_denied_without_tenant_details() -> None:
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "ACTOR_NOT_AUTHORIZED"
+
+
+def test_atomic_telegram_workflow_survives_lost_response_without_duplicate_resources() -> None:
+    admin = 7_100_000_001 + uuid4().int % 100_000_000
+    other_admin = 8_100_000_001 + uuid4().int % 100_000_000
+    seed_admin(admin)
+    seed_admin(other_admin)
+    workflow_id = uuid4()
+    payload = workflow_submission()
+
+    with application_client() as first_process:
+        first = first_process.post(
+            f"/v1/telegram-case-workflows/{workflow_id}/submissions",
+            headers=actor_headers(admin),
+            json=payload,
+        )
+        assert first.status_code == 201
+        first_body = first.json()
+        assert first_body["workflowId"] == str(workflow_id)
+        assert first_body["state"] == "SUCCEEDED"
+        assert first_body["report"]["reportJson"]["legalBasis"]["status"] == "NOT_AVAILABLE"
+
+        # Simulates a response lost after commit: Telegram retries the same callback.
+        replay = first_process.post(
+            f"/v1/telegram-case-workflows/{workflow_id}/submissions",
+            headers=actor_headers(admin),
+            json=payload,
+        )
+        assert replay.status_code == 200
+        assert replay.json() == first_body
+
+    # A fresh app/client has no process memory and recovers the persisted result.
+    with application_client() as restarted_process:
+        recovered = restarted_process.get(
+            f"/v1/telegram-case-workflows/{workflow_id}",
+            headers=actor_headers(admin),
+        )
+        hidden = restarted_process.get(
+            f"/v1/telegram-case-workflows/{workflow_id}",
+            headers=actor_headers(other_admin),
+        )
+        collision = restarted_process.post(
+            f"/v1/telegram-case-workflows/{workflow_id}/submissions",
+            headers=actor_headers(other_admin),
+            json=payload,
+        )
+
+    assert recovered.status_code == 200
+    assert recovered.json() == first_body
+    assert hidden.status_code == 404
+    assert hidden.json()["error"]["code"] == "WORKFLOW_NOT_FOUND"
+    assert collision.status_code == 409
+    assert collision.json()["error"]["code"] == "WORKFLOW_ID_UNAVAILABLE"
+    facts = payload["facts"]
+    assert isinstance(facts, list)
+    assert count_workflow_resources(admin) == (1, 1, len(facts), 1)
+    assert count_workflow_resources(other_admin) == (0, 0, 0, 0)
+
+
+def test_workflow_uuid_cannot_be_reused_for_changed_facts() -> None:
+    admin = 7_200_000_001 + uuid4().int % 100_000_000
+    seed_admin(admin)
+    workflow_id = uuid4()
+    original = workflow_submission()
+    changed = workflow_submission()
+    changed_facts = changed["facts"]
+    assert isinstance(changed_facts, list)
+    changed_facts[5]["value"]["text"] = "Иная обезличенная ситуация"
+
+    with application_client() as client:
+        created = client.post(
+            f"/v1/telegram-case-workflows/{workflow_id}/submissions",
+            headers=actor_headers(admin),
+            json=original,
+        )
+        conflict = client.post(
+            f"/v1/telegram-case-workflows/{workflow_id}/submissions",
+            headers=actor_headers(admin),
+            json=changed,
+        )
+
+    assert created.status_code == 201
+    assert conflict.status_code == 422
+    assert conflict.json()["error"]["code"] == "WORKFLOW_PAYLOAD_MISMATCH"
+    facts = original["facts"]
+    assert isinstance(facts, list)
+    assert count_workflow_resources(admin)[1:] == (1, len(facts), 1)
+
+
+def test_telegram_workflow_rejects_semantically_invalid_facts_before_persistence() -> None:
+    admin = 7_300_000_001 + uuid4().int % 100_000_000
+    seed_admin(admin)
+    workflow_id = uuid4()
+    payload = workflow_submission()
+    facts = payload["facts"]
+    assert isinstance(facts, list)
+    facts[0] = {
+        "factKey": "INCIDENT_TYPES",
+        "valueType": "TEXT",
+        "value": {"text": "Не набор типов инцидентов"},
+        "sourceType": "USER_STATEMENT",
+    }
+
+    with application_client() as client:
+        response = client.post(
+            f"/v1/telegram-case-workflows/{workflow_id}/submissions",
+            headers=actor_headers(admin),
+            json=payload,
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert count_workflow_resources(admin) == (0, 0, 0, 0)

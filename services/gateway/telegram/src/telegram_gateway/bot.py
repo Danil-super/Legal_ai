@@ -175,9 +175,13 @@ DOCUMENTS_KEYBOARD = _keyboard(
         [("❌ Документов пока нет", "case:documents:NONE")],
     ]
 )
-CONFIRM_KEYBOARD = _keyboard(
-    [[("✅ Сформировать отчёт", "case:confirm"), ("❌ Отменить", "case:cancel")]]
-)
+def confirm_keyboard(workflow_id: UUID) -> InlineKeyboardMarkup:
+    callback = f"case:confirm:{workflow_id}"
+    if len(callback.encode()) > 64:
+        raise ValueError("Telegram callback is too long")
+    return _keyboard(
+        [[("✅ Сформировать отчёт", callback), ("❌ Отменить", "case:cancel")]]
+    )
 
 
 def _user_data(context: ContextTypes.DEFAULT_TYPE) -> dict[Any, Any]:
@@ -202,7 +206,7 @@ def _clear_wizard(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def _legal_core(context: ContextTypes.DEFAULT_TYPE) -> LegalCoreClient:
     client = context.bot_data.get(LEGAL_CORE_CLIENT_KEY)
-    if not isinstance(client, LegalCoreClient) and not hasattr(client, "create_case"):
+    if client is None:
         raise LegalCoreApiError(503, "LEGAL_CORE_UNAVAILABLE", "Legal Core unavailable")
     return cast(LegalCoreClient, client)
 
@@ -244,12 +248,7 @@ async def case_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if actor.get("role") != "CLINIC_ADMIN":
         await _reply(update, "⚠️ Legal Core вернул некорректный ответ. Попробуйте позже.")
         return ConversationHandler.END
-    _user_data(context)[WIZARD_DATA_KEY] = {
-        "create_key": str(uuid4()),
-        "facts_key": str(uuid4()),
-        "finalize_key": str(uuid4()),
-        "report_key": str(uuid4()),
-    }
+    _user_data(context)[WIZARD_DATA_KEY] = {"workflow_id": str(uuid4())}
     await _reply(
         update,
         "📝 Новая карточка открыта. Кейс будет создан после вашей проверки.\n\n"
@@ -600,17 +599,76 @@ async def choose_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
     message = update.effective_message
     if message is not None:
+        workflow_id = UUID(str(data["workflow_id"]))
         await message.reply_text(
-            "Сформировать единый PDF-отчёт?", reply_markup=CONFIRM_KEYBOARD
+            "Сформировать единый PDF-отчёт?",
+            reply_markup=confirm_keyboard(workflow_id),
         )
     return WizardState.CONFIRM
+
+
+async def _send_workflow_report(
+    update: Update,
+    client: LegalCoreClient,
+    workflow: dict[str, Any],
+    actor_id: int,
+) -> None:
+    case = workflow.get("case")
+    report = workflow.get("report")
+    if workflow.get("state") != "SUCCEEDED" or not isinstance(case, dict):
+        raise ValueError("workflow is not complete")
+    if not isinstance(report, dict):
+        raise ValueError("workflow report is missing")
+    public_number = case.get("publicNumber")
+    report_id_value = report.get("id")
+    report_json = report.get("reportJson")
+    if not isinstance(public_number, str) or not isinstance(report_json, dict):
+        raise ValueError("workflow response is invalid")
+    report_id = UUID(str(report_id_value))
+    telegram_summary = telegram_summary_from_report(report_json)
+    pdf = await client.download_pdf(report_id, actor_id)
+    safe_number = re.sub(r"[^A-Za-z0-9_-]", "-", public_number)[:64]
+    message = update.effective_message
+    if message is not None:
+        await message.reply_text(telegram_summary)
+        await message.reply_document(
+            document=InputFile(BytesIO(pdf), filename=f"{safe_number}.pdf"),
+            caption=(
+                f"✅ Отчёт по кейсу {public_number} готов.\n"
+                "Это структурированная карточка, не юридическое заключение. "
+                "Автоматическая отправка пациенту отключена."
+            ),
+        )
+
+
+async def resume_workflow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    callback = await _answer_callback(update)
+    actor_id = _actor_id(update)
+    if callback is None or actor_id is None:
+        return
+    try:
+        workflow_id = UUID(callback.removeprefix("case:confirm:"))
+        client = _legal_core(context)
+        workflow = await client.get_workflow(workflow_id, actor_id)
+        await _send_workflow_report(update, client, workflow, actor_id)
+    except (ValueError, LegalCoreApiError) as exc:
+        logger.warning("workflow recovery failed: %s", type(exc).__name__)
+        if isinstance(exc, LegalCoreApiError) and exc.status_code == 404:
+            await _reply(
+                update,
+                "Эта карточка не была подтверждена. Откройте /menu и заполните её заново.",
+            )
+        elif isinstance(exc, LegalCoreApiError) and exc.status_code == 403:
+            await _reply(update, "🔒 Доступ администратора отозван.")
+        else:
+            await _reply(update, "⚠️ Не удалось получить отчёт. Попробуйте ещё раз.")
 
 
 async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     callback = await _answer_callback(update)
     if callback == "case:cancel":
         return await cancel_case(update, context)
-    if callback != "case:confirm":
+    if callback is None or not callback.startswith("case:confirm:"):
         return WizardState.CONFIRM
     actor_id = _actor_id(update)
     data = _wizard_data(context)
@@ -618,28 +676,13 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         _clear_wizard(context)
         return ConversationHandler.END
     try:
+        workflow_id = UUID(callback.removeprefix("case:confirm:"))
+        if workflow_id != UUID(str(data["workflow_id"])):
+            raise ValueError("workflow callback does not match active conversation")
         facts = facts_from_draft(_draft_from_data(data))
         client = _legal_core(context)
-        if "case_id" not in data or "public_number" not in data:
-            created = await client.create_case(actor_id, UUID(str(data["create_key"])))
-            case_id_value = created.get("id")
-            public_number_value = created.get("publicNumber")
-            if not isinstance(case_id_value, str) or not isinstance(public_number_value, str):
-                raise ValueError("invalid case response")
-            case_id = UUID(case_id_value)
-            data["case_id"] = str(case_id)
-            data["public_number"] = public_number_value
-        else:
-            case_id = UUID(str(data["case_id"]))
-        await client.add_facts(case_id, facts, actor_id, UUID(str(data["facts_key"])))
-        await client.finalize_case(case_id, actor_id, UUID(str(data["finalize_key"])))
-        report = await client.create_report(case_id, actor_id, UUID(str(data["report_key"])))
-        report_id = UUID(str(report["id"]))
-        report_json = report.get("reportJson")
-        if not isinstance(report_json, dict):
-            raise ValueError("missing canonical report")
-        telegram_summary = telegram_summary_from_report(report_json)
-        pdf = await client.download_pdf(report_id, actor_id)
+        workflow = await client.submit_workflow(workflow_id, facts, actor_id)
+        await _send_workflow_report(update, client, workflow, actor_id)
     except (KeyError, ValueError, LegalCoreApiError) as exc:
         if isinstance(exc, LegalCoreApiError) and exc.status_code == 403:
             _clear_wizard(context)
@@ -652,20 +695,6 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         )
         return WizardState.CONFIRM
 
-    public_number = str(data.get("public_number", "case"))
-    safe_number = re.sub(r"[^A-Za-z0-9_-]", "-", public_number)[:64]
-    message = update.effective_message
-    if message is not None:
-        await message.reply_text(telegram_summary)
-        stream = BytesIO(pdf)
-        await message.reply_document(
-            document=InputFile(stream, filename=f"{safe_number}.pdf"),
-            caption=(
-                f"✅ Отчёт по кейсу {public_number} готов.\n"
-                "Это структурированная карточка, не юридическое заключение. "
-                "Автоматическая отправка пациенту отключена."
-            ),
-        )
     _clear_wizard(context)
     return ConversationHandler.END
 
@@ -675,16 +704,12 @@ async def cancel_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if query is not None and query.data == "case:cancel":
         # ``confirm_case`` may already have answered this callback.
         pass
-    persisted = isinstance(_wizard_data(context).get("case_id"), str)
     _clear_wizard(context)
-    if persisted:
-        await _reply(
-            update,
-            "Сбор данных остановлен. Уже созданный кейс сохранён как незавершённый; "
-            "юридический анализ не запускался.",
-        )
-    else:
-        await _reply(update, "Сбор данных остановлен. Незавершённая карточка удалена.")
+    await _reply(
+        update,
+        "Сбор данных остановлен. Новая отправка не выполняется; "
+        "повтор уже подтверждённой кнопки вернёт тот же отчёт.",
+    )
     return ConversationHandler.END
 
 
@@ -832,7 +857,14 @@ def build_application(token: str) -> TelegramApplication:
                     CallbackQueryHandler(choose_documents, pattern=r"^case:documents:")
                 ],
                 WizardState.CONFIRM: [
-                    CallbackQueryHandler(confirm_case, pattern=r"^case:(confirm|cancel)$")
+                    CallbackQueryHandler(
+                        confirm_case,
+                        pattern=(
+                            r"^(case:cancel|case:confirm:"
+                            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+                            r"[0-9a-f]{4}-[0-9a-f]{12})$"
+                        ),
+                    )
                 ],
                 ConversationHandler.TIMEOUT: [
                     MessageHandler(filters.ALL, timeout_case),
@@ -856,6 +888,15 @@ def build_application(token: str) -> TelegramApplication:
     application.add_handler(CommandHandler("menu", menu))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("whoami", whoami))
+    application.add_handler(
+        CallbackQueryHandler(
+            resume_workflow,
+            pattern=(
+                r"^case:confirm:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+                r"[0-9a-f]{4}-[0-9a-f]{12}$"
+            ),
+        )
+    )
     application.add_handler(CallbackQueryHandler(menu_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_input))
     application.add_error_handler(on_error)

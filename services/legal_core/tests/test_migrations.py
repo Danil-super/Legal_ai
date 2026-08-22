@@ -37,6 +37,7 @@ def test_upgrade_security_and_downgrade_roundtrip() -> None:
             "case_reports",
             "audit_events",
             "idempotency_records",
+            "telegram_case_workflows",
             "legal_sources",
             "legal_documents",
             "legal_versions",
@@ -44,12 +45,21 @@ def test_upgrade_security_and_downgrade_roundtrip() -> None:
             "legal_approval_events",
         } <= table_names
 
+        workflow_foreign_keys = inspect(engine).get_foreign_keys("telegram_case_workflows")
+        assert any(
+            foreign_key["referred_table"] == "case_reports"
+            and foreign_key["constrained_columns"] == ["clinic_id", "case_id", "report_id"]
+            and foreign_key["referred_columns"] == ["clinic_id", "case_id", "id"]
+            for foreign_key in workflow_foreign_keys
+        )
+
         with engine.connect() as connection:
             secured = connection.execute(
                 text(
                     "SELECT relname FROM pg_class "
                     "WHERE relrowsecurity AND relname IN "
-                    "('cases','case_facts','case_reports','audit_events','idempotency_records')"
+                    "('cases','case_facts','case_reports','audit_events','idempotency_records',"
+                    "'telegram_case_workflows')"
                 )
             ).scalars()
             triggers = connection.execute(
@@ -57,7 +67,7 @@ def test_upgrade_security_and_downgrade_roundtrip() -> None:
                     "SELECT c.relname FROM pg_trigger t "
                     "JOIN pg_class c ON c.oid=t.tgrelid "
                     "WHERE NOT t.tgisinternal AND c.relname IN "
-                    "('case_facts','case_reports','legal_approval_events',"
+                    "('case_facts','case_reports','telegram_case_workflows','legal_approval_events',"
                     "'legal_sources','legal_documents','legal_versions','legal_fragments')"
                 )
             ).scalars()
@@ -87,10 +97,12 @@ def test_upgrade_security_and_downgrade_roundtrip() -> None:
                 "case_reports",
                 "audit_events",
                 "idempotency_records",
+                "telegram_case_workflows",
             }
             assert set(triggers) == {
                 "case_facts",
                 "case_reports",
+                "telegram_case_workflows",
                 "legal_approval_events",
                 "legal_sources",
                 "legal_documents",
