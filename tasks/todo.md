@@ -125,3 +125,13 @@
 
 Recommendations, legal risk conclusions and patient-response drafts remain disabled until
 approved-only retrieval, applicable-date resolution and claim-to-evidence verification pass.
+
+## Task 2.3: Human legal review of the initial corpus
+
+**Acceptance criteria:**
+- [ ] A qualified `LEGAL_EDITOR` has reviewed the immutable official artifacts using
+  `docs/legal-review/initial-corpus-review.md`.
+- [ ] The PP №659 fragment selection covers the intended recommendation scenarios before approval.
+- [ ] Every approved version has a checksum-bound, append-only approval attestation.
+
+**Dependencies:** Task 2.1; explicit human legal review
