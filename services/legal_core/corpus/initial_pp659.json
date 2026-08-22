@@ -1,0 +1,43 @@
+{
+  "manifest_version": "dental-legal-corpus.v1",
+  "source_key": "publication-pravo-gov-ru",
+  "source_name": "Официальное опубликование правовых актов",
+  "source_url": "https://publication.pravo.gov.ru/document/0001202606010083",
+  "source_external_id": "0001202606010083",
+  "allowed_hosts": ["publication.pravo.gov.ru"],
+  "document_key": "ru-government-decree-659-2026",
+  "document_type": "GOVERNMENT_DECREE",
+  "title": "Постановление Правительства Российской Федерации от 30.05.2026 № 659",
+  "issuer": "Правительство Российской Федерации",
+  "official_number": "659",
+  "adoption_date": "2026-05-30",
+  "publication_date": "2026-06-01",
+  "version_date": "2026-05-30",
+  "effective_from": "2026-09-01",
+  "effective_to": "2031-09-01",
+  "approval_state": "REVIEW_REQUIRED",
+  "artifact_kind": "NORMALIZED_EXCERPT",
+  "artifact_mime_type": "application/vnd.dental-legal.normalized-excerpt+json",
+  "artifact_sha256": "37d9df607dc056befc4866fc9b568ffd855060683b988288abb2f79371e0a892",
+  "artifact_text": "Постановление Правительства Российской Федерации от 30 мая 2026 г. № 659. Пункт 2. Настоящее постановление вступает в силу с 1 сентября 2026 г. Правила, утвержденные настоящим постановлением, действуют до 1 сентября 2031 г. Изменения в постановление № 736, пункт 2. Правила предоставления медицинскими организациями платных медицинских услуг, утвержденные указанным постановлением, признать утратившими силу.",
+  "fragments": [
+    {
+      "ordinal": 1,
+      "article": null,
+      "part": null,
+      "point": "2",
+      "heading": "Начало и окончание действия",
+      "structural_path": "Постановление/пункт 2",
+      "text": "Настоящее постановление вступает в силу с 1 сентября 2026 г. Правила, утвержденные настоящим постановлением, действуют до 1 сентября 2031 г."
+    },
+    {
+      "ordinal": 2,
+      "article": null,
+      "part": null,
+      "point": "Изменения/2",
+      "heading": "Замена Правил № 736",
+      "structural_path": "Изменения в ПП № 736/пункт 2",
+      "text": "Правила предоставления медицинскими организациями платных медицинских услуг, утвержденные указанным постановлением, признать утратившими силу."
+    }
+  ]
+}

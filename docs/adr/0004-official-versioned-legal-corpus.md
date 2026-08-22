@@ -25,6 +25,12 @@ Ingestion creates `REVIEW_REQUIRED` versions by default. Approval is a separate,
 the downloader cannot approve its own result. The first mandatory regression boundary is the
 replacement of Government Decree No. 736 by No. 659 on 2026-09-01.
 
+An embedded or manually normalized excerpt is labelled `NORMALIZED_EXCERPT`. Database
+constraints and the approval service prohibit approving it. A human legal editor may approve
+only an `OFFICIAL_RAW` artifact loaded from an in-repository file, with matching SHA-256,
+allowlisted official host, verified applicability dates, complete normalized text and fragment
+checks. Every successful or blocked review attempt is append-only audit data.
+
 ## Alternatives considered
 
 ### Live web search for each case
@@ -46,4 +52,3 @@ quality or legal applicability.
 - Reports can cite a concrete fragment and immutable source checksum.
 - Future and expired versions are excluded by query, not by prompt wording.
 - Corpus maintenance requires legal review and regression tests at every effective-date boundary.
-

@@ -29,8 +29,16 @@ curl --fail http://127.0.0.1:8000/health/ready
 docker compose down
 ```
 
-The Legal Core startup applies migrations and idempotently ingests the checksum-locked first
-corpus manifest as `REVIEW_REQUIRED`. Ingestion never approves law for production retrieval.
+The Legal Core startup applies migrations and idempotently ingests checksum-locked manifests for
+Government Decrees No. 736 and No. 659 as `REVIEW_REQUIRED`. They currently contain normalized
+review excerpts, not official raw PDF artifacts, and therefore cannot be approved. The
+applicability boundary is `[2023-09-01, 2026-09-01)` for No. 736 and
+`[2026-09-01, 2031-09-01)` for No. 659. Ingestion never approves law for production retrieval.
+
+Approval is a separate CLI operation for an active `LEGAL_EDITOR`. It requires an exact official
+artifact checksum, expected effective dates and four explicit human attestations. The database
+stores successful and blocked attempts in an append-only audit table; production retrieval also
+requires `artifact_kind=OFFICIAL_RAW`.
 
 To connect the first clinic administrator securely:
 

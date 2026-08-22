@@ -105,9 +105,9 @@
 
 **Acceptance criteria:**
 - [ ] Official raw artifacts and metadata are ingested reproducibly with SHA-256.
-- [ ] Approval is separate from ingestion and audited.
+- [x] Approval is separate from ingestion and audited.
 - [x] Retrieval exposes only approved versions applicable on `as_of_date`.
-- [ ] The 2026-09-01 Decree 736/659 boundary is covered by corpus regression tests.
+- [x] The 2026-09-01 Decree 736/659 boundary is covered by corpus regression tests.
 
 **Dependencies:** Task 1.1
 

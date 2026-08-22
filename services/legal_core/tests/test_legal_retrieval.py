@@ -1,17 +1,19 @@
 import asyncio
 import os
-from datetime import UTC, date, datetime
+from datetime import date
 from pathlib import Path
 
 import pytest
 from legal_core.corpus_loader import ingest_manifest
 from legal_core.database import database_url
+from legal_core.legal_approval import ApprovalAttestation, approve_legal_version
 from legal_core.legal_retrieval import ApprovedLegalCorpusRepository
-from legal_core.models import LegalSource, LegalVersion, User
+from legal_core.models import LegalVersion, User
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 ROOT = Path(__file__).parents[3]
-MANIFEST = ROOT / "services/legal_core/corpus/initial_pp736.json"
+MANIFEST = ROOT / "services/legal_core/tests/fixtures/official_test_manifest.json"
 
 
 @pytest.mark.skipif(
@@ -33,26 +35,39 @@ def test_retrieval_excludes_pending_content_and_enforces_effective_dates() -> No
                     )
                     assert pending == []
 
-                    reviewer = User(
-                        telegram_user_id=8_220_260_001,
-                        display_name="Integration legal reviewer",
-                        system_role="LEGAL_EDITOR",
+                    reviewer = await session.scalar(
+                        select(User).where(User.telegram_user_id == 8_220_260_001)
                     )
-                    session.add(reviewer)
+                    if reviewer is None:
+                        reviewer = User(
+                            telegram_user_id=8_220_260_001,
+                            display_name="Integration legal reviewer",
+                            system_role="LEGAL_EDITOR",
+                        )
+                        session.add(reviewer)
                     await session.flush()
                     version = await session.get(LegalVersion, version_id)
                     assert version is not None
-                    source = await session.get(LegalSource, version.source_id)
-                    assert source is not None
-                    approved_at = datetime.now(UTC)
-                    source.status = "APPROVED"
-                    source.approved_by = reviewer.id
-                    source.approved_at = approved_at
-                    version.approval_state = "APPROVED"
-                    version.regression_passed = True
-                    version.approved_by = reviewer.id
-                    version.approved_at = approved_at
-                    await session.flush()
+
+                    await transaction.commit()
+                    await approve_legal_version(
+                        factory,
+                        ApprovalAttestation(
+                            reviewer_telegram_user_id=reviewer.telegram_user_id,
+                            version_id=version.id,
+                            expected_sha256=version.raw_sha256,
+                            expected_normalized_sha256=version.normalized_sha256,
+                            expected_fragments_sha256=version.fragments_sha256,
+                            expected_effective_from=version.effective_from,
+                            expected_effective_to=version.effective_to,
+                            source_is_official=True,
+                            artifact_is_complete=True,
+                            effective_dates_verified=True,
+                            fragments_verified=True,
+                        ),
+                    )
+
+                    await session.begin()
 
                     current = await repository.search(
                         "медицинских услуг", as_of_date=date(2026, 8, 22)
@@ -68,7 +83,8 @@ def test_retrieval_excludes_pending_content_and_enforces_effective_dates() -> No
                     )
                     assert expired == []
                 finally:
-                    await transaction.rollback()
+                    if session.in_transaction():
+                        await session.rollback()
         finally:
             await engine.dispose()
 

@@ -1,9 +1,18 @@
 import asyncio
+import hashlib
+import json
 import os
 from pathlib import Path
 
 import pytest
-from legal_core.corpus_loader import ingest_manifest, load_manifest
+from legal_core.corpus_loader import (
+    CorpusFragment,
+    corpus_fragments_sha256,
+    ingest_manifest,
+    load_artifact,
+    load_manifest,
+    normalized_text_sha256,
+)
 from legal_core.database import database_url
 from legal_core.models import LegalFragment, LegalSource, LegalVersion
 from sqlalchemy import func, select
@@ -22,14 +31,125 @@ def test_initial_manifest_is_official_checksum_locked_and_not_auto_approved() ->
     assert manifest.effective_to is not None
     assert manifest.effective_to.isoformat() == "2026-09-01"
     assert manifest.approval_state == "REVIEW_REQUIRED"
+    assert manifest.artifact_kind == "NORMALIZED_EXCERPT"
     assert len(manifest.fragments) >= 4
+
+
+def test_v2_manifest_reads_exact_official_raw_bytes(tmp_path: Path) -> None:
+    raw = b"%PDF-1.7\nexact official bytes\n%%EOF\n"
+    normalized = "A complete normalized legal document with enough text for validation."
+    fragment = CorpusFragment(
+        ordinal=1,
+        article=None,
+        part=None,
+        point="1",
+        heading=None,
+        structural_path="point:1",
+        text="A complete normalized legal document fragment.",
+    )
+    artifact = tmp_path / "official.pdf"
+    artifact.write_bytes(raw)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": "dental-legal-corpus.v2",
+                "source_key": "official-test",
+                "source_name": "Official test source",
+                "source_url": "https://example.gov.ru/document/1",
+                "source_external_id": "1",
+                "allowed_hosts": ["example.gov.ru"],
+                "document_key": "test-document",
+                "document_type": "DECREE",
+                "title": "Test legal document",
+                "issuer": "Test authority",
+                "official_number": "1",
+                "adoption_date": "2026-01-01",
+                "publication_date": "2026-01-02",
+                "version_date": "2026-01-01",
+                "effective_from": "2026-02-01",
+                "effective_to": None,
+                "approval_state": "REVIEW_REQUIRED",
+                "artifact_kind": "OFFICIAL_RAW",
+                "artifact_mime_type": "application/pdf",
+                "artifact_sha256": hashlib.sha256(raw).hexdigest(),
+                "artifact_path": "official.pdf",
+                "artifact_retrieved_at": "2026-08-22T00:00:00Z",
+                "artifact_size_bytes": len(raw),
+                "artifact_page_count": 1,
+                "normalized_text": normalized,
+                "normalized_sha256": normalized_text_sha256(normalized),
+                "fragments_sha256": corpus_fragments_sha256([fragment]),
+                "normalization_scope": "FULL_DOCUMENT",
+                "parser_version": "test-parser.v1",
+                "fragments": [fragment.model_dump(mode="json")],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manifest = load_manifest(manifest_path)
+
+    assert load_artifact(manifest, manifest_path) == raw
+
+
+def test_v2_manifest_rejects_artifact_path_outside_manifest_directory(tmp_path: Path) -> None:
+    outside = tmp_path.parent / "outside.pdf"
+    outside.write_bytes(b"%PDF-1.7\nnot trusted by path\n%%EOF")
+    manifest_path = tmp_path / "manifest.json"
+    normalized = "A complete normalized legal document with enough text for validation."
+    fragment = CorpusFragment(
+        ordinal=1,
+        article=None,
+        part=None,
+        point="1",
+        heading=None,
+        structural_path="point:1",
+        text="A complete normalized legal document fragment.",
+    )
+    payload = {
+        "manifest_version": "dental-legal-corpus.v2",
+        "source_key": "official-test",
+        "source_name": "Official test source",
+        "source_url": "https://example.gov.ru/document/1",
+        "source_external_id": "1",
+        "allowed_hosts": ["example.gov.ru"],
+        "document_key": "test-document",
+        "document_type": "DECREE",
+        "title": "Test legal document",
+        "issuer": "Test authority",
+        "official_number": "1",
+        "adoption_date": "2026-01-01",
+        "publication_date": "2026-01-02",
+        "version_date": "2026-01-01",
+        "effective_from": "2026-02-01",
+        "effective_to": None,
+        "approval_state": "REVIEW_REQUIRED",
+        "artifact_kind": "OFFICIAL_RAW",
+        "artifact_mime_type": "application/pdf",
+        "artifact_sha256": hashlib.sha256(outside.read_bytes()).hexdigest(),
+        "artifact_path": "../outside.pdf",
+        "artifact_retrieved_at": "2026-08-22T00:00:00Z",
+        "artifact_size_bytes": len(outside.read_bytes()),
+        "artifact_page_count": 1,
+        "normalized_text": normalized,
+        "normalized_sha256": normalized_text_sha256(normalized),
+        "fragments_sha256": corpus_fragments_sha256([fragment]),
+        "normalization_scope": "FULL_DOCUMENT",
+        "parser_version": "test-parser.v1",
+        "fragments": [fragment.model_dump(mode="json")],
+    }
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="inside the manifest directory"):
+        load_manifest(manifest_path)
 
 
 @pytest.mark.skipif(
     os.getenv("POSTGRES_INTEGRATION") != "1",
     reason="set POSTGRES_INTEGRATION=1 to run PostgreSQL corpus tests",
 )
-def test_manifest_ingestion_is_idempotent_and_stays_review_required() -> None:
+def test_manifest_ingestion_is_idempotent_and_stays_review_required(tmp_path: Path) -> None:
     async def scenario() -> None:
         engine = create_async_engine(database_url())
         factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -37,6 +157,14 @@ def test_manifest_ingestion_is_idempotent_and_stays_review_required() -> None:
             first = await ingest_manifest(factory, MANIFEST)
             second = await ingest_manifest(factory, MANIFEST)
             assert first == second
+            conflicting_payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
+            conflicting_payload["parser_version"] = "conflicting-parser.v2"
+            conflicting_manifest = tmp_path / "conflicting.json"
+            conflicting_manifest.write_text(
+                json.dumps(conflicting_payload, ensure_ascii=False), encoding="utf-8"
+            )
+            with pytest.raises(ValueError, match="metadata conflicts"):
+                await ingest_manifest(factory, conflicting_manifest)
             async with factory() as session:
                 version = await session.get(LegalVersion, first)
                 assert version is not None

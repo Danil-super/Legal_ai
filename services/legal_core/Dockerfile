@@ -25,4 +25,4 @@ USER app
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "alembic upgrade head && python -m legal_core.corpus_loader services/legal_core/corpus/initial_pp736.json && python -m legal_core.bootstrap_admin --if-configured && exec uvicorn legal_core.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "alembic upgrade head && python -m legal_core.corpus_loader services/legal_core/corpus/initial_pp736.json && python -m legal_core.corpus_loader services/legal_core/corpus/initial_pp659.json && python -m legal_core.bootstrap_admin --if-configured && exec uvicorn legal_core.main:app --host 0.0.0.0 --port 8000"]

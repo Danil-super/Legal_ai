@@ -41,6 +41,7 @@ def test_upgrade_security_and_downgrade_roundtrip() -> None:
             "legal_documents",
             "legal_versions",
             "legal_fragments",
+            "legal_approval_events",
         } <= table_names
 
         with engine.connect() as connection:
@@ -55,9 +56,31 @@ def test_upgrade_security_and_downgrade_roundtrip() -> None:
                 text(
                     "SELECT c.relname FROM pg_trigger t "
                     "JOIN pg_class c ON c.oid=t.tgrelid "
-                    "WHERE NOT t.tgisinternal AND c.relname IN ('case_facts','case_reports')"
+                    "WHERE NOT t.tgisinternal AND c.relname IN "
+                    "('case_facts','case_reports','legal_approval_events',"
+                    "'legal_sources','legal_documents','legal_versions','legal_fragments')"
                 )
             ).scalars()
+            legal_guard_triggers = set(
+                connection.execute(
+                    text(
+                        "SELECT tgname FROM pg_trigger "
+                        "WHERE NOT tgisinternal AND tgname IN "
+                        "('legal_approval_events_validate_insert',"
+                        "'legal_fragments_append_only','legal_sources_protect_identity',"
+                        "'legal_versions_protect_content')"
+                    )
+                ).scalars()
+            )
+            legal_guard_functions = set(
+                connection.execute(
+                    text(
+                        "SELECT proname FROM pg_proc WHERE proname IN "
+                        "('legal_canonical_jsonb','legal_regression_result_sha256',"
+                        "'legal_approval_event_is_current')"
+                    )
+                ).scalars()
+            )
             assert set(secured) == {
                 "cases",
                 "case_facts",
@@ -65,7 +88,26 @@ def test_upgrade_security_and_downgrade_roundtrip() -> None:
                 "audit_events",
                 "idempotency_records",
             }
-            assert set(triggers) == {"case_facts", "case_reports"}
+            assert set(triggers) == {
+                "case_facts",
+                "case_reports",
+                "legal_approval_events",
+                "legal_sources",
+                "legal_documents",
+                "legal_versions",
+                "legal_fragments",
+            }
+            assert legal_guard_triggers == {
+                "legal_approval_events_validate_insert",
+                "legal_fragments_append_only",
+                "legal_sources_protect_identity",
+                "legal_versions_protect_content",
+            }
+            assert legal_guard_functions == {
+                "legal_canonical_jsonb",
+                "legal_regression_result_sha256",
+                "legal_approval_event_is_current",
+            }
 
         command.downgrade(config, "base")
         remaining = set(inspect(engine).get_table_names())

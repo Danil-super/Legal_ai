@@ -239,7 +239,14 @@ class IdempotencyRecord(Base):
 
 class LegalSource(Base):
     __tablename__ = "legal_sources"
-    __table_args__ = (UniqueConstraint("source_key", "revision"),)
+    __table_args__ = (
+        UniqueConstraint("source_key", "revision"),
+        CheckConstraint(
+            "(status = 'DRAFT' AND approved_by IS NULL AND approved_at IS NULL) OR "
+            "(status = 'APPROVED' AND approved_by IS NOT NULL AND approved_at IS NOT NULL)",
+            name="ck_legal_sources_lifecycle",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(
         UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
@@ -278,6 +285,37 @@ class LegalVersion(Base):
         UniqueConstraint("document_id", "version_no"),
         UniqueConstraint("document_id", "raw_sha256"),
         CheckConstraint("effective_to IS NULL OR effective_to > effective_from"),
+        CheckConstraint(
+            "artifact_kind IN ('NORMALIZED_EXCERPT', 'OFFICIAL_RAW')",
+            name="ck_legal_versions_artifact_kind",
+        ),
+        CheckConstraint(
+            "approval_state <> 'APPROVED' OR artifact_kind = 'OFFICIAL_RAW'",
+            name="ck_legal_versions_approved_official_raw",
+        ),
+        CheckConstraint(
+            "encode(digest(raw_bytes, 'sha256'), 'hex') = raw_sha256",
+            name="ck_legal_versions_raw_sha256",
+        ),
+        CheckConstraint(
+            "octet_length(raw_bytes) = raw_size_bytes",
+            name="ck_legal_versions_raw_size",
+        ),
+        CheckConstraint(
+            "encode(digest(convert_to(normalized_text, 'UTF8'), 'sha256'), 'hex') "
+            "= normalized_sha256",
+            name="ck_legal_versions_normalized_sha256",
+        ),
+        CheckConstraint(
+            "normalization_scope IN ('SELECTED_EXCERPT', 'FULL_DOCUMENT')",
+            name="ck_legal_versions_normalization_scope",
+        ),
+        CheckConstraint(
+            "artifact_kind <> 'OFFICIAL_RAW' OR "
+            "(artifact_retrieved_at IS NOT NULL AND normalization_scope = 'FULL_DOCUMENT' "
+            "AND (raw_mime_type <> 'application/pdf' OR artifact_page_count IS NOT NULL))",
+            name="ck_legal_versions_official_metadata",
+        ),
         Index("ix_legal_versions_resolution", "document_id", "approval_state", "effective_from"),
     )
 
@@ -294,15 +332,61 @@ class LegalVersion(Base):
     effective_from: Mapped[date] = mapped_column(Date)
     effective_to: Mapped[date | None] = mapped_column(Date)
     approval_state: Mapped[str] = mapped_column(String(30), server_default="REVIEW_REQUIRED")
+    artifact_kind: Mapped[str] = mapped_column(
+        String(30), server_default="NORMALIZED_EXCERPT"
+    )
     raw_sha256: Mapped[str] = mapped_column(String(64))
     raw_mime_type: Mapped[str] = mapped_column(String(100))
     raw_bytes: Mapped[bytes] = mapped_column(LargeBinary)
+    raw_size_bytes: Mapped[int] = mapped_column(BigInteger)
+    artifact_retrieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    artifact_page_count: Mapped[int | None] = mapped_column(Integer)
     normalized_text: Mapped[str] = mapped_column(Text)
+    normalized_sha256: Mapped[str] = mapped_column(String(64))
+    fragments_sha256: Mapped[str] = mapped_column(String(64))
+    normalization_scope: Mapped[str] = mapped_column(String(30))
     parser_version: Mapped[str] = mapped_column(String(80))
     regression_passed: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_by: Mapped[UUID | None] = mapped_column(UUID_PK, ForeignKey("users.id"))
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
+class LegalApprovalEvent(Base):
+    __tablename__ = "legal_approval_events"
+    __table_args__ = (
+        CheckConstraint("decision IN ('APPROVED', 'BLOCKED', 'REJECTED')"),
+        CheckConstraint("char_length(expected_sha256) = 64"),
+        CheckConstraint("char_length(regression_result_sha256) = 64"),
+        CheckConstraint("char_length(policy_version) BETWEEN 1 AND 80"),
+        Index("ix_legal_approval_events_version_time", "legal_version_id", "created_at", "id"),
+        Index(
+            "uq_legal_approval_events_approved",
+            "legal_version_id",
+            unique=True,
+            postgresql_where=text("decision = 'APPROVED'"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    legal_version_id: Mapped[UUID] = mapped_column(
+        UUID_PK, ForeignKey("legal_versions.id", ondelete="RESTRICT")
+    )
+    actor_user_id: Mapped[UUID] = mapped_column(
+        UUID_PK, ForeignKey("users.id", ondelete="RESTRICT")
+    )
+    decision: Mapped[str] = mapped_column(String(20))
+    expected_sha256: Mapped[str] = mapped_column(String(64))
+    reason_code: Mapped[str] = mapped_column(String(80))
+    policy_version: Mapped[str] = mapped_column(String(80))
+    regression_result_sha256: Mapped[str] = mapped_column(String(64))
+    regression_checks_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb")
+    )
+    checks_json: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 
 class LegalFragment(Base):
