@@ -66,6 +66,12 @@ def complete_fact_batch() -> dict[str, object]:
                 "sourceType": "USER_STATEMENT",
             },
             {
+                "factKey": "PRIMARY_INCIDENT_TYPE",
+                "valueType": "ENUM",
+                "value": {"value": "CROWN_PROBLEM"},
+                "sourceType": "USER_STATEMENT",
+            },
+            {
                 "factKey": "SERVICE_TYPE",
                 "valueType": "TEXT",
                 "value": {"text": "Установка коронки"},
@@ -114,9 +120,21 @@ def complete_fact_batch() -> dict[str, object]:
                 "sourceType": "USER_STATEMENT",
             },
             {
+                "factKey": "LAWYER_CONTACT",
+                "valueType": "BOOLEAN",
+                "value": {"state": "NO"},
+                "sourceType": "USER_STATEMENT",
+            },
+            {
                 "factKey": "REGULATOR_OR_COURT",
                 "valueType": "BOOLEAN",
                 "value": {"boolean": False},
+                "sourceType": "USER_STATEMENT",
+            },
+            {
+                "factKey": "REGULATOR_THREAT",
+                "valueType": "BOOLEAN",
+                "value": {"state": "NO"},
                 "sourceType": "USER_STATEMENT",
             },
             {
@@ -285,6 +303,56 @@ def test_unknown_telegram_user_is_denied_without_tenant_details() -> None:
     assert response.json()["error"]["code"] == "ACTOR_NOT_AUTHORIZED"
 
 
+def test_unknown_dates_and_signals_are_persisted_without_becoming_negative_evidence() -> None:
+    admin = 6_100_000_001 + uuid4().int % 100_000_000
+    seed_admin(admin)
+    batch = complete_fact_batch()
+    facts = batch["facts"]
+    assert isinstance(facts, list)
+    by_key = {fact["factKey"]: fact for fact in facts}
+    by_key["SERVICE_DATE"]["value"] = {"date": None, "precision": "UNKNOWN"}
+    by_key["FORMAL_CLAIM"]["value"] = {"state": "UNKNOWN"}
+    by_key["HARM_CLAIMED"]["value"] = {"state": "UNKNOWN"}
+    by_key["REGULATOR_OR_COURT"]["value"] = {"state": "UNKNOWN"}
+    by_key["REGULATOR_THREAT"]["value"] = {"state": "UNKNOWN"}
+    facts.append(
+        {
+            "factKey": "HOSPITALIZATION",
+            "valueType": "BOOLEAN",
+            "value": {"state": "UNKNOWN"},
+            "sourceType": "USER_STATEMENT",
+        }
+    )
+
+    with application_client() as client:
+        created = client.post(
+            "/v1/cases",
+            headers=actor_headers(admin, uuid4()),
+            json={"intakeSchemaVersion": "dental-case-intake.v1", "channel": "TELEGRAM"},
+        )
+        case_id = created.json()["id"]
+        recorded = client.post(
+            f"/v1/cases/{case_id}/facts",
+            headers=actor_headers(admin, uuid4()),
+            json=batch,
+        )
+        report = client.post(
+            f"/v1/cases/{case_id}/reports",
+            headers=actor_headers(admin, uuid4()),
+            json={"locale": "ru-RU"},
+        )
+
+    assert created.status_code == 201
+    assert recorded.status_code == 200
+    assert recorded.json()["missingFacts"] == []
+    assert report.status_code == 201
+    assert report.json()["reportJson"]["facts"]["SERVICE_DATE"] == {
+        "date": None,
+        "precision": "UNKNOWN",
+    }
+    assert report.json()["reportJson"]["facts"]["HARM_CLAIMED"] == "UNKNOWN"
+
+
 def test_atomic_telegram_workflow_survives_lost_response_without_duplicate_resources() -> None:
     admin = 7_100_000_001 + uuid4().int % 100_000_000
     other_admin = 8_100_000_001 + uuid4().int % 100_000_000
@@ -350,7 +418,10 @@ def test_workflow_uuid_cannot_be_reused_for_changed_facts() -> None:
     changed = workflow_submission()
     changed_facts = changed["facts"]
     assert isinstance(changed_facts, list)
-    changed_facts[5]["value"]["text"] = "Иная обезличенная ситуация"
+    summary_fact = next(
+        fact for fact in changed_facts if fact["factKey"] == "PROBLEM_SUMMARY"
+    )
+    summary_fact["value"]["text"] = "Иная обезличенная ситуация"
 
     with application_client() as client:
         created = client.post(
