@@ -2,13 +2,21 @@
 
 import asyncio
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Literal
+from uuid import uuid4
 
-from fastapi import FastAPI, Response, status
+from fastapi import FastAPI, Request, Response, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from starlette.middleware.base import RequestResponseEndpoint
 
 from legal_core import __version__
+from legal_core.case_api import ApiError, create_case_router
+from legal_core.database import create_engine, create_session_factory
 
 SERVICE_NAME = "legal-core"
 ReadinessChecks = dict[str, bool]
@@ -63,7 +71,22 @@ async def probe_dependencies() -> ReadinessChecks:
     return dict(zip(endpoints, results, strict=True))
 
 
-def create_app(readiness_probe: ReadinessProbe = probe_dependencies) -> FastAPI:
+def create_app(
+    readiness_probe: ReadinessProbe = probe_dependencies,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+    managed_engine: AsyncEngine | None = None,
+) -> FastAPI:
+    engine = managed_engine or create_engine()
+    sessions = session_factory or create_session_factory(engine)
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        # FastAPI recommends lifespan for resource cleanup instead of deprecated events.
+        # Source: https://fastapi.tiangolo.com/advanced/events/#lifespan
+        del application
+        yield
+        await engine.dispose()
+
     app = FastAPI(
         title="Dental Legal AI — Legal Core",
         version=__version__,
@@ -71,10 +94,44 @@ def create_app(readiness_probe: ReadinessProbe = probe_dependencies) -> FastAPI:
         docs_url=None,
         redoc_url=None,
         description=(
-            "Versioned evidence and case services. "
-            "Legal conclusions require retrieved evidence."
+            "Versioned evidence and case services. Legal conclusions require retrieved evidence."
         ),
+        lifespan=lifespan,
     )
+
+    @app.middleware("http")
+    async def correlation_id(request: Request, call_next: RequestResponseEndpoint) -> Response:
+        request.state.correlation_id = str(uuid4())
+        return await call_next(request)
+
+    @app.exception_handler(ApiError)
+    async def api_error(request: Request, error: ApiError) -> JSONResponse:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={
+                "error": {
+                    "code": error.code,
+                    "message": error.message,
+                    "details": error.details,
+                    "correlationId": request.state.correlation_id,
+                }
+            },
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
+        details = [{"location": list(item["loc"]), "type": item["type"]} for item in error.errors()]
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Request validation failed",
+                    "details": details,
+                    "correlationId": request.state.correlation_id,
+                }
+            },
+        )
 
     @app.get("/health/live", response_model=LiveResponse, tags=["health"])
     async def live() -> LiveResponse:
@@ -95,6 +152,8 @@ def create_app(readiness_probe: ReadinessProbe = probe_dependencies) -> FastAPI:
             status="ready" if is_ready else "not_ready",
             checks=checks,
         )
+
+    app.include_router(create_case_router(sessions))
 
     return app
 
