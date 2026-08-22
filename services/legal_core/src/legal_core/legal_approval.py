@@ -168,6 +168,17 @@ async def _block_reason(
         )
         if approved_event is None:
             return "APPROVED_EVENT_MISSING"
+    newer_selection = await session.scalar(
+        select(LegalVersion.id)
+        .where(
+            LegalVersion.document_id == version.document_id,
+            LegalVersion.raw_sha256 == version.raw_sha256,
+            LegalVersion.version_no > version.version_no,
+        )
+        .limit(1)
+    )
+    if newer_selection is not None:
+        return "SUPERSEDED_BY_NEWER_EXTRACTION"
     return None
 
 

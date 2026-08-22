@@ -321,7 +321,6 @@ class LegalVersion(Base):
     __tablename__ = "legal_versions"
     __table_args__ = (
         UniqueConstraint("document_id", "version_no"),
-        UniqueConstraint("document_id", "raw_sha256"),
         CheckConstraint("effective_to IS NULL OR effective_to > effective_from"),
         CheckConstraint(
             "artifact_kind IN ('NORMALIZED_EXCERPT', 'OFFICIAL_RAW')",
@@ -355,6 +354,13 @@ class LegalVersion(Base):
             name="ck_legal_versions_official_metadata",
         ),
         Index("ix_legal_versions_resolution", "document_id", "approval_state", "effective_from"),
+        Index(
+            "uq_legal_versions_approved_raw",
+            "document_id",
+            "raw_sha256",
+            unique=True,
+            postgresql_where=text("approval_state = 'APPROVED'"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(

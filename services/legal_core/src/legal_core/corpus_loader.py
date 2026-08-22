@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import hashlib
+import json
 from datetime import date, datetime
 from pathlib import Path
 from typing import Literal
@@ -132,6 +133,23 @@ class CorpusManifest(BaseModel):
         return content
 
 
+class CorpusSelectionManifest(BaseModel):
+    """A reviewed fragment selection derived from one immutable v2 artifact manifest."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    manifest_version: Literal["dental-legal-corpus.selection.v1"]
+    base_manifest_path: str = Field(min_length=1, max_length=240)
+    fragments: list[CorpusFragment] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_ordinals(self) -> "CorpusSelectionManifest":
+        ordinals = [fragment.ordinal for fragment in self.fragments]
+        if len(ordinals) != len(set(ordinals)):
+            raise ValueError("fragment ordinals must be unique")
+        return self
+
+
 def load_artifact(manifest: CorpusManifest, manifest_path: Path) -> bytes:
     if manifest.artifact_text is not None:
         raw_bytes = manifest.artifact_text.encode()
@@ -160,7 +178,36 @@ def load_artifact(manifest: CorpusManifest, manifest_path: Path) -> bytes:
 
 
 def load_manifest(path: Path) -> CorpusManifest:
-    manifest = CorpusManifest.model_validate_json(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("manifest_version") == "dental-legal-corpus.selection.v1":
+        selection = CorpusSelectionManifest.model_validate(payload)
+        selection_directory = path.resolve().parent
+        base_path = (selection_directory / selection.base_manifest_path).resolve()
+        if (
+            not base_path.is_relative_to(selection_directory)
+            or base_path.parent != selection_directory
+        ):
+            raise ValueError("selection base manifest must be a sibling file")
+        if not base_path.is_file():
+            raise ValueError("selection base manifest does not exist")
+        base = load_manifest(base_path)
+        if (
+            base.manifest_version != "dental-legal-corpus.v2"
+            or base.artifact_kind != "OFFICIAL_RAW"
+        ):
+            raise ValueError("selection base manifest must be an OFFICIAL_RAW v2 manifest")
+        selected_payload = base.model_dump()
+        selected_payload.update(
+            {
+                "fragments": selection.fragments,
+                "fragments_sha256": corpus_fragments_sha256(selection.fragments),
+            }
+        )
+        manifest = CorpusManifest.model_validate(
+            selected_payload
+        )
+    else:
+        manifest = CorpusManifest.model_validate(payload)
     load_artifact(manifest, path)
     return manifest
 
@@ -249,11 +296,26 @@ async def ingest_manifest(session_factory: async_sessionmaker[AsyncSession], pat
         async with session.begin():
             source = await _source(session, manifest)
             document = await _document(session, manifest)
-            existing = await session.scalar(
-                select(LegalVersion).where(
-                    LegalVersion.document_id == document.id,
-                    LegalVersion.raw_sha256 == manifest.artifact_sha256,
+            normalized_sha = normalized_text_sha256(manifest.normalized_content())
+            fragments_sha = corpus_fragments_sha256(manifest.fragments)
+            raw_matches = list(
+                await session.scalars(
+                    select(LegalVersion)
+                    .where(
+                        LegalVersion.document_id == document.id,
+                        LegalVersion.raw_sha256 == manifest.artifact_sha256,
+                    )
+                    .order_by(LegalVersion.version_no.desc())
                 )
+            )
+            existing = next(
+                (
+                    version
+                    for version in raw_matches
+                    if version.normalized_sha256 == normalized_sha
+                    and version.fragments_sha256 == fragments_sha
+                ),
+                None,
             )
             if existing is not None:
                 expected_version = (
@@ -270,8 +332,8 @@ async def ingest_manifest(session_factory: async_sessionmaker[AsyncSession], pat
                     manifest.normalized_content(),
                     manifest.parser_version,
                     len(raw_bytes),
-                    normalized_text_sha256(manifest.normalized_content()),
-                    corpus_fragments_sha256(manifest.fragments),
+                    normalized_sha,
+                    fragments_sha,
                     manifest.normalization_scope,
                     manifest.artifact_retrieved_at,
                     manifest.artifact_page_count,
@@ -346,8 +408,8 @@ async def ingest_manifest(session_factory: async_sessionmaker[AsyncSession], pat
                 normalized_text=manifest.normalized_content(),
                 parser_version=manifest.parser_version,
                 raw_size_bytes=len(raw_bytes),
-                normalized_sha256=normalized_text_sha256(manifest.normalized_content()),
-                fragments_sha256=corpus_fragments_sha256(manifest.fragments),
+                normalized_sha256=normalized_sha,
+                fragments_sha256=fragments_sha,
                 normalization_scope=manifest.normalization_scope,
                 artifact_retrieved_at=manifest.artifact_retrieved_at,
                 artifact_page_count=manifest.artifact_page_count,
