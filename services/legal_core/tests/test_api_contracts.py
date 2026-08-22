@@ -37,3 +37,35 @@ def test_add_facts_request_rejects_duplicate_fact_keys() -> None:
             intakeSchemaVersion="dental-case-intake.v1",
             facts=[duplicate_fact, duplicate_fact],
         )
+
+
+def test_fact_input_preserves_an_explicit_unknown_signal() -> None:
+    fact = FactInput(
+        factKey="HARM_CLAIMED",
+        valueType="BOOLEAN",
+        value={"state": "UNKNOWN"},
+        sourceType="USER_STATEMENT",
+    )
+
+    assert fact.value == {"state": "UNKNOWN"}
+
+
+def test_fact_input_preserves_an_explicit_unknown_date() -> None:
+    fact = FactInput(
+        factKey="SERVICE_DATE",
+        valueType="DATE",
+        value={"date": None, "precision": "UNKNOWN"},
+        sourceType="USER_STATEMENT",
+    )
+
+    assert fact.value == {"date": None, "precision": "UNKNOWN"}
+
+
+def test_fact_input_rejects_a_date_value_when_precision_is_unknown() -> None:
+    with pytest.raises(ValidationError, match="SERVICE_DATE"):
+        FactInput(
+            factKey="SERVICE_DATE",
+            valueType="DATE",
+            value={"date": "2026-08-22", "precision": "UNKNOWN"},
+            sourceType="USER_STATEMENT",
+        )

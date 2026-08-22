@@ -227,7 +227,7 @@ def _domain_value(fact: CaseFact) -> object:
     if fact.value_type == "TEXT":
         return value.get("text")
     if fact.value_type == "BOOLEAN":
-        return value.get("boolean")
+        return value.get("state", value.get("boolean"))
     if fact.value_type == "ENUM":
         return value.get("value")
     if fact.value_type == "ENUM_SET":
@@ -243,7 +243,7 @@ def _input_value(value_type: str, value: dict[str, Any]) -> object:
     if value_type == "TEXT":
         return value.get("text")
     if value_type == "BOOLEAN":
-        return value.get("boolean")
+        return value.get("state", value.get("boolean"))
     if value_type == "ENUM":
         return value.get("value")
     if value_type == "ENUM_SET":

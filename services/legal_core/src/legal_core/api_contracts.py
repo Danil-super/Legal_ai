@@ -41,6 +41,7 @@ _DOCUMENT_STATUSES = frozenset(
 _DOCUMENT_KEYS = frozenset(
     {"CONTRACT", "MEDICAL_RECORD", "INFORMED_CONSENT", "GUARANTEE"}
 )
+_SIGNAL_STATES = frozenset({"YES", "NO", "UNKNOWN"})
 
 
 def _exact_keys(value: dict[str, Any], keys: set[str], fact_key: FactKey) -> None:
@@ -146,19 +147,33 @@ class FactInput(ContractModel):
             expected_type = "DATE"
             _exact_keys(self.value, {"date", "precision"}, self.fact_key)
             date_value = self.value["date"]
-            if not isinstance(date_value, str):
-                raise ValueError(f"{self.fact_key.value} requires an ISO date")
-            try:
-                date.fromisoformat(date_value)
-            except ValueError as exc:
-                raise ValueError(f"{self.fact_key.value} requires a valid ISO date") from exc
-            if self.value["precision"] not in {"EXACT", "APPROXIMATE"}:
+            precision = self.value["precision"]
+            if precision == "UNKNOWN":
+                if date_value is not None:
+                    raise ValueError(
+                        f"{self.fact_key.value} cannot include a date with UNKNOWN precision"
+                    )
+            elif precision in {"EXACT", "APPROXIMATE"}:
+                if not isinstance(date_value, str):
+                    raise ValueError(f"{self.fact_key.value} requires an ISO date")
+                try:
+                    date.fromisoformat(date_value)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{self.fact_key.value} requires a valid ISO date"
+                    ) from exc
+            else:
                 raise ValueError(f"{self.fact_key.value} has an invalid date precision")
         elif self.fact_key in _BOOLEAN_FACT_KEYS:
             expected_type = "BOOLEAN"
-            _exact_keys(self.value, {"boolean"}, self.fact_key)
-            if not isinstance(self.value["boolean"], bool):
-                raise ValueError(f"{self.fact_key.value} requires a boolean value")
+            if set(self.value) == {"boolean"}:
+                if not isinstance(self.value["boolean"], bool):
+                    raise ValueError(f"{self.fact_key.value} requires a boolean value")
+            elif set(self.value) == {"state"}:
+                if self.value["state"] not in _SIGNAL_STATES:
+                    raise ValueError(f"{self.fact_key.value} has an invalid signal state")
+            else:
+                raise ValueError(f"{self.fact_key.value} has an invalid value shape")
         elif self.fact_key in _ENUM_SET_FACT_KEYS:
             expected_type = "ENUM_SET"
             _exact_keys(self.value, {"values"}, self.fact_key)
