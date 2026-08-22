@@ -40,6 +40,29 @@ artifact checksum, expected effective dates and four explicit human attestations
 stores successful and blocked attempts in an append-only audit table; production retrieval also
 requires `artifact_kind=OFFICIAL_RAW`.
 
+When an official PDF has been downloaded manually, prepare its immutable snapshot before
+ingestion. The command checks the `%PDF-` signature, 50 MB limit, `pdfinfo` metadata, published
+page count and published byte length, independently recorded SHA-256, act number/date in the
+extracted full text and exact fragment substrings. Image-only publications use a clearly labelled
+Russian Tesseract OCR fallback; OCR is never treated as the source of truth and must be reviewed
+against the immutable PDF. The command only emits a `REVIEW_REQUIRED` manifest:
+
+```bash
+mkdir -p services/legal_core/corpus/official
+docker compose run --rm --no-deps \
+  -v /absolute/path/to/downloads:/input:ro \
+  -v "$PWD/services/legal_core/corpus/official:/output" \
+  legal-core python -m legal_core.official_artifact \
+  --pdf /input/pp736.pdf \
+  --base-manifest /app/services/legal_core/corpus/initial_pp736.json \
+  --output-directory /output \
+  --retrieved-at 2026-08-22T12:00:00+00:00
+```
+
+Review the generated normalized text and fragments, then ingest the generated JSON with
+`python -m legal_core.corpus_loader`. Ingestion still cannot make it visible to production
+retrieval; the independent `LEGAL_EDITOR` approval gate remains mandatory.
+
 To connect the first clinic administrator securely:
 
 1. Open the bot and send `/whoami`.

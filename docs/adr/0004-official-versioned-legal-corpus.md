@@ -31,6 +31,13 @@ only an `OFFICIAL_RAW` artifact loaded from an in-repository file, with matching
 allowlisted official host, verified applicability dates, complete normalized text and fragment
 checks. Every successful or blocked review attempt is append-only audit data.
 
+If the official host is unreachable from the service network, an operator may download the PDF
+through a normal browser and pass it to the offline preparation command. That command snapshots
+the exact bytes, extracts the complete text with a pinned parser contract and verifies document
+identity, published metadata and fragment containment. Manual transport does not weaken the
+review state: the resulting version is still `REVIEW_REQUIRED`, and source revisions distinguish
+the official publication portal from earlier normalized review excerpts.
+
 ## Alternatives considered
 
 ### Live web search for each case

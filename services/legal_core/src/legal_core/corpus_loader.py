@@ -46,7 +46,9 @@ class CorpusManifest(BaseModel):
 
     manifest_version: Literal["dental-legal-corpus.v1", "dental-legal-corpus.v2"]
     source_key: str
+    source_revision: int = Field(default=1, ge=1)
     source_name: str
+    source_base_url: str | None = None
     source_url: str
     source_external_id: str
     allowed_hosts: list[str] = Field(min_length=1)
@@ -81,6 +83,10 @@ class CorpusManifest(BaseModel):
         parsed = urlparse(self.source_url)
         if parsed.scheme != "https" or parsed.hostname not in self.allowed_hosts:
             raise ValueError("source URL must be HTTPS and match the manifest allowlist")
+        base_url = self.source_base_url or self.source_url
+        parsed_base = urlparse(base_url)
+        if parsed_base.scheme != "https" or parsed_base.hostname not in self.allowed_hosts:
+            raise ValueError("source base URL must be HTTPS and match the manifest allowlist")
         if self.manifest_version == "dental-legal-corpus.v1":
             if self.artifact_kind != "NORMALIZED_EXCERPT" or self.artifact_text is None:
                 raise ValueError("v1 manifests must contain a normalized excerpt")
@@ -163,9 +169,10 @@ async def _source(session: AsyncSession, manifest: CorpusManifest) -> LegalSourc
     source = await session.scalar(
         select(LegalSource).where(
             LegalSource.source_key == manifest.source_key,
-            LegalSource.revision == 1,
+            LegalSource.revision == manifest.source_revision,
         )
     )
+    source_base_url = manifest.source_base_url or manifest.source_url
     if source is not None:
         identity = (
             source.display_name,
@@ -175,7 +182,7 @@ async def _source(session: AsyncSession, manifest: CorpusManifest) -> LegalSourc
         )
         expected = (
             manifest.source_name,
-            manifest.source_url,
+            source_base_url,
             manifest.allowed_hosts,
             "PRIMARY",
         )
@@ -184,9 +191,9 @@ async def _source(session: AsyncSession, manifest: CorpusManifest) -> LegalSourc
         return source
     source = LegalSource(
         source_key=manifest.source_key,
-        revision=1,
+        revision=manifest.source_revision,
         display_name=manifest.source_name,
-        base_url=manifest.source_url,
+        base_url=source_base_url,
         allowed_hosts=manifest.allowed_hosts,
         trust_level="PRIMARY",
         # Loader never approves a source. Legal-editor review is a separate audited action.

@@ -104,7 +104,7 @@
 ## Task 2.1: First verified legal corpus and retrieval
 
 **Acceptance criteria:**
-- [ ] Official raw artifacts and metadata are ingested reproducibly with SHA-256.
+- [x] Official raw artifacts and metadata are ingested reproducibly with SHA-256.
 - [x] Approval is separate from ingestion and audited.
 - [x] Retrieval exposes only approved versions applicable on `as_of_date`.
 - [x] The 2026-09-01 Decree 736/659 boundary is covered by corpus regression tests.
@@ -116,7 +116,7 @@
 **Acceptance criteria:**
 - [x] `Создать кейс` is available only to a mapped `CLINIC_ADMIN`.
 - [x] The bot collects only the minimum pseudonymous intake data in steps.
-- [ ] Restart/cancel/retry do not duplicate cases or facts.
+- [x] Restart/cancel/retry do not duplicate cases or facts.
 - [x] `/whoami` gives the administrator the identifier needed for secure bootstrap.
 
 **Dependencies:** Tasks 1.2 and 2.1

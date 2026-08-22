@@ -55,7 +55,9 @@ def test_v2_manifest_reads_exact_official_raw_bytes(tmp_path: Path) -> None:
             {
                 "manifest_version": "dental-legal-corpus.v2",
                 "source_key": "official-test",
+                "source_revision": 2,
                 "source_name": "Official test source",
+                "source_base_url": "https://example.gov.ru/",
                 "source_url": "https://example.gov.ru/document/1",
                 "source_external_id": "1",
                 "allowed_hosts": ["example.gov.ru"],
@@ -91,6 +93,8 @@ def test_v2_manifest_reads_exact_official_raw_bytes(tmp_path: Path) -> None:
     manifest = load_manifest(manifest_path)
 
     assert load_artifact(manifest, manifest_path) == raw
+    assert manifest.source_revision == 2
+    assert manifest.source_base_url == "https://example.gov.ru/"
 
 
 def test_v2_manifest_rejects_artifact_path_outside_manifest_directory(tmp_path: Path) -> None:
@@ -173,7 +177,7 @@ def test_manifest_ingestion_is_idempotent_and_stays_review_required(tmp_path: Pa
                 fragment_count = await session.scalar(
                     select(func.count(LegalFragment.id)).where(LegalFragment.version_id == first)
                 )
-                assert fragment_count == 4
+                assert fragment_count == 5
                 source = await session.scalar(
                     select(LegalSource).where(LegalSource.source_key == "government-ru")
                 )
