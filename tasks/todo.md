@@ -1,0 +1,127 @@
+# Dental Legal AI task list
+
+## Task 0.1: Зафиксировать bootstrap-контракт
+
+**Acceptance criteria:**
+- [x] Есть capability map, ADR Legal Core и ADR tenant context.
+- [x] Есть project rules, spec, dependency-ordered plan и риски.
+
+**Verification:**
+- [x] Артефакты согласованы с разделами 0, 4, 19, 25–27 ТЗ.
+
+**Dependencies:** None
+
+**Files:** `AGENTS.md`, `CAPABILITY_MAP.md`, `SPEC-platform-bootstrap.md`, `docs/adr/*`, `tasks/*`
+
+## Task 0.2: Реализовать Legal Core health API
+
+**Acceptance criteria:**
+- [x] `GET /health/live` имеет стабильную typed response schema.
+- [x] `GET /health/ready` проверяет зависимости и сообщает degraded state.
+- [x] Endpoint'ы документируются OpenAPI и не требуют auth.
+
+**Verification:**
+- [x] Focused/full pytest проходят.
+- [x] Ruff и mypy проходят.
+- [x] Runtime HTTP check возвращает ожидаемые коды и payload.
+
+**Dependencies:** Task 0.1
+
+**Estimated scope:** Medium (3–5 files)
+
+## Task 0.3: Добавить локальную инфраструктуру
+
+**Acceptance criteria:**
+- [x] Compose описывает PostgreSQL/pgvector, Redis, MinIO и legal-core.
+- [x] Сервисы имеют healthchecks, persistent volumes и environment placeholders.
+- [x] Секреты не захардкожены; `.env` исключён из Git.
+
+**Verification:**
+- [x] `docker compose config --quiet` проходит.
+- [x] Контейнеры стартуют и readiness становится healthy.
+
+**Dependencies:** Task 0.2
+
+**Estimated scope:** Medium (3–5 files)
+
+## Checkpoint: Bootstrap slice
+
+- [x] Unit/contract tests, lint и typecheck проходят.
+- [x] Compose config и runtime health проверены.
+- [x] Git diff проверен на scope и секреты.
+
+## Task 0.4: Подключить Telegram gateway в безопасном режиме
+
+**Acceptance criteria:**
+- [x] Токен получается только из environment и не попадает в Git/логи.
+- [x] `/start` и `/help` явно сообщают об ограничениях технического режима.
+- [x] Приветствие, аватар, описания и inline-меню оформлены в едином стиле.
+- [x] Свободный текст не обрабатывается до появления auth/Case Core.
+- [x] Gateway запускается без host-портов и от непривилегированного пользователя.
+
+**Verification:**
+- [x] Unit tests, Ruff и mypy проходят.
+- [x] Telegram API `getMe`, регистрация команд и container health проверены.
+
+**Dependencies:** Task 0.3
+
+## Task 0.5: Добавить CI и закрепить Hermes
+
+**Acceptance criteria:**
+- [ ] CI запускает pytest, Ruff, mypy, lock/install и Compose validation.
+- [ ] Hermes подключён по проверенному immutable release/commit, а не по `main`.
+- [ ] Compatibility smoke test доказывает, что Hermes не обходит Legal Core/MCP boundaries.
+
+**Verification:**
+- [ ] CI проходит из чистого checkout.
+- [ ] Upstream reference и rationale записаны в ADR.
+
+**Dependencies:** Task 0.4; human review для выбора Hermes pin
+
+## Following: Task 1.1 — identity/tenant data contract
+
+## Task 1.1: Administrator intake and persistence contract
+
+**Acceptance criteria:**
+- [x] Intake, missing-facts and report contracts are fixed in a versioned specification.
+- [x] Canonical report and legal-corpus lifecycle decisions are recorded in ADRs.
+- [ ] Alembic creates identity, case, report, audit and legal-corpus tables.
+- [ ] Tenant identity is resolved by Legal Core and cannot be supplied in a request body.
+- [ ] Cross-tenant and idempotency contract tests pass.
+
+**Dependencies:** Task 0.4
+
+## Task 1.2: Case Core and blocked intake report
+
+**Acceptance criteria:**
+- [ ] Case/fact/finalisation endpoints implement the stable error envelope.
+- [ ] Critical missing facts deterministically produce the next question.
+- [ ] One canonical JSON creates both the Telegram summary and PDF.
+- [ ] Legal sections remain explicitly unavailable before evidence gates.
+
+**Dependencies:** Task 1.1
+
+## Task 2.1: First verified legal corpus and retrieval
+
+**Acceptance criteria:**
+- [ ] Official raw artifacts and metadata are ingested reproducibly with SHA-256.
+- [ ] Approval is separate from ingestion and audited.
+- [ ] Retrieval exposes only approved versions applicable on `as_of_date`.
+- [ ] The 2026-09-01 Decree 736/659 boundary is covered by regression tests.
+
+**Dependencies:** Task 1.1
+
+## Task 2.2: Telegram administrator workflow
+
+**Acceptance criteria:**
+- [ ] `Создать кейс` is available only to a mapped `CLINIC_ADMIN`.
+- [ ] The bot collects only the minimum pseudonymous intake data in steps.
+- [ ] Restart/cancel/retry do not duplicate cases or facts.
+- [ ] `/whoami` gives the administrator the identifier needed for secure bootstrap.
+
+**Dependencies:** Tasks 1.2 and 2.1
+
+## Evidence gate
+
+Recommendations, legal risk conclusions and patient-response drafts remain disabled until
+approved-only retrieval, applicable-date resolution and claim-to-evidence verification pass.
