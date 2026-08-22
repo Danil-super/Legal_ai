@@ -60,6 +60,13 @@ def _nonempty_token(value: object, fact_key: FactKey) -> None:
         raise ValueError(f"{fact_key.value} requires an uppercase enum token")
 
 
+def _unique_fact_keys(facts: list["FactInput"]) -> list["FactInput"]:
+    keys = [fact.fact_key for fact in facts]
+    if len(keys) != len(set(keys)):
+        raise ValueError("fact keys must be unique")
+    return facts
+
+
 class CreateCaseRequest(ContractModel):
     intake_schema_version: Literal["dental-case-intake.v1"] = Field(alias="intakeSchemaVersion")
     channel: Literal["TELEGRAM"]
@@ -200,6 +207,11 @@ class AddFactsRequest(ContractModel):
     intake_schema_version: Literal["dental-case-intake.v1"] = Field(alias="intakeSchemaVersion")
     facts: list[FactInput] = Field(min_length=1, max_length=20)
 
+    @field_validator("facts")
+    @classmethod
+    def fact_keys_are_unique(cls, facts: list[FactInput]) -> list[FactInput]:
+        return _unique_fact_keys(facts)
+
 
 class IntakeResponse(ContractModel):
     case_id: UUID = Field(alias="caseId")
@@ -235,10 +247,7 @@ class TelegramWorkflowSubmissionRequest(ContractModel):
     @field_validator("facts")
     @classmethod
     def fact_keys_are_unique(cls, facts: list[FactInput]) -> list[FactInput]:
-        keys = [fact.fact_key for fact in facts]
-        if len(keys) != len(set(keys)):
-            raise ValueError("fact keys must be unique")
-        return facts
+        return _unique_fact_keys(facts)
 
 
 class TelegramWorkflowResponse(ContractModel):
