@@ -116,3 +116,11 @@ separate product and security decision.
 ## Open Questions
 
 Критичные для bootstrap вопросы не требуются. Вопросы о Hermes pin, provider, trusted sources, thresholds, retention и pilot quality gate должны быть решены до соответствующих фаз, а не угадываться сейчас.
+
+## Proposed next slice: evidence-gated analysis and updater
+
+`SPEC-evidence-risk-agents-updater.md` is the approval package for phases 3–4. It proposes a
+limited source scope, deterministic versioned risk policy, verifier contract, optional disabled
+Hermes/provider boundary and a legal-updater promotion pipeline. It does not enable a legal
+recommendation, risk conclusion, external draft, source approval, LLM connection or payment
+feature. Implementation begins only after its legal/product/security approval record is complete.

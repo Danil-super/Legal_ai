@@ -157,3 +157,59 @@ approved-only retrieval, applicable-date resolution and claim-to-evidence verifi
 - [ ] Every approved version has a checksum-bound, append-only approval attestation.
 
 **Dependencies:** Task 2.1; explicit human legal review
+
+## Task 3.0: Approve the evidence/risk/agent release packet
+
+**Acceptance criteria:**
+- [ ] A qualified platform-side `LEGAL_EDITOR` approves legal-base v1 scope and every
+  checksum-bound artifact/selection; subscriber and platform owner cannot substitute approval.
+- [ ] Product owner approves covered incidents plus monetary-threshold semantics.
+- [ ] Legal editor approves `risk-policy.v1` triggers and regression scenarios.
+- [ ] Security/product owner approves provider/data processing and an immutable Hermes revision,
+  or explicitly keeps the provider disabled.
+
+**Dependencies:** Task 2.3
+
+**Reference:** `SPEC-evidence-risk-agents-updater.md`
+
+## Task 3.1: Versioned deterministic risk and escalation
+
+**Acceptance criteria:**
+- [ ] Alembic adds immutable risk-policy, case-risk and escalation records with tenant/RLS scope.
+- [ ] Typed facts produce `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` or `UNAVAILABLE` with reason codes,
+  policy version and input snapshot hash.
+- [ ] Missing policy-required facts and absent policy fail closed; CRITICAL blocks external draft.
+- [ ] A policy change makes a new version and cannot rewrite an earlier report.
+
+**Dependencies:** Task 3.0
+
+## Task 3.2: Evidence claims and verifier gate
+
+**Acceptance criteria:**
+- [ ] Every legal/action claim has date-applicable approved evidence, source metadata and a
+  verifier result.
+- [ ] Unsupported, contradictory, inapplicable or incomplete claims block recommendations and
+  patient-response drafts deterministically.
+- [ ] Contract, tenant-negative, expired-version and no-auto-send tests pass.
+
+**Dependencies:** Tasks 2.3, 3.1
+
+## Task 3.3: Pinned, least-privilege agent integration
+
+**Acceptance criteria:**
+- [ ] Hermes is pinned to an approved immutable revision and uses only read-only,
+  server-authorised contracts.
+- [ ] Provider adapter is disabled unless a provider/data-processing decision is approved.
+- [ ] Pseudonymisation, timeout, audit-redaction, authz and bypass-negative tests pass.
+
+**Dependencies:** Tasks 3.0, 3.2
+
+## Task 4.1: Deterministic legal updater and comparison review queue
+
+**Acceptance criteria:**
+- [ ] Versioned source allowlist, immutable fetch, SHA-256 idempotency, parse and structural diff
+  produce `REVIEW_REQUIRED` candidates only.
+- [ ] Automatic promotion is impossible; reviewer attestation and regression are required.
+- [ ] Fetch/parser/source-boundary failures are auditable and fail closed.
+
+**Dependencies:** Tasks 2.3, 3.0
