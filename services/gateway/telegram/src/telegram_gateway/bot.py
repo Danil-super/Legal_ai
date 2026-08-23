@@ -42,6 +42,7 @@ from telegram_gateway.ui import (
     START_MESSAGE,
     TEXT_INPUT_DISABLED_MESSAGE,
     WELCOME_IMAGE,
+    admin_panel_keyboard,
     back_keyboard,
     main_menu_keyboard,
 )
@@ -54,6 +55,7 @@ READY_FILE = Path("/tmp/telegram-gateway-ready")
 ALLOWED_UPDATES = ["message", "callback_query"]
 LEGAL_CORE_CLIENT_KEY = "legal_core_client"
 WIZARD_DATA_KEY = "case_wizard"
+ADMIN_GRANT_ACCESS_KEY = "admin_grant_access"
 LEGAL_CORE_TIMEOUT_SECONDS = 15.0
 
 
@@ -113,8 +115,13 @@ async def _reply(update: Update, text: str) -> None:
         await message.reply_text(text)
 
 
+def _clear_pending_admin_grant(context: ContextTypes.DEFAULT_TYPE | None) -> None:
+    if context is not None and context.user_data is not None:
+        context.user_data.pop(ADMIN_GRANT_ACCESS_KEY, None)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> None:
-    del context
+    _clear_pending_admin_grant(context)
     message = update.effective_message
     if message is not None:
         # Path uploads and inline keyboards follow the official PTB 22.8 APIs.
@@ -132,7 +139,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> Non
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> None:
-    del context
+    _clear_pending_admin_grant(context)
     await _reply(update, HELP_MESSAGE)
 
 
@@ -145,24 +152,38 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> N
     await _reply(update, f"👤 Ваш Telegram ID: {user.id}")
 
 
-async def grant_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> None:
+    _clear_pending_admin_grant(context)
+    message = update.effective_message
+    if message is not None:
+        await message.reply_text(
+            "🛠 ПАНЕЛЬ ВЛАДЕЛЬЦА\n\n"
+            "Выберите действие. Права владельца дополнительно проверяет Legal Core.",
+            reply_markup=admin_panel_keyboard(),
+        )
+
+
+def _target_telegram_id(raw_value: str) -> int | None:
+    if not raw_value.isdigit():
+        return None
+    target_id = int(raw_value)
+    return target_id if 0 < target_id <= 9_223_372_036_854_775_807 else None
+
+
+async def _grant_access_to_target(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    target_id: int,
+) -> None:
     owner_id = _actor_id(update)
-    arguments = context.args
     if owner_id is None:
         await _reply(update, "Не удалось определить владельца.")
-        return
-    if len(arguments) != 1 or not arguments[0].isdigit():
-        await _reply(update, "Использование: /grant_access <Telegram_ID>")
-        return
-    target_id = int(arguments[0])
-    if not 0 < target_id <= 9_223_372_036_854_775_807:
-        await _reply(update, "Telegram ID указан некорректно.")
         return
     try:
         granted = await _legal_core(context).grant_subscription(owner_id, target_id)
     except LegalCoreApiError as exc:
         if exc.code == "OWNER_REQUIRED":
-            await _reply(update, "🔒 Эта команда доступна только владельцу сервиса.")
+            await _reply(update, "🔒 Эта панель доступна только владельцу сервиса.")
         elif exc.code == "TARGET_ADMIN_AMBIGUOUS":
             await _reply(
                 update,
@@ -179,6 +200,41 @@ async def grant_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"✅ Доступ выдан для Telegram ID {target_id}. "
         "Попросите пользователя открыть /start и затем /menu.",
     )
+
+
+async def grant_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    arguments = context.args
+    if len(arguments) != 1:
+        await _reply(update, "Использование: /grant_access <Telegram_ID>")
+        return
+    target_id = _target_telegram_id(arguments[0])
+    if target_id is None:
+        await _reply(update, "Telegram ID указан некорректно.")
+        return
+    await _grant_access_to_target(update, context, target_id)
+
+
+async def prompt_admin_grant_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if await _answer_callback(update) != "admin:grant":
+        return
+    if WIZARD_DATA_KEY in _user_data(context):
+        await _reply(update, "Сначала завершите или отмените заполнение текущего кейса.")
+        return
+    _user_data(context)[ADMIN_GRANT_ACCESS_KEY] = True
+    await _reply(
+        update,
+        "Введите Telegram ID пользователя одним числом. "
+        "Он получит доступ только после серверной проверки ваших прав владельца.",
+    )
+
+
+async def record_admin_grant_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    target_id = _target_telegram_id(_message_text(update))
+    if target_id is None:
+        await _reply(update, "Введите корректный Telegram ID одним положительным числом.")
+        return
+    _user_data(context).pop(ADMIN_GRANT_ACCESS_KEY, None)
+    await _grant_access_to_target(update, context, target_id)
 
 
 def _keyboard(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
@@ -934,12 +990,13 @@ async def exit_to_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def text_input(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> None:
-    del context
+    if context is not None and _user_data(context).get(ADMIN_GRANT_ACCESS_KEY) is True:
+        await record_admin_grant_access(update, context)
+        return
     await _reply(update, TEXT_INPUT_DISABLED_MESSAGE)
 
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> None:
-    del context
     query = update.callback_query
     if query is None:
         return
@@ -953,8 +1010,22 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE | Non
     # Callback queries must be answered, even when no toast is needed.
     # Source: https://docs.python-telegram-bot.org/en/v22.7/examples.inlinekeyboard.html
     await query.answer()
-    keyboard = main_menu_keyboard() if callback_data == "menu" else back_keyboard()
-    await query.edit_message_caption(caption=SCREENS[callback_data], reply_markup=keyboard)
+    if callback_data == "menu":
+        _clear_pending_admin_grant(context)
+        caption = START_MESSAGE
+        keyboard = main_menu_keyboard()
+    elif callback_data == "account:id":
+        actor_id = _actor_id(update)
+        caption = (
+            "👤 ВАШ TELEGRAM ID\n\n"
+            f"{actor_id if actor_id is not None else 'Не удалось определить'}\n\n"
+            "Передайте этот ID владельцу сервиса только для подключения доступа."
+        )
+        keyboard = back_keyboard()
+    else:
+        caption = HELP_MESSAGE if callback_data == "help" else SCREENS[callback_data]
+        keyboard = back_keyboard()
+    await query.edit_message_caption(caption=caption, reply_markup=keyboard)
 
 
 async def on_startup(application: TelegramApplication) -> None:
@@ -1094,7 +1165,7 @@ def build_application(token: str) -> TelegramApplication:
                 CommandHandler(["start", "menu"], exit_to_menu),
                 CallbackQueryHandler(
                     exit_to_menu_callback,
-                    pattern=r"^(menu|features|workflow|privacy|about)$",
+                    pattern=r"^(menu|features|workflow|privacy|about|account:id|help)$",
                 ),
             ],
             allow_reentry=True,
@@ -1106,7 +1177,11 @@ def build_application(token: str) -> TelegramApplication:
     application.add_handler(CommandHandler("menu", menu))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("whoami", whoami))
+    application.add_handler(CommandHandler("admin", admin_panel))
     application.add_handler(CommandHandler("grant_access", grant_access))
+    application.add_handler(
+        CallbackQueryHandler(prompt_admin_grant_access, pattern=r"^admin:grant$")
+    )
     application.add_handler(
         CallbackQueryHandler(
             resume_workflow,

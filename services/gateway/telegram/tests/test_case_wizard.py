@@ -18,6 +18,8 @@ from telegram_gateway.bot import (
     choose_lawyer,
     confirm_case,
     grant_access,
+    prompt_admin_grant_access,
+    record_admin_grant_access,
     record_lawyer_deadline,
     resume_workflow,
     whoami,
@@ -456,6 +458,29 @@ def test_grant_access_does_not_reveal_target_details_to_non_owner() -> None:
 
     assert "только владельцу" in message.text_replies[0].lower()
     assert "7000000002" not in message.text_replies[0]
+
+
+def test_owner_panel_button_collects_id_and_grants_access_without_a_command() -> None:
+    message = FakeMessage()
+    query = FakeQuery("admin:grant")
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+    context = SimpleNamespace(
+        bot_data={LEGAL_CORE_CLIENT_KEY: FakeLegalCore({"role": "CLINIC_ADMIN"})},
+        user_data={},
+    )
+
+    asyncio.run(prompt_admin_grant_access(update, context))
+    message.text = "7000000002"
+    asyncio.run(record_admin_grant_access(update, context))
+
+    assert query.answers == [(None, False)]
+    assert "введите telegram id" in message.text_replies[0].lower()
+    assert "доступ выдан" in message.text_replies[1].lower()
+    assert context.user_data == {}
 
 
 def test_case_start_explains_inactive_subscription_without_leaking_tenant_details() -> None:

@@ -21,6 +21,9 @@ BOT_COMMANDS = [
     BotCommand("start", "Открыть приветствие"),
     BotCommand("menu", "Показать главное меню"),
     BotCommand("help", "Показать справку"),
+    BotCommand("whoami", "Показать Telegram ID"),
+    BotCommand("cancel", "Отменить заполнение кейса"),
+    BotCommand("admin", "Панель владельца"),
 ]
 
 

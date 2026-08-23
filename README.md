@@ -77,10 +77,11 @@ docker compose exec legal-core python -m legal_core.bootstrap_admin
 
 5. Set `PLATFORM_OWNER_TELEGRAM_ID` in `.env` to the service owner's numeric Telegram ID. The
 owner must also have an active entitlement, then can grant access from the bot after a verified
-purchase:
+purchase. Open `/admin`, choose `➕ Выдать доступ` and send the target Telegram ID in the next
+message; no access command needs to be memorized:
 
 ```text
-/grant_access <Telegram_ID>
+/admin → ➕ Выдать доступ → <Telegram_ID>
 ```
 
 The command creates a separate clinic named `Новая стоматология` and a `CLINIC_ADMIN` membership

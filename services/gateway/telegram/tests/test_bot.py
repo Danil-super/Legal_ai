@@ -1,12 +1,15 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from telegram import InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler, CommandHandler
 from telegram_gateway.bot import (
+    ADMIN_GRANT_ACCESS_KEY,
     ALLOWED_UPDATES,
+    admin_panel,
     build_application,
     help_command,
     load_token,
@@ -26,6 +29,7 @@ from telegram_gateway.ui import (
     START_MESSAGE,
     TEXT_INPUT_DISABLED_MESSAGE,
     WELCOME_IMAGE,
+    admin_panel_keyboard,
     main_menu_keyboard,
 )
 
@@ -125,12 +129,13 @@ def test_free_text_is_not_echoed_or_processed_before_case_core() -> None:
     assert sensitive_input not in message.text_replies[0][0]
 
 
-def test_main_menu_has_five_clear_allowlisted_actions() -> None:
+def test_main_menu_exposes_frequent_actions_as_clear_allowlisted_buttons() -> None:
     keyboard = main_menu_keyboard()
     buttons = [button for row in keyboard.inline_keyboard for button in row]
 
-    assert len(buttons) == 5
+    assert len(buttons) == 7
     assert {button.callback_data for button in buttons} == MAIN_MENU_CALLBACKS
+    assert {"case:start", "account:id", "help"} <= MAIN_MENU_CALLBACKS
     assert all(button.text.strip() for button in buttons)
     assert all(
         isinstance(button.callback_data, str) and len(button.callback_data.encode()) <= 64
@@ -146,6 +151,38 @@ def test_known_callback_answers_and_edits_the_welcome_caption() -> None:
     assert query.answers == [(None, False)]
     assert query.edits[0][0] == SCREENS["privacy"]
     assert query.edits[0][1].inline_keyboard[0][0].callback_data == "menu"
+
+
+def test_identity_button_displays_the_current_users_telegram_id() -> None:
+    query = FakeCallbackQuery("account:id")
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=7_000_000_001),
+    )
+
+    asyncio.run(menu_callback(update, None))
+
+    assert query.answers == [(None, False)]
+    assert "7000000001" in query.edits[0][0]
+    assert query.edits[0][1].inline_keyboard[0][0].callback_data == "menu"
+
+
+def test_returning_to_menu_clears_pending_owner_access_input() -> None:
+    query = FakeCallbackQuery("menu")
+    context = SimpleNamespace(user_data={ADMIN_GRANT_ACCESS_KEY: True})
+
+    asyncio.run(menu_callback(FakeUpdate(callback_query=query), context))
+
+    assert context.user_data == {}
+
+
+def test_admin_command_opens_a_separate_owner_workspace() -> None:
+    message = FakeMessage()
+
+    asyncio.run(admin_panel(FakeUpdate(message), None))
+
+    assert "панель владельца" in message.text_replies[0][0].lower()
+    assert message.text_replies[0][1] == admin_panel_keyboard()
 
 
 @pytest.mark.parametrize("data", ["unknown", 42, None])
@@ -174,6 +211,10 @@ def test_application_registers_callback_handler_and_required_update_types() -> N
     assert any(isinstance(handler, CallbackQueryHandler) for handler in handlers)
     assert any(
         isinstance(handler, CommandHandler) and "grant_access" in handler.commands
+        for handler in handlers
+    )
+    assert any(
+        isinstance(handler, CommandHandler) and "admin" in handler.commands
         for handler in handlers
     )
     assert ALLOWED_UPDATES == ["message", "callback_query"]

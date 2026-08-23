@@ -85,6 +85,7 @@ HELP_MESSAGE = (
     "/help — показать эту справку\n\n"
     "/whoami — показать Telegram ID\n"
     "/cancel — остановить заполнение кейса\n\n"
+    "/admin — панель владельца сервиса\n\n"
     "Юридические рекомендации и черновики не формируются без проверенной правовой базы."
 )
 
@@ -93,21 +94,33 @@ TEXT_INPUT_DISABLED_MESSAGE = (
     "Не отправляйте данные пациента или документы. Откройте /menu, чтобы продолжить."
 )
 
-MAIN_MENU_CALLBACKS = {"features", "workflow", "case:start", "privacy", "about"}
+MAIN_MENU_CALLBACKS = {
+    "features",
+    "workflow",
+    "case:start",
+    "privacy",
+    "about",
+    "account:id",
+    "help",
+}
 
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
+            [InlineKeyboardButton("📝 Создать кейс", callback_data="case:start")],
+            [
+                InlineKeyboardButton("👤 Мой Telegram ID", callback_data="account:id"),
+                InlineKeyboardButton("❓ Справка", callback_data="help"),
+            ],
             [
                 InlineKeyboardButton("⚖️ Возможности", callback_data="features"),
                 InlineKeyboardButton("🧭 Как это работает", callback_data="workflow"),
             ],
             [
-                InlineKeyboardButton("📝 Создать кейс", callback_data="case:start"),
                 InlineKeyboardButton("🛡 Конфиденциальность", callback_data="privacy"),
+                InlineKeyboardButton("ℹ️ О проекте", callback_data="about"),
             ],
-            [InlineKeyboardButton("ℹ️ О проекте", callback_data="about")],
         ]
     )
 
@@ -115,4 +128,13 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
 def back_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton("← Главное меню", callback_data="menu")]]
+    )
+
+
+def admin_panel_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("➕ Выдать доступ", callback_data="admin:grant")],
+            [InlineKeyboardButton("← Главное меню", callback_data="menu")],
+        ]
     )
