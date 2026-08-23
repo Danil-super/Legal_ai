@@ -725,6 +725,46 @@ class LegalUpdateReviewItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 
+class LegalUpdateRun(Base):
+    """Append-only updater attempt result; diagnostics are codes and hashes only."""
+
+    __tablename__ = "legal_update_runs"
+    __table_args__ = (
+        UniqueConstraint("idempotency_sha256"),
+        CheckConstraint("char_length(idempotency_sha256) = 64"),
+        CheckConstraint("char_length(result_sha256) = 64"),
+        CheckConstraint(
+            "result_sha256 = legal_update_run_result_sha256("
+            "idempotency_sha256, status, failure_code, review_item_id)"
+        ),
+        CheckConstraint(
+            "(status = 'REVIEW_QUEUED' AND review_item_id IS NOT NULL AND failure_code IS NULL) "
+            "OR (status = 'NO_CHANGE' AND review_item_id IS NULL AND failure_code IS NULL) "
+            "OR (status IN ('FETCH_FAILED', 'PARSE_FAILED', 'VALIDATION_FAILED') "
+            "AND review_item_id IS NULL AND failure_code IS NOT NULL)"
+        ),
+        Index("ix_legal_update_runs_source_time", "source_id", "created_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    source_id: Mapped[UUID] = mapped_column(
+        UUID_PK, ForeignKey("legal_sources.id", ondelete="RESTRICT")
+    )
+    document_id: Mapped[UUID | None] = mapped_column(
+        UUID_PK, ForeignKey("legal_documents.id", ondelete="RESTRICT")
+    )
+    review_item_id: Mapped[UUID | None] = mapped_column(
+        UUID_PK, ForeignKey("legal_update_review_items.id", ondelete="RESTRICT")
+    )
+    idempotency_sha256: Mapped[str] = mapped_column(String(64))
+    result_sha256: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(30))
+    failure_code: Mapped[str | None] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
 class LegalFragment(Base):
     __tablename__ = "legal_fragments"
     __table_args__ = (

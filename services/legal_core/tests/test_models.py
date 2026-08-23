@@ -24,6 +24,7 @@ def test_required_domain_tables_are_declared() -> None:
         "legal_fragments",
         "legal_approval_events",
         "legal_update_review_items",
+        "legal_update_runs",
     }
 
     assert required <= set(Base.metadata.tables)
@@ -46,6 +47,22 @@ def test_legal_update_review_queue_is_checksum_bound_and_global() -> None:
         "candidate_sha256",
         "status",
     } <= set(queue.columns.keys())
+
+
+def test_legal_update_runs_are_global_and_traceable_without_raw_error_text() -> None:
+    runs = Base.metadata.tables["legal_update_runs"]
+
+    assert "clinic_id" not in runs.columns
+    assert {
+        "source_id",
+        "document_id",
+        "review_item_id",
+        "idempotency_sha256",
+        "result_sha256",
+        "status",
+        "failure_code",
+    } <= set(runs.columns.keys())
+    assert "error_text" not in runs.columns
 
 
 def test_every_tenant_owned_table_has_clinic_id() -> None:

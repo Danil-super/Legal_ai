@@ -7,6 +7,7 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from uuid import UUID
 
 from sqlalchemy import select
@@ -14,7 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from legal_core.corpus_loader import CorpusFragment, corpus_fragments_sha256
 from legal_core.legal_diff import StructuralDiff, diff_fragment_selections
-from legal_core.models import LegalSource, LegalUpdateReviewItem, LegalVersion
+from legal_core.models import (
+    LegalDocument,
+    LegalSource,
+    LegalUpdateReviewItem,
+    LegalUpdateRun,
+    LegalVersion,
+)
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -47,6 +54,29 @@ class ReviewQueuePayload:
 @dataclass(frozen=True, slots=True)
 class ReviewQueueReceipt:
     review_item_id: UUID
+    created: bool
+
+
+class UpdateRunStatus(StrEnum):
+    NO_CHANGE = "NO_CHANGE"
+    REVIEW_QUEUED = "REVIEW_QUEUED"
+    FETCH_FAILED = "FETCH_FAILED"
+    PARSE_FAILED = "PARSE_FAILED"
+    VALIDATION_FAILED = "VALIDATION_FAILED"
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateRunPayload:
+    idempotency_sha256: str
+    result_sha256: str
+    status: UpdateRunStatus
+    failure_code: str | None
+    review_item_id: UUID | None
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateRunReceipt:
+    update_run_id: UUID
     created: bool
 
 
@@ -113,6 +143,56 @@ def review_queue_payload(candidate: LegalUpdateCandidate) -> ReviewQueuePayload:
             for change in candidate.structural_diff.changes
         ],
         candidate_sha256=candidate.candidate_sha256,
+    )
+
+
+def update_run_payload(
+    *,
+    status: UpdateRunStatus,
+    idempotency_sha256: str,
+    failure_code: str | None,
+    review_item_id: UUID | None = None,
+) -> UpdateRunPayload:
+    """Create a redacted, deterministic record for one updater attempt."""
+
+    idempotency_sha256 = _validated_sha256(idempotency_sha256, name="idempotency")
+    failure_statuses = {
+        UpdateRunStatus.FETCH_FAILED,
+        UpdateRunStatus.PARSE_FAILED,
+        UpdateRunStatus.VALIDATION_FAILED,
+    }
+    if status in failure_statuses:
+        if review_item_id is not None:
+            raise ValueError("failure status cannot reference a review item")
+        if failure_code is None or re.fullmatch(r"[A-Z0-9_]{1,80}", failure_code) is None:
+            raise ValueError("failure status requires a failure code")
+    elif status is UpdateRunStatus.REVIEW_QUEUED:
+        if review_item_id is None:
+            raise ValueError("review-queued status requires a review item")
+        if failure_code is not None:
+            raise ValueError("review-queued status cannot have a failure code")
+    elif status is UpdateRunStatus.NO_CHANGE:
+        if review_item_id is not None or failure_code is not None:
+            raise ValueError("no-change status cannot have a review item or failure code")
+    else:  # pragma: no cover - StrEnum constrains ordinary callers.
+        raise ValueError("unsupported update run status")
+
+    result_sha256 = hashlib.sha256(
+        "|".join(
+            (
+                idempotency_sha256,
+                status.value,
+                failure_code or "",
+                str(review_item_id) if review_item_id is not None else "",
+            )
+        ).encode()
+    ).hexdigest()
+    return UpdateRunPayload(
+        idempotency_sha256=idempotency_sha256,
+        result_sha256=result_sha256,
+        status=status,
+        failure_code=failure_code,
+        review_item_id=review_item_id,
     )
 
 
@@ -207,3 +287,65 @@ async def queue_review_candidate(
     session.add(item)
     await session.flush()
     return ReviewQueueReceipt(review_item_id=item.id, created=True)
+
+
+async def record_update_run(
+    session: AsyncSession,
+    *,
+    source_id: UUID,
+    document_id: UUID | None,
+    payload: UpdateRunPayload,
+) -> UpdateRunReceipt:
+    """Append a redacted updater outcome; retries with the same digest are idempotent."""
+
+    existing = await session.scalar(
+        select(LegalUpdateRun).where(
+            LegalUpdateRun.idempotency_sha256 == payload.idempotency_sha256
+        )
+    )
+    expected_identity = (
+        source_id,
+        document_id,
+        payload.review_item_id,
+        payload.result_sha256,
+        payload.status.value,
+        payload.failure_code,
+    )
+    if existing is not None:
+        stored_identity = (
+            existing.source_id,
+            existing.document_id,
+            existing.review_item_id,
+            existing.result_sha256,
+            existing.status,
+            existing.failure_code,
+        )
+        if stored_identity != expected_identity:
+            raise ValueError("idempotency checksum conflicts with an existing update run")
+        return UpdateRunReceipt(update_run_id=existing.id, created=False)
+
+    if await session.get(LegalSource, source_id) is None:
+        raise LookupError("legal source not found")
+    if document_id is not None and await session.get(LegalDocument, document_id) is None:
+        raise LookupError("legal document not found")
+    if payload.review_item_id is not None:
+        review_item = await session.get(LegalUpdateReviewItem, payload.review_item_id)
+        if (
+            review_item is None
+            or review_item.source_id != source_id
+            or review_item.document_id != document_id
+        ):
+            raise ValueError("review item must belong to the same source and document")
+
+    run = LegalUpdateRun(
+        source_id=source_id,
+        document_id=document_id,
+        review_item_id=payload.review_item_id,
+        idempotency_sha256=payload.idempotency_sha256,
+        result_sha256=payload.result_sha256,
+        status=payload.status.value,
+        failure_code=payload.failure_code,
+    )
+    session.add(run)
+    await session.flush()
+    return UpdateRunReceipt(update_run_id=run.id, created=True)

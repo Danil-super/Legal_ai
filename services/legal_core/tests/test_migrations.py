@@ -51,6 +51,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
             "legal_fragments",
             "legal_approval_events",
             "legal_update_review_items",
+            "legal_update_runs",
         } <= table_names
 
         workflow_foreign_keys = inspect(engine).get_foreign_keys("telegram_case_workflows")
@@ -81,7 +82,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                     "'legal_sources','legal_documents','legal_versions','legal_fragments',"
                     "'subscription_entitlement_events','risk_policy_versions','risk_policy_events',"
                     "'case_risk_assessments','case_escalations','case_analysis_runs',"
-                    "'case_analysis_claims','legal_update_review_items')"
+                    "'case_analysis_claims','legal_update_review_items','legal_update_runs')"
                 )
             ).scalars()
             legal_guard_triggers = set(
@@ -135,6 +136,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 "case_analysis_runs",
                 "case_analysis_claims",
                 "legal_update_review_items",
+                "legal_update_runs",
             }
             assert legal_guard_triggers == {
                 "legal_approval_events_validate_insert",

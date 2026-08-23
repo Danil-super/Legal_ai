@@ -13,14 +13,18 @@ from legal_core.corpus_loader import (
 from legal_core.database import database_url
 from legal_core.legal_updater import (
     LegalUpdateCandidate,
+    UpdateRunStatus,
     build_review_candidate,
     queue_review_candidate,
+    record_update_run,
     review_queue_payload,
+    update_run_payload,
 )
 from legal_core.models import (
     LegalDocument,
     LegalSource,
     LegalUpdateReviewItem,
+    LegalUpdateRun,
     LegalVersion,
     User,
 )
@@ -210,6 +214,95 @@ def test_database_rejects_a_review_item_from_a_draft_source() -> None:
                     )
                 )
                 with pytest.raises(DBAPIError, match="source must be approved"):
+                    await session.flush()
+                await session.rollback()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_failed_update_runs_are_idempotent_and_immutable() -> None:
+    async def scenario() -> None:
+        engine = create_async_engine(database_url())
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        suffix = uuid4().hex
+        try:
+            async with factory() as session:
+                source = LegalSource(
+                    source_key=f"failed-run-source-{suffix}",
+                    revision=1,
+                    display_name="Synthetic failed-run source",
+                    base_url="https://example.gov.ru",
+                    allowed_hosts=["example.gov.ru"],
+                    trust_level="PRIMARY",
+                    status="DRAFT",
+                )
+                session.add(source)
+                await session.flush()
+                payload = update_run_payload(
+                    status=UpdateRunStatus.FETCH_FAILED,
+                    idempotency_sha256="c" * 64,
+                    failure_code="HTTPS_TIMEOUT",
+                )
+                first = await record_update_run(
+                    session,
+                    source_id=source.id,
+                    document_id=None,
+                    payload=payload,
+                )
+                replay = await record_update_run(
+                    session,
+                    source_id=source.id,
+                    document_id=None,
+                    payload=payload,
+                )
+                assert first.created is True
+                assert replay == first.__class__(update_run_id=first.update_run_id, created=False)
+
+                stored = await session.get(LegalUpdateRun, first.update_run_id)
+                assert stored is not None
+                assert stored.failure_code == "HTTPS_TIMEOUT"
+                stored.failure_code = "TAMPERED"
+                with pytest.raises(DBAPIError, match="immutable"):
+                    await session.flush()
+                await session.rollback()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_database_rejects_a_tampered_update_run_result_digest() -> None:
+    async def scenario() -> None:
+        engine = create_async_engine(database_url())
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        suffix = uuid4().hex
+        try:
+            async with factory() as session:
+                source = LegalSource(
+                    source_key=f"tampered-run-source-{suffix}",
+                    revision=1,
+                    display_name="Synthetic tampered-run source",
+                    base_url="https://example.gov.ru",
+                    allowed_hosts=["example.gov.ru"],
+                    trust_level="PRIMARY",
+                    status="DRAFT",
+                )
+                session.add(source)
+                await session.flush()
+                session.add(
+                    LegalUpdateRun(
+                        source_id=source.id,
+                        document_id=None,
+                        review_item_id=None,
+                        idempotency_sha256="d" * 64,
+                        result_sha256="0" * 64,
+                        status="FETCH_FAILED",
+                        failure_code="HTTPS_TIMEOUT",
+                    )
+                )
+                with pytest.raises(DBAPIError, match="check constraint"):
                     await session.flush()
                 await session.rollback()
         finally:
