@@ -1,5 +1,5 @@
 from legal_core.corpus_loader import CorpusFragment
-from legal_core.legal_updater import build_review_candidate
+from legal_core.legal_updater import build_review_candidate, review_queue_payload
 
 
 def _fragment(ordinal: int, path: str, text: str) -> CorpusFragment:
@@ -43,3 +43,27 @@ def test_updater_rejects_invalid_artifact_checksums() -> None:
         assert str(error) == "raw SHA-256 must be a lowercase 64-character digest"
     else:  # pragma: no cover - documents mandatory fail-closed behaviour.
         raise AssertionError("invalid raw checksum was accepted")
+
+
+def test_review_queue_payload_keeps_only_structural_hashes() -> None:
+    candidate = build_review_candidate(
+        document_key="paid-medical-services",
+        previous=[_fragment(1, "rule/1", "Прежний синтетический текст нормы.")],
+        proposed=[_fragment(1, "rule/1", "Новый синтетический текст нормы.")],
+        raw_sha256="a" * 64,
+        normalized_sha256="b" * 64,
+    )
+
+    payload = review_queue_payload(candidate)
+
+    assert payload.status == "REVIEW_REQUIRED"
+    assert payload.candidate_sha256 == candidate.candidate_sha256
+    assert payload.structural_diff_json == [
+        {
+            "candidateTextSha256": payload.structural_diff_json[0]["candidateTextSha256"],
+            "kind": "CHANGED",
+            "previousTextSha256": payload.structural_diff_json[0]["previousTextSha256"],
+            "structuralPath": "rule/1",
+        }
+    ]
+    assert "Новый синтетический текст нормы." not in str(payload.structural_diff_json)

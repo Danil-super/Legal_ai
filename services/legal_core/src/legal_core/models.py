@@ -685,6 +685,46 @@ class LegalApprovalEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 
+class LegalUpdateReviewItem(Base):
+    """Append-only, hash-only legal-updater candidate awaiting human review."""
+
+    __tablename__ = "legal_update_review_items"
+    __table_args__ = (
+        UniqueConstraint("candidate_sha256"),
+        CheckConstraint("status = 'REVIEW_REQUIRED'"),
+        CheckConstraint("char_length(raw_sha256) = 64"),
+        CheckConstraint("char_length(normalized_sha256) = 64"),
+        CheckConstraint("char_length(fragments_sha256) = 64"),
+        CheckConstraint("char_length(structural_diff_sha256) = 64"),
+        CheckConstraint("char_length(candidate_sha256) = 64"),
+        Index("ix_legal_update_review_items_queue", "document_id", "created_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    source_id: Mapped[UUID] = mapped_column(
+        UUID_PK, ForeignKey("legal_sources.id", ondelete="RESTRICT")
+    )
+    document_id: Mapped[UUID] = mapped_column(
+        UUID_PK, ForeignKey("legal_documents.id", ondelete="RESTRICT")
+    )
+    previous_legal_version_id: Mapped[UUID | None] = mapped_column(
+        UUID_PK, ForeignKey("legal_versions.id", ondelete="RESTRICT")
+    )
+    candidate_legal_version_id: Mapped[UUID] = mapped_column(
+        UUID_PK, ForeignKey("legal_versions.id", ondelete="RESTRICT")
+    )
+    raw_sha256: Mapped[str] = mapped_column(String(64))
+    normalized_sha256: Mapped[str] = mapped_column(String(64))
+    fragments_sha256: Mapped[str] = mapped_column(String(64))
+    structural_diff_sha256: Mapped[str] = mapped_column(String(64))
+    structural_diff_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    candidate_sha256: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), server_default="REVIEW_REQUIRED")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
 class LegalFragment(Base):
     __tablename__ = "legal_fragments"
     __table_args__ = (
