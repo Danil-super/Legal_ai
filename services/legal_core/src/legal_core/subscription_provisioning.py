@@ -73,56 +73,79 @@ async def provision_entitlement(
 ) -> UUID:
     """Grant or change access without changing a customer's role or storing payment data."""
 
+    async with session_factory() as session, session.begin():
+        return await provision_entitlement_in_session(
+            session,
+            membership_id=membership_id,
+            plan_code=plan_code,
+            status=status,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            performed_by_user_id=performed_by_user_id,
+        )
+
+
+async def provision_entitlement_in_session(
+    session: AsyncSession,
+    *,
+    membership_id: UUID,
+    plan_code: str,
+    status: str,
+    starts_at: datetime,
+    ends_at: datetime | None,
+    performed_by_user_id: UUID | None = None,
+) -> UUID:
+    """Provision inside an existing transaction after the caller has authorized the action."""
+
     normalized_status, normalized_plan = _validate_input(
         status=status, plan_code=plan_code, starts_at=starts_at, ends_at=ends_at
     )
     starts_at = starts_at.astimezone(UTC)
     ends_at = None if ends_at is None else ends_at.astimezone(UTC)
 
-    async with session_factory() as session, session.begin():
-        membership = await _membership_for_provisioning(session, membership_id)
-        entitlement = await session.scalar(
-            select(SubscriptionEntitlement)
-            .where(
-                SubscriptionEntitlement.clinic_id == membership.clinic_id,
-                SubscriptionEntitlement.user_id == membership.user_id,
-            )
-            .with_for_update()
+    membership = await _membership_for_provisioning(session, membership_id)
+    entitlement = await session.scalar(
+        select(SubscriptionEntitlement)
+        .where(
+            SubscriptionEntitlement.clinic_id == membership.clinic_id,
+            SubscriptionEntitlement.user_id == membership.user_id,
         )
-        event_type = "GRANTED"
-        if entitlement is None:
-            entitlement = SubscriptionEntitlement(
-                clinic_id=membership.clinic_id,
-                user_id=membership.user_id,
-                status=normalized_status,
-                plan_code=normalized_plan,
-                starts_at=starts_at,
-                ends_at=ends_at,
-            )
-            session.add(entitlement)
-            await session.flush()
-        else:
-            entitlement.status = normalized_status
-            entitlement.plan_code = normalized_plan
-            entitlement.starts_at = starts_at
-            entitlement.ends_at = ends_at
-            event_type = "UPDATED" if normalized_status == "ACTIVE" else normalized_status
+        .with_for_update()
+    )
+    event_type = "GRANTED"
+    if entitlement is None:
+        entitlement = SubscriptionEntitlement(
+            clinic_id=membership.clinic_id,
+            user_id=membership.user_id,
+            status=normalized_status,
+            plan_code=normalized_plan,
+            starts_at=starts_at,
+            ends_at=ends_at,
+        )
+        session.add(entitlement)
+        await session.flush()
+    else:
+        entitlement.status = normalized_status
+        entitlement.plan_code = normalized_plan
+        entitlement.starts_at = starts_at
+        entitlement.ends_at = ends_at
+        event_type = "UPDATED" if normalized_status == "ACTIVE" else normalized_status
 
-        session.add(
-            SubscriptionEntitlementEvent(
-                clinic_id=membership.clinic_id,
-                entitlement_id=entitlement.id,
-                event_type=event_type,
-                performed_by_user_id=performed_by_user_id,
-                metadata_json={
-                    "planCode": normalized_plan,
-                    "status": normalized_status,
-                    "startsAt": starts_at.isoformat(),
-                    "endsAt": None if ends_at is None else ends_at.isoformat(),
-                },
-            )
+    session.add(
+        SubscriptionEntitlementEvent(
+            clinic_id=membership.clinic_id,
+            entitlement_id=entitlement.id,
+            event_type=event_type,
+            performed_by_user_id=performed_by_user_id,
+            metadata_json={
+                "planCode": normalized_plan,
+                "status": normalized_status,
+                "startsAt": starts_at.isoformat(),
+                "endsAt": None if ends_at is None else ends_at.isoformat(),
+            },
         )
-        return entitlement.id
+    )
+    return entitlement.id
 
 
 def _arguments() -> argparse.Namespace:

@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 from telegram import InlineKeyboardMarkup
-from telegram.ext import CallbackQueryHandler
+from telegram.ext import CallbackQueryHandler, CommandHandler
 from telegram_gateway.bot import (
     ALLOWED_UPDATES,
     build_application,
@@ -172,6 +172,10 @@ def test_application_registers_callback_handler_and_required_update_types() -> N
     handlers: list[Any] = [handler for group in application.handlers.values() for handler in group]
 
     assert any(isinstance(handler, CallbackQueryHandler) for handler in handlers)
+    assert any(
+        isinstance(handler, CommandHandler) and "grant_access" in handler.commands
+        for handler in handlers
+    )
     assert ALLOWED_UPDATES == ["message", "callback_query"]
 
 

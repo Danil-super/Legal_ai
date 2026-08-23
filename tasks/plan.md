@@ -107,9 +107,11 @@ This slice is specified in `SPEC-case-intake-report-legal-corpus.md` and ADR-000
 The service is a SaaS assistant for clinics, not a provider of a customer-facing lawyer.
 Before a clinic administrator can use the bot, Legal Core must resolve an active entitlement for
 that exact user and clinic. The first release contains entitlement persistence, expiry/suspension
-enforcement and internal provisioning only. It intentionally excludes payments, card data,
-provider webhooks, invoices and self-service purchase; those require a separate product and
-security decision.
+enforcement and owner-controlled provisioning through Telegram only. Legal Core checks the
+configured owner ID server-side and the command accepts a target Telegram ID; it does not grant
+legal-editor rights or select among multiple target clinics. The release intentionally excludes
+payments, card data, provider webhooks, invoices and self-service purchase; those require a
+separate product and security decision.
 
 ## Open Questions
 

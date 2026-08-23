@@ -145,6 +145,42 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> N
     await _reply(update, f"👤 Ваш Telegram ID: {user.id}")
 
 
+async def grant_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    owner_id = _actor_id(update)
+    arguments = context.args
+    if owner_id is None:
+        await _reply(update, "Не удалось определить владельца.")
+        return
+    if len(arguments) != 1 or not arguments[0].isdigit():
+        await _reply(update, "Использование: /grant_access <Telegram_ID>")
+        return
+    target_id = int(arguments[0])
+    if not 0 < target_id <= 9_223_372_036_854_775_807:
+        await _reply(update, "Telegram ID указан некорректно.")
+        return
+    try:
+        granted = await _legal_core(context).grant_subscription(owner_id, target_id)
+    except LegalCoreApiError as exc:
+        if exc.code == "OWNER_REQUIRED":
+            await _reply(update, "🔒 Эта команда доступна только владельцу сервиса.")
+        elif exc.code == "TARGET_ADMIN_AMBIGUOUS":
+            await _reply(
+                update,
+                "⚠️ Для этого ID уже задано несколько клиник. Обратитесь в поддержку.",
+            )
+        else:
+            await _reply(update, "⚠️ Не удалось выдать доступ. Попробуйте позже.")
+        return
+    if granted.get("telegramUserId") != target_id or granted.get("status") != "ACTIVE":
+        await _reply(update, "⚠️ Legal Core вернул некорректный ответ. Попробуйте позже.")
+        return
+    await _reply(
+        update,
+        f"✅ Доступ выдан для Telegram ID {target_id}. "
+        "Попросите пользователя открыть /start и затем /menu.",
+    )
+
+
 def _keyboard(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton(label, callback_data=data) for label, data in row] for row in rows]
@@ -1070,6 +1106,7 @@ def build_application(token: str) -> TelegramApplication:
     application.add_handler(CommandHandler("menu", menu))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("whoami", whoami))
+    application.add_handler(CommandHandler("grant_access", grant_access))
     application.add_handler(
         CallbackQueryHandler(
             resume_workflow,

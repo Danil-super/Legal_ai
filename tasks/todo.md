@@ -132,10 +132,14 @@
   created by an Alembic migration.
 - [x] Internal provisioning cannot change a subscriber into `LEGAL_EDITOR`.
 - [x] Payment data, acquirer credentials and payment webhooks are not stored or introduced.
+- [x] The configured platform owner can grant `MVP_MANUAL` access by Telegram ID through the bot;
+  the server checks ownership, creates an isolated first clinic when required and keeps the action
+  idempotent.
 
 **Verification:**
 - [x] PostgreSQL API tests cover active, missing, suspended and expired access plus tenant scope.
 - [x] Telegram wizard explains inactive access without exposing internal subscription details.
+- [x] API and bot tests reject non-owner grants and validate owner grant/replay behaviour.
 
 **Dependencies:** Task 1.1
 

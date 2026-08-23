@@ -75,8 +75,22 @@ To connect the first clinic administrator securely:
 docker compose exec legal-core python -m legal_core.bootstrap_admin
 ```
 
-5. After the purchase has been verified by the service operator, grant access to that exact
-administrator and clinic. This command stores no payment data and never changes the user's role:
+5. Set `PLATFORM_OWNER_TELEGRAM_ID` in `.env` to the service owner's numeric Telegram ID. The
+owner must also have an active entitlement, then can grant access from the bot after a verified
+purchase:
+
+```text
+/grant_access <Telegram_ID>
+```
+
+The command creates a separate clinic named `Новая стоматология` and a `CLINIC_ADMIN` membership
+for an unknown ID, then grants the active `MVP_MANUAL` entitlement. If that user already has one
+active administrator clinic, their entitlement for that clinic is renewed instead. It never grants
+`LEGAL_EDITOR`. A user with several active administrator clinics requires support resolution to
+avoid choosing a tenant implicitly.
+
+The internal command remains available for suspension, cancellation and explicit plan or expiry
+changes. It stores no payment data and never changes the user's role:
 
 ```bash
 docker compose exec legal-core python -m legal_core.subscription_provisioning \
@@ -85,7 +99,7 @@ docker compose exec legal-core python -m legal_core.subscription_provisioning \
   --starts-at 2026-08-22T12:00:00+00:00
 ```
 
-6. Open `/menu` and choose `📝 Создать кейс`.
+6. The new administrator opens `/start`, then `/menu` and chooses `📝 Создать кейс`.
 
 The bootstrap is idempotent and does not register unknown Telegram users automatically. A mapped
 administrator without an active, current subscription cannot open cases or use legal retrieval;

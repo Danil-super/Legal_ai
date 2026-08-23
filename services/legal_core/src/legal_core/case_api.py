@@ -2,9 +2,10 @@
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, Response, status
@@ -21,6 +22,8 @@ from legal_core.api_contracts import (
     CreateReportRequest,
     FinalizeRequest,
     IntakeResponse,
+    PlatformSubscriptionGrantRequest,
+    PlatformSubscriptionGrantResponse,
     ReportResponse,
     TelegramWorkflowResponse,
     TelegramWorkflowSubmissionRequest,
@@ -32,6 +35,7 @@ from legal_core.models import (
     Case,
     CaseFact,
     CaseReport,
+    Clinic,
     ClinicUser,
     IdempotencyRecord,
     SubscriptionEntitlement,
@@ -39,9 +43,12 @@ from legal_core.models import (
     User,
 )
 from legal_core.reports import build_intake_report, render_report_pdf
+from legal_core.subscription_provisioning import provision_entitlement_in_session
 
 TelegramUserId = Annotated[int, Header(alias="X-Telegram-User-Id", gt=0)]
 IdempotencyKey = Annotated[UUID, Header(alias="Idempotency-Key")]
+MANUAL_SUBSCRIPTION_PLAN: Literal["MVP_MANUAL"] = "MVP_MANUAL"
+NEW_CLINIC_NAME = "Новая стоматология"
 
 
 class ApiError(Exception):
@@ -131,6 +138,25 @@ async def resolve_actor(session: AsyncSession, telegram_user_id: int) -> ActorCo
         clinic_id=clinic_id,
         role=role,
     )
+
+
+def _configured_platform_owner_telegram_id() -> int:
+    raw_value = os.getenv("PLATFORM_OWNER_TELEGRAM_ID", "").strip()
+    try:
+        owner_id = int(raw_value)
+    except ValueError as exc:
+        raise ApiError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="OWNER_CONFIGURATION_INVALID",
+            message="Platform owner access is not configured",
+        ) from exc
+    if owner_id <= 0:
+        raise ApiError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="OWNER_CONFIGURATION_INVALID",
+            message="Platform owner access is not configured",
+        )
+    return owner_id
 
 
 async def _idempotency_replay(
@@ -329,6 +355,132 @@ def create_case_router(
     ) -> ActorResponse:
         await resolve_actor(session, telegram_user_id)
         return ActorResponse(role="CLINIC_ADMIN")
+
+    @router.post(
+        "/platform/subscription-grants",
+        response_model=PlatformSubscriptionGrantResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def grant_platform_subscription(
+        payload: PlatformSubscriptionGrantRequest,
+        response: Response,
+        telegram_user_id: TelegramUserId,
+        idempotency_key: IdempotencyKey,
+        session: Session,
+    ) -> PlatformSubscriptionGrantResponse:
+        actor = await resolve_actor(session, telegram_user_id)
+        if telegram_user_id != _configured_platform_owner_telegram_id():
+            raise ApiError(
+                status_code=status.HTTP_403_FORBIDDEN,
+                code="OWNER_REQUIRED",
+                message="Platform owner access is required",
+            )
+
+        request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
+        replay = await _idempotency_replay(
+            session,
+            actor=actor,
+            scope="platform:subscription-grants",
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replay is not None:
+            response.status_code = status.HTTP_200_OK
+            return PlatformSubscriptionGrantResponse.model_validate(replay)
+
+        idempotency = _new_idempotency_record(
+            actor=actor,
+            scope="platform:subscription-grants",
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        session.add(idempotency)
+        await session.flush()
+
+        # Idempotency keys scope a request; this lock also serializes two distinct owner
+        # requests for the same target before a first user/membership is inserted.
+        await session.execute(select(func.pg_advisory_xact_lock(payload.telegram_user_id)))
+        target_user = await session.scalar(
+            select(User)
+            .where(User.telegram_user_id == payload.telegram_user_id)
+            .with_for_update()
+        )
+        if target_user is None:
+            target_user = User(telegram_user_id=payload.telegram_user_id)
+            session.add(target_user)
+            await session.flush()
+        elif target_user.status != "ACTIVE":
+            raise ApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="TARGET_USER_INACTIVE",
+                message="Target Telegram user is inactive",
+            )
+
+        memberships = list(
+            (
+                await session.scalars(
+                    select(ClinicUser)
+                    .where(
+                        ClinicUser.user_id == target_user.id,
+                        ClinicUser.status == "ACTIVE",
+                        ClinicUser.role == "CLINIC_ADMIN",
+                    )
+                    .with_for_update()
+                )
+            ).all()
+        )
+        if len(memberships) > 1:
+            raise ApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="TARGET_ADMIN_AMBIGUOUS",
+                message="Target Telegram user has multiple active clinic administrator memberships",
+            )
+        if memberships:
+            membership = memberships[0]
+            clinic_name = await session.scalar(
+                select(Clinic.name).where(Clinic.id == membership.clinic_id)
+            )
+            if clinic_name is None:
+                raise RuntimeError("active clinic administrator membership has no clinic")
+        else:
+            clinic = Clinic(name=NEW_CLINIC_NAME)
+            session.add(clinic)
+            await session.flush()
+            membership = ClinicUser(
+                clinic_id=clinic.id,
+                user_id=target_user.id,
+                role="CLINIC_ADMIN",
+            )
+            session.add(membership)
+            await session.flush()
+            clinic_name = clinic.name
+
+        entitlement_id = await provision_entitlement_in_session(
+            session,
+            membership_id=membership.id,
+            plan_code=MANUAL_SUBSCRIPTION_PLAN,
+            status="ACTIVE",
+            starts_at=datetime.now(UTC),
+            ends_at=None,
+            performed_by_user_id=actor.user_id,
+        )
+        await session.execute(
+            select(func.set_config("app.current_clinic_id", str(actor.clinic_id), True))
+        )
+        result = PlatformSubscriptionGrantResponse(
+            telegramUserId=payload.telegram_user_id,
+            clinicName=clinic_name,
+            planCode=MANUAL_SUBSCRIPTION_PLAN,
+            status="ACTIVE",
+        )
+        _finish_idempotency(
+            idempotency,
+            resource_type="SUBSCRIPTION_ENTITLEMENT",
+            resource_id=entitlement_id,
+            response_json=result.model_dump(mode="json", by_alias=True),
+        )
+        await session.commit()
+        return result
 
     @router.post("/cases", response_model=CaseResponse, status_code=status.HTTP_201_CREATED)
     async def create_case(

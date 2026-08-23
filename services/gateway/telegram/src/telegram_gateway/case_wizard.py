@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, TypeAlias
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx2
 
@@ -353,6 +353,17 @@ class LegalCoreClient:
             "GET",
             "/v1/actor",
             telegram_user_id=telegram_user_id,
+        )
+
+    async def grant_subscription(
+        self, telegram_user_id: int, target_telegram_user_id: int
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "POST",
+            "/v1/platform/subscription-grants",
+            telegram_user_id=telegram_user_id,
+            idempotency_key=uuid4(),
+            payload={"telegramUserId": target_telegram_user_id},
         )
 
     async def submit_workflow(

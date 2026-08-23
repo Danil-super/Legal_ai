@@ -66,6 +66,7 @@ services:
       MINIO_PORT: 9000
       BOOTSTRAP_TELEGRAM_ADMIN_ID: ${BOOTSTRAP_TELEGRAM_ADMIN_ID:-}
       BOOTSTRAP_CLINIC_NAME: ${BOOTSTRAP_CLINIC_NAME:-Моя стоматология}
+      PLATFORM_OWNER_TELEGRAM_ID: ${PLATFORM_OWNER_TELEGRAM_ID:-}
     depends_on:
       postgres:
         condition: service_healthy

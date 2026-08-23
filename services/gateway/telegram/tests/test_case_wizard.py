@@ -17,6 +17,7 @@ from telegram_gateway.bot import (
     case_start,
     choose_lawyer,
     confirm_case,
+    grant_access,
     record_lawyer_deadline,
     resume_workflow,
     whoami,
@@ -68,6 +69,19 @@ class FakeLegalCore:
     async def create_case(self, telegram_user_id: int, idempotency_key: UUID) -> dict[str, Any]:
         del telegram_user_id, idempotency_key
         raise AssertionError("case must not be created before confirmation")
+
+    async def grant_subscription(
+        self, telegram_user_id: int, target_telegram_user_id: int
+    ) -> dict[str, Any]:
+        del telegram_user_id
+        if isinstance(self.response, Exception):
+            raise self.response
+        return {
+            "telegramUserId": target_telegram_user_id,
+            "clinicName": "Новая стоматология",
+            "planCode": "MVP_MANUAL",
+            "status": "ACTIVE",
+        }
 
 
 class FakeReportPipeline:
@@ -404,6 +418,44 @@ def test_case_start_handles_unknown_administrator_without_leaking_details() -> N
     assert "не подключён" in message.text_replies[0].lower()
     assert "clinic" not in message.text_replies[0].lower()
     assert context.user_data == {}
+
+
+def test_grant_access_accepts_only_one_numeric_target_id() -> None:
+    message = FakeMessage()
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+    context = SimpleNamespace(
+        bot_data={LEGAL_CORE_CLIENT_KEY: FakeLegalCore({"role": "CLINIC_ADMIN"})},
+        args=["7000000002"],
+    )
+
+    asyncio.run(grant_access(update, context))
+
+    assert "7000000002" in message.text_replies[0]
+    assert "доступ" in message.text_replies[0].lower()
+
+
+def test_grant_access_does_not_reveal_target_details_to_non_owner() -> None:
+    message = FakeMessage()
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+    context = SimpleNamespace(
+        bot_data={
+            LEGAL_CORE_CLIENT_KEY: FakeLegalCore(
+                LegalCoreApiError(403, "OWNER_REQUIRED", "owner is required")
+            )
+        },
+        args=["7000000002"],
+    )
+
+    asyncio.run(grant_access(update, context))
+
+    assert "только владельцу" in message.text_replies[0].lower()
+    assert "7000000002" not in message.text_replies[0]
 
 
 def test_case_start_explains_inactive_subscription_without_leaking_tenant_details() -> None:

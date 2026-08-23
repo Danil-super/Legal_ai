@@ -220,6 +220,96 @@ def test_actor_probe_authorizes_only_mapped_clinic_admin() -> None:
     assert denied.json()["error"]["code"] == "ACTOR_NOT_AUTHORIZED"
 
 
+def test_platform_owner_can_grant_access_by_telegram_id_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = 6_200_000_001 + uuid4().int % 100_000_000
+    non_owner = 6_300_000_001 + uuid4().int % 100_000_000
+    target = 6_400_000_001 + uuid4().int % 100_000_000
+    seed_admin(owner)
+    seed_admin(non_owner)
+    monkeypatch.setenv("PLATFORM_OWNER_TELEGRAM_ID", str(owner))
+    idempotency_key = uuid4()
+
+    with application_client() as client:
+        denied = client.post(
+            "/v1/platform/subscription-grants",
+            headers=actor_headers(non_owner, uuid4()),
+            json={"telegramUserId": target},
+        )
+        granted = client.post(
+            "/v1/platform/subscription-grants",
+            headers=actor_headers(owner, idempotency_key),
+            json={"telegramUserId": target},
+        )
+        replayed = client.post(
+            "/v1/platform/subscription-grants",
+            headers=actor_headers(owner, idempotency_key),
+            json={"telegramUserId": target},
+        )
+        target_actor = client.get("/v1/actor", headers=actor_headers(target))
+
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "OWNER_REQUIRED"
+    assert granted.status_code == 201
+    assert granted.json() == {
+        "telegramUserId": target,
+        "clinicName": "Новая стоматология",
+        "planCode": "MVP_MANUAL",
+        "status": "ACTIVE",
+    }
+    assert replayed.status_code == 200
+    assert replayed.json() == granted.json()
+    assert target_actor.status_code == 200
+    assert target_actor.json() == {"role": "CLINIC_ADMIN"}
+
+
+def test_platform_owner_updates_the_target_single_existing_clinic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = 6_500_000_001 + uuid4().int % 100_000_000
+    target = 6_600_000_001 + uuid4().int % 100_000_000
+    seed_admin(owner)
+    target_clinic_id, _ = seed_admin(target)
+    monkeypatch.setenv("PLATFORM_OWNER_TELEGRAM_ID", str(owner))
+
+    with application_client() as client:
+        granted = client.post(
+            "/v1/platform/subscription-grants",
+            headers=actor_headers(owner, uuid4()),
+            json={"telegramUserId": target},
+        )
+
+    engine = create_engine(database_url().set(drivername="postgresql+psycopg"))
+    try:
+        with engine.connect() as connection:
+            memberships = connection.scalar(
+                text(
+                    "SELECT count(*) FROM clinic_users cu "
+                    "JOIN users u ON u.id = cu.user_id "
+                    "WHERE u.telegram_user_id = :telegram_user_id "
+                    "AND cu.status = 'ACTIVE' AND cu.role = 'CLINIC_ADMIN'"
+                ),
+                {"telegram_user_id": target},
+            )
+            entitlement = connection.execute(
+                text(
+                    "SELECT se.clinic_id, se.plan_code, se.status "
+                    "FROM subscription_entitlements se "
+                    "JOIN users u ON u.id = se.user_id "
+                    "WHERE u.telegram_user_id = :telegram_user_id"
+                ),
+                {"telegram_user_id": target},
+            ).one()
+    finally:
+        engine.dispose()
+
+    assert granted.status_code == 201
+    assert granted.json()["clinicName"] == "Синтетическая тестовая клиника"
+    assert memberships == 1
+    assert entitlement == (target_clinic_id, "MVP_MANUAL", "ACTIVE")
+
+
 @pytest.mark.parametrize(
     ("entitlement_status", "entitlement_is_expired"),
     [

@@ -85,6 +85,17 @@ class ActorResponse(ContractModel):
     role: Literal["CLINIC_ADMIN"]
 
 
+class PlatformSubscriptionGrantRequest(ContractModel):
+    telegram_user_id: int = Field(alias="telegramUserId", gt=0, le=9_223_372_036_854_775_807)
+
+
+class PlatformSubscriptionGrantResponse(ContractModel):
+    telegram_user_id: int = Field(alias="telegramUserId")
+    clinic_name: str = Field(alias="clinicName")
+    plan_code: Literal["MVP_MANUAL"] = Field(alias="planCode")
+    status: Literal["ACTIVE"]
+
+
 class LegalFragmentResponse(ContractModel):
     fragment_id: UUID = Field(alias="fragmentId")
     version_id: UUID = Field(alias="versionId")

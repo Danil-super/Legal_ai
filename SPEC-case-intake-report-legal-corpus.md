@@ -14,9 +14,13 @@ Dental Legal AI TZ v0.1 without enabling production use with real patient data.
   entitlement. A clinic membership alone does not grant service access. Subscription state is
   enforced by Legal Core for every protected Case Core and legal-retrieval request.
 - The initial implementation deliberately contains no payment credentials, card data or payment
-  provider integration. After a verified purchase, a platform operator grants or changes the
-  entitlement through the internal provisioning path. Selecting an acquirer, webhook contract,
-  refund policy or self-service billing is a separate approved capability.
+  provider integration. After a verified purchase, the configured platform owner may use
+  `/grant_access <Telegram_ID>` in the bot. Legal Core verifies the owner ID server-side, creates
+  an isolated clinic membership for a previously unknown ID, and grants the `MVP_MANUAL`
+  entitlement. If the target already has exactly one active administrator membership, that
+  entitlement is updated; several memberships are rejected rather than choosing a tenant.
+  Selecting an acquirer, webhook contract, refund policy or self-service billing is a separate
+  approved capability.
 - `LEGAL_EDITOR` is an internal platform role for the legal-corpus release process. A subscriber
   can never obtain it through clinic onboarding or a paid plan.
 - The intake asks for an internal pseudonymous patient reference only; names, phone numbers,
@@ -73,12 +77,16 @@ POST /v1/cases/{case_id}/reports
 GET  /v1/reports/{report_id}
 GET  /v1/reports/{report_id}/pdf
 GET  /v1/legal/fragments?query=...&as_of_date=...
+POST /v1/platform/subscription-grants
 ```
 
 The gateway sends only the Telegram user identity. Legal Core obtains tenant and role from the
 database. Unknown and non-admin users receive `403` without revealing whether a case exists.
 Mapped administrators without an active entitlement receive `403` with the stable
 `SUBSCRIPTION_INACTIVE` code; the gateway displays only a neutral subscription-support message.
+`POST /v1/platform/subscription-grants` additionally requires an `Idempotency-Key`, an active
+owner entitlement and a Telegram ID equal to the server-side `PLATFORM_OWNER_TELEGRAM_ID`; it is
+not a public self-service endpoint.
 
 Errors use one envelope:
 
@@ -169,3 +177,5 @@ evidence verification must all pass first.
 - A mapped administrator with no active entitlement, a suspended entitlement or an expired
   entitlement cannot call any protected Legal Core endpoint or begin a Telegram case.
 - A clinic administrator can never be made a `LEGAL_EDITOR` by subscription provisioning.
+- Only the configured platform owner can grant access by Telegram ID; the API denies every other
+  mapped subscriber and idempotent retries do not create an additional clinic or entitlement.
