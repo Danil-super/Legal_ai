@@ -37,6 +37,8 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
             "risk_policy_events",
             "case_risk_assessments",
             "case_escalations",
+            "case_analysis_runs",
+            "case_analysis_claims",
             "cases",
             "case_facts",
             "case_reports",
@@ -65,7 +67,8 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                     "WHERE relrowsecurity AND relname IN "
                     "('cases','case_facts','case_reports','audit_events','idempotency_records',"
                     "'telegram_case_workflows','subscription_entitlements',"
-                    "'subscription_entitlement_events','case_risk_assessments','case_escalations')"
+                    "'subscription_entitlement_events','case_risk_assessments','case_escalations',"
+                    "'case_analysis_runs','case_analysis_claims')"
                 )
             ).scalars()
             triggers = connection.execute(
@@ -76,7 +79,8 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                     "('case_facts','case_reports','telegram_case_workflows','legal_approval_events',"
                     "'legal_sources','legal_documents','legal_versions','legal_fragments',"
                     "'subscription_entitlement_events','risk_policy_versions','risk_policy_events',"
-                    "'case_risk_assessments','case_escalations')"
+                    "'case_risk_assessments','case_escalations','case_analysis_runs',"
+                    "'case_analysis_claims')"
                 )
             ).scalars()
             legal_guard_triggers = set(
@@ -110,6 +114,8 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 "subscription_entitlement_events",
                 "case_risk_assessments",
                 "case_escalations",
+                "case_analysis_runs",
+                "case_analysis_claims",
             }
             assert set(triggers) == {
                 "case_facts",
@@ -125,6 +131,8 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 "risk_policy_events",
                 "case_risk_assessments",
                 "case_escalations",
+                "case_analysis_runs",
+                "case_analysis_claims",
             }
             assert legal_guard_triggers == {
                 "legal_approval_events_validate_insert",

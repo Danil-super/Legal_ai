@@ -366,6 +366,80 @@ class CaseEscalation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 
+class CaseAnalysisRun(Base):
+    """Immutable evidence/verifier outcome for one frozen case analysis attempt."""
+
+    __tablename__ = "case_analysis_runs"
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "id"),
+        ForeignKeyConstraint(
+            ["clinic_id", "case_id"], ["cases.clinic_id", "cases.id"], ondelete="RESTRICT"
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "created_by_membership_id"],
+            ["clinic_users.clinic_id", "clinic_users.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "case_risk_assessment_id"],
+            ["case_risk_assessments.clinic_id", "case_risk_assessments.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("verifier_status IN ('PASSED', 'BLOCKED')"),
+        CheckConstraint("char_length(fact_snapshot_sha256) = 64"),
+        CheckConstraint("char_length(evidence_trace_sha256) = 64"),
+        Index("ix_case_analysis_runs_tenant_case", "clinic_id", "case_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    case_id: Mapped[UUID] = mapped_column(UUID_PK)
+    case_risk_assessment_id: Mapped[UUID | None] = mapped_column(UUID_PK)
+    created_by_membership_id: Mapped[UUID] = mapped_column(UUID_PK)
+    as_of_date: Mapped[date] = mapped_column(Date)
+    fact_snapshot_sha256: Mapped[str] = mapped_column(String(64))
+    evidence_trace_sha256: Mapped[str] = mapped_column(String(64))
+    verifier_status: Mapped[str] = mapped_column(String(20))
+    block_reason_codes_json: Mapped[list[str]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
+class CaseAnalysisClaim(Base):
+    """Hash-only claim evidence trail; raw generated text stays out of audit tables."""
+
+    __tablename__ = "case_analysis_claims"
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "analysis_run_id", "claim_id"),
+        ForeignKeyConstraint(
+            ["clinic_id", "analysis_run_id"],
+            ["case_analysis_runs.clinic_id", "case_analysis_runs.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("claim_kind IN ('LEGAL', 'ACTION')"),
+        CheckConstraint(
+            "verification_result IN "
+            "('VERIFIED', 'UNSUPPORTED', 'CONTRADICTED', 'NOT_APPLICABLE', 'INSUFFICIENT_FACTS')"
+        ),
+        CheckConstraint("char_length(claim_sha256) = 64"),
+        Index("ix_case_analysis_claims_tenant_run", "clinic_id", "analysis_run_id", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    analysis_run_id: Mapped[UUID] = mapped_column(UUID_PK)
+    claim_id: Mapped[str] = mapped_column(String(80))
+    claim_kind: Mapped[str] = mapped_column(String(20))
+    claim_sha256: Mapped[str] = mapped_column(String(64))
+    verification_result: Mapped[str] = mapped_column(String(30))
+    reason_code: Mapped[str | None] = mapped_column(String(80))
+    evidence_fragment_ids_json: Mapped[list[str]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     __table_args__ = (
