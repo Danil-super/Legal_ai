@@ -406,6 +406,31 @@ def test_case_start_handles_unknown_administrator_without_leaking_details() -> N
     assert context.user_data == {}
 
 
+def test_case_start_explains_inactive_subscription_without_leaking_tenant_details() -> None:
+    message = FakeMessage()
+    query = FakeQuery("case:start")
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+    context = SimpleNamespace(
+        bot_data={
+            LEGAL_CORE_CLIENT_KEY: FakeLegalCore(
+                LegalCoreApiError(403, "SUBSCRIPTION_INACTIVE", "inactive")
+            )
+        },
+        user_data={},
+    )
+
+    result = asyncio.run(case_start(update, context))
+
+    assert result == ConversationHandler.END
+    assert "подписк" in message.text_replies[0].lower()
+    assert "clinic" not in message.text_replies[0].lower()
+    assert context.user_data == {}
+
+
 def test_case_start_checks_access_without_creating_case_and_opens_incident_question() -> None:
     message = FakeMessage()
     query = FakeQuery("case:start")

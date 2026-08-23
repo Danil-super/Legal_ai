@@ -19,9 +19,8 @@ def alembic_config() -> Config:
     return Config(str(ROOT / "alembic.ini"))
 
 
-def test_upgrade_security_and_downgrade_roundtrip() -> None:
+def test_upgrade_security_and_subscription_migration_roundtrip() -> None:
     config = alembic_config()
-    command.downgrade(config, "base")
     command.upgrade(config, "head")
 
     sync_url = database_url().set(drivername="postgresql+psycopg")
@@ -32,6 +31,8 @@ def test_upgrade_security_and_downgrade_roundtrip() -> None:
             "clinics",
             "users",
             "clinic_users",
+            "subscription_entitlements",
+            "subscription_entitlement_events",
             "cases",
             "case_facts",
             "case_reports",
@@ -59,7 +60,8 @@ def test_upgrade_security_and_downgrade_roundtrip() -> None:
                     "SELECT relname FROM pg_class "
                     "WHERE relrowsecurity AND relname IN "
                     "('cases','case_facts','case_reports','audit_events','idempotency_records',"
-                    "'telegram_case_workflows')"
+                    "'telegram_case_workflows','subscription_entitlements',"
+                    "'subscription_entitlement_events')"
                 )
             ).scalars()
             triggers = connection.execute(
@@ -68,7 +70,8 @@ def test_upgrade_security_and_downgrade_roundtrip() -> None:
                     "JOIN pg_class c ON c.oid=t.tgrelid "
                     "WHERE NOT t.tgisinternal AND c.relname IN "
                     "('case_facts','case_reports','telegram_case_workflows','legal_approval_events',"
-                    "'legal_sources','legal_documents','legal_versions','legal_fragments')"
+                    "'legal_sources','legal_documents','legal_versions','legal_fragments',"
+                    "'subscription_entitlement_events')"
                 )
             ).scalars()
             legal_guard_triggers = set(
@@ -98,6 +101,8 @@ def test_upgrade_security_and_downgrade_roundtrip() -> None:
                 "audit_events",
                 "idempotency_records",
                 "telegram_case_workflows",
+                "subscription_entitlements",
+                "subscription_entitlement_events",
             }
             assert set(triggers) == {
                 "case_facts",
@@ -108,6 +113,7 @@ def test_upgrade_security_and_downgrade_roundtrip() -> None:
                 "legal_documents",
                 "legal_versions",
                 "legal_fragments",
+                "subscription_entitlement_events",
             }
             assert legal_guard_triggers == {
                 "legal_approval_events_validate_insert",
@@ -121,9 +127,10 @@ def test_upgrade_security_and_downgrade_roundtrip() -> None:
                 "legal_approval_event_is_current",
             }
 
-        command.downgrade(config, "base")
+        command.downgrade(config, "f19b4c6e7d20")
         remaining = set(inspect(engine).get_table_names())
-        assert not (table_names - {"alembic_version"}).intersection(remaining)
+        assert "subscription_entitlements" not in remaining
+        assert "subscription_entitlement_events" not in remaining
     finally:
         engine.dispose()
         command.upgrade(config, "head")

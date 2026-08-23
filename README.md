@@ -69,9 +69,29 @@ To connect the first clinic administrator securely:
 2. Put the returned numeric ID into `BOOTSTRAP_TELEGRAM_ADMIN_ID` in `.env` and set
    `BOOTSTRAP_CLINIC_NAME`.
 3. Run `docker compose up -d --force-recreate legal-core`.
-4. Open `/menu` and choose `📝 Создать кейс`.
+4. Run the bootstrap once more to obtain the printed `membership_id` (the operation is idempotent):
 
-The bootstrap is idempotent and does not register unknown Telegram users automatically.
+```bash
+docker compose exec legal-core python -m legal_core.bootstrap_admin
+```
+
+5. After the purchase has been verified by the service operator, grant access to that exact
+administrator and clinic. This command stores no payment data and never changes the user's role:
+
+```bash
+docker compose exec legal-core python -m legal_core.subscription_provisioning \
+  --membership-id <membership_id> \
+  --plan-code MVP_MONTHLY \
+  --starts-at 2026-08-22T12:00:00+00:00
+```
+
+6. Open `/menu` and choose `📝 Создать кейс`.
+
+The bootstrap is idempotent and does not register unknown Telegram users automatically. A mapped
+administrator without an active, current subscription cannot open cases or use legal retrieval;
+the bot gives a neutral support message. Use the same internal command with `--status SUSPENDED`
+or `--status CANCELLED` to stop access. Payment checkout, cards and provider webhooks are not
+implemented in this MVP.
 
 Apply the bot name, descriptions, commands and avatar as an explicit one-off operation:
 
@@ -85,7 +105,8 @@ every polling restart.
 `docker compose down` keeps the named data volumes. Add `--volumes` only when intentionally deleting local PostgreSQL, Redis and MinIO data.
 
 The Telegram gateway uses long polling and exposes no host port. `/start` and `/menu` open a
-branded, image-based inline menu. A mapped `CLINIC_ADMIN` can fill a pseudonymous case card,
-confirm it and receive the canonical PDF. Cancelling before confirmation creates no database
-case. The PDF remains an intake record: legal recommendations and a patient-response draft are
-explicitly blocked until an approved evidence corpus and verifier gate are available.
+branded, image-based inline menu. A mapped `CLINIC_ADMIN` with an active subscription can fill a
+pseudonymous case card, confirm it and receive the canonical PDF. Cancelling before confirmation
+creates no database case. The PDF remains an intake record: legal recommendations and a
+patient-response draft are explicitly blocked until an approved evidence corpus and verifier gate
+are available.

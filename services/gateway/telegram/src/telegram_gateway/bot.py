@@ -255,7 +255,13 @@ async def case_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         actor = await _legal_core(context).get_actor(actor_id)
     except LegalCoreApiError as exc:
         _clear_wizard(context)
-        if exc.status_code == 403 or exc.code == "ACTOR_NOT_AUTHORIZED":
+        if exc.code == "SUBSCRIPTION_INACTIVE":
+            await _reply(
+                update,
+                "🔒 Доступ по подписке сейчас не активен. "
+                "Обратитесь в поддержку сервиса для подключения или продления.",
+            )
+        elif exc.status_code == 403 or exc.code == "ACTOR_NOT_AUTHORIZED":
             await _reply(
                 update,
                 "🔒 Ваш аккаунт ещё не подключён как администратор. "

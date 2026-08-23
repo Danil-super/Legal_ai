@@ -83,6 +83,61 @@ class ClinicUser(Base):
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 
+class SubscriptionEntitlement(Base):
+    __tablename__ = "subscription_entitlements"
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "id"),
+        UniqueConstraint("clinic_id", "user_id"),
+        ForeignKeyConstraint(
+            ["clinic_id", "user_id"],
+            ["clinic_users.clinic_id", "clinic_users.user_id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("status IN ('ACTIVE', 'SUSPENDED', 'CANCELLED')"),
+        CheckConstraint("ends_at IS NULL OR ends_at > starts_at"),
+        Index("ix_subscription_entitlements_access", "user_id", "status", "starts_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    user_id: Mapped[UUID] = mapped_column(UUID_PK)
+    status: Mapped[str] = mapped_column(String(20), server_default="ACTIVE")
+    plan_code: Mapped[str] = mapped_column(String(80))
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
+class SubscriptionEntitlementEvent(Base):
+    __tablename__ = "subscription_entitlement_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["clinic_id", "entitlement_id"],
+            ["subscription_entitlements.clinic_id", "subscription_entitlements.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("event_type IN ('GRANTED', 'UPDATED', 'SUSPENDED', 'CANCELLED')"),
+        Index("ix_subscription_entitlement_events_tenant_time", "clinic_id", "created_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    entitlement_id: Mapped[UUID] = mapped_column(UUID_PK)
+    event_type: Mapped[str] = mapped_column(String(20))
+    performed_by_user_id: Mapped[UUID | None] = mapped_column(
+        UUID_PK, ForeignKey("users.id", ondelete="RESTRICT")
+    )
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
 class Case(Base):
     __tablename__ = "cases"
     __table_args__ = (

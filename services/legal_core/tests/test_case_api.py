@@ -14,7 +14,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def seed_admin(telegram_user_id: int) -> tuple[UUID, UUID]:
+def seed_admin(
+    telegram_user_id: int,
+    *,
+    entitlement_status: str | None = "ACTIVE",
+    entitlement_is_expired: bool = False,
+) -> tuple[UUID, UUID]:
     clinic_id = uuid4()
     user_id = uuid4()
     membership_id = uuid4()
@@ -36,6 +41,25 @@ def seed_admin(telegram_user_id: int) -> tuple[UUID, UUID]:
                 ),
                 {"id": membership_id, "clinic_id": clinic_id, "user_id": user_id},
             )
+            if entitlement_status is not None:
+                ends_at_sql = (
+                    "timezone('utc', now()) - INTERVAL '1 minute'"
+                    if entitlement_is_expired
+                    else "NULL"
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO subscription_entitlements "
+                        "(clinic_id,user_id,status,plan_code,starts_at,ends_at) "
+                        "VALUES (:clinic_id,:user_id,:status,'MVP',"
+                        f"timezone('utc', now()) - INTERVAL '1 day',{ends_at_sql})"
+                    ),
+                    {
+                        "clinic_id": clinic_id,
+                        "user_id": user_id,
+                        "status": entitlement_status,
+                    },
+                )
     finally:
         engine.dispose()
     return clinic_id, membership_id
@@ -194,6 +218,39 @@ def test_actor_probe_authorizes_only_mapped_clinic_admin() -> None:
     assert allowed.json() == {"role": "CLINIC_ADMIN"}
     assert denied.status_code == 403
     assert denied.json()["error"]["code"] == "ACTOR_NOT_AUTHORIZED"
+
+
+@pytest.mark.parametrize(
+    ("entitlement_status", "entitlement_is_expired"),
+    [
+        (None, False),
+        ("SUSPENDED", False),
+        ("CANCELLED", False),
+        ("ACTIVE", True),
+    ],
+)
+def test_actor_probe_requires_an_active_current_subscription(
+    entitlement_status: str | None, entitlement_is_expired: bool
+) -> None:
+    admin = 6_100_000_001 + uuid4().int % 100_000_000
+    seed_admin(
+        admin,
+        entitlement_status=entitlement_status,
+        entitlement_is_expired=entitlement_is_expired,
+    )
+
+    with application_client() as client:
+        denied = client.get("/v1/actor", headers=actor_headers(admin))
+        protected = client.get(
+            "/v1/legal/fragments",
+            headers=actor_headers(admin),
+            params={"query": "медицинских услуг", "as_of_date": "2026-08-22"},
+        )
+
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "SUBSCRIPTION_INACTIVE"
+    assert protected.status_code == 403
+    assert protected.json()["error"]["code"] == "SUBSCRIPTION_INACTIVE"
 
 
 def test_legal_fragment_search_is_authenticated_validated_and_approved_only() -> None:

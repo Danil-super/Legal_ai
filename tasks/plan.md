@@ -102,6 +102,15 @@ The approved implementation order is:
 
 This slice is specified in `SPEC-case-intake-report-legal-corpus.md` and ADR-0003/0004.
 
+## Subscription access decision
+
+The service is a SaaS assistant for clinics, not a provider of a customer-facing lawyer.
+Before a clinic administrator can use the bot, Legal Core must resolve an active entitlement for
+that exact user and clinic. The first release contains entitlement persistence, expiry/suspension
+enforcement and internal provisioning only. It intentionally excludes payments, card data,
+provider webhooks, invoices and self-service purchase; those require a separate product and
+security decision.
+
 ## Open Questions
 
 Критичные для bootstrap вопросы не требуются. Вопросы о Hermes pin, provider, trusted sources, thresholds, retention и pilot quality gate должны быть решены до соответствующих фаз, а не угадываться сейчас.

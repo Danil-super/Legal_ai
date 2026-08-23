@@ -34,6 +34,7 @@ from legal_core.models import (
     CaseReport,
     ClinicUser,
     IdempotencyRecord,
+    SubscriptionEntitlement,
     TelegramCaseWorkflow,
     User,
 )
@@ -108,6 +109,22 @@ async def resolve_actor(session: AsyncSession, telegram_user_id: int) -> ActorCo
         )
     user_id, membership_id, clinic_id, role = memberships[0]
     await session.execute(select(func.set_config("app.current_clinic_id", str(clinic_id), True)))
+    entitlement = await session.scalar(
+        select(SubscriptionEntitlement.id).where(
+            SubscriptionEntitlement.clinic_id == clinic_id,
+            SubscriptionEntitlement.user_id == user_id,
+            SubscriptionEntitlement.status == "ACTIVE",
+            SubscriptionEntitlement.starts_at <= func.now(),
+            (SubscriptionEntitlement.ends_at.is_(None))
+            | (SubscriptionEntitlement.ends_at > func.now()),
+        )
+    )
+    if entitlement is None:
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="SUBSCRIPTION_INACTIVE",
+            message="Telegram administrator does not have an active subscription",
+        )
     return ActorContext(
         user_id=user_id,
         membership_id=membership_id,

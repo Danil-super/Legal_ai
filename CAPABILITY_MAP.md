@@ -6,6 +6,7 @@
 |---|---|---|
 | `platform-bootstrap` | Репозиторий, конфигурация, контейнеры, health/readiness, базовые quality gates | — |
 | `identity-tenancy` | Clinics, users, RBAC, server-side tenant context, tenant isolation | `platform-bootstrap` |
+| `subscription-access` | Индивидуальные права платного доступа к конкретной клинике, сроки и server-side enforcement | `identity-tenancy` |
 | `case-core` | Cases, messages, typed facts, missing facts, audit state transitions | `identity-tenancy` |
 | `legal-corpus` | Trusted sources, documents, immutable versions, effective-date resolver, approval lifecycle | `platform-bootstrap`, `identity-tenancy` |
 | `legal-retrieval` | Exact/FTS/vector retrieval, metadata/date filters, evidence contracts | `legal-corpus` |
@@ -17,6 +18,6 @@
 
 Порядок сборки:
 
-`platform-bootstrap` → (`identity-tenancy`, `legal-corpus`) → `case-core` → (`legal-retrieval`, `risk-escalation`) → `agent-orchestration` → (`telegram-gateway`, `legal-updater`) → `pilot-operations`.
+`platform-bootstrap` → (`identity-tenancy`, `legal-corpus`) → `subscription-access` → `case-core` → (`legal-retrieval`, `risk-escalation`) → `agent-orchestration` → (`telegram-gateway`, `legal-updater`) → `pilot-operations`.
 
 Ключевой принцип зависимости: Hermes и Telegram потребляют Legal Core через ограниченные API/MCP-контракты; они не владеют нормативными текстами, risk policy или tenant identity.

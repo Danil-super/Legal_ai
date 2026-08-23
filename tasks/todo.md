@@ -121,6 +121,24 @@
 
 **Dependencies:** Tasks 1.2 and 2.1
 
+## Task 2.2a: Subscription-gated clinic access
+
+**Acceptance criteria:**
+- [x] A `CLINIC_ADMIN` can use protected Legal Core and Telegram intake only with an active,
+  time-valid entitlement for that same clinic.
+- [x] Suspended, cancelled and expired entitlements produce the stable
+  `SUBSCRIPTION_INACTIVE` error and reveal no case data.
+- [x] Entitlements and their append-only audit events are tenant-scoped, RLS-protected and
+  created by an Alembic migration.
+- [x] Internal provisioning cannot change a subscriber into `LEGAL_EDITOR`.
+- [x] Payment data, acquirer credentials and payment webhooks are not stored or introduced.
+
+**Verification:**
+- [x] PostgreSQL API tests cover active, missing, suspended and expired access plus tenant scope.
+- [x] Telegram wizard explains inactive access without exposing internal subscription details.
+
+**Dependencies:** Task 1.1
+
 ## Evidence gate
 
 Recommendations, legal risk conclusions and patient-response drafts remain disabled until
@@ -129,7 +147,7 @@ approved-only retrieval, applicable-date resolution and claim-to-evidence verifi
 ## Task 2.3: Human legal review of the initial corpus
 
 **Acceptance criteria:**
-- [ ] A qualified `LEGAL_EDITOR` has reviewed the immutable official artifacts using
+- [ ] A qualified, platform-side `LEGAL_EDITOR` has reviewed the immutable official artifacts using
   `docs/legal-review/initial-corpus-review.md`.
 - [ ] The PP №659 fragment selection covers the intended recommendation scenarios before approval.
 - [ ] Every approved version has a checksum-bound, append-only approval attestation.

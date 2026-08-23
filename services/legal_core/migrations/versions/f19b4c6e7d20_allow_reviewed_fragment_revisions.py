@@ -30,6 +30,19 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    duplicate_revisions = op.get_bind().execute(
+        sa.text(
+            "SELECT EXISTS ("
+            "SELECT 1 FROM legal_versions "
+            "GROUP BY document_id, raw_sha256 HAVING count(*) > 1"
+            ")"
+        )
+    ).scalar_one()
+    if duplicate_revisions:
+        raise RuntimeError(
+            "cannot downgrade reviewed fragment revisions while immutable "
+            "same-raw candidates exist"
+        )
     op.drop_index("uq_legal_versions_approved_raw", table_name="legal_versions")
     op.create_unique_constraint(
         "legal_versions_document_id_raw_sha256_key",
