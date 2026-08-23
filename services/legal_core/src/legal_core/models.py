@@ -243,6 +243,129 @@ class CaseReport(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 
+class RiskPolicyVersion(Base):
+    """Platform-owned immutable policy content; status changes are reviewed separately."""
+
+    __tablename__ = "risk_policy_versions"
+    __table_args__ = (
+        UniqueConstraint("policy_key", "version"),
+        CheckConstraint("version > 0"),
+        CheckConstraint("status IN ('DRAFT', 'APPROVED', 'RETIRED')"),
+        CheckConstraint("char_length(content_sha256) = 64"),
+        Index(
+            "uq_risk_policy_versions_one_approved",
+            "policy_key",
+            unique=True,
+            postgresql_where=text("status = 'APPROVED'"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    policy_key: Mapped[str] = mapped_column(String(80))
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), server_default="DRAFT")
+    policy_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        UUID_PK, ForeignKey("users.id", ondelete="RESTRICT")
+    )
+    approved_by_user_id: Mapped[UUID | None] = mapped_column(
+        UUID_PK, ForeignKey("users.id", ondelete="RESTRICT")
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
+class RiskPolicyEvent(Base):
+    """Append-only legal-editor decision trail for a platform risk-policy version."""
+
+    __tablename__ = "risk_policy_events"
+    __table_args__ = (
+        CheckConstraint("decision IN ('APPROVED', 'RETIRED', 'BLOCKED')"),
+        CheckConstraint("char_length(expected_content_sha256) = 64"),
+        Index("ix_risk_policy_events_policy_time", "risk_policy_id", "created_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    risk_policy_id: Mapped[UUID] = mapped_column(
+        UUID_PK, ForeignKey("risk_policy_versions.id", ondelete="RESTRICT")
+    )
+    actor_user_id: Mapped[UUID] = mapped_column(
+        UUID_PK, ForeignKey("users.id", ondelete="RESTRICT")
+    )
+    decision: Mapped[str] = mapped_column(String(20))
+    expected_content_sha256: Mapped[str] = mapped_column(String(64))
+    reason_code: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
+class CaseRiskAssessment(Base):
+    """Append-only result of evaluating one policy over a frozen tenant case snapshot."""
+
+    __tablename__ = "case_risk_assessments"
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "id"),
+        ForeignKeyConstraint(
+            ["clinic_id", "case_id"], ["cases.clinic_id", "cases.id"], ondelete="RESTRICT"
+        ),
+        CheckConstraint("level IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'UNAVAILABLE')"),
+        CheckConstraint("char_length(fact_snapshot_sha256) = 64"),
+        CheckConstraint("char_length(evidence_trace_sha256) = 64"),
+        CheckConstraint("external_draft_allowed = false"),
+        Index("ix_case_risk_assessments_tenant_case", "clinic_id", "case_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    case_id: Mapped[UUID] = mapped_column(UUID_PK)
+    policy_id: Mapped[UUID] = mapped_column(
+        UUID_PK, ForeignKey("risk_policy_versions.id", ondelete="RESTRICT")
+    )
+    level: Mapped[str] = mapped_column(String(20))
+    reason_codes_json: Mapped[list[str]] = mapped_column(JSONB)
+    fact_snapshot_sha256: Mapped[str] = mapped_column(String(64))
+    evidence_trace_sha256: Mapped[str] = mapped_column(String(64))
+    external_draft_allowed: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
+class CaseEscalation(Base):
+    """Append-only required review generated from a HIGH or CRITICAL assessment."""
+
+    __tablename__ = "case_escalations"
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "case_risk_assessment_id"),
+        ForeignKeyConstraint(
+            ["clinic_id", "case_id"], ["cases.clinic_id", "cases.id"], ondelete="RESTRICT"
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "case_risk_assessment_id"],
+            ["case_risk_assessments.clinic_id", "case_risk_assessments.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("level IN ('HIGH', 'CRITICAL')"),
+        CheckConstraint("status = 'REQUIRED'"),
+        Index("ix_case_escalations_tenant_case", "clinic_id", "case_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    case_id: Mapped[UUID] = mapped_column(UUID_PK)
+    case_risk_assessment_id: Mapped[UUID] = mapped_column(UUID_PK)
+    level: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), server_default="REQUIRED")
+    reason_codes_json: Mapped[list[str]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     __table_args__ = (

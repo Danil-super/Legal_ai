@@ -19,7 +19,7 @@ def alembic_config() -> Config:
     return Config(str(ROOT / "alembic.ini"))
 
 
-def test_upgrade_security_and_subscription_migration_roundtrip() -> None:
+def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
     config = alembic_config()
     command.upgrade(config, "head")
 
@@ -33,6 +33,10 @@ def test_upgrade_security_and_subscription_migration_roundtrip() -> None:
             "clinic_users",
             "subscription_entitlements",
             "subscription_entitlement_events",
+            "risk_policy_versions",
+            "risk_policy_events",
+            "case_risk_assessments",
+            "case_escalations",
             "cases",
             "case_facts",
             "case_reports",
@@ -61,7 +65,7 @@ def test_upgrade_security_and_subscription_migration_roundtrip() -> None:
                     "WHERE relrowsecurity AND relname IN "
                     "('cases','case_facts','case_reports','audit_events','idempotency_records',"
                     "'telegram_case_workflows','subscription_entitlements',"
-                    "'subscription_entitlement_events')"
+                    "'subscription_entitlement_events','case_risk_assessments','case_escalations')"
                 )
             ).scalars()
             triggers = connection.execute(
@@ -71,7 +75,8 @@ def test_upgrade_security_and_subscription_migration_roundtrip() -> None:
                     "WHERE NOT t.tgisinternal AND c.relname IN "
                     "('case_facts','case_reports','telegram_case_workflows','legal_approval_events',"
                     "'legal_sources','legal_documents','legal_versions','legal_fragments',"
-                    "'subscription_entitlement_events')"
+                    "'subscription_entitlement_events','risk_policy_versions','risk_policy_events',"
+                    "'case_risk_assessments','case_escalations')"
                 )
             ).scalars()
             legal_guard_triggers = set(
@@ -103,6 +108,8 @@ def test_upgrade_security_and_subscription_migration_roundtrip() -> None:
                 "telegram_case_workflows",
                 "subscription_entitlements",
                 "subscription_entitlement_events",
+                "case_risk_assessments",
+                "case_escalations",
             }
             assert set(triggers) == {
                 "case_facts",
@@ -114,6 +121,10 @@ def test_upgrade_security_and_subscription_migration_roundtrip() -> None:
                 "legal_versions",
                 "legal_fragments",
                 "subscription_entitlement_events",
+                "risk_policy_versions",
+                "risk_policy_events",
+                "case_risk_assessments",
+                "case_escalations",
             }
             assert legal_guard_triggers == {
                 "legal_approval_events_validate_insert",

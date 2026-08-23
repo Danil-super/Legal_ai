@@ -12,6 +12,10 @@ def test_required_domain_tables_are_declared() -> None:
         "audit_events",
         "idempotency_records",
         "telegram_case_workflows",
+        "risk_policy_versions",
+        "risk_policy_events",
+        "case_risk_assessments",
+        "case_escalations",
         "legal_sources",
         "legal_documents",
         "legal_versions",
@@ -30,6 +34,8 @@ def test_every_tenant_owned_table_has_clinic_id() -> None:
         "case_reports",
         "audit_events",
         "telegram_case_workflows",
+        "case_risk_assessments",
+        "case_escalations",
     ):
         assert "clinic_id" in Base.metadata.tables[table_name].columns
 
