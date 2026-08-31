@@ -108,7 +108,7 @@ def test_fetch_pdf_preserves_bytes_and_sha256() -> None:
             artifact = await PravoPublicationClient(client=client).fetch_pdf(EO_NUMBER)
 
         assert artifact.content == pdf
-        assert artifact.sha256 == "477806169ba5fe1fd33d07f31155dbe76284369846b19da551193d59a4e77320"
+        assert artifact.sha256 == "80eaec90d66b90248d98f8423e1e85370eca1c038d177e01bbe357127b51d90a"
         assert artifact.source_url.startswith("https://publication.pravo.gov.ru/File/Pdf")
 
     asyncio.run(scenario())
