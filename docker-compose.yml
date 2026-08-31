@@ -126,6 +126,40 @@ services:
     networks: [backend, edge]
     restart: unless-stopped
 
+  legal-watcher:
+    profiles: [maintenance]
+    build:
+      context: .
+      dockerfile: services/legal_core/watcher.Dockerfile
+    environment:
+      LEGAL_WATCH_INTERVAL_SECONDS: ${LEGAL_WATCH_INTERVAL_SECONDS:-21600}
+    command:
+      - sh
+      - -c
+      - >-
+        set -eu;
+        while :; do
+          watch_to=$$(date -u +%F);
+          watch_from=$$(date -u -d '1 day ago' +%F);
+          python -m legal_core.legal_watcher
+          --rules /app/services/legal_core/corpus/legal_watch_rules.v1.json
+          --inbox /var/lib/dental-legal-ai/legal-update-inbox
+          --publication-from $$watch_from
+          --publication-to $$watch_to;
+          sleep "$$LEGAL_WATCH_INTERVAL_SECONDS";
+        done
+    read_only: true
+    volumes:
+      - legal-watch-inbox:/var/lib/dental-legal-ai/legal-update-inbox
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks: [edge]
+    restart: unless-stopped
+
   telegram-gateway:
     build:
       context: .
@@ -133,7 +167,7 @@ services:
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Set TELEGRAM_BOT_TOKEN in .env}
       LEGAL_CORE_URL: http://legal-core:8000
-      AGENT_ORCHESTRATOR_URL: http://agent-orchestrator:8010
+      AGENT_ORCHESTRATOR_URL: ${AGENT_ORCHESTRATOR_URL:-}
       AGENT_INTERNAL_KEY: ${AGENT_INTERNAL_KEY:-}
     healthcheck:
       test:
@@ -169,3 +203,4 @@ volumes:
   postgres-data:
   redis-data:
   minio-data:
+  legal-watch-inbox:
