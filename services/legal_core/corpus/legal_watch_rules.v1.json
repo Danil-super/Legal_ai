@@ -1,0 +1,12 @@
+{
+  "manifest_version": "dental-legal-watch.v1",
+  "rules": [
+    {
+      "rule_id": "paid-medical-services",
+      "search_mode": "DOCUMENT_TEXT",
+      "query": "платных медицинских услуг",
+      "required_title_terms": [],
+      "max_hits": 20
+    }
+  ]
+}
