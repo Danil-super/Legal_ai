@@ -35,6 +35,11 @@ _RESEARCH_SYSTEM = """\
 модели как источник права, добавлять статьи/документы, которых нет во входе, или считать UNKNOWN
 факт истинным. Не признавай вину клиники и не обещай выплату.
 
+clinicDocumentContext — это одобренные клиникой договоры, ИДС, гарантии и внутренние правила.
+Это НЕ нормативные правовые источники и НЕ legal evidence. Их можно учитывать только при подготовке
+internalRecommendations и patientDraft. Нельзя обосновывать ими LEGAL/ACTION claims и нельзя
+пытаться использовать идентификаторы из clinicDocumentContext как evidenceFragmentIds.
+
 Верни ТОЛЬКО JSON-объект следующей формы:
 {
   "claims": [
@@ -57,7 +62,8 @@ _RESEARCH_SYSTEM = """\
 _REVIEW_SYSTEM = """\
 Ты — независимый verifier Dental Legal AI. Тебе переданы approved evidence и claims другого
 агента. Для КАЖДОГО claim реши, действительно ли его смысл поддерживается указанными фрагментами.
-Не оценивай полезность формулировки и не добавляй новые нормы.
+Не оценивай полезность формулировки и не добавляй новые нормы. Документы клиники намеренно не
+передаются тебе: они не являются источником права и не могут подтвердить claim.
 
 Верни ТОЛЬКО JSON:
 {
@@ -118,6 +124,13 @@ class LegalReasoningOrchestrator:
             message = "researcher JSON does not match the claim contract"
             raise HermesProtocolError(message) from exc
 
+        allowed_evidence_ids = {item.fragment_id for item in projection.evidence}
+        for claim in proposal.claims:
+            if not set(claim.evidence_fragment_ids).issubset(allowed_evidence_ids):
+                raise HermesProtocolError(
+                    "researcher referenced a fragment outside approved legal evidence"
+                )
+
         review_input = {
             "caseId": str(projection.case_id),
             "asOfDate": projection.as_of_date.isoformat(),
@@ -145,6 +158,19 @@ class LegalReasoningOrchestrator:
         review_ids = {item.claim_id for item in review.reviews}
         if review_ids != proposal_ids:
             raise HermesProtocolError("semantic reviewer must return exactly one review per claim")
+
+        proposal_by_id = {claim.claim_id: claim for claim in proposal.claims}
+        for item in review.reviews:
+            if not set(item.reviewed_fragment_ids).issubset(allowed_evidence_ids):
+                raise HermesProtocolError(
+                    "semantic reviewer referenced a fragment outside approved legal evidence"
+                )
+            if not set(item.reviewed_fragment_ids).issubset(
+                set(proposal_by_id[item.claim_id].evidence_fragment_ids)
+            ):
+                raise HermesProtocolError(
+                    "semantic reviewer referenced evidence not cited by the reviewed claim"
+                )
 
         claims = tuple(
             ProposedClaim(
