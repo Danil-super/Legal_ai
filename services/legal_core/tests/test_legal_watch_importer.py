@@ -60,7 +60,7 @@ def test_candidate_loader_rejects_tampered_pdf(tmp_path: Path) -> None:
     directory = _write_candidate(tmp_path, eo_number=eo_number)
     (directory / "official.pdf").write_bytes(b"%PDF-1.7\ntampered")
 
-    with pytest.raises(ValueError, match="size|SHA-256"):
+    with pytest.raises(ValueError, match=r"size|SHA-256"):
         load_staged_candidate(inbox=tmp_path, directory=directory)
 
 
