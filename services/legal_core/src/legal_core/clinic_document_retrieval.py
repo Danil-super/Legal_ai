@@ -49,7 +49,7 @@ _SEARCH_APPROVED_CLINIC_CONTEXT = text(
     SELECT {_FRAGMENT_COLUMNS}
       FROM approved_clinic_document_fragments
      WHERE clinic_id = :clinic_id
-       AND (:as_of_date IS NULL
+       AND (CAST(:as_of_date AS date) IS NULL
             OR ((valid_from IS NULL OR valid_from <= CAST(:as_of_date AS date))
                 AND (valid_to IS NULL OR valid_to > CAST(:as_of_date AS date))))
        AND (
