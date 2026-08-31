@@ -21,7 +21,7 @@ class RiskLevel(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class RiskPolicy:
-    """An approved policy snapshot supplied by the policy repository in a later slice."""
+    """An approved policy snapshot supplied by the policy repository."""
 
     version: str
     high_demand_threshold_kopecks: int
@@ -51,7 +51,9 @@ _REQUIRED_SIGNALS = (
 )
 
 
-def _canonical_fact_snapshot(facts: Mapping[FactKey, object]) -> str:
+def fact_snapshot_sha256(facts: Mapping[FactKey, object]) -> str:
+    """Hash the canonical typed-fact snapshot used by risk and analysis concurrency checks."""
+
     payload = {
         key.value: value
         for key, value in sorted(facts.items(), key=lambda item: item[0].value)
@@ -110,7 +112,7 @@ def _assessment(
         level=level,
         reason_codes=reasons,
         policy_version=policy.version,
-        fact_snapshot_sha256=_canonical_fact_snapshot(facts),
+        fact_snapshot_sha256=fact_snapshot_sha256(facts),
         external_draft_allowed=level is RiskLevel.LOW,
     )
 
