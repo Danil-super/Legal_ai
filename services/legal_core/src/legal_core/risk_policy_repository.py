@@ -33,8 +33,10 @@ class ApprovedRiskPolicyRepository:
             raise LookupError("approved risk policy is not available")
 
         payload = row.policy_json
-        if set(payload) != {"highDemandThresholdKopecks"}:
+        if set(payload) != {"schemaVersion", "highDemandThresholdKopecks"}:
             raise ValueError("approved risk policy has an unsupported v1 shape")
+        if payload.get("schemaVersion") != "risk-policy.v1":
+            raise ValueError("approved risk policy has an unsupported schema version")
         threshold = payload["highDemandThresholdKopecks"]
         if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 1:
             raise ValueError("approved risk policy has an invalid monetary threshold")
