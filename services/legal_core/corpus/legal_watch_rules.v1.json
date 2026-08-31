@@ -7,6 +7,34 @@
       "query": "платных медицинских услуг",
       "required_title_terms": [],
       "max_hits": 20
+    },
+    {
+      "rule_id": "health-protection-323-fz",
+      "search_mode": "DOCUMENT_TEXT",
+      "query": "323-ФЗ",
+      "required_title_terms": [],
+      "max_hits": 20
+    },
+    {
+      "rule_id": "consumer-protection-2300-1",
+      "search_mode": "DOCUMENT_TEXT",
+      "query": "2300-1",
+      "required_title_terms": [],
+      "max_hits": 20
+    },
+    {
+      "rule_id": "civil-code-paid-services",
+      "search_mode": "DOCUMENT_TEXT",
+      "query": "глава 39 Гражданского кодекса Российской Федерации",
+      "required_title_terms": [],
+      "max_hits": 20
+    },
+    {
+      "rule_id": "personal-data-152-fz",
+      "search_mode": "DOCUMENT_TEXT",
+      "query": "152-ФЗ",
+      "required_title_terms": [],
+      "max_hits": 20
     }
   ]
 }
