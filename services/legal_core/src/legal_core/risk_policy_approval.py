@@ -144,7 +144,7 @@ def rubles_to_kopecks(value: str) -> int:
         amount = Decimal(value.replace(",", "."))
     except InvalidOperation as exc:
         raise ValueError("threshold must be a decimal ruble amount") from exc
-    if not amount.is_finite() or amount <= 0 or amount.as_tuple().exponent < -2:
+    if not amount.is_finite() or amount <= 0:
         raise ValueError("threshold must be positive with at most two decimal places")
     kopecks = amount * 100
     if kopecks != kopecks.to_integral_value():
