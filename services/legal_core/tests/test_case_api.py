@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from legal_core.database import database_url
+from legal_core.database import database_url, owner_database_url
 from legal_core.draft_retention import purge_expired_intake_drafts
 from legal_core.main import create_app
 from sqlalchemy import create_engine, text
@@ -26,7 +26,7 @@ def seed_admin(
     clinic_id = uuid4()
     user_id = uuid4()
     membership_id = uuid4()
-    engine = create_engine(database_url().set(drivername="postgresql+psycopg"))
+    engine = create_engine(owner_database_url().set(drivername="postgresql+psycopg"))
     try:
         with engine.begin() as connection:
             connection.execute(
@@ -184,7 +184,7 @@ def workflow_submission() -> dict[str, object]:
 
 
 def count_workflow_resources(telegram_user_id: int) -> tuple[int, int, int, int]:
-    engine = create_engine(database_url().set(drivername="postgresql+psycopg"))
+    engine = create_engine(owner_database_url().set(drivername="postgresql+psycopg"))
     try:
         with engine.connect() as connection:
             clinic_id = connection.execute(
@@ -284,7 +284,7 @@ def test_platform_owner_updates_the_target_single_existing_clinic(
             json={"telegramUserId": target},
         )
 
-    engine = create_engine(database_url().set(drivername="postgresql+psycopg"))
+    engine = create_engine(owner_database_url().set(drivername="postgresql+psycopg"))
     try:
         with engine.connect() as connection:
             memberships = connection.scalar(
@@ -427,7 +427,7 @@ def test_expired_telegram_intake_drafts_are_purged_without_creating_a_case() -> 
         )
         draft_id = created.json()["id"]
 
-    sync_engine = create_engine(database_url().set(drivername="postgresql+psycopg"))
+    sync_engine = create_engine(owner_database_url().set(drivername="postgresql+psycopg"))
     try:
         with sync_engine.begin() as connection:
             connection.execute(
