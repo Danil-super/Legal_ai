@@ -371,7 +371,7 @@ def create_clinic_documents_router(
                     "AND (position(lower(:query) in lower(fragment_text)) > 0 "
                     "OR position(lower(:query) in lower(document_title)) > 0 "
                     "OR position(lower(:query) in lower(document_key)) > 0) "
-                    "AND (:as_of_date IS NULL OR "
+                    "AND (CAST(:as_of_date AS date) IS NULL OR "
                     "((valid_from IS NULL OR valid_from <= CAST(:as_of_date AS date)) "
                     "AND (valid_to IS NULL OR valid_to > CAST(:as_of_date AS date)))) "
                     "ORDER BY document_key, version_no DESC, ordinal, fragment_id "
