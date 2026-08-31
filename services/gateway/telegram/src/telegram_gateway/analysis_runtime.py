@@ -16,6 +16,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTypes
 
 from telegram_gateway import bot as gateway_bot
+from telegram_gateway.case_wizard import LegalCoreClient
 
 logger = logging.getLogger(__name__)
 ANALYSIS_CALLBACK_PREFIX = "case:analyze:"
@@ -79,10 +80,10 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
     """Render only the server-verified analysis fields returned by Legal Core."""
 
     if payload.get("analysisAllowed") is not True:
-        risk = _bounded_text(payload.get("riskLevel"), limit=24) or "UNAVAILABLE"
+        blocked_risk = _bounded_text(payload.get("riskLevel"), limit=24) or "UNAVAILABLE"
         return (
             "⚖️ Юридический анализ не прошёл проверку доказательств.\n"
-            f"Риск: {risk}\n\n"
+            f"Риск: {blocked_risk}\n\n"
             "Бот не будет додумывать вывод. Проверьте недостающие факты или передайте кейс юристу."
         )
 
@@ -93,24 +94,29 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
     if not isinstance(report_json, dict):
         raise ValueError("analysis response has no canonical report")
 
-    case = report_json.get("case")
-    risk = report_json.get("risk")
-    recommendations = report_json.get("recommendations")
-    legal_basis = report_json.get("legalBasis")
-    draft = report_json.get("draftResponse")
-    if not all(
-        isinstance(value, dict)
-        for value in (case, risk, recommendations, legal_basis, draft)
-    ):
-        raise ValueError("canonical analysis report is incomplete")
+    case_data = report_json.get("case")
+    risk_data = report_json.get("risk")
+    recommendations_data = report_json.get("recommendations")
+    legal_basis_data = report_json.get("legalBasis")
+    draft_data = report_json.get("draftResponse")
+    if not isinstance(case_data, dict):
+        raise ValueError("canonical analysis report has no case block")
+    if not isinstance(risk_data, dict):
+        raise ValueError("canonical analysis report has no risk block")
+    if not isinstance(recommendations_data, dict):
+        raise ValueError("canonical analysis report has no recommendations block")
+    if not isinstance(legal_basis_data, dict):
+        raise ValueError("canonical analysis report has no legal basis block")
+    if not isinstance(draft_data, dict):
+        raise ValueError("canonical analysis report has no draft block")
 
-    public_number = _bounded_text(case.get("publicNumber"), limit=64)
-    risk_level = _bounded_text(risk.get("level"), limit=24)
-    reason_codes = risk.get("reasonCodes")
-    action_items = recommendations.get("items")
-    sources = legal_basis.get("sources")
-    draft_status = _bounded_text(draft.get("status"), limit=32)
-    draft_reason = _bounded_text(draft.get("reasonCode"), limit=80)
+    public_number = _bounded_text(case_data.get("publicNumber"), limit=64)
+    risk_level = _bounded_text(risk_data.get("level"), limit=24)
+    reason_codes = risk_data.get("reasonCodes")
+    action_items = recommendations_data.get("items")
+    sources = legal_basis_data.get("sources")
+    draft_status = _bounded_text(draft_data.get("status"), limit=32)
+    draft_reason = _bounded_text(draft_data.get("reasonCode"), limit=80)
     if (
         public_number is None
         or risk_level is None
@@ -125,7 +131,7 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
         f"⚖️ АНАЛИЗ {public_number}",
         f"Риск: {risk_level}",
     ]
-    if risk.get("escalationRequired") is True:
+    if risk_data.get("escalationRequired") is True:
         lines.append("🔴 Требуется передача ответственному юристу.")
 
     safe_reasons = [
@@ -248,7 +254,7 @@ async def analyze_case_callback(
     raise ApplicationHandlerStop
 
 
-def _install_report_analysis_button(settings: AnalysisSettings) -> None:
+def _install_report_analysis_button() -> None:
     global _PATCHED
     if _PATCHED:
         return
@@ -256,16 +262,16 @@ def _install_report_analysis_button(settings: AnalysisSettings) -> None:
 
     async def wrapped_send_workflow_report(
         update: Update,
-        client: gateway_bot.LegalCoreClient,
+        client: LegalCoreClient,
         workflow: dict[str, Any],
         actor_id: int,
     ) -> None:
         await original(update, client, workflow, actor_id)
-        case = workflow.get("case")
-        if not isinstance(case, dict):
+        case_data = workflow.get("case")
+        if not isinstance(case_data, dict):
             return
         try:
-            case_id = UUID(str(case["id"]))
+            case_id = UUID(str(case_data["id"]))
         except (KeyError, ValueError):
             return
         message = update.effective_message
@@ -279,13 +285,13 @@ def _install_report_analysis_button(settings: AnalysisSettings) -> None:
     _PATCHED = True
 
 
-def build_application_with_analysis(token: str):
+def build_application_with_analysis(token: str) -> gateway_bot.TelegramApplication:
     settings = load_analysis_settings()
     application = gateway_bot.build_application(token)
     if settings is None:
         return application
 
-    _install_report_analysis_button(settings)
+    _install_report_analysis_button()
 
     async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await analyze_case_callback(update, context, settings=settings)
