@@ -38,8 +38,15 @@ class LegalCoreEndpoint:
 
     def __post_init__(self) -> None:
         parsed = urlparse(self.base_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("Legal Core base_url must be an absolute http(s) URL")
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Legal Core base_url must be a credential-free absolute http(s) URL")
         if not 1 <= self.timeout_seconds <= 120:
             raise ValueError("Legal Core timeout must be between 1 and 120 seconds")
 
@@ -68,7 +75,11 @@ class LegalCoreClient:
             headers["Idempotency-Key"] = str(idempotency_key)
 
         owns_client = self._client is None
-        client = self._client or httpx.AsyncClient(timeout=self.endpoint.timeout_seconds)
+        client = self._client or httpx.AsyncClient(
+            timeout=self.endpoint.timeout_seconds,
+            follow_redirects=False,
+            trust_env=False,
+        )
         try:
             try:
                 response = await client.request(
@@ -83,6 +94,10 @@ class LegalCoreClient:
                     "Legal Core request failed",
                     status_code=503,
                 ) from exc
+
+            expected = urlparse(self.endpoint.base_url)
+            if response.url.scheme != expected.scheme or response.url.host != expected.hostname:
+                raise LegalCoreProtocolError("Legal Core response came from an unexpected origin")
 
             try:
                 payload = response.json()
