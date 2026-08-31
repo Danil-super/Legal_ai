@@ -1,7 +1,7 @@
 """Provision the least-privilege PostgreSQL login used by Legal Core at runtime.
 
-The bootstrap/owner login remains responsible for migrations.  Runtime code authenticates with a
-separate role that cannot bypass RLS or create database objects.  The command is intentionally
+The bootstrap/owner login remains responsible for migrations. Runtime code authenticates with a
+separate role that cannot bypass RLS or create database objects. The command is intentionally
 idempotent and may run both before and after migrations so default and existing-object grants stay
 consistent on upgraded deployments.
 """
@@ -49,74 +49,71 @@ def provision_runtime_role() -> str:
         user=owner_user,
         password=owner_password,
         autocommit=True,
-    ) as connection:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (app_user,))
-            exists = cursor.fetchone() is not None
-            role = sql.Identifier(app_user)
-            password = sql.Literal(app_password)
-            if not exists:
-                cursor.execute(
-                    sql.SQL(
-                        "CREATE ROLE {} LOGIN PASSWORD {} "
-                        "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
-                    ).format(role, password)
-                )
-            else:
-                cursor.execute(
-                    sql.SQL(
-                        "ALTER ROLE {} WITH LOGIN PASSWORD {} "
-                        "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
-                    ).format(role, password)
-                )
-
-            cursor.execute(
-                sql.SQL("ALTER ROLE {} SET search_path = public").format(role)
-            )
-            cursor.execute(
-                sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
-                    sql.Identifier(database),
-                    role,
-                )
-            )
-            cursor.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(role))
-            cursor.execute(sql.SQL("REVOKE CREATE ON SCHEMA public FROM {}").format(role))
-
-            owner = sql.Identifier(owner_user)
+    ) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (app_user,))
+        exists = cursor.fetchone() is not None
+        role = sql.Identifier(app_user)
+        password = sql.Literal(app_password)
+        if not exists:
             cursor.execute(
                 sql.SQL(
-                    "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
-                    "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {}"
-                ).format(owner, role)
+                    "CREATE ROLE {} LOGIN PASSWORD {} "
+                    "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+                ).format(role, password)
             )
+        else:
             cursor.execute(
                 sql.SQL(
-                    "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
-                    "GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO {}"
-                ).format(owner, role)
-            )
-            cursor.execute(
-                sql.SQL(
-                    "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
-                    "GRANT EXECUTE ON FUNCTIONS TO {}"
-                ).format(owner, role)
+                    "ALTER ROLE {} WITH LOGIN PASSWORD {} "
+                    "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+                ).format(role, password)
             )
 
-            # Re-running after migrations covers existing deployments and objects created before
-            # the default-privilege policy was installed.
-            cursor.execute(
-                sql.SQL(
-                    "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}"
-                ).format(role)
+        cursor.execute(sql.SQL("ALTER ROLE {} SET search_path = public").format(role))
+        cursor.execute(
+            sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                sql.Identifier(database),
+                role,
             )
-            cursor.execute(
-                sql.SQL(
-                    "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {}"
-                ).format(role)
-            )
-            cursor.execute(
-                sql.SQL("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {}").format(role)
-            )
+        )
+        cursor.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(role))
+        cursor.execute(sql.SQL("REVOKE CREATE ON SCHEMA public FROM {}").format(role))
+
+        owner = sql.Identifier(owner_user)
+        cursor.execute(
+            sql.SQL(
+                "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {}"
+            ).format(owner, role)
+        )
+        cursor.execute(
+            sql.SQL(
+                "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
+                "GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO {}"
+            ).format(owner, role)
+        )
+        cursor.execute(
+            sql.SQL(
+                "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
+                "GRANT EXECUTE ON FUNCTIONS TO {}"
+            ).format(owner, role)
+        )
+
+        # Re-running after migrations covers existing deployments and objects created before the
+        # default-privilege policy was installed.
+        cursor.execute(
+            sql.SQL(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}"
+            ).format(role)
+        )
+        cursor.execute(
+            sql.SQL(
+                "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {}"
+            ).format(role)
+        )
+        cursor.execute(
+            sql.SQL("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {}").format(role)
+        )
 
     return app_user
 
