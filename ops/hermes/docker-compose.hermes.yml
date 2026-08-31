@@ -1,0 +1,78 @@
+services:
+  hermes-researcher:
+    profiles: [analysis]
+    image: dental-legal-hermes:5fc308a70719a83cccdbba4c0e39c23f5a8239d5
+    environment:
+      HERMES_HOME: /opt/data
+      HERMES_MODEL: ${HERMES_RESEARCHER_LLM_MODEL:?Set HERMES_RESEARCHER_LLM_MODEL}
+      OPENAI_BASE_URL: ${HERMES_LLM_BASE_URL:?Set HERMES_LLM_BASE_URL}
+      OPENAI_API_KEY: ${HERMES_LLM_API_KEY:?Set HERMES_LLM_API_KEY}
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_PORT: "8642"
+      API_SERVER_KEY: ${HERMES_RESEARCHER_API_KEY:?Set HERMES_RESEARCHER_API_KEY}
+    command:
+      - sh
+      - -lc
+      - >-
+        python /opt/legal/assert_tool_free.py &&
+        exec hermes gateway run --no-supervise
+    volumes:
+      - hermes-researcher-data:/opt/data
+      - ./ops/hermes/legal-profile.config.yaml:/opt/data/config.yaml:ro
+      - ./ops/hermes/assert_tool_free.py:/opt/legal/assert_tool_free.py:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks: [backend, edge]
+    restart: unless-stopped
+
+  hermes-reviewer:
+    profiles: [analysis]
+    image: dental-legal-hermes:5fc308a70719a83cccdbba4c0e39c23f5a8239d5
+    environment:
+      HERMES_HOME: /opt/data
+      HERMES_MODEL: ${HERMES_REVIEWER_LLM_MODEL:?Set HERMES_REVIEWER_LLM_MODEL}
+      OPENAI_BASE_URL: ${HERMES_LLM_BASE_URL:?Set HERMES_LLM_BASE_URL}
+      OPENAI_API_KEY: ${HERMES_LLM_API_KEY:?Set HERMES_LLM_API_KEY}
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_PORT: "8642"
+      API_SERVER_KEY: ${HERMES_REVIEWER_API_KEY:?Set HERMES_REVIEWER_API_KEY}
+    command:
+      - sh
+      - -lc
+      - >-
+        python /opt/legal/assert_tool_free.py &&
+        exec hermes gateway run --no-supervise
+    volumes:
+      - hermes-reviewer-data:/opt/data
+      - ./ops/hermes/legal-profile.config.yaml:/opt/data/config.yaml:ro
+      - ./ops/hermes/assert_tool_free.py:/opt/legal/assert_tool_free.py:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks: [backend, edge]
+    restart: unless-stopped
+
+  agent-orchestrator:
+    environment:
+      HERMES_RESEARCHER_URL: http://hermes-researcher:8642
+      HERMES_RESEARCHER_API_KEY: ${HERMES_RESEARCHER_API_KEY:?Set HERMES_RESEARCHER_API_KEY}
+      HERMES_RESEARCHER_MODEL: hermes-agent
+      HERMES_REVIEWER_URL: http://hermes-reviewer:8642
+      HERMES_REVIEWER_API_KEY: ${HERMES_REVIEWER_API_KEY:?Set HERMES_REVIEWER_API_KEY}
+      HERMES_REVIEWER_MODEL: hermes-agent
+    depends_on:
+      legal-core:
+        condition: service_healthy
+      hermes-researcher:
+        condition: service_started
+      hermes-reviewer:
+        condition: service_started
+
+volumes:
+  hermes-researcher-data:
+  hermes-reviewer-data:
