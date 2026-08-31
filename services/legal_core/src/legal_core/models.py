@@ -527,6 +527,43 @@ class TelegramCaseWorkflow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 
+class TelegramIntakeDraft(Base):
+    """Tenant-scoped, resumable pseudonymous intake before case confirmation."""
+
+    __tablename__ = "telegram_intake_drafts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["clinic_id", "actor_membership_id"],
+            ["clinic_users.clinic_id", "clinic_users.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("status IN ('DRAFT', 'ARCHIVED', 'SUBMITTED')"),
+        CheckConstraint("revision > 0"),
+        CheckConstraint("jsonb_typeof(draft_json) = 'object'"),
+        Index(
+            "ix_telegram_intake_drafts_actor_active",
+            "clinic_id",
+            "actor_membership_id",
+            "status",
+            "updated_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    actor_membership_id: Mapped[UUID] = mapped_column(UUID_PK)
+    status: Mapped[str] = mapped_column(String(20), server_default="DRAFT")
+    wizard_state: Mapped[str] = mapped_column(String(40))
+    draft_json: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    revision: Mapped[int] = mapped_column(Integer, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+    purge_after: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class LegalSource(Base):
     __tablename__ = "legal_sources"
     __table_args__ = (

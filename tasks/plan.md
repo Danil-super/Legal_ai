@@ -132,3 +132,11 @@ limited source scope, deterministic versioned risk policy, verifier contract, op
 Hermes/provider boundary and a legal-updater promotion pipeline. It does not enable a legal
 recommendation, risk conclusion, external draft, source approval, LLM connection or payment
 feature. Implementation begins only after its legal/product/security approval record is complete.
+
+## Active slice: durable administrator draft cards
+
+`SPEC-durable-telegram-drafts.md` replaces the gateway-only in-memory draft as the source of
+truth. Build order is: tenant-scoped draft persistence and contract → authorisation/idempotency
+tests → Telegram save/resume/list/switch controls → restart and deployment verification. It
+deliberately keeps case creation at final confirmation and does not change evidence, risk or
+recommendation gates.

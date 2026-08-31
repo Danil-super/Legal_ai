@@ -235,3 +235,17 @@ approved-only retrieval, applicable-date resolution and claim-to-evidence verifi
 - [ ] P0 scenario failures block corpus/policy promotion; fixtures contain no real patient data.
 
 **Dependencies:** Task 3.0; legal/security approval
+
+## Task 1.3: Durable Telegram intake drafts
+
+**Acceptance criteria:**
+- [ ] Legal Core stores multiple active, pseudonymous drafts per administrator and clinic with RLS,
+  optimistic revision and an Alembic migration.
+- [ ] Create/list/read/update/archive contracts use server-side actor scope, idempotency and
+  tenant-negative tests; list entries contain no free-text patient facts.
+- [ ] Telegram persists each accepted transition, presents **Мои черновики**, supports switching
+  and restarts from the exact next question.
+- [ ] Leaving to the menu preserves the draft; explicit archive and completed submission remove it
+  from active drafts without creating duplicate cases or reports.
+
+**Dependencies:** Tasks 1.1, 2.2a; `SPEC-durable-telegram-drafts.md`

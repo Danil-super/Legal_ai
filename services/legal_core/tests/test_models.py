@@ -12,6 +12,7 @@ def test_required_domain_tables_are_declared() -> None:
         "audit_events",
         "idempotency_records",
         "telegram_case_workflows",
+        "telegram_intake_drafts",
         "risk_policy_versions",
         "risk_policy_events",
         "case_risk_assessments",
