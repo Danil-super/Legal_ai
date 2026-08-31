@@ -145,6 +145,10 @@ async def provision_entitlement_in_session(
             },
         )
     )
+    # Callers such as the platform-owner flow restore their own tenant context after
+    # provisioning. Flush the target entitlement and its append-only event while the
+    # target clinic RLS context is still active; commit may happen later in the caller.
+    await session.flush()
     return entitlement.id
 
 
