@@ -12,15 +12,48 @@ from sqlalchemy.ext.asyncio import (
 )
 
 
-def database_url(environment: Mapping[str, str] | None = None) -> URL:
-    source = os.environ if environment is None else environment
+def _database_url(
+    source: Mapping[str, str],
+    *,
+    username: str,
+    password: str,
+) -> URL:
     return URL.create(
         drivername="postgresql+psycopg",
-        username=source.get("POSTGRES_USER", "dental_legal"),
-        password=source.get("POSTGRES_PASSWORD", ""),
+        username=username,
+        password=password,
         host=source.get("POSTGRES_HOST", "localhost"),
         port=int(source.get("POSTGRES_PORT", "5432")),
         database=source.get("POSTGRES_DB", "dental_legal"),
+    )
+
+
+def owner_database_url(environment: Mapping[str, str] | None = None) -> URL:
+    """Privileged connection used only for migrations and role provisioning."""
+
+    source = os.environ if environment is None else environment
+    return _database_url(
+        source,
+        username=source.get("POSTGRES_USER", "dental_legal"),
+        password=source.get("POSTGRES_PASSWORD", ""),
+    )
+
+
+def database_url(environment: Mapping[str, str] | None = None) -> URL:
+    """Least-privilege runtime connection.
+
+    Deployments should configure a dedicated ``POSTGRES_APP_USER``. Falling back to the owner is
+    retained only for backwards-compatible local/unit tooling; Compose and CI require the runtime
+    identity explicitly.
+    """
+
+    source = os.environ if environment is None else environment
+    owner_user = source.get("POSTGRES_USER", "dental_legal")
+    owner_password = source.get("POSTGRES_PASSWORD", "")
+    return _database_url(
+        source,
+        username=source.get("POSTGRES_APP_USER", owner_user),
+        password=source.get("POSTGRES_APP_PASSWORD", owner_password),
     )
 
 
