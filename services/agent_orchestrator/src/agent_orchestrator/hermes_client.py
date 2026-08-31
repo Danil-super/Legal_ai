@@ -88,7 +88,8 @@ class HermesClient:
                 payload = response.json()
                 content = payload["choices"][0]["message"]["content"]
             except (ValueError, KeyError, IndexError, TypeError) as exc:
-                raise HermesProtocolError("Hermes returned an invalid chat-completion envelope") from exc
+                message = "Hermes returned an invalid chat-completion envelope"
+                raise HermesProtocolError(message) from exc
             if not isinstance(content, str) or not content.strip():
                 raise HermesProtocolError("Hermes returned an empty/non-text response")
             if len(content) > 80_000:
@@ -96,7 +97,8 @@ class HermesClient:
 
             stripped = content.strip()
             if stripped.startswith("```"):
-                raise HermesProtocolError("Hermes response must be raw JSON without markdown fences")
+                message = "Hermes response must be raw JSON without markdown fences"
+                raise HermesProtocolError(message)
             try:
                 decoded = json.loads(stripped)
             except json.JSONDecodeError as exc:
