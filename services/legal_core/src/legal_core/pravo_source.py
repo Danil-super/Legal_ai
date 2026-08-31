@@ -169,6 +169,15 @@ class PravoPublicationClient:
             pdf_length=self._optional_positive_int(item.get("pdfFileLength")),
         )
 
+    @staticmethod
+    def _search_filter(value: str | None, *, name: str) -> str | None:
+        if value is None:
+            return None
+        normalized = " ".join(value.split())
+        if not 3 <= len(normalized) <= 240:
+            raise ValueError(f"{name} filter must contain between 3 and 240 characters")
+        return normalized
+
     async def discover(
         self,
         *,
@@ -176,6 +185,8 @@ class PravoPublicationClient:
         publication_to: date,
         page: int = 1,
         page_size: int = 100,
+        name: str | None = None,
+        document_text: str | None = None,
     ) -> tuple[PravoDocumentHit, ...]:
         if publication_to < publication_from:
             raise ValueError("publication_to must be on or after publication_from")
@@ -184,15 +195,20 @@ class PravoPublicationClient:
         if page_size not in {10, 30, 100, 200}:
             raise ValueError("page_size must be one of the portal-supported values")
 
-        response = await self._request(
-            "/api/Documents",
-            params={
-                "PublishDateFrom": publication_from.isoformat(),
-                "PublishDateTo": publication_to.isoformat(),
-                "PageSize": page_size,
-                "Index": page,
-            },
-        )
+        params: dict[str, QueryParamValue] = {
+            "PublishDateFrom": publication_from.isoformat(),
+            "PublishDateTo": publication_to.isoformat(),
+            "PageSize": page_size,
+            "Index": page,
+        }
+        name_filter = self._search_filter(name, name="name")
+        text_filter = self._search_filter(document_text, name="document_text")
+        if name_filter is not None:
+            params["Name"] = name_filter
+        if text_filter is not None:
+            params["DocumentText"] = text_filter
+
+        response = await self._request("/api/Documents", params=params)
         payload = self._json_object(response)
         items = payload.get("items")
         if not isinstance(items, list):
