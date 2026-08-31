@@ -172,7 +172,12 @@ def build_analysis_report(
     recommendation = (
         Recommendations(status="AVAILABLE", items=actions)
         if actions
-        else Recommendations(status="AVAILABLE", items=["Передайте карточку ответственному сотруднику для внутренней проверки."])
+        else Recommendations(
+            status="AVAILABLE",
+            items=[
+                "Передайте карточку ответственному сотруднику для внутренней проверки."
+            ],
+        )
     )
     escalation_required = risk.level in {RiskLevel.HIGH, RiskLevel.CRITICAL}
     draft_reason = (
