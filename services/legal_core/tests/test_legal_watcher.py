@@ -138,7 +138,7 @@ def test_watcher_refuses_changed_bytes_for_the_same_official_identity(tmp_path: 
         )
         with pytest.raises(FileExistsError, match="refusing to overwrite different quarantine"):
             await stage_official_publications(
-                FakeSource(content=b"%PDF-1.7\nchanged official bytes"),
+                FakeSource(content=b"%PDF-1.7\nreview candidatf"),
                 manifest=_manifest(),
                 publication_from=date(2026, 8, 31),
                 publication_to=date(2026, 8, 31),
