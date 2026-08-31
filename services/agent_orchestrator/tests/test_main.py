@@ -1,5 +1,4 @@
 from datetime import UTC, date, datetime
-from types import SimpleNamespace
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -143,7 +142,8 @@ def _client():
         legal_core=legal_core,
         reasoning=reasoning,
     )
-    return TestClient(create_app(settings=settings, dependencies=dependencies)), legal_core, reasoning
+    client = TestClient(create_app(settings=settings, dependencies=dependencies))
+    return client, legal_core, reasoning
 
 
 def test_internal_key_is_required_before_analysis() -> None:
