@@ -8,6 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from agent_orchestrator.contracts import CaseProjection, EvidenceItem
+from legal_core.analysis_contracts import AnalysisContextResponse
 from legal_core.contracts import FactKey
 from legal_core.legal_retrieval import ApprovedLegalFragment
 from legal_core.pseudonymization import (
@@ -70,6 +71,39 @@ def build_case_projection(
     return CaseProjection(
         caseId=case_id,
         asOfDate=as_of_date,
+        facts=projected_facts,
+        evidence=projected_evidence,
+    )
+
+
+def build_projection_from_context(
+    context: AnalysisContextResponse,
+    *,
+    known_identifiers: dict[str, str] | None = None,
+) -> CaseProjection:
+    """Redact a typed Legal Core response before the first external model call."""
+
+    identifiers = known_identifiers or {}
+    projected_facts = {
+        key: _pseudonymize_value(value, known_identifiers=identifiers)
+        for key, value in sorted(context.facts.items())
+    }
+    projected_evidence = [
+        EvidenceItem(
+            fragmentId=fragment.fragment_id,
+            documentTitle=fragment.document_title,
+            officialNumber=fragment.official_number,
+            structuralPath=fragment.structural_path,
+            text=fragment.fragment_text,
+            effectiveFrom=fragment.effective_from,
+            effectiveTo=fragment.effective_to,
+            sourceUrl=fragment.source_url,
+        )
+        for fragment in context.evidence
+    ]
+    return CaseProjection(
+        caseId=context.case_id,
+        asOfDate=context.as_of_date,
         facts=projected_facts,
         evidence=projected_evidence,
     )
