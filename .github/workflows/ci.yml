@@ -48,3 +48,49 @@ jobs:
           MINIO_ROOT_PASSWORD: ci-only-minio-password
           TELEGRAM_BOT_TOKEN: 123456:ci_config_validation_token_1234567890
         run: docker compose config --quiet
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.1-pg16
+        env:
+          POSTGRES_DB: dental_legal
+          POSTGRES_USER: dental_legal
+          POSTGRES_PASSWORD: integration-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dental_legal -d dental_legal"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: '5432'
+      POSTGRES_DB: dental_legal
+      POSTGRES_USER: dental_legal
+      POSTGRES_PASSWORD: integration-only-password
+      POSTGRES_INTEGRATION: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install locked dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.lock
+          python -m pip install -e '.[dev]' --no-deps
+
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      - name: PostgreSQL integration tests
+        run: python -m pytest services/legal_core/tests
