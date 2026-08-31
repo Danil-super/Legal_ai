@@ -31,8 +31,15 @@ class HermesEndpoint:
 
     def __post_init__(self) -> None:
         parsed = urlparse(self.base_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("Hermes base_url must be an absolute http(s) URL")
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Hermes base_url must be a credential-free absolute http(s) URL")
         if not self.api_key:
             raise ValueError("Hermes API key must not be empty")
         if not self.model or len(self.model) > 120:
@@ -72,7 +79,11 @@ class HermesClient:
             "Content-Type": "application/json",
         }
         owns_client = self._client is None
-        client = self._client or httpx.AsyncClient(timeout=self.endpoint.timeout_seconds)
+        client = self._client or httpx.AsyncClient(
+            timeout=self.endpoint.timeout_seconds,
+            follow_redirects=False,
+            trust_env=False,
+        )
         try:
             try:
                 response = await client.post(
@@ -83,6 +94,11 @@ class HermesClient:
                 response.raise_for_status()
             except (httpx.HTTPError, TimeoutError) as exc:
                 raise HermesUnavailable("Hermes API request failed") from exc
+
+            expected = urlparse(self.endpoint.base_url)
+            final = response.url
+            if final.scheme != expected.scheme or final.host != expected.hostname:
+                raise HermesProtocolError("Hermes response came from an unexpected origin")
 
             try:
                 payload = response.json()
