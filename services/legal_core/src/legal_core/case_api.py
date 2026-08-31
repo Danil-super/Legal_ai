@@ -5,7 +5,7 @@ import json
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, Response, status
@@ -25,6 +25,13 @@ from legal_core.api_contracts import (
     PlatformSubscriptionGrantRequest,
     PlatformSubscriptionGrantResponse,
     ReportResponse,
+    TelegramDraftWizardState,
+    TelegramIntakeDraftArchiveRequest,
+    TelegramIntakeDraftCreateRequest,
+    TelegramIntakeDraftListResponse,
+    TelegramIntakeDraftResponse,
+    TelegramIntakeDraftSummary,
+    TelegramIntakeDraftUpdateRequest,
     TelegramWorkflowResponse,
     TelegramWorkflowSubmissionRequest,
 )
@@ -40,6 +47,7 @@ from legal_core.models import (
     IdempotencyRecord,
     SubscriptionEntitlement,
     TelegramCaseWorkflow,
+    TelegramIntakeDraft,
     User,
 )
 from legal_core.reports import build_intake_report, render_report_pdf
@@ -49,6 +57,8 @@ TelegramUserId = Annotated[int, Header(alias="X-Telegram-User-Id", gt=0)]
 IdempotencyKey = Annotated[UUID, Header(alias="Idempotency-Key")]
 FREE_PILOT_SUBSCRIPTION_PLAN = "FREE_PILOT"
 NEW_CLINIC_NAME = "Новая стоматология"
+DRAFT_RETENTION = timedelta(days=30)
+DRAFT_ACTIVE_LIMIT = 20
 
 
 class ApiError(Exception):
@@ -94,6 +104,47 @@ def _case_response(case: Case) -> CaseResponse:
         intakeSchemaVersion=case.intake_schema_version,
         createdAt=case.created_at,
     )
+
+
+def _draft_summary(draft: TelegramIntakeDraft) -> TelegramIntakeDraftSummary:
+    incident_type = draft.draft_json.get("incident_type")
+    return TelegramIntakeDraftSummary(
+        id=draft.id,
+        wizardState=cast(TelegramDraftWizardState, draft.wizard_state),
+        revision=draft.revision,
+        incidentType=incident_type if isinstance(incident_type, str) else None,
+        updatedAt=draft.updated_at,
+    )
+
+
+def _draft_response(draft: TelegramIntakeDraft) -> TelegramIntakeDraftResponse:
+    return TelegramIntakeDraftResponse(
+        **_draft_summary(draft).model_dump(mode="python", by_alias=False),
+        draftData=draft.draft_json,
+        purgeAfter=draft.purge_after,
+    )
+
+
+async def _actor_draft(
+    session: AsyncSession, actor: ActorContext, draft_id: UUID
+) -> TelegramIntakeDraft:
+    draft = await session.scalar(
+        select(TelegramIntakeDraft)
+        .where(
+            TelegramIntakeDraft.id == draft_id,
+            TelegramIntakeDraft.clinic_id == actor.clinic_id,
+            TelegramIntakeDraft.actor_membership_id == actor.membership_id,
+            TelegramIntakeDraft.status == "DRAFT",
+        )
+        .with_for_update()
+    )
+    if draft is None:
+        raise ApiError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="INTAKE_DRAFT_NOT_FOUND",
+            message="Intake draft not found",
+        )
+    return draft
 
 
 async def resolve_actor(session: AsyncSession, telegram_user_id: int) -> ActorContext:
@@ -355,6 +406,231 @@ def create_case_router(
     ) -> ActorResponse:
         await resolve_actor(session, telegram_user_id)
         return ActorResponse(role="CLINIC_ADMIN")
+
+    @router.post(
+        "/telegram-intake-drafts",
+        response_model=TelegramIntakeDraftResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def create_telegram_intake_draft(
+        payload: TelegramIntakeDraftCreateRequest,
+        response: Response,
+        telegram_user_id: TelegramUserId,
+        idempotency_key: IdempotencyKey,
+        session: Session,
+    ) -> TelegramIntakeDraftResponse:
+        actor = await resolve_actor(session, telegram_user_id)
+        request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
+        replay = await _idempotency_replay(
+            session,
+            actor=actor,
+            scope="telegram-intake-drafts:create",
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replay is not None:
+            response.status_code = status.HTTP_200_OK
+            return TelegramIntakeDraftResponse.model_validate(replay)
+
+        active_count = await session.scalar(
+            select(func.count())
+            .select_from(TelegramIntakeDraft)
+            .where(
+                TelegramIntakeDraft.clinic_id == actor.clinic_id,
+                TelegramIntakeDraft.actor_membership_id == actor.membership_id,
+                TelegramIntakeDraft.status == "DRAFT",
+            )
+        )
+        if active_count is not None and active_count >= DRAFT_ACTIVE_LIMIT:
+            raise ApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="INTAKE_DRAFT_LIMIT_REACHED",
+                message="The active intake draft limit was reached",
+            )
+
+        now = datetime.now(UTC)
+        draft = TelegramIntakeDraft(
+            clinic_id=actor.clinic_id,
+            actor_membership_id=actor.membership_id,
+            status="DRAFT",
+            wizard_state="INCIDENT",
+            draft_json={},
+            revision=1,
+            created_at=now,
+            updated_at=now,
+            purge_after=now + DRAFT_RETENTION,
+        )
+        idempotency = _new_idempotency_record(
+            actor=actor,
+            scope="telegram-intake-drafts:create",
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        session.add_all([draft, idempotency])
+        await session.flush()
+        result = _draft_response(draft)
+        _finish_idempotency(
+            idempotency,
+            resource_type="TELEGRAM_INTAKE_DRAFT",
+            resource_id=draft.id,
+            response_json=result.model_dump(mode="json", by_alias=True),
+        )
+        session.add(
+            _audit(
+                actor=actor,
+                action="TELEGRAM_INTAKE_DRAFT_CREATED",
+                resource_type="TELEGRAM_INTAKE_DRAFT",
+                resource_id=draft.id,
+                metadata={"wizardState": draft.wizard_state},
+            )
+        )
+        await session.commit()
+        return result
+
+    @router.get("/telegram-intake-drafts", response_model=TelegramIntakeDraftListResponse)
+    async def list_telegram_intake_drafts(
+        telegram_user_id: TelegramUserId,
+        session: Session,
+    ) -> TelegramIntakeDraftListResponse:
+        actor = await resolve_actor(session, telegram_user_id)
+        drafts = list(
+            (
+                await session.scalars(
+                    select(TelegramIntakeDraft)
+                    .where(
+                        TelegramIntakeDraft.clinic_id == actor.clinic_id,
+                        TelegramIntakeDraft.actor_membership_id == actor.membership_id,
+                        TelegramIntakeDraft.status == "DRAFT",
+                    )
+                    .order_by(TelegramIntakeDraft.updated_at.desc(), TelegramIntakeDraft.id.desc())
+                    .limit(DRAFT_ACTIVE_LIMIT)
+                )
+            ).all()
+        )
+        return TelegramIntakeDraftListResponse(items=[_draft_summary(draft) for draft in drafts])
+
+    @router.get(
+        "/telegram-intake-drafts/{draft_id}", response_model=TelegramIntakeDraftResponse
+    )
+    async def get_telegram_intake_draft(
+        draft_id: UUID,
+        telegram_user_id: TelegramUserId,
+        session: Session,
+    ) -> TelegramIntakeDraftResponse:
+        actor = await resolve_actor(session, telegram_user_id)
+        draft = await _actor_draft(session, actor, draft_id)
+        return _draft_response(draft)
+
+    @router.put(
+        "/telegram-intake-drafts/{draft_id}", response_model=TelegramIntakeDraftResponse
+    )
+    async def update_telegram_intake_draft(
+        draft_id: UUID,
+        payload: TelegramIntakeDraftUpdateRequest,
+        telegram_user_id: TelegramUserId,
+        idempotency_key: IdempotencyKey,
+        session: Session,
+    ) -> TelegramIntakeDraftResponse:
+        actor = await resolve_actor(session, telegram_user_id)
+        request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
+        scope = f"telegram-intake-drafts:update:{draft_id}"
+        replay = await _idempotency_replay(
+            session, actor=actor, scope=scope, key=idempotency_key, request_hash=request_hash
+        )
+        if replay is not None:
+            return TelegramIntakeDraftResponse.model_validate(replay)
+
+        draft = await _actor_draft(session, actor, draft_id)
+        if draft.revision != payload.expected_revision:
+            raise ApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="INTAKE_DRAFT_REVISION_CONFLICT",
+                message="The intake draft has a newer revision",
+            )
+        now = datetime.now(UTC)
+        draft.wizard_state = payload.wizard_state
+        draft.draft_json = payload.draft_data
+        draft.revision += 1
+        draft.updated_at = now
+        draft.purge_after = now + DRAFT_RETENTION
+        idempotency = _new_idempotency_record(
+            actor=actor, scope=scope, key=idempotency_key, request_hash=request_hash
+        )
+        session.add(idempotency)
+        await session.flush()
+        result = _draft_response(draft)
+        _finish_idempotency(
+            idempotency,
+            resource_type="TELEGRAM_INTAKE_DRAFT",
+            resource_id=draft.id,
+            response_json=result.model_dump(mode="json", by_alias=True),
+        )
+        session.add(
+            _audit(
+                actor=actor,
+                action="TELEGRAM_INTAKE_DRAFT_SAVED",
+                resource_type="TELEGRAM_INTAKE_DRAFT",
+                resource_id=draft.id,
+                metadata={"wizardState": draft.wizard_state, "revision": draft.revision},
+            )
+        )
+        await session.commit()
+        return result
+
+    @router.post(
+        "/telegram-intake-drafts/{draft_id}/archive", response_model=TelegramIntakeDraftResponse
+    )
+    async def archive_telegram_intake_draft(
+        draft_id: UUID,
+        payload: TelegramIntakeDraftArchiveRequest,
+        telegram_user_id: TelegramUserId,
+        idempotency_key: IdempotencyKey,
+        session: Session,
+    ) -> TelegramIntakeDraftResponse:
+        actor = await resolve_actor(session, telegram_user_id)
+        request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
+        scope = f"telegram-intake-drafts:archive:{draft_id}"
+        replay = await _idempotency_replay(
+            session, actor=actor, scope=scope, key=idempotency_key, request_hash=request_hash
+        )
+        if replay is not None:
+            return TelegramIntakeDraftResponse.model_validate(replay)
+
+        draft = await _actor_draft(session, actor, draft_id)
+        if draft.revision != payload.expected_revision:
+            raise ApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="INTAKE_DRAFT_REVISION_CONFLICT",
+                message="The intake draft has a newer revision",
+            )
+        now = datetime.now(UTC)
+        draft.status = "ARCHIVED"
+        draft.revision += 1
+        draft.updated_at = now
+        draft.purge_after = now + DRAFT_RETENTION
+        idempotency = _new_idempotency_record(
+            actor=actor, scope=scope, key=idempotency_key, request_hash=request_hash
+        )
+        session.add(idempotency)
+        await session.flush()
+        result = _draft_response(draft)
+        _finish_idempotency(
+            idempotency,
+            resource_type="TELEGRAM_INTAKE_DRAFT",
+            resource_id=draft.id,
+            response_json=result.model_dump(mode="json", by_alias=True),
+        )
+        session.add(
+            _audit(
+                actor=actor,
+                action="TELEGRAM_INTAKE_DRAFT_ARCHIVED",
+                resource_type="TELEGRAM_INTAKE_DRAFT",
+                resource_id=draft.id,
+                metadata={"revision": draft.revision},
+            )
+        )
+        await session.commit()
+        return result
 
     @router.post(
         "/platform/subscription-grants",

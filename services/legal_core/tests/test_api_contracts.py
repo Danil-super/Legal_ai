@@ -1,5 +1,10 @@
 import pytest
-from legal_core.api_contracts import AddFactsRequest, FactInput, PlatformSubscriptionGrantRequest
+from legal_core.api_contracts import (
+    AddFactsRequest,
+    FactInput,
+    PlatformSubscriptionGrantRequest,
+    TelegramIntakeDraftUpdateRequest,
+)
 from pydantic import ValidationError
 
 
@@ -99,4 +104,29 @@ def test_free_pilot_grant_requires_a_bounded_explicit_duration() -> None:
             telegramUserId=7_000_000_002,
             planCode="FREE_PILOT",
             pilotDays=91,
+        )
+
+
+def test_intake_draft_update_accepts_only_a_bounded_known_snapshot() -> None:
+    update = TelegramIntakeDraftUpdateRequest(
+        expectedRevision=1,
+        wizardState="SERVICE_TYPE",
+        draftData={"incident_type": "QUALITY_COMPLAINT"},
+    )
+
+    assert update.expected_revision == 1
+    assert update.draft_data == {"incident_type": "QUALITY_COMPLAINT"}
+
+    with pytest.raises(ValidationError, match="expectedRevision"):
+        TelegramIntakeDraftUpdateRequest(
+            expectedRevision=0,
+            wizardState="SERVICE_TYPE",
+            draftData={},
+        )
+
+    with pytest.raises(ValidationError, match="draftData"):
+        TelegramIntakeDraftUpdateRequest(
+            expectedRevision=1,
+            wizardState="SERVICE_TYPE",
+            draftData={"unexpected": "value"},
         )

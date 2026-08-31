@@ -42,6 +42,55 @@ _DOCUMENT_KEYS = frozenset(
     {"CONTRACT", "MEDICAL_RECORD", "INFORMED_CONSENT", "GUARANTEE"}
 )
 _SIGNAL_STATES = frozenset({"YES", "NO", "UNKNOWN"})
+_DRAFT_DATA_KEYS = frozenset(
+    {
+        "incident_type",
+        "service_type",
+        "service_date",
+        "incident_date",
+        "claim_date",
+        "problem_summary",
+        "patient_demand",
+        "demand_amount_kopecks",
+        "formal_claim",
+        "claim_received_at",
+        "response_deadline",
+        "harm_claimed",
+        "hospitalization",
+        "lawyer_contact",
+        "representative_authority",
+        "regulator_or_court",
+        "authority_kind",
+        "authority_document_date",
+        "regulator_threat",
+        "documents_status",
+    }
+)
+TelegramDraftWizardState = Literal[
+    "INCIDENT",
+    "SERVICE_TYPE",
+    "SERVICE_DATE",
+    "INCIDENT_DATE",
+    "CLAIM_DATE",
+    "PROBLEM_SUMMARY",
+    "PATIENT_DEMAND",
+    "DEMAND_AMOUNT",
+    "FORMAL_CLAIM",
+    "CLAIM_RECEIVED_AT",
+    "CLAIM_DEADLINE",
+    "HARM",
+    "HOSPITALIZATION",
+    "LAWYER",
+    "REPRESENTATIVE_AUTHORITY",
+    "LAWYER_DEADLINE",
+    "AUTHORITY",
+    "AUTHORITY_KIND",
+    "AUTHORITY_DATE",
+    "AUTHORITY_DEADLINE",
+    "REGULATOR_THREAT",
+    "DOCUMENTS",
+    "CONFIRM",
+]
 
 
 def _exact_keys(value: dict[str, Any], keys: set[str], fact_key: FactKey) -> None:
@@ -83,6 +132,47 @@ class CaseResponse(ContractModel):
 
 class ActorResponse(ContractModel):
     role: Literal["CLINIC_ADMIN"]
+
+
+class TelegramIntakeDraftUpdateRequest(ContractModel):
+    expected_revision: int = Field(alias="expectedRevision", ge=1)
+    wizard_state: TelegramDraftWizardState = Field(alias="wizardState")
+    draft_data: dict[str, Any] = Field(alias="draftData")
+
+    @field_validator("draft_data")
+    @classmethod
+    def validate_draft_data(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if not set(value) <= _DRAFT_DATA_KEYS:
+            raise ValueError("draftData contains unsupported fields")
+        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        if len(encoded.encode()) > 16_384:
+            raise ValueError("draftData exceeds 16384 bytes")
+        return value
+
+
+class TelegramIntakeDraftCreateRequest(ContractModel):
+    pass
+
+
+class TelegramIntakeDraftArchiveRequest(ContractModel):
+    expected_revision: int = Field(alias="expectedRevision", ge=1)
+
+
+class TelegramIntakeDraftSummary(ContractModel):
+    id: UUID
+    wizard_state: TelegramDraftWizardState = Field(alias="wizardState")
+    revision: int
+    incident_type: str | None = Field(alias="incidentType")
+    updated_at: datetime = Field(alias="updatedAt")
+
+
+class TelegramIntakeDraftListResponse(ContractModel):
+    items: list[TelegramIntakeDraftSummary]
+
+
+class TelegramIntakeDraftResponse(TelegramIntakeDraftSummary):
+    draft_data: dict[str, Any] = Field(alias="draftData")
+    purge_after: datetime = Field(alias="purgeAfter")
 
 
 class PlatformSubscriptionGrantRequest(ContractModel):

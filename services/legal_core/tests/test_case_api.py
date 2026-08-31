@@ -342,6 +342,77 @@ def test_platform_owner_can_grant_a_time_limited_free_pilot(
     assert target_actor.status_code == 200
 
 
+def test_telegram_intake_drafts_are_resumable_private_and_versioned() -> None:
+    administrator = 6_900_000_001 + uuid4().int % 100_000_000
+    other_administrator = 7_000_000_001 + uuid4().int % 100_000_000
+    seed_admin(administrator)
+    seed_admin(other_administrator)
+
+    with application_client() as client:
+        created = client.post(
+            "/v1/telegram-intake-drafts",
+            headers=actor_headers(administrator, uuid4()),
+            json={},
+        )
+        draft_id = created.json()["id"]
+        listed_before_update = client.get(
+            "/v1/telegram-intake-drafts", headers=actor_headers(administrator)
+        )
+        saved = client.put(
+            f"/v1/telegram-intake-drafts/{draft_id}",
+            headers=actor_headers(administrator, uuid4()),
+            json={
+                "expectedRevision": 1,
+                "wizardState": "SERVICE_TYPE",
+                "draftData": {"incident_type": "QUALITY_COMPLAINT"},
+            },
+        )
+        denied = client.get(
+            f"/v1/telegram-intake-drafts/{draft_id}", headers=actor_headers(other_administrator)
+        )
+        stale = client.put(
+            f"/v1/telegram-intake-drafts/{draft_id}",
+            headers=actor_headers(administrator, uuid4()),
+            json={
+                "expectedRevision": 1,
+                "wizardState": "SERVICE_TYPE",
+                "draftData": {"incident_type": "QUALITY_COMPLAINT"},
+            },
+        )
+        archived = client.post(
+            f"/v1/telegram-intake-drafts/{draft_id}/archive",
+            headers=actor_headers(administrator, uuid4()),
+            json={"expectedRevision": 2},
+        )
+        listed_after_archive = client.get(
+            "/v1/telegram-intake-drafts", headers=actor_headers(administrator)
+        )
+
+    assert created.status_code == 201
+    assert created.json()["wizardState"] == "INCIDENT"
+    assert created.json()["draftData"] == {}
+    assert listed_before_update.json()["items"] == [
+        {
+            "id": draft_id,
+            "wizardState": "INCIDENT",
+            "revision": 1,
+            "incidentType": None,
+            "updatedAt": created.json()["updatedAt"],
+        }
+    ]
+    assert saved.status_code == 200
+    assert saved.json()["revision"] == 2
+    assert saved.json()["draftData"] == {"incident_type": "QUALITY_COMPLAINT"}
+    assert denied.status_code == 404
+    assert denied.json()["error"]["code"] == "INTAKE_DRAFT_NOT_FOUND"
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "INTAKE_DRAFT_REVISION_CONFLICT"
+    assert archived.status_code == 200
+    assert archived.json()["revision"] == 3
+    assert listed_after_archive.json() == {"items": []}
+    assert count_workflow_resources(administrator) == (0, 0, 0, 0)
+
+
 @pytest.mark.parametrize(
     ("entitlement_status", "entitlement_is_expired"),
     [
