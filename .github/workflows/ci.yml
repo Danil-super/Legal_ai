@@ -43,4 +43,8 @@ jobs:
         run: python -m pytest
 
       - name: Validate Compose
+        env:
+          POSTGRES_PASSWORD: ci-only-postgres-password
+          MINIO_ROOT_PASSWORD: ci-only-minio-password
+          TELEGRAM_BOT_TOKEN: 123456:ci_config_validation_token_1234567890
         run: docker compose config --quiet
