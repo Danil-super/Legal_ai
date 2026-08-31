@@ -49,19 +49,22 @@ def _split_oversized_paragraph(paragraph: str) -> list[str]:
     current: list[str] = []
     current_length = 0
     for word in words:
+        if len(word) > MAX_FRAGMENT_CHARS:
+            if current:
+                chunks.append(" ".join(current))
+                current = []
+                current_length = 0
+            chunks.extend(
+                word[offset : offset + MAX_FRAGMENT_CHARS]
+                for offset in range(0, len(word), MAX_FRAGMENT_CHARS)
+            )
+            continue
+
         additional = len(word) if not current else len(word) + 1
         if current and current_length + additional > MAX_FRAGMENT_CHARS:
             chunks.append(" ".join(current))
             current = [word]
             current_length = len(word)
-            continue
-        if not current and len(word) > MAX_FRAGMENT_CHARS:
-            chunks.extend(
-                word[offset : offset + MAX_FRAGMENT_CHARS]
-                for offset in range(0, len(word), MAX_FRAGMENT_CHARS)
-            )
-            current = []
-            current_length = 0
             continue
         current.append(word)
         current_length += additional
