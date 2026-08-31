@@ -4,7 +4,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from legal_core.database import database_url
+from legal_core.database import owner_database_url
 from legal_core.models import Base
 from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
@@ -13,7 +13,10 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", database_url().render_as_string(hide_password=False))
+config.set_main_option(
+    "sqlalchemy.url",
+    owner_database_url().render_as_string(hide_password=False),
+)
 target_metadata = Base.metadata
 
 
