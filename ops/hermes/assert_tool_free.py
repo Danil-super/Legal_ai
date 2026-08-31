@@ -1,8 +1,8 @@
 """Fail closed unless the active pinned Hermes profile exposes zero model tools.
 
-Run this inside the Hermes runtime immediately before `hermes gateway run`.  The imports intentionally
-use pinned Hermes internals: this guard is coupled to ADR-0013's immutable commit and must be reviewed
-again on every Hermes upgrade.
+Run this inside the Hermes runtime immediately before `hermes gateway run`.
+The imports intentionally use pinned Hermes internals: this guard is coupled to
+ADR-0013's immutable commit and must be reviewed again on every Hermes upgrade.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def main() -> None:
             f"Hermes version mismatch: expected {EXPECTED_HERMES_VERSION}, got {package_version}"
         )
 
-    # Resolve the same runtime registries that the gateway can see.  A bundled or
+    # Resolve the same runtime registries that the gateway can see. A bundled or
     # configured plugin must therefore also survive this check before the server starts.
     discover_builtin_tools()
     try:
