@@ -11,7 +11,7 @@ from functools import partial
 from html import escape
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from reportlab.lib import colors  # type: ignore[import-untyped]
@@ -57,6 +57,7 @@ _FONT_PATHS = (
     Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
     Path("/usr/share/fonts/dejavu/DejaVuSans.ttf"),
 )
+RiskLevelLiteral = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL", "UNAVAILABLE"]
 
 
 def _canonical_json(value: object) -> bytes:
@@ -185,6 +186,7 @@ def build_analysis_report(
         if escalation_required
         else "DRAFT_VERIFIER_NOT_ENABLED"
     )
+    risk_level = cast(RiskLevelLiteral, risk.level.value)
 
     return CanonicalReport(
         reportId=report_id,
@@ -202,7 +204,7 @@ def build_analysis_report(
         draftResponse=DraftResponse(status="BLOCKED", reasonCode=draft_reason),
         legalBasis=LegalBasis(status="AVAILABLE", sources=_source_cards(evidence)),
         risk=RiskSummary(
-            level=risk.level.value,
+            level=risk_level,
             reasonCodes=list(risk.reason_codes),
             policyVersion=risk.policy_version,
             escalationRequired=escalation_required,
@@ -304,8 +306,8 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
         Paragraph("Недостающая информация", heading),
     ]
     if report.missing_facts:
-        for item in report.missing_facts:
-            story.append(Paragraph(f"• {escape(item.fact_key.value)}", body))
+        for missing_item in report.missing_facts:
+            story.append(Paragraph(f"• {escape(missing_item.fact_key.value)}", body))
     else:
         story.append(Paragraph("Критичные пробелы не выявлены.", body))
 
@@ -325,8 +327,8 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
             story.append(Paragraph(f"• {escape(reason)}", body))
 
         story.append(Paragraph("Рекомендованные действия", heading))
-        for item in report.recommendations.items:
-            story.append(Paragraph(f"• {escape(item)}", body))
+        for recommendation_item in report.recommendations.items:
+            story.append(Paragraph(f"• {escape(recommendation_item)}", body))
 
         story.append(Paragraph("Черновик ответа пациенту", heading))
         if report.draft_response.status == "AVAILABLE" and report.draft_response.text:
