@@ -7,12 +7,14 @@ import pytest
 from legal_core.legal_watcher import (
     PORTAL_PAGE_SIZE,
     WatchManifest,
+    load_watch_manifest,
     stage_official_publications,
 )
 from legal_core.pravo_source import PravoDocumentHit, PravoPdfArtifact
 
 
 EO_NUMBER = "0001202606010083"
+ROOT = Path(__file__).parents[3]
 
 
 def _hit() -> PravoDocumentHit:
@@ -188,3 +190,18 @@ def test_watch_manifest_rejects_duplicate_rule_ids() -> None:
     }
     with pytest.raises(ValueError, match="watch rule IDs must be unique"):
         WatchManifest.model_validate(payload)
+
+
+def test_repository_watch_manifest_tracks_the_approved_scope_groups() -> None:
+    manifest = load_watch_manifest(
+        ROOT / "services/legal_core/corpus/legal_watch_rules.v1.json"
+    )
+    assert {rule.rule_id for rule in manifest.rules} == {
+        "paid-medical-services",
+        "health-protection-323-fz",
+        "consumer-protection-2300-1",
+        "civil-code-paid-services",
+        "personal-data-152-fz",
+    }
+    assert all(rule.search_mode == "DOCUMENT_TEXT" for rule in manifest.rules)
+    assert all(1 <= rule.max_hits <= 20 for rule in manifest.rules)
