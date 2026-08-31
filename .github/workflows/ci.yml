@@ -122,4 +122,4 @@ jobs:
         run: python -m legal_core.runtime_db_role
 
       - name: PostgreSQL integration tests
-        run: python -m pytest services/legal_core/tests
+        run: timeout 120s python -m pytest -vv services/legal_core/tests
