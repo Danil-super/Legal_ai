@@ -1,7 +1,7 @@
 """Two-pass legal reasoning over a bounded Legal Core projection.
 
-The first Hermes profile proposes structured internal claims.  A second profile receives the same
-approved evidence and reviews each claim independently.  Legal Core still performs the final
+The first Hermes profile proposes structured internal claims. A second profile receives the same
+approved evidence and reviews each claim independently. Legal Core still performs the final
 server-side structural/date/risk gates; this module never declares a claim legally verified.
 """
 
@@ -97,7 +97,8 @@ class LegalReasoningOrchestrator:
         serialized_projection = projection.model_dump(mode="json", by_alias=True)
         research_input = json.dumps(serialized_projection, ensure_ascii=False, sort_keys=True)
         if contains_obvious_direct_identifier(research_input):
-            raise ValueError("bounded case projection still contains an obvious direct identifier")
+            message = "bounded case projection still contains an obvious direct identifier"
+            raise ValueError(message)
 
         research_raw = await self._researcher.complete_json(
             system=_RESEARCH_SYSTEM,
@@ -106,14 +107,21 @@ class LegalReasoningOrchestrator:
         try:
             proposal = ClaimProposalBatch.model_validate(research_raw)
         except ValidationError as exc:
-            raise HermesProtocolError("researcher JSON does not match the claim contract") from exc
+            message = "researcher JSON does not match the claim contract"
+            raise HermesProtocolError(message) from exc
 
         review_input = {
             "caseId": str(projection.case_id),
             "asOfDate": projection.as_of_date.isoformat(),
             "facts": projection.facts,
-            "evidence": [item.model_dump(mode="json", by_alias=True) for item in projection.evidence],
-            "claims": [item.model_dump(mode="json", by_alias=True) for item in proposal.claims],
+            "evidence": [
+                item.model_dump(mode="json", by_alias=True)
+                for item in projection.evidence
+            ],
+            "claims": [
+                item.model_dump(mode="json", by_alias=True)
+                for item in proposal.claims
+            ],
         }
         review_raw = await self._reviewer.complete_json(
             system=_REVIEW_SYSTEM,
@@ -122,7 +130,8 @@ class LegalReasoningOrchestrator:
         try:
             review = SemanticReviewBatch.model_validate(review_raw)
         except ValidationError as exc:
-            raise HermesProtocolError("reviewer JSON does not match the semantic-review contract") from exc
+            message = "reviewer JSON does not match the semantic-review contract"
+            raise HermesProtocolError(message) from exc
 
         proposal_ids = {claim.claim_id for claim in proposal.claims}
         review_ids = {item.claim_id for item in review.reviews}
