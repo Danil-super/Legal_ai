@@ -2,7 +2,6 @@ from uuid import UUID
 
 import pytest
 from telegram.ext import CallbackQueryHandler
-
 from telegram_gateway.analysis_runtime import (
     analysis_keyboard,
     build_application_with_analysis,
