@@ -165,6 +165,9 @@ class LegalCoreClient:
             asOfDate=context.as_of_date,
             expectedFactSnapshotSha256=context.fact_snapshot_sha256,
             expectedEvidenceTraceSha256=context.evidence_trace_sha256,
+            expectedClinicDocumentContextTraceSha256=(
+                context.clinic_document_context_trace_sha256
+            ),
             expectedRiskPolicyVersion=context.risk_policy_version,
             claims=claims,
             semanticReviews=semantic_reviews,
