@@ -1,10 +1,14 @@
 # Dental Legal AI
 
-Evidence-grounded AI assistant for legally significant situations in Russian dental clinics. The MVP uses Telegram as its user interface and keeps verified, versioned law in a separate Legal Core.
+Специализированный ИИ-помощник для юридически значимых ситуаций в российских
+стоматологических клиниках. MVP использует Telegram как интерфейс, а проверенную,
+версионируемую нормативную базу хранит в отдельном Legal Core.
 
-The project is in bootstrap development. It must not be used for real patient cases or production legal decisions until the legal, personal-data and medical-confidentiality reviews required by the specification are complete.
+Проект находится на этапе разработки. До завершения юридической проверки, оценки требований к
+персональным данным и врачебной тайне, предусмотренных спецификацией, его нельзя применять к
+реальным кейсам пациентов или для принятия юридических решений.
 
-## Local development
+## Локальная разработка
 
 ```bash
 python3 -m venv .venv
@@ -15,12 +19,13 @@ python3 -m venv .venv
 .venv/bin/python -m mypy services/legal_core/src services/gateway/telegram/src
 ```
 
-Architecture and implementation order are documented in [CAPABILITY_MAP.md](CAPABILITY_MAP.md) and [tasks/plan.md](tasks/plan.md).
+Архитектура и порядок реализации описаны в [CAPABILITY_MAP.md](CAPABILITY_MAP.md) и
+[tasks/plan.md](tasks/plan.md).
 
-## Local containers
+## Локальный запуск в контейнерах
 
-Copy `.env.example` to `.env`, replace both placeholder passwords, add the Telegram bot
-token, then run:
+Скопируйте `.env.example` в `.env`, замените оба пароля-заглушки, добавьте токен Telegram-бота и
+запустите:
 
 ```bash
 docker compose up -d --build
@@ -29,23 +34,23 @@ curl --fail http://127.0.0.1:8000/health/ready
 docker compose down
 ```
 
-The Legal Core startup applies migrations and idempotently ingests checksum-locked manifests for
-Government Decrees No. 736 and No. 659 as `REVIEW_REQUIRED`. They currently contain normalized
-review excerpts, not official raw PDF artifacts, and therefore cannot be approved. The
-applicability boundary is `[2023-09-01, 2026-09-01)` for No. 736 and
-`[2026-09-01, 2031-09-01)` for No. 659. Ingestion never approves law for production retrieval.
+При запуске Legal Core применяет миграции и идемпотентно загружает защищённые контрольными суммами
+манифесты постановлений Правительства РФ № 736 и № 659 со статусом `REVIEW_REQUIRED`. Сейчас они
+содержат нормализованные выдержки для проверки, а не официальные исходные PDF, поэтому не могут
+быть одобрены. Граница применимости: `[2023-09-01, 2026-09-01)` для № 736 и
+`[2026-09-01, 2031-09-01)` для № 659. Загрузка никогда не одобряет норму для production-поиска.
 
-Approval is a separate CLI operation for an active `LEGAL_EDITOR`. It requires an exact official
-artifact checksum, expected effective dates and four explicit human attestations. The database
-stores successful and blocked attempts in an append-only audit table; production retrieval also
-requires `artifact_kind=OFFICIAL_RAW`.
+Одобрение — отдельная CLI-операция активного `LEGAL_EDITOR`. Она требует точной контрольной суммы
+официального документа, ожидаемых дат действия и четырёх явных человеческих подтверждений. База
+данных хранит успешные и заблокированные попытки в append-only аудите; production-поиск также
+требует `artifact_kind=OFFICIAL_RAW`.
 
-When an official PDF has been downloaded manually, prepare its immutable snapshot before
-ingestion. The command checks the `%PDF-` signature, 50 MB limit, `pdfinfo` metadata, published
-page count and published byte length, independently recorded SHA-256, act number/date in the
-extracted full text and exact fragment substrings. Image-only publications use a clearly labelled
-Russian Tesseract OCR fallback; OCR is never treated as the source of truth and must be reviewed
-against the immutable PDF. The command only emits a `REVIEW_REQUIRED` manifest:
+После ручного скачивания официального PDF подготовьте неизменяемый снимок до загрузки. Команда
+проверяет сигнатуру `%PDF-`, лимит 50 МБ, метаданные `pdfinfo`, опубликованные количество страниц
+и размер файла, независимо зафиксированную SHA-256, номер и дату акта в извлечённом полном тексте,
+а также точные фрагменты. Для публикаций-изображений предусмотрен явно помеченный русский OCR
+Tesseract; он не является источником истины и требует сверки с неизменяемым PDF. Команда создаёт
+только манифест `REVIEW_REQUIRED`:
 
 ```bash
 mkdir -p services/legal_core/corpus/official
@@ -59,39 +64,38 @@ docker compose run --rm --no-deps \
   --retrieved-at 2026-08-22T12:00:00+00:00
 ```
 
-Review the generated normalized text and fragments, then ingest the generated JSON with
-`python -m legal_core.corpus_loader`. Ingestion still cannot make it visible to production
-retrieval; the independent `LEGAL_EDITOR` approval gate remains mandatory.
+Проверьте созданный нормализованный текст и фрагменты, затем загрузите JSON командой
+`python -m legal_core.corpus_loader`. Даже после этого материал не появляется в production-поиске:
+независимый gate одобрения `LEGAL_EDITOR` остаётся обязательным.
 
-To connect the first clinic administrator securely:
+## Подключение первого администратора клиники
 
-1. Open the bot and send `/whoami`.
-2. Put the returned numeric ID into `BOOTSTRAP_TELEGRAM_ADMIN_ID` in `.env` and set
+1. Откройте бота и отправьте `/whoami`.
+2. Укажите полученный числовой ID в `BOOTSTRAP_TELEGRAM_ADMIN_ID` файла `.env`, а также задайте
    `BOOTSTRAP_CLINIC_NAME`.
-3. Run `docker compose up -d --force-recreate legal-core`.
-4. Run the bootstrap once more to obtain the printed `membership_id` (the operation is idempotent):
+3. Выполните `docker compose up -d --force-recreate legal-core`.
+4. Запустите bootstrap ещё раз, чтобы получить напечатанный `membership_id` (операция идемпотентна):
 
 ```bash
 docker compose exec legal-core python -m legal_core.bootstrap_admin
 ```
 
-5. Set `PLATFORM_OWNER_TELEGRAM_ID` in `.env` to the service owner's numeric Telegram ID. The
-owner must also have an active entitlement, then can grant access from the bot after a verified
-purchase. Open `/admin`, choose `➕ Выдать доступ` and send the target Telegram ID in the next
-message; no access command needs to be memorized:
+5. Укажите числовой Telegram ID владельца сервиса в `PLATFORM_OWNER_TELEGRAM_ID` файла `.env`.
+   Владелец также должен иметь активный доступ. Затем через `/admin` он может выбрать
+   «➕ Выдать доступ» и следующим сообщением отправить ID пользователя:
 
 ```text
 /admin → ➕ Выдать доступ → <Telegram_ID>
 ```
 
-The command creates a separate clinic named `Новая стоматология` and a `CLINIC_ADMIN` membership
-for an unknown ID, then grants the active `MVP_MANUAL` entitlement. If that user already has one
-active administrator clinic, their entitlement for that clinic is renewed instead. It never grants
-`LEGAL_EDITOR`. A user with several active administrator clinics requires support resolution to
-avoid choosing a tenant implicitly.
+Для неизвестного ID команда создаёт отдельную клинику «Новая стоматология», членство
+`CLINIC_ADMIN` и активное право `MVP_MANUAL`. Если у пользователя уже есть одно активное
+администраторское членство, право для соответствующей клиники продлевается. Права `LEGAL_EDITOR`
+никогда не выдаются. Если активных администраторских клиник несколько, требуется ручное решение,
+чтобы не выбирать tenant неявно.
 
-The internal command remains available for suspension, cancellation and explicit plan or expiry
-changes. It stores no payment data and never changes the user's role:
+Внутренняя команда остаётся доступна для приостановки, отмены и явного изменения тарифа или срока.
+Она не хранит платёжные данные и не меняет роль пользователя:
 
 ```bash
 docker compose exec legal-core python -m legal_core.subscription_provisioning \
@@ -100,28 +104,29 @@ docker compose exec legal-core python -m legal_core.subscription_provisioning \
   --starts-at 2026-08-22T12:00:00+00:00
 ```
 
-6. The new administrator opens `/start`, then `/menu` and chooses `📝 Создать кейс`.
+6. Новый администратор открывает `/start`, затем `/menu` и выбирает «📝 Создать кейс».
 
-The bootstrap is idempotent and does not register unknown Telegram users automatically. A mapped
-administrator without an active, current subscription cannot open cases or use legal retrieval;
-the bot gives a neutral support message. Use the same internal command with `--status SUSPENDED`
-or `--status CANCELLED` to stop access. Payment checkout, cards and provider webhooks are not
-implemented in this MVP.
+Bootstrap идемпотентен и не регистрирует неизвестных пользователей Telegram автоматически.
+Администратор без активного права не может открывать кейсы или использовать поиск по правовой
+базе; бот показывает нейтральное сообщение. Для отключения доступа используйте ту же внутреннюю
+команду со `--status SUSPENDED` или `--status CANCELLED`. Платёжный checkout, банковские карты и
+webhook-и провайдера в MVP не реализованы.
 
-Apply the bot name, descriptions, commands and avatar as an explicit one-off operation:
+Имя бота, описания, команды и аватар задаются отдельной разовой операцией:
 
 ```bash
 docker compose run --rm telegram-gateway python -m telegram_gateway.profile
 ```
 
-Telegram strictly rate-limits profile mutations, so they are deliberately not repeated on
-every polling restart.
+Telegram ограничивает частоту изменений профиля, поэтому они намеренно не повторяются при каждом
+перезапуске polling-процесса.
 
-`docker compose down` keeps the named data volumes. Add `--volumes` only when intentionally deleting local PostgreSQL, Redis and MinIO data.
+`docker compose down` сохраняет именованные тома данных. Добавляйте `--volumes` только при
+осознанном удалении локальных данных PostgreSQL, Redis и MinIO.
 
-The Telegram gateway uses long polling and exposes no host port. `/start` and `/menu` open a
-branded, image-based inline menu. A mapped `CLINIC_ADMIN` with an active subscription can fill a
-pseudonymous case card, confirm it and receive the canonical PDF. Cancelling before confirmation
-creates no database case. The PDF remains an intake record: legal recommendations and a
-patient-response draft are explicitly blocked until an approved evidence corpus and verifier gate
-are available.
+Telegram gateway использует long polling и не публикует порт хоста. `/start` и `/menu` открывают
+оформленное inline-меню. `CLINIC_ADMIN` с активным доступом может заполнить обезличенную карточку,
+сохранить её как черновик, вернуться к ней через «📂 Мои черновики», подтвердить и получить
+канонический PDF. До подтверждения запись case в БД не создаётся. PDF — это карточка intake:
+юридические рекомендации и проект ответа пациенту явно заблокированы до появления одобренного
+корпуса доказательств и verifier-gate.
