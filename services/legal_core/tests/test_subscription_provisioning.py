@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from legal_core.database import database_url
+from legal_core.database import database_url, owner_database_url
 from legal_core.models import SubscriptionEntitlement, SubscriptionEntitlementEvent, User
 from legal_core.subscription_provisioning import (
     parse_utc_timestamp,
@@ -28,15 +28,17 @@ def test_parse_utc_timestamp_requires_an_explicit_timezone() -> None:
 )
 def test_provisioning_records_an_append_only_entitlement_history() -> None:
     async def scenario() -> None:
-        engine = create_async_engine(database_url())
-        factory = async_sessionmaker(engine, expire_on_commit=False)
+        runtime_engine = create_async_engine(database_url())
+        runtime_factory = async_sessionmaker(runtime_engine, expire_on_commit=False)
+        owner_engine = create_async_engine(owner_database_url())
+        owner_factory = async_sessionmaker(owner_engine, expire_on_commit=False)
         telegram_id = 8_220_260_003 + uuid4().int % 100_000_000
         clinic_id = uuid4()
         user_id = uuid4()
         membership_id = uuid4()
         starts_at = datetime.now(UTC) - timedelta(minutes=1)
         try:
-            async with factory() as session, session.begin():
+            async with owner_factory() as session, session.begin():
                 await session.execute(
                     text("INSERT INTO clinics (id,name) VALUES (:id,:name)"),
                     {"id": clinic_id, "name": "Клиника подписки"},
@@ -54,7 +56,7 @@ def test_provisioning_records_an_append_only_entitlement_history() -> None:
                 )
 
             first = await provision_entitlement(
-                factory,
+                runtime_factory,
                 membership_id=membership_id,
                 plan_code="MVP_MONTHLY",
                 status="ACTIVE",
@@ -62,7 +64,7 @@ def test_provisioning_records_an_append_only_entitlement_history() -> None:
                 ends_at=None,
             )
             second = await provision_entitlement(
-                factory,
+                runtime_factory,
                 membership_id=membership_id,
                 plan_code="MVP_MONTHLY",
                 status="SUSPENDED",
@@ -71,7 +73,18 @@ def test_provisioning_records_an_append_only_entitlement_history() -> None:
             )
 
             assert first == second
-            async with factory() as session:
+            async with runtime_factory() as session:
+                hidden_without_tenant = await session.scalar(
+                    select(SubscriptionEntitlement).where(
+                        SubscriptionEntitlement.id == first,
+                        SubscriptionEntitlement.clinic_id == clinic_id,
+                    )
+                )
+                assert hidden_without_tenant is None
+
+                await session.execute(
+                    select(func.set_config("app.current_clinic_id", str(clinic_id), True))
+                )
                 entitlement = await session.scalar(
                     select(SubscriptionEntitlement).where(
                         SubscriptionEntitlement.id == first,
@@ -91,6 +104,7 @@ def test_provisioning_records_an_append_only_entitlement_history() -> None:
             assert user is not None
             assert user.system_role is None
         finally:
-            await engine.dispose()
+            await runtime_engine.dispose()
+            await owner_engine.dispose()
 
     asyncio.run(scenario())
