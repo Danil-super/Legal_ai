@@ -20,6 +20,7 @@ def _submission() -> AnalysisSubmissionRequest:
         asOfDate=date(2026, 8, 31),
         expectedFactSnapshotSha256="a" * 64,
         expectedEvidenceTraceSha256="b" * 64,
+        expectedClinicDocumentContextTraceSha256="c" * 64,
         expectedRiskPolicyVersion="dental-risk.v1",
         claims=[
             {
@@ -65,6 +66,7 @@ def test_submission_contract_maps_to_domain_and_verified_actions() -> None:
     claims = _domain_claims(payload)
     reviews = _semantic_reviews(payload)
 
+    assert payload.expected_clinic_document_context_trace_sha256 == "c" * 64
     assert claims[0].kind is ClaimKind.ACTION
     assert claims[0].required_fact_keys == (FactKey.FORMAL_CLAIM,)
     assert reviews[0].verdict is SemanticVerdict.SUPPORTED
