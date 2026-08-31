@@ -49,6 +49,25 @@ jobs:
           TELEGRAM_BOT_TOKEN: 123456:ci_config_validation_token_1234567890
         run: docker compose config --quiet
 
+      - name: Validate pinned Hermes overlay
+        env:
+          POSTGRES_PASSWORD: ci-only-postgres-password
+          MINIO_ROOT_PASSWORD: ci-only-minio-password
+          TELEGRAM_BOT_TOKEN: 123456:ci_config_validation_token_1234567890
+          AGENT_INTERNAL_KEY: ci-only-agent-internal-key-12345678901234567890
+          HERMES_LLM_BASE_URL: https://llm.example.invalid/v1
+          HERMES_LLM_API_KEY: ci-only-provider-key
+          HERMES_RESEARCHER_LLM_MODEL: synthetic-researcher-model
+          HERMES_REVIEWER_LLM_MODEL: synthetic-reviewer-model
+          HERMES_RESEARCHER_API_KEY: ci-only-researcher-server-key
+          HERMES_REVIEWER_API_KEY: ci-only-reviewer-server-key
+        run: >-
+          docker compose
+          -f docker-compose.yml
+          -f ops/hermes/docker-compose.hermes.yml
+          --profile analysis
+          config --quiet
+
   postgres-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 15
