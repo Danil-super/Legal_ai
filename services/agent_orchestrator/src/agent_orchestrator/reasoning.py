@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from pydantic import ValidationError
 
@@ -82,13 +83,20 @@ class ReasoningResult:
     patient_draft: str | None
 
 
+def _endpoint_origin(url: str) -> tuple[str, str, int | None]:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+        raise ValueError("Hermes endpoint must have an absolute http(s) origin")
+    return parsed.scheme, parsed.hostname.casefold(), parsed.port
+
+
 class LegalReasoningOrchestrator:
     def __init__(self, *, researcher: HermesClient, reviewer: HermesClient) -> None:
-        researcher_identity = (researcher.endpoint.base_url, researcher.endpoint.model)
-        reviewer_identity = (reviewer.endpoint.base_url, reviewer.endpoint.model)
-        if researcher_identity == reviewer_identity:
+        researcher_origin = _endpoint_origin(researcher.endpoint.base_url)
+        reviewer_origin = _endpoint_origin(reviewer.endpoint.base_url)
+        if researcher_origin == reviewer_origin:
             raise ValueError(
-                "researcher and semantic reviewer must use distinct Hermes profile identities"
+                "researcher and semantic reviewer must use distinct Hermes endpoint origins"
             )
         self._researcher = researcher
         self._reviewer = reviewer
