@@ -7,8 +7,13 @@ from datetime import date
 from typing import Any
 from uuid import UUID
 
-from agent_orchestrator.contracts import CaseProjection, EvidenceItem
+from agent_orchestrator.contracts import (
+    CaseProjection,
+    ClinicDocumentContextItem,
+    EvidenceItem,
+)
 from legal_core.analysis_contracts import AnalysisContextResponse
+from legal_core.clinic_document_retrieval import ApprovedClinicDocumentFragment
 from legal_core.contracts import FactKey
 from legal_core.legal_retrieval import ApprovedLegalFragment
 from legal_core.pseudonymization import (
@@ -40,12 +45,42 @@ def _pseudonymize_value(
     raise TypeError(f"unsupported fact value type for agent projection: {type(value).__name__}")
 
 
+def _redact_clinic_text(value: str, *, known_identifiers: dict[str, str]) -> str:
+    redacted = pseudonymize_text(value, known_identifiers=known_identifiers).text
+    if contains_obvious_direct_identifier(redacted):
+        raise ValueError("clinic document context contains a direct identifier after redaction")
+    return redacted
+
+
+def _clinic_context_item(
+    fragment: ApprovedClinicDocumentFragment,
+    *,
+    known_identifiers: dict[str, str],
+) -> ClinicDocumentContextItem:
+    return ClinicDocumentContextItem(
+        documentType=fragment.document_type,
+        documentTitle=_redact_clinic_text(
+            fragment.document_title,
+            known_identifiers=known_identifiers,
+        ),
+        versionNo=fragment.version_no,
+        validFrom=fragment.valid_from,
+        validTo=fragment.valid_to,
+        structuralPath=fragment.structural_path,
+        text=_redact_clinic_text(
+            fragment.fragment_text,
+            known_identifiers=known_identifiers,
+        ),
+    )
+
+
 def build_case_projection(
     *,
     case_id: UUID,
     as_of_date: date,
     facts: Mapping[FactKey, object],
     evidence: Sequence[ApprovedLegalFragment],
+    clinic_document_context: Sequence[ApprovedClinicDocumentFragment] = (),
     known_identifiers: dict[str, str] | None = None,
 ) -> CaseProjection:
     if not evidence:
@@ -68,11 +103,16 @@ def build_case_projection(
         )
         for fragment in evidence
     ]
+    projected_clinic_context = [
+        _clinic_context_item(fragment, known_identifiers=identifiers)
+        for fragment in clinic_document_context
+    ]
     return CaseProjection(
         caseId=case_id,
         asOfDate=as_of_date,
         facts=projected_facts,
         evidence=projected_evidence,
+        clinicDocumentContext=projected_clinic_context,
     )
 
 
@@ -101,9 +141,28 @@ def build_projection_from_context(
         )
         for fragment in context.evidence
     ]
+    projected_clinic_context = [
+        ClinicDocumentContextItem(
+            documentType=fragment.document_type,
+            documentTitle=_redact_clinic_text(
+                fragment.document_title,
+                known_identifiers=identifiers,
+            ),
+            versionNo=fragment.version_no,
+            validFrom=fragment.valid_from,
+            validTo=fragment.valid_to,
+            structuralPath=fragment.structural_path,
+            text=_redact_clinic_text(
+                fragment.text,
+                known_identifiers=identifiers,
+            ),
+        )
+        for fragment in context.clinic_document_context
+    ]
     return CaseProjection(
         caseId=context.case_id,
         asOfDate=context.as_of_date,
         facts=projected_facts,
         evidence=projected_evidence,
+        clinicDocumentContext=projected_clinic_context,
     )
