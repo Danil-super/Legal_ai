@@ -25,12 +25,11 @@ class EvidenceItem(StrictModel):
 
 
 class ClinicDocumentContextItem(StrictModel):
-    """Clinic-owned context that is explicitly not a legal evidence source."""
+    """Clinic-owned context that is explicitly non-citable and not legal evidence."""
 
     context_kind: Literal["CLINIC_DOCUMENT_CONTEXT"] = Field(
         default="CLINIC_DOCUMENT_CONTEXT", alias="contextKind"
     )
-    fragment_id: UUID = Field(alias="fragmentId")
     document_type: str = Field(alias="documentType", min_length=1, max_length=80)
     document_title: str = Field(alias="documentTitle", min_length=1, max_length=240)
     version_no: int = Field(alias="versionNo", ge=1)
