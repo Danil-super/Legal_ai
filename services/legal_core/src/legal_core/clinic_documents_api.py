@@ -314,10 +314,13 @@ def create_clinic_documents_router(
                 {"clinic_id": actor.clinic_id, "version_id": version_id},
             )
         ).mappings().first()
-        if latest is not None:
-            if latest["decision"] == payload.decision and latest["reason_code"] == payload.reason_code:
-                response.status_code = status.HTTP_200_OK
-                return ClinicDocumentApprovalResponse.model_validate(dict(latest))
+        if (
+            latest is not None
+            and latest["decision"] == payload.decision
+            and latest["reason_code"] == payload.reason_code
+        ):
+            response.status_code = status.HTTP_200_OK
+            return ClinicDocumentApprovalResponse.model_validate(dict(latest))
 
         event = (
             await session.execute(
