@@ -45,6 +45,7 @@ jobs:
       - name: Validate Compose
         env:
           POSTGRES_PASSWORD: ci-only-postgres-password
+          POSTGRES_APP_PASSWORD: ci-only-runtime-database-password-1234567890
           MINIO_ROOT_PASSWORD: ci-only-minio-password
           TELEGRAM_BOT_TOKEN: 123456:ci_config_validation_token_1234567890
         run: docker compose config --quiet
@@ -52,6 +53,7 @@ jobs:
       - name: Validate pinned Hermes overlay
         env:
           POSTGRES_PASSWORD: ci-only-postgres-password
+          POSTGRES_APP_PASSWORD: ci-only-runtime-database-password-1234567890
           MINIO_ROOT_PASSWORD: ci-only-minio-password
           TELEGRAM_BOT_TOKEN: 123456:ci_config_validation_token_1234567890
           AGENT_INTERNAL_KEY: ci-only-agent-internal-key-12345678901234567890
@@ -91,6 +93,8 @@ jobs:
       POSTGRES_DB: dental_legal_test_ci
       POSTGRES_USER: dental_legal
       POSTGRES_PASSWORD: integration-only-password
+      POSTGRES_APP_USER: dental_legal_app
+      POSTGRES_APP_PASSWORD: integration-runtime-password-12345678901234567890
       POSTGRES_INTEGRATION: '1'
     steps:
       - name: Checkout
@@ -108,8 +112,14 @@ jobs:
           python -m pip install -r requirements.lock
           python -m pip install -e '.[dev]' --no-deps
 
+      - name: Provision runtime database role
+        run: python -m legal_core.runtime_db_role
+
       - name: Apply migrations
         run: alembic upgrade head
+
+      - name: Refresh runtime database grants
+        run: python -m legal_core.runtime_db_role
 
       - name: PostgreSQL integration tests
         run: python -m pytest services/legal_core/tests
