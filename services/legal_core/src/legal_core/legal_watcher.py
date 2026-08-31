@@ -139,7 +139,11 @@ def _stage_metadata(
             existing = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise ValueError("existing quarantine metadata is unreadable") from exc
-        if not isinstance(existing, dict) or _stable_identity(existing) != _stable_identity(metadata):
+        identity_mismatch = (
+            isinstance(existing, dict)
+            and _stable_identity(existing) != _stable_identity(metadata)
+        )
+        if not isinstance(existing, dict) or identity_mismatch:
             raise ValueError("existing quarantine metadata conflicts with the discovered artifact")
         return False
     encoded = (json.dumps(metadata, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode()
