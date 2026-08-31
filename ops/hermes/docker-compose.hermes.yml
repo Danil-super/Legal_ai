@@ -17,6 +17,14 @@ services:
       - >-
         python /opt/legal/assert_tool_free.py &&
         exec hermes gateway run --no-supervise
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "curl --fail --silent http://127.0.0.1:8642/health >/dev/null"
+      interval: 10s
+      timeout: 3s
+      retries: 9
+      start_period: 20s
     volumes:
       - hermes-researcher-data:/opt/data
       - ./ops/hermes/legal-profile.config.yaml:/opt/data/config.yaml:ro
@@ -46,6 +54,14 @@ services:
       - >-
         python /opt/legal/assert_tool_free.py &&
         exec hermes gateway run --no-supervise
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "curl --fail --silent http://127.0.0.1:8642/health >/dev/null"
+      interval: 10s
+      timeout: 3s
+      retries: 9
+      start_period: 20s
     volumes:
       - hermes-reviewer-data:/opt/data
       - ./ops/hermes/legal-profile.config.yaml:/opt/data/config.yaml:ro
@@ -69,9 +85,9 @@ services:
       legal-core:
         condition: service_healthy
       hermes-researcher:
-        condition: service_started
+        condition: service_healthy
       hermes-reviewer:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   hermes-researcher-data:
