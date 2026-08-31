@@ -50,7 +50,7 @@ class ServiceSettings:
             raise ValueError("AGENT_INTERNAL_KEY must contain at least 32 characters")
 
     @classmethod
-    def from_environment(cls) -> "ServiceSettings":
+    def from_environment(cls) -> ServiceSettings:
         settings = cls(
             internal_key=os.getenv("AGENT_INTERNAL_KEY", ""),
             legal_core_url=os.getenv("LEGAL_CORE_URL", ""),
