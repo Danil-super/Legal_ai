@@ -1,7 +1,5 @@
 """Tenant-scoped API for clinic-owned documents with explicit review gates."""
 
-from __future__ import annotations
-
 from datetime import date
 from typing import Annotated, Any
 from uuid import UUID
