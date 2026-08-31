@@ -18,6 +18,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 from legal_core import __version__
 from legal_core.analysis_api import create_analysis_router
 from legal_core.case_api import ApiError, create_case_router
+from legal_core.clinic_documents_api import create_clinic_documents_router
 from legal_core.database import create_engine, create_session_factory
 from legal_core.draft_retention import purge_expired_intake_drafts
 from legal_core.legal_api import create_legal_router
@@ -182,6 +183,7 @@ def create_app(
 
     app.include_router(create_case_router(sessions))
     app.include_router(create_legal_router(sessions))
+    app.include_router(create_clinic_documents_router(sessions))
     app.include_router(create_analysis_router(sessions))
 
     return app
