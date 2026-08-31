@@ -70,7 +70,11 @@ def test_projection_redacts_direct_identifiers_inside_nested_facts_and_clinic_co
     assert summary == "[PATIENT_1]: [PHONE], скол винира"
     assert projection.evidence[0].fragment_id == FRAGMENT_ID
     assert projection.clinic_document_context[0].document_title == "Гарантия для [PATIENT_1]"
-    assert projection.clinic_document_context[0].text == "[PATIENT_1] может обратиться по телефону [PHONE]."
-    clinic_payload = projection.clinic_document_context[0].model_dump(mode="json", by_alias=True)
+    assert projection.clinic_document_context[0].text == (
+        "[PATIENT_1] может обратиться по телефону [PHONE]."
+    )
+    clinic_payload = projection.clinic_document_context[0].model_dump(
+        mode="json", by_alias=True
+    )
     assert "fragmentId" not in clinic_payload
     assert str(CLINIC_FRAGMENT_ID) not in str(clinic_payload)
