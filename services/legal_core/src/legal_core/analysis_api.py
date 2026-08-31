@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Annotated, Any
+from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Response, status
@@ -237,13 +237,11 @@ def create_analysis_router(
         async with session_factory() as session:
             yield session
 
-    Session = Annotated[AsyncSession, Depends(get_session)]
-
     @router.get("/{case_id}/analysis-context", response_model=AnalysisContextResponse)
     async def get_analysis_context(
         case_id: UUID,
         telegram_user_id: TelegramUserId,
-        session: Session,
+        session: AsyncSession = Depends(get_session),
     ) -> AnalysisContextResponse:
         actor = await resolve_actor(session, telegram_user_id)
         return _context_response(await _load_analysis_state(session, actor, case_id))
@@ -259,7 +257,7 @@ def create_analysis_router(
         response: Response,
         telegram_user_id: TelegramUserId,
         idempotency_key: IdempotencyKey,
-        session: Session,
+        session: AsyncSession = Depends(get_session),
     ) -> AnalysisSubmissionResponse:
         actor = await resolve_actor(session, telegram_user_id)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
