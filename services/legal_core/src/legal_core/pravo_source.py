@@ -96,7 +96,12 @@ class PravoPublicationClient:
             raise PravoSourceError("source URL escaped the trusted host")
         return url
 
-    async def _request(self, path: str, *, params: dict[str, object] | None = None) -> httpx.Response:
+    async def _request(
+        self,
+        path: str,
+        *,
+        params: dict[str, object] | None = None,
+    ) -> httpx.Response:
         owns_client = self._client is None
         client = self._client or httpx.AsyncClient(
             timeout=self._timeout_seconds,
