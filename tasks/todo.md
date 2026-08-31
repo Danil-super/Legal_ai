@@ -239,13 +239,18 @@ approved-only retrieval, applicable-date resolution and claim-to-evidence verifi
 ## Task 1.3: Durable Telegram intake drafts
 
 **Acceptance criteria:**
-- [ ] Legal Core stores multiple active, pseudonymous drafts per administrator and clinic with RLS,
+- [x] Legal Core stores multiple active, pseudonymous drafts per administrator and clinic with RLS,
   optimistic revision and an Alembic migration.
-- [ ] Create/list/read/update/archive contracts use server-side actor scope, idempotency and
+- [x] Create/list/read/update/archive contracts use server-side actor scope, idempotency and
   tenant-negative tests; list entries contain no free-text patient facts.
-- [ ] Telegram persists each accepted transition, presents **Мои черновики**, supports switching
+- [x] Telegram persists each accepted transition, presents **Мои черновики**, supports switching
   and restarts from the exact next question.
-- [ ] Leaving to the menu preserves the draft; explicit archive and completed submission remove it
+- [x] Leaving to the menu preserves the draft; explicit archive and completed submission remove it
   from active drafts without creating duplicate cases or reports.
+
+**Verification:**
+- [x] Unit/contract suite, Ruff, mypy and Compose validation pass.
+- [x] Isolated PostgreSQL migration/API suite proves RLS ownership, revision conflict and 30-day
+  purge; production deployment completed on 2026-08-31.
 
 **Dependencies:** Tasks 1.1, 2.2a; `SPEC-durable-telegram-drafts.md`
