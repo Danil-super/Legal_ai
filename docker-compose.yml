@@ -165,6 +165,44 @@ services:
     networks: [edge]
     restart: unless-stopped
 
+  legal-watch-importer:
+    profiles: [maintenance]
+    build:
+      context: .
+      dockerfile: services/legal_core/watcher.Dockerfile
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-dental_legal}
+      POSTGRES_USER: ${POSTGRES_USER:-dental_legal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      LEGAL_WATCH_IMPORT_INTERVAL_SECONDS: ${LEGAL_WATCH_IMPORT_INTERVAL_SECONDS:-300}
+    command:
+      - sh
+      - -c
+      - >-
+        set -eu;
+        while :; do
+          python -m legal_core.legal_watch_importer
+          --inbox /var/lib/dental-legal-ai/legal-update-inbox
+          --max-candidates 500;
+          sleep "$$LEGAL_WATCH_IMPORT_INTERVAL_SECONDS";
+        done
+    depends_on:
+      legal-core:
+        condition: service_healthy
+    read_only: true
+    volumes:
+      - legal-watch-inbox:/var/lib/dental-legal-ai/legal-update-inbox:ro
+    tmpfs:
+      - /tmp:size=1m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks: [backend]
+    restart: unless-stopped
+
   telegram-gateway:
     build:
       context: .

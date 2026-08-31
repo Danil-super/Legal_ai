@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from legal_core.embedding_provider import (
@@ -118,7 +118,7 @@ _SEARCH_APPROVED_VECTOR = text(
 )
 
 
-def _row_fragment(row: Mapping[str, Any]) -> ApprovedLegalFragment:
+def _row_fragment(row: RowMapping) -> ApprovedLegalFragment:
     return ApprovedLegalFragment(**dict(row))
 
 
