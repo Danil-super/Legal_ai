@@ -89,6 +89,43 @@ services:
     networks: [backend, edge]
     restart: unless-stopped
 
+  agent-orchestrator:
+    profiles: [analysis]
+    build:
+      context: .
+      dockerfile: services/agent_orchestrator/Dockerfile
+    environment:
+      AGENT_INTERNAL_KEY: ${AGENT_INTERNAL_KEY:-}
+      LEGAL_CORE_URL: http://legal-core:8000
+      HERMES_RESEARCHER_URL: ${HERMES_RESEARCHER_URL:-}
+      HERMES_RESEARCHER_API_KEY: ${HERMES_RESEARCHER_API_KEY:-}
+      HERMES_RESEARCHER_MODEL: ${HERMES_RESEARCHER_MODEL:-researcher}
+      HERMES_REVIEWER_URL: ${HERMES_REVIEWER_URL:-}
+      HERMES_REVIEWER_API_KEY: ${HERMES_REVIEWER_API_KEY:-}
+      HERMES_REVIEWER_MODEL: ${HERMES_REVIEWER_MODEL:-reviewer}
+    depends_on:
+      legal-core:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8010/health/live', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp:size=1m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks: [backend, edge]
+    restart: unless-stopped
+
   telegram-gateway:
     build:
       context: .
@@ -96,6 +133,8 @@ services:
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Set TELEGRAM_BOT_TOKEN in .env}
       LEGAL_CORE_URL: http://legal-core:8000
+      AGENT_ORCHESTRATOR_URL: http://agent-orchestrator:8010
+      AGENT_INTERNAL_KEY: ${AGENT_INTERNAL_KEY:-}
     healthcheck:
       test:
         - CMD
