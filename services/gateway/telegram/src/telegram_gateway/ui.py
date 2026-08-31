@@ -8,9 +8,7 @@ WELCOME_IMAGE = Path(__file__).with_name("assets") / "welcome.png"
 AVATAR_IMAGE = Path(__file__).with_name("assets") / "avatar.jpg"
 
 BOT_NAME = "Dental Legal AI"
-BOT_SHORT_DESCRIPTION = (
-    "Юридический навигатор для стоматологических клиник"
-)
+BOT_SHORT_DESCRIPTION = "Юридический навигатор для стоматологических клиник"
 BOT_DESCRIPTION = (
     "Dental Legal AI — проект юридического помощника для стоматологических клиник. "
     "Сервис создаётся для структурирования кейсов, проверки фактов и подготовки "
@@ -84,7 +82,7 @@ HELP_MESSAGE = (
     "/menu — показать главное меню\n"
     "/help — показать эту справку\n\n"
     "/whoami — показать Telegram ID\n"
-    "/cancel — остановить заполнение кейса\n\n"
+    "/cancel — сохранить и выйти из заполнения\n\n"
     "/admin — панель владельца сервиса\n\n"
     "Юридические рекомендации и черновики не формируются без проверенной правовой базы."
 )
@@ -98,6 +96,7 @@ MAIN_MENU_CALLBACKS = {
     "features",
     "workflow",
     "case:start",
+    "case:drafts",
     "privacy",
     "about",
     "account:id",
@@ -109,6 +108,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("📝 Создать кейс", callback_data="case:start")],
+            [InlineKeyboardButton("📂 Мои черновики", callback_data="case:drafts")],
             [
                 InlineKeyboardButton("👤 Мой Telegram ID", callback_data="account:id"),
                 InlineKeyboardButton("❓ Справка", callback_data="help"),
@@ -126,9 +126,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
 
 
 def back_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("← Главное меню", callback_data="menu")]]
-    )
+    return InlineKeyboardMarkup([[InlineKeyboardButton("← Главное меню", callback_data="menu")]])
 
 
 def admin_panel_keyboard() -> InlineKeyboardMarkup:

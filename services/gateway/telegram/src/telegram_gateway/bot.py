@@ -530,6 +530,185 @@ async def case_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return WizardState.INCIDENT
 
 
+_DRAFT_INCIDENT_LABELS = {
+    "QUALITY_COMPLAINT": "Качество лечения",
+    "PAYMENT_DISPUTE": "Оплата / возврат",
+    "INFORMED_CONSENT": "Согласие и документы",
+    "PERSONAL_DATA": "Персональные данные",
+    "OTHER": "Другая ситуация",
+}
+
+
+def _draft_updated_label(value: object) -> str:
+    """Render the server timestamp compactly without exposing draft contents."""
+
+    if not isinstance(value, str) or len(value) < 16:
+        return "время неизвестно"
+    return value[8:10] + "." + value[5:7] + " " + value[11:16]
+
+
+async def show_intake_drafts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if await _answer_callback(update) != "case:drafts":
+        return
+    actor_id = _actor_id(update)
+    if actor_id is None:
+        await _reply(update, "Не удалось определить администратора.")
+        return
+    try:
+        response = await _legal_core(context).list_intake_drafts(actor_id)
+        items = response.get("items")
+        if not isinstance(items, list):
+            raise ValueError("draft list response is invalid")
+    except (LegalCoreApiError, ValueError) as exc:
+        logger.warning("intake draft list failed: %s", type(exc).__name__)
+        await _reply(update, "⚠️ Не удалось загрузить черновики. Попробуйте позже.")
+        return
+    if not items:
+        await _reply(
+            update, "📂 Активных черновиков нет. Нажмите «Создать кейс», чтобы открыть новый."
+        )
+        return
+    rows: list[list[InlineKeyboardButton]] = []
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        try:
+            draft_id = UUID(str(item["id"]))
+        except (KeyError, ValueError):
+            continue
+        incident_type = item.get("incidentType")
+        label = _DRAFT_INCIDENT_LABELS.get(
+            incident_type if isinstance(incident_type, str) else "", "Новая карточка"
+        )
+        state = item.get("wizardState")
+        step = state if isinstance(state, str) else "СОХРАНЁННЫЙ ШАГ"
+        button_label = f"{index}. {label} · {step}"[:42]
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"{button_label}\n{_draft_updated_label(item.get('updatedAt'))}",
+                    callback_data=f"case:draft:{draft_id}",
+                )
+            ]
+        )
+    if not rows:
+        await _reply(update, "⚠️ Не удалось прочитать список черновиков. Попробуйте позже.")
+        return
+    rows.append([InlineKeyboardButton("← Главное меню", callback_data="menu")])
+    message = update.effective_message
+    if message is not None:
+        await message.reply_text(
+            "📂 МОИ ЧЕРНОВИКИ\n\nВыберите карточку для продолжения. Данные сохраняются 30 дней.",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+
+
+async def _prompt_resumed_draft(update: Update, state: WizardState, data: dict[str, Any]) -> None:
+    message = update.effective_message
+    if state == WizardState.INCIDENT:
+        if message is not None:
+            await message.reply_text(
+                "Выберите основной тип ситуации:", reply_markup=INCIDENT_KEYBOARD
+            )
+    elif state == WizardState.SERVICE_TYPE:
+        await _reply(update, "1/10. Какая стоматологическая услуга была оказана? Кратко, без ФИО.")
+    elif state == WizardState.SERVICE_DATE:
+        await _reply(update, "2/10. Дата оказания услуги в формате ГГГГ-ММ-ДД:")
+    elif state == WizardState.INCIDENT_DATE:
+        await _reply(update, "3/10. Когда произошла проблемная ситуация? ГГГГ-ММ-ДД:")
+    elif state == WizardState.CLAIM_DATE:
+        await _reply(update, "4/10. Когда пациент впервые обратился с претензией? ГГГГ-ММ-ДД:")
+    elif state == WizardState.PROBLEM_SUMMARY:
+        await _reply(
+            update, "5/10. Опишите ситуацию нейтрально и по фактам, без ФИО (10–1500 символов)."
+        )
+    elif state == WizardState.PATIENT_DEMAND:
+        if message is not None:
+            await message.reply_text("6/10. Чего требует пациент?", reply_markup=DEMAND_KEYBOARD)
+    elif state == WizardState.DEMAND_AMOUNT:
+        await _reply(update, "Укажите требуемую сумму в рублях, только число:")
+    elif state == WizardState.FORMAL_CLAIM:
+        await _ask_formal_claim(update)
+    elif state == WizardState.CLAIM_RECEIVED_AT:
+        await _reply(update, "Дата получения письменной претензии, ГГГГ-ММ-ДД:")
+    elif state == WizardState.CLAIM_DEADLINE:
+        await _reply(update, "Срок ответа из документа, ГГГГ-ММ-ДД:")
+    elif state == WizardState.HARM:
+        await _ask_harm(update)
+    elif state == WizardState.HOSPITALIZATION:
+        if message is not None:
+            await message.reply_text(
+                "Была госпитализация?", reply_markup=YES_NO_KEYBOARDS["hospital"]
+            )
+    elif state == WizardState.LAWYER:
+        await _ask_lawyer(update)
+    elif state == WizardState.REPRESENTATIVE_AUTHORITY:
+        if message is not None:
+            await message.reply_text(
+                "Подтверждены полномочия представителя?",
+                reply_markup=YES_NO_KEYBOARDS["representative"],
+            )
+    elif state == WizardState.LAWYER_DEADLINE:
+        await _reply(update, "Срок ответа представителю, ГГГГ-ММ-ДД или «неизвестно»:")
+    elif state == WizardState.AUTHORITY:
+        await _ask_authority(update)
+    elif state == WizardState.AUTHORITY_KIND:
+        await _reply(update, "Какой орган или суд направил документ? Без персональных данных.")
+    elif state == WizardState.AUTHORITY_DATE:
+        await _reply(update, "Дата документа органа, ГГГГ-ММ-ДД:")
+    elif state == WizardState.AUTHORITY_DEADLINE:
+        await _reply(update, "Срок ответа из документа, ГГГГ-ММ-ДД:")
+    elif state == WizardState.REGULATOR_THREAT:
+        await _ask_regulator_threat(update)
+    elif state == WizardState.DOCUMENTS:
+        await _ask_documents(update)
+    else:
+        workflow_id = UUID(str(data["workflow_id"]))
+        if message is not None:
+            await message.reply_text(
+                "Карточка заполнена. Сформировать единый PDF-отчёт?",
+                reply_markup=confirm_keyboard(workflow_id),
+            )
+
+
+async def resume_intake_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    callback = await _answer_callback(update)
+    actor_id = _actor_id(update)
+    if callback is None or actor_id is None:
+        return ConversationHandler.END
+    try:
+        draft_id = UUID(callback.removeprefix("case:draft:"))
+        draft = await _legal_core(context).get_intake_draft(draft_id, actor_id)
+        state_name = draft.get("wizardState")
+        revision = draft.get("revision")
+        draft_data = draft.get("draftData")
+        if (
+            not isinstance(state_name, str)
+            or not isinstance(revision, int)
+            or revision < 1
+            or not isinstance(draft_data, dict)
+        ):
+            raise ValueError("draft response is invalid")
+        state = WizardState[state_name]
+    except (KeyError, ValueError, LegalCoreApiError) as exc:
+        logger.warning("intake draft resume failed: %s", type(exc).__name__)
+        await _reply(update, "⚠️ Этот черновик недоступен. Обновите список через /menu.")
+        return ConversationHandler.END
+    _clear_wizard(context)
+    data = dict(draft_data)
+    data.update(
+        {
+            "workflow_id": str(draft_id),
+            DRAFT_ID_KEY: str(draft_id),
+            DRAFT_REVISION_KEY: revision,
+        }
+    )
+    _user_data(context)[WIZARD_DATA_KEY] = data
+    await _reply(update, "✅ Черновик открыт. Продолжаем с сохранённого шага.")
+    await _prompt_resumed_draft(update, state, data)
+    return state
+
+
 async def choose_incident(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     data = await _answer_callback(update)
     if data is None:
@@ -1092,11 +1271,6 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         client = _legal_core(context)
         workflow = await client.submit_workflow(workflow_id, facts, actor_id)
         await _send_workflow_report(update, client, workflow, actor_id)
-        await client.archive_intake_draft(
-            UUID(str(data[DRAFT_ID_KEY])),
-            actor_id,
-            expected_revision=int(data[DRAFT_REVISION_KEY]),
-        )
     except (KeyError, ValueError, LegalCoreApiError) as exc:
         if isinstance(exc, LegalCoreApiError) and exc.status_code == 403:
             _clear_wizard(context)
@@ -1108,6 +1282,20 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             "⚠️ Отчёт пока не сформирован. Нажмите «Сформировать отчёт» ещё раз или /cancel.",
         )
         return WizardState.CONFIRM
+
+    try:
+        await client.archive_intake_draft(
+            UUID(str(data[DRAFT_ID_KEY])),
+            actor_id,
+            expected_revision=int(data[DRAFT_REVISION_KEY]),
+        )
+    except (KeyError, ValueError, LegalCoreApiError) as exc:
+        logger.warning("intake draft archive after submission failed: %s", type(exc).__name__)
+        await _reply(
+            update,
+            "Отчёт сформирован. Черновик временно остался в списке; "
+            "повторное подтверждение безопасно.",
+        )
 
     _clear_wizard(context)
     return ConversationHandler.END
@@ -1121,15 +1309,18 @@ async def cancel_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     _clear_wizard(context)
     await _reply(
         update,
-        "Сбор данных остановлен. Новая отправка не выполняется; "
-        "повтор уже подтверждённой кнопки вернёт тот же отчёт.",
+        "Сбор приостановлен, черновик сохранён. Откройте /menu → «Мои черновики», "
+        "чтобы продолжить или переключиться на другой.",
     )
     return ConversationHandler.END
 
 
 async def timeout_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     _clear_wizard(context)
-    await _reply(update, "Время заполнения истекло. Откройте /menu, чтобы начать новый кейс.")
+    await _reply(
+        update,
+        "Время заполнения истекло. Черновик сохранён: откройте /menu → «Мои черновики».",
+    )
     return ConversationHandler.END
 
 
@@ -1232,7 +1423,16 @@ def build_application(token: str) -> TelegramApplication:
     )
     application.add_handler(
         ConversationHandler(
-            entry_points=[CallbackQueryHandler(case_start, pattern=r"^case:start$")],
+            entry_points=[
+                CallbackQueryHandler(case_start, pattern=r"^case:start$"),
+                CallbackQueryHandler(
+                    resume_intake_draft,
+                    pattern=(
+                        r"^case:draft:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+                        r"[0-9a-f]{4}-[0-9a-f]{12}$"
+                    ),
+                ),
+            ],
             states={
                 WizardState.INCIDENT: [
                     CallbackQueryHandler(_persisted(choose_incident), pattern=r"^case:incident:")
@@ -1373,6 +1573,7 @@ def build_application(token: str) -> TelegramApplication:
             ),
         )
     )
+    application.add_handler(CallbackQueryHandler(show_intake_drafts, pattern=r"^case:drafts$"))
     application.add_handler(CallbackQueryHandler(menu_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_input))
     application.add_error_handler(on_error)

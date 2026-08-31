@@ -26,6 +26,7 @@ from telegram_gateway.bot import (
     record_admin_grant_access,
     record_admin_grant_pilot,
     record_lawyer_deadline,
+    resume_intake_draft,
     resume_workflow,
     whoami,
 )
@@ -98,6 +99,23 @@ class FakeLegalCore:
         if isinstance(self.response, Exception):
             raise self.response
         return {"revision": 3}
+
+    async def list_intake_drafts(self, telegram_user_id: int) -> dict[str, Any]:
+        del telegram_user_id
+        if isinstance(self.response, Exception):
+            raise self.response
+        return {"items": []}
+
+    async def get_intake_draft(self, draft_id: UUID, telegram_user_id: int) -> dict[str, Any]:
+        del telegram_user_id
+        if isinstance(self.response, Exception):
+            raise self.response
+        return {
+            "id": str(draft_id),
+            "wizardState": "SERVICE_TYPE",
+            "revision": 2,
+            "draftData": {"incident_type": "QUALITY_COMPLAINT"},
+        }
 
     async def grant_subscription(
         self,
@@ -599,6 +617,28 @@ def test_accepted_wizard_transition_saves_the_draft_before_next_question() -> No
 
     assert result == WizardState.LAWYER
     assert context.user_data["case_wizard"]["draft_revision"] == 2
+
+
+def test_resuming_a_draft_restores_its_next_question() -> None:
+    draft_id = "9d0dd02f-cfd9-498a-85e4-c30b53abca88"
+    message = FakeMessage()
+    query = FakeQuery(f"case:draft:{draft_id}")
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+    context = SimpleNamespace(
+        bot_data={LEGAL_CORE_CLIENT_KEY: FakeLegalCore({"role": "CLINIC_ADMIN"})}, user_data={}
+    )
+
+    result = asyncio.run(resume_intake_draft(update, context))
+
+    assert result == WizardState.SERVICE_TYPE
+    assert context.user_data["case_wizard"]["draft_id"] == draft_id
+    assert context.user_data["case_wizard"]["draft_revision"] == 2
+    assert "сохранённого шага" in message.text_replies[0]
+    assert "стоматологическая услуга" in message.text_replies[1]
 
 
 def test_case_start_explains_inactive_subscription_without_leaking_tenant_details() -> None:

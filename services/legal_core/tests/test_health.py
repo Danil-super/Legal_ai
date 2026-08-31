@@ -7,7 +7,7 @@ ReadinessProbe = Callable[[], Awaitable[dict[str, bool]]]
 
 
 def client_with_probe(probe: ReadinessProbe) -> TestClient:
-    return TestClient(create_app(readiness_probe=probe))
+    return TestClient(create_app(readiness_probe=probe, enable_draft_retention=False))
 
 
 def test_live_reports_service_identity() -> None:
@@ -57,7 +57,7 @@ def test_openapi_is_generated_but_not_exposed_without_authentication() -> None:
     async def available_dependencies() -> dict[str, bool]:
         return {"postgres": True, "redis": True, "object_storage": True}
 
-    app = create_app(readiness_probe=available_dependencies)
+    app = create_app(readiness_probe=available_dependencies, enable_draft_retention=False)
 
     assert {
         "/health/live",

@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -5,6 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from legal_core.database import database_url
+from legal_core.draft_retention import purge_expired_intake_drafts
 from legal_core.main import create_app
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -413,6 +415,48 @@ def test_telegram_intake_drafts_are_resumable_private_and_versioned() -> None:
     assert count_workflow_resources(administrator) == (0, 0, 0, 0)
 
 
+def test_expired_telegram_intake_drafts_are_purged_without_creating_a_case() -> None:
+    administrator = 7_100_000_001 + uuid4().int % 100_000_000
+    seed_admin(administrator)
+
+    with application_client() as client:
+        created = client.post(
+            "/v1/telegram-intake-drafts",
+            headers=actor_headers(administrator, uuid4()),
+            json={},
+        )
+        draft_id = created.json()["id"]
+
+    sync_engine = create_engine(database_url().set(drivername="postgresql+psycopg"))
+    try:
+        with sync_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE telegram_intake_drafts SET purge_after = "
+                    "timezone('utc', now()) - INTERVAL '1 second' WHERE id = :id"
+                ),
+                {"id": draft_id},
+            )
+    finally:
+        sync_engine.dispose()
+
+    async_engine = create_async_engine(database_url())
+    try:
+        deleted = asyncio.run(
+            purge_expired_intake_drafts(async_sessionmaker(async_engine, expire_on_commit=False))
+        )
+    finally:
+        asyncio.run(async_engine.dispose())
+
+    with application_client() as client:
+        listed = client.get("/v1/telegram-intake-drafts", headers=actor_headers(administrator))
+
+    assert created.status_code == 201
+    assert deleted == 1
+    assert listed.json() == {"items": []}
+    assert count_workflow_resources(administrator) == (0, 0, 0, 0)
+
+
 @pytest.mark.parametrize(
     ("entitlement_status", "entitlement_is_expired"),
     [
@@ -668,9 +712,7 @@ def test_workflow_uuid_cannot_be_reused_for_changed_facts() -> None:
     changed = workflow_submission()
     changed_facts = changed["facts"]
     assert isinstance(changed_facts, list)
-    summary_fact = next(
-        fact for fact in changed_facts if fact["factKey"] == "PROBLEM_SUMMARY"
-    )
+    summary_fact = next(fact for fact in changed_facts if fact["factKey"] == "PROBLEM_SUMMARY")
     summary_fact["value"]["text"] = "Иная обезличенная ситуация"
 
     with application_client() as client:

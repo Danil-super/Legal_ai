@@ -45,6 +45,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
             "audit_events",
             "idempotency_records",
             "telegram_case_workflows",
+            "telegram_intake_drafts",
             "legal_sources",
             "legal_documents",
             "legal_versions",
@@ -68,7 +69,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                     "SELECT relname FROM pg_class "
                     "WHERE relrowsecurity AND relname IN "
                     "('cases','case_facts','case_reports','audit_events','idempotency_records',"
-                    "'telegram_case_workflows','subscription_entitlements',"
+                    "'telegram_case_workflows','telegram_intake_drafts','subscription_entitlements',"
                     "'subscription_entitlement_events','case_risk_assessments','case_escalations',"
                     "'case_analysis_runs','case_analysis_claims')"
                 )
@@ -101,7 +102,8 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                     text(
                         "SELECT proname FROM pg_proc WHERE proname IN "
                         "('legal_canonical_jsonb','legal_regression_result_sha256',"
-                        "'legal_approval_event_is_current')"
+                        "'legal_approval_event_is_current',"
+                        "'purge_expired_telegram_intake_drafts')"
                     )
                 ).scalars()
             )
@@ -112,6 +114,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 "audit_events",
                 "idempotency_records",
                 "telegram_case_workflows",
+                "telegram_intake_drafts",
                 "subscription_entitlements",
                 "subscription_entitlement_events",
                 "case_risk_assessments",
@@ -148,6 +151,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 "legal_canonical_jsonb",
                 "legal_regression_result_sha256",
                 "legal_approval_event_is_current",
+                "purge_expired_telegram_intake_drafts",
             }
 
         command.downgrade(config, "f19b4c6e7d20")

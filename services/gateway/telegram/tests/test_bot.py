@@ -133,9 +133,9 @@ def test_main_menu_exposes_frequent_actions_as_clear_allowlisted_buttons() -> No
     keyboard = main_menu_keyboard()
     buttons = [button for row in keyboard.inline_keyboard for button in row]
 
-    assert len(buttons) == 7
+    assert len(buttons) == 8
     assert {button.callback_data for button in buttons} == MAIN_MENU_CALLBACKS
-    assert {"case:start", "account:id", "help"} <= MAIN_MENU_CALLBACKS
+    assert {"case:start", "case:drafts", "account:id", "help"} <= MAIN_MENU_CALLBACKS
     assert all(button.text.strip() for button in buttons)
     assert all(
         isinstance(button.callback_data, str) and len(button.callback_data.encode()) <= 64

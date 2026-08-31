@@ -74,6 +74,7 @@ def test_every_tenant_owned_table_has_clinic_id() -> None:
         "case_reports",
         "audit_events",
         "telegram_case_workflows",
+        "telegram_intake_drafts",
         "case_risk_assessments",
         "case_escalations",
         "case_analysis_runs",

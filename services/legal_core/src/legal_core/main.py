@@ -1,9 +1,10 @@
 """FastAPI entrypoint for the Legal Core service."""
 
 import asyncio
+import logging
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Literal
 from uuid import uuid4
 
@@ -17,9 +18,11 @@ from starlette.middleware.base import RequestResponseEndpoint
 from legal_core import __version__
 from legal_core.case_api import ApiError, create_case_router
 from legal_core.database import create_engine, create_session_factory
+from legal_core.draft_retention import purge_expired_intake_drafts
 from legal_core.legal_api import create_legal_router
 
 SERVICE_NAME = "legal-core"
+DRAFT_PURGE_INTERVAL_SECONDS = 60 * 60
 ReadinessChecks = dict[str, bool]
 ReadinessProbe = Callable[[], Awaitable[ReadinessChecks]]
 
@@ -72,10 +75,23 @@ async def probe_dependencies() -> ReadinessChecks:
     return dict(zip(endpoints, results, strict=True))
 
 
+async def _draft_purge_loop(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    """Run retention at startup and periodically without handling draft contents."""
+
+    while True:
+        try:
+            await purge_expired_intake_drafts(session_factory)
+        except Exception:  # pragma: no cover - operator-visible process log is the recovery path.
+            # Retention must not make the Legal Core unavailable; the next interval retries it.
+            logging.getLogger(__name__).exception("Telegram draft retention purge failed")
+        await asyncio.sleep(DRAFT_PURGE_INTERVAL_SECONDS)
+
+
 def create_app(
     readiness_probe: ReadinessProbe = probe_dependencies,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     managed_engine: AsyncEngine | None = None,
+    enable_draft_retention: bool = True,
 ) -> FastAPI:
     engine = managed_engine or create_engine()
     sessions = session_factory or create_session_factory(engine)
@@ -85,8 +101,17 @@ def create_app(
         # FastAPI recommends lifespan for resource cleanup instead of deprecated events.
         # Source: https://fastapi.tiangolo.com/advanced/events/#lifespan
         del application
-        yield
-        await engine.dispose()
+        retention_task = (
+            asyncio.create_task(_draft_purge_loop(sessions)) if enable_draft_retention else None
+        )
+        try:
+            yield
+        finally:
+            if retention_task is not None:
+                retention_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await retention_task
+            await engine.dispose()
 
     app = FastAPI(
         title="Dental Legal AI — Legal Core",
