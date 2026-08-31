@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
@@ -231,9 +232,13 @@ async def analyze_case_callback(
         if isinstance(exc, AgentOrchestratorApiError):
             messages = {
                 "INSUFFICIENT_FACTS": "В кейсе не хватает обязательных фактов.",
-                "LEGAL_EVIDENCE_UNAVAILABLE": "Для этого кейса пока не хватает одобренной правовой базы.",
+                "LEGAL_EVIDENCE_UNAVAILABLE": (
+                    "Для этого кейса пока не хватает одобренной правовой базы."
+                ),
                 "RISK_POLICY_NOT_READY": "Политика риска пока не активирована.",
-                "ANALYSIS_CONTEXT_STALE": "Кейс изменился во время анализа. Запустите проверку ещё раз.",
+                "ANALYSIS_CONTEXT_STALE": (
+                    "Кейс изменился во время анализа. Запустите проверку ещё раз."
+                ),
                 "ANALYSIS_PROVIDER_UNAVAILABLE": "ИИ-провайдер временно недоступен.",
             }
             detail = messages.get(exc.code, "Не удалось безопасно завершить анализ.")
