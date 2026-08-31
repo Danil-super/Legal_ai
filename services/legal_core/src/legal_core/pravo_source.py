@@ -21,6 +21,7 @@ PRAVO_HOST = "publication.pravo.gov.ru"
 PRAVO_BASE_URL = f"https://{PRAVO_HOST}"
 MAX_PDF_BYTES = 50 * 1024 * 1024
 _EO_NUMBER = re.compile(r"^[0-9]{16,24}$")
+QueryParamValue = str | int | float | bool | None
 
 
 class PravoSourceError(RuntimeError):
@@ -100,7 +101,7 @@ class PravoPublicationClient:
         self,
         path: str,
         *,
-        params: dict[str, object] | None = None,
+        params: dict[str, QueryParamValue] | None = None,
     ) -> httpx.Response:
         owns_client = self._client is None
         client = self._client or httpx.AsyncClient(
