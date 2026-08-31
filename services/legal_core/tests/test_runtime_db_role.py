@@ -35,7 +35,9 @@ def test_runtime_database_identity_is_not_privileged() -> None:
                 assert identity["rolbypassrls"] is False
 
                 with pytest.raises(DBAPIError, match="permission denied"):
-                    await connection.execute(text("CREATE TABLE runtime_role_must_not_create (id int)"))
+                    await connection.execute(
+                        text("CREATE TABLE runtime_role_must_not_create (id int)")
+                    )
                 await connection.rollback()
         finally:
             await engine.dispose()
