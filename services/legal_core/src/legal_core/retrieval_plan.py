@@ -2,7 +2,8 @@
 
 The reasoning model never chooses arbitrary web/legal sources.  This planner turns typed case
 facts into a small bounded set of Russian lexical queries executed only by
-``ApprovedLegalCorpusRepository``.
+``ApprovedLegalCorpusRepository``.  Only fixed, product-reviewed query strings may cross the
+optional external embedding boundary; free-text service wording remains local FTS-only.
 """
 
 from __future__ import annotations
@@ -20,6 +21,19 @@ _BASE_QUERIES: Final = (
     "платные медицинские услуги",
     "права пациента медицинская помощь",
     "ответственность исполнитель медицинские услуги",
+)
+
+_SEMANTIC_SAFE_QUERIES: Final = frozenset(
+    _BASE_QUERIES
+    + (
+        "требования потребителя претензия медицинские услуги",
+        "возмещение вреда здоровью медицинские услуги",
+        "ответственность медицинская организация проверка",
+        "защита прав потребителя медицинские услуги",
+        "возврат денежных средств медицинские услуги",
+        "возмещение убытков вреда медицинские услуги",
+        "медицинская документация пациент копии",
+    )
 )
 
 
@@ -57,12 +71,17 @@ def plan_legal_queries(facts: Mapping[FactKey, object]) -> tuple[str, ...]:
 
     service_type = facts.get(FactKey.SERVICE_TYPE)
     if isinstance(service_type, str) and service_type.strip():
-        # Service wording helps rank relevant fragments without letting the model browse or invent
-        # a source. Limit free-text contribution so a user message cannot turn into an unbounded
-        # retrieval prompt.
+        # Free text may contain identifiers or prompt injection.  It is useful for local ranking,
+        # but intentionally never becomes an external semantic-embedding request.
         queries.append(f"медицинская услуга {service_type.strip()[:120]}")
 
     return tuple(dict.fromkeys(query.strip() for query in queries if query.strip()))
+
+
+def is_semantic_safe_query(query: str) -> bool:
+    """Return true only for fixed, product-reviewed legal retrieval phrases."""
+
+    return query in _SEMANTIC_SAFE_QUERIES
 
 
 async def retrieve_planned_evidence(
@@ -84,6 +103,7 @@ async def retrieve_planned_evidence(
             query,
             as_of_date=as_of_date,
             limit=limit_per_query,
+            semantic=is_semantic_safe_query(query),
         ):
             unique.setdefault(fragment.fragment_id, fragment)
             if len(unique) >= max_fragments:
