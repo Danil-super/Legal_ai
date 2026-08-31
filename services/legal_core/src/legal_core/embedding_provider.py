@@ -1,7 +1,7 @@
 """Optional OpenAI-compatible embedding boundary for public legal text and safe legal queries.
 
-Embedding is a retrieval enhancement, never a source of legal truth.  Legal Core still filters by
-APPROVED versions and effective dates and the verifier still gates every legal claim.  The provider
+Embedding is a retrieval enhancement, never a source of legal truth. Legal Core still filters by
+APPROVED versions and effective dates and the verifier still gates every legal claim. The provider
 is optional: when it is unavailable, retrieval safely falls back to local lexical search.
 """
 
@@ -53,7 +53,9 @@ class EmbeddingSettings:
             or parsed.query
             or parsed.fragment
         ):
-            raise ValueError("embedding base URL must be an absolute http(s) URL without credentials")
+            raise ValueError(
+                "embedding base URL must be an absolute http(s) URL without credentials"
+            )
         if not 1 <= len(self.model) <= 200:
             raise ValueError("embedding model must be between 1 and 200 characters")
         if _MODEL_KEY.fullmatch(self.model_key) is None:
@@ -203,7 +205,9 @@ class OpenAICompatibleEmbeddingProvider:
                 if isinstance(index, bool) or not isinstance(index, int):
                     raise EmbeddingProviderError("embedding provider data index is invalid")
                 if index in indexed or not 0 <= index < len(normalized):
-                    raise EmbeddingProviderError("embedding provider returned an invalid data index")
+                    raise EmbeddingProviderError(
+                        "embedding provider returned an invalid data index"
+                    )
                 indexed[index] = self._parse_embedding(item.get("embedding"))
             if set(indexed) != set(range(len(normalized))):
                 raise EmbeddingProviderError("embedding provider omitted one or more vectors")

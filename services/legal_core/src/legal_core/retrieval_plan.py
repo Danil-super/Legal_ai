@@ -1,8 +1,8 @@
 """Deterministic query planning for the approved legal corpus.
 
-The reasoning model never chooses arbitrary web/legal sources.  This planner turns typed case
-facts into a small bounded set of Russian lexical queries executed only by
-``ApprovedLegalCorpusRepository``.  Only fixed, product-reviewed query strings may cross the
+The reasoning model never chooses arbitrary web/legal sources. This planner turns typed case facts
+into a small bounded set of Russian lexical queries executed only by
+``ApprovedLegalCorpusRepository``. Only fixed, product-reviewed query strings may cross the
 optional external embedding boundary; free-text service wording remains local FTS-only.
 """
 
@@ -24,8 +24,8 @@ _BASE_QUERIES: Final = (
 )
 
 _SEMANTIC_SAFE_QUERIES: Final = frozenset(
-    _BASE_QUERIES
-    + (
+    (
+        *_BASE_QUERIES,
         "требования потребителя претензия медицинские услуги",
         "возмещение вреда здоровью медицинские услуги",
         "ответственность медицинская организация проверка",
@@ -71,7 +71,7 @@ def plan_legal_queries(facts: Mapping[FactKey, object]) -> tuple[str, ...]:
 
     service_type = facts.get(FactKey.SERVICE_TYPE)
     if isinstance(service_type, str) and service_type.strip():
-        # Free text may contain identifiers or prompt injection.  It is useful for local ranking,
+        # Free text may contain identifiers or prompt injection. It is useful for local ranking,
         # but intentionally never becomes an external semantic-embedding request.
         queries.append(f"медицинская услуга {service_type.strip()[:120]}")
 

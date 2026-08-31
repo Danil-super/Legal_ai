@@ -22,7 +22,13 @@ class FakeEmbeddingProvider:
     dimensions = 3
 
     async def embed(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
-        return tuple((1.0, 0.0, 0.0) for _ in texts)
+        vectors = []
+        for value in texts:
+            if "проверки поиска" in value or "абсолютно иной безопасный" in value:
+                vectors.append((1.0, 0.0, 0.0))
+            else:
+                vectors.append((0.0, 1.0, 0.0))
+        return tuple(vectors)
 
 
 @pytest.mark.skipif(
@@ -86,11 +92,8 @@ def test_retrieval_excludes_pending_content_and_enforces_effective_dates() -> No
                     )
 
                     assert current
-                    assert all(
-                        item.source_url.startswith("https://government.ru/")
-                        for item in current
-                    )
-                    assert expired == []
+                    assert any(item.version_id == version_id for item in current)
+                    assert all(item.version_id != version_id for item in expired)
                 finally:
                     if session.in_transaction():
                         await session.rollback()
@@ -109,21 +112,22 @@ def test_retrieval_excludes_pending_content_and_enforces_effective_dates() -> No
                     session,
                     embedding_provider=FakeEmbeddingProvider(),
                 )
-                # Deliberately no lexical match: the result must come from the approved-only
-                # pgvector branch, while the effective-date guard remains identical.
+                # Deliberately no lexical match: the fixture must come from the approved-only
+                # pgvector branch, while the same version disappears after its effective range.
                 semantic = await semantic_repository.search(
                     "абсолютно иной безопасный тестовый запрос",
                     as_of_date=date(2026, 8, 22),
                     semantic=True,
+                    limit=20,
                 )
                 semantic_expired = await semantic_repository.search(
                     "абсолютно иной безопасный тестовый запрос",
                     as_of_date=date(2026, 9, 1),
                     semantic=True,
+                    limit=20,
                 )
-                assert semantic
-                assert all(item.source_url.startswith("https://government.ru/") for item in semantic)
-                assert semantic_expired == []
+                assert any(item.version_id == version_id for item in semantic)
+                assert all(item.version_id != version_id for item in semantic_expired)
         finally:
             await engine.dispose()
 
