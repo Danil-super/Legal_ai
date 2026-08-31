@@ -24,6 +24,22 @@ class EvidenceItem(StrictModel):
     source_url: str = Field(alias="sourceUrl", min_length=1, max_length=2_000)
 
 
+class ClinicDocumentContextItem(StrictModel):
+    """Clinic-owned context that is explicitly not a legal evidence source."""
+
+    context_kind: Literal["CLINIC_DOCUMENT_CONTEXT"] = Field(
+        default="CLINIC_DOCUMENT_CONTEXT", alias="contextKind"
+    )
+    fragment_id: UUID = Field(alias="fragmentId")
+    document_type: str = Field(alias="documentType", min_length=1, max_length=80)
+    document_title: str = Field(alias="documentTitle", min_length=1, max_length=240)
+    version_no: int = Field(alias="versionNo", ge=1)
+    valid_from: date | None = Field(default=None, alias="validFrom")
+    valid_to: date | None = Field(default=None, alias="validTo")
+    structural_path: str = Field(alias="structuralPath", min_length=1, max_length=500)
+    text: str = Field(min_length=1, max_length=12_000)
+
+
 class CaseProjection(StrictModel):
     """Minimal pseudonymous input that may be sent to a reasoning provider."""
 
@@ -31,6 +47,9 @@ class CaseProjection(StrictModel):
     as_of_date: date = Field(alias="asOfDate")
     facts: dict[str, Any]
     evidence: list[EvidenceItem] = Field(min_length=1, max_length=30)
+    clinic_document_context: list[ClinicDocumentContextItem] = Field(
+        default_factory=list, alias="clinicDocumentContext", max_length=20
+    )
 
 
 class ClaimProposal(StrictModel):
