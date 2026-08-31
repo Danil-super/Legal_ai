@@ -1,11 +1,11 @@
-"""Versioned public contracts for case intake and reports."""
+"""Versioned public contracts for case intake and evidence-gated reports."""
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ContractModel(BaseModel):
@@ -62,10 +62,16 @@ class MissingFact(ContractModel):
 
 
 class AnalysisAvailability(ContractModel):
-    status: Literal["BLOCKED"] = "BLOCKED"
-    reason_code: Literal["LEGAL_CORPUS_NOT_READY"] = Field(
-        default="LEGAL_CORPUS_NOT_READY", alias="reasonCode"
-    )
+    status: Literal["BLOCKED", "READY"] = "BLOCKED"
+    reason_code: str | None = Field(default="LEGAL_CORPUS_NOT_READY", alias="reasonCode")
+
+    @model_validator(mode="after")
+    def validate_state(self) -> "AnalysisAvailability":
+        if self.status == "READY" and self.reason_code is not None:
+            raise ValueError("READY analysis cannot have a block reason")
+        if self.status == "BLOCKED" and not self.reason_code:
+            raise ValueError("BLOCKED analysis requires a reason code")
+        return self
 
 
 class ReportCase(ContractModel):
@@ -81,22 +87,78 @@ class ReportSummary(ContractModel):
 
 
 class Recommendations(ContractModel):
-    status: Literal["NOT_AVAILABLE"] = "NOT_AVAILABLE"
-    items: list[str] = Field(default_factory=list)
+    status: Literal["NOT_AVAILABLE", "AVAILABLE"] = "NOT_AVAILABLE"
+    items: list[str] = Field(default_factory=list, max_length=30)
+
+    @model_validator(mode="after")
+    def validate_state(self) -> "Recommendations":
+        if self.status == "AVAILABLE" and not self.items:
+            raise ValueError("AVAILABLE recommendations require at least one item")
+        if self.status == "NOT_AVAILABLE" and self.items:
+            raise ValueError("NOT_AVAILABLE recommendations cannot contain items")
+        return self
 
 
 class DraftResponse(ContractModel):
-    status: Literal["NOT_AVAILABLE"] = "NOT_AVAILABLE"
-    text: None = None
+    status: Literal["NOT_AVAILABLE", "AVAILABLE", "BLOCKED"] = "NOT_AVAILABLE"
+    text: str | None = Field(default=None, max_length=8_000)
     is_draft: Literal[True] = Field(default=True, alias="isDraft")
     human_approval_required: Literal[True] = Field(
         default=True, alias="humanApprovalRequired"
     )
+    reason_code: str | None = Field(default=None, alias="reasonCode")
+
+    @model_validator(mode="after")
+    def validate_state(self) -> "DraftResponse":
+        if self.status == "AVAILABLE":
+            if not self.text or self.reason_code is not None:
+                raise ValueError("AVAILABLE draft requires text and no block reason")
+        elif self.text is not None:
+            raise ValueError("unavailable/blocked draft cannot contain text")
+        if self.status == "BLOCKED" and not self.reason_code:
+            raise ValueError("BLOCKED draft requires a reason code")
+        return self
+
+
+class LegalSourceCard(ContractModel):
+    fragment_id: UUID = Field(alias="fragmentId")
+    document_title: str = Field(alias="documentTitle")
+    official_number: str | None = Field(default=None, alias="officialNumber")
+    structural_path: str = Field(alias="structuralPath")
+    effective_from: date = Field(alias="effectiveFrom")
+    effective_to: date | None = Field(default=None, alias="effectiveTo")
+    source_url: str = Field(alias="sourceUrl")
+    text_sha256: str = Field(alias="textSha256", pattern=r"^[0-9a-f]{64}$")
+    raw_sha256: str = Field(alias="rawSha256", pattern=r"^[0-9a-f]{64}$")
 
 
 class LegalBasis(ContractModel):
-    status: Literal["NOT_AVAILABLE"] = "NOT_AVAILABLE"
-    sources: list[dict[str, Any]] = Field(default_factory=list)
+    status: Literal["NOT_AVAILABLE", "AVAILABLE"] = "NOT_AVAILABLE"
+    sources: list[LegalSourceCard] = Field(default_factory=list, max_length=30)
+
+    @model_validator(mode="after")
+    def validate_state(self) -> "LegalBasis":
+        if self.status == "AVAILABLE" and not self.sources:
+            raise ValueError("AVAILABLE legal basis requires sources")
+        if self.status == "NOT_AVAILABLE" and self.sources:
+            raise ValueError("NOT_AVAILABLE legal basis cannot contain sources")
+        return self
+
+
+class RiskSummary(ContractModel):
+    level: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL", "UNAVAILABLE"]
+    reason_codes: list[str] = Field(alias="reasonCodes", max_length=30)
+    policy_version: str = Field(alias="policyVersion", min_length=1, max_length=80)
+    escalation_required: bool = Field(alias="escalationRequired")
+
+
+class AnalysisSnapshot(ContractModel):
+    analysis_run_id: UUID = Field(alias="analysisRunId")
+    as_of_date: date = Field(alias="asOfDate")
+    verifier_status: Literal["PASSED", "BLOCKED"] = Field(alias="verifierStatus")
+    evidence_trace_sha256: str = Field(
+        alias="evidenceTraceSha256", pattern=r"^[0-9a-f]{64}$"
+    )
 
 
 class CanonicalReport(ContractModel):
@@ -113,6 +175,16 @@ class CanonicalReport(ContractModel):
     recommendations: Recommendations
     draft_response: DraftResponse = Field(alias="draftResponse")
     legal_basis: LegalBasis = Field(alias="legalBasis")
+    risk: RiskSummary | None = None
+    analysis: AnalysisSnapshot | None = None
     fact_snapshot_sha256: str = Field(alias="factSnapshotSha256", pattern=r"^[0-9a-f]{64}$")
     disclaimer: str
 
+    @model_validator(mode="after")
+    def validate_analysis_consistency(self) -> "CanonicalReport":
+        ready = self.summary.analysis_availability.status == "READY"
+        if ready and (self.risk is None or self.analysis is None):
+            raise ValueError("READY report requires risk and analysis snapshots")
+        if not ready and (self.risk is not None or self.analysis is not None):
+            raise ValueError("BLOCKED intake report cannot contain analysis snapshots")
+        return self
