@@ -33,7 +33,11 @@ jobs:
         run: python -m ruff check .
 
       - name: Mypy
-        run: python -m mypy services/legal_core/src services/gateway/telegram/src
+        run: >-
+          python -m mypy
+          services/legal_core/src
+          services/gateway/telegram/src
+          services/agent_orchestrator/src
 
       - name: Unit tests
         run: python -m pytest
