@@ -4,13 +4,13 @@
 import logging
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from enum import IntEnum
 from io import BytesIO
 from pathlib import Path
 from typing import Any, TypeAlias, cast
 from urllib.parse import urlsplit
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import httpx2
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
@@ -55,6 +55,8 @@ READY_FILE = Path("/tmp/telegram-gateway-ready")
 ALLOWED_UPDATES = ["message", "callback_query"]
 LEGAL_CORE_CLIENT_KEY = "legal_core_client"
 WIZARD_DATA_KEY = "case_wizard"
+DRAFT_ID_KEY = "draft_id"
+DRAFT_REVISION_KEY = "draft_revision"
 ADMIN_GRANT_ACCESS_KEY = "admin_grant_access"
 ADMIN_GRANT_PILOT_KEY = "admin_grant_pilot"
 LEGAL_CORE_TIMEOUT_SECONDS = 15.0
@@ -367,13 +369,13 @@ def _signal_answer(callback: str, name: str) -> str | None:
         return None
     value = callback.removeprefix(prefix).upper()
     return value if value in {"YES", "NO", "UNKNOWN"} else None
+
+
 def confirm_keyboard(workflow_id: UUID) -> InlineKeyboardMarkup:
     callback = f"case:confirm:{workflow_id}"
     if len(callback.encode()) > 64:
         raise ValueError("Telegram callback is too long")
-    return _keyboard(
-        [[("✅ Сформировать отчёт", callback), ("❌ Отменить", "case:cancel")]]
-    )
+    return _keyboard([[("✅ Сформировать отчёт", callback), ("❌ Отменить", "case:cancel")]])
 
 
 def _user_data(context: ContextTypes.DEFAULT_TYPE) -> dict[Any, Any]:
@@ -394,6 +396,61 @@ def _wizard_data(context: ContextTypes.DEFAULT_TYPE) -> dict[str, Any]:
 
 def _clear_wizard(context: ContextTypes.DEFAULT_TYPE) -> None:
     _user_data(context).pop(WIZARD_DATA_KEY, None)
+
+
+def _draft_payload(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in data.items()
+        if key not in {"workflow_id", DRAFT_ID_KEY, DRAFT_REVISION_KEY}
+    }
+
+
+async def _persist_transition(
+    handler: Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, int]],
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> int:
+    data = _wizard_data(context)
+    before = _draft_payload(data)
+    next_state = await handler(update, context)
+    if not isinstance(next_state, WizardState) or _draft_payload(data) == before:
+        return next_state
+    actor_id = _actor_id(update)
+    try:
+        draft_id = UUID(str(data[DRAFT_ID_KEY]))
+        revision = int(data[DRAFT_REVISION_KEY])
+        if actor_id is None or revision < 1:
+            raise ValueError("draft selection is missing")
+        saved = await _legal_core(context).save_intake_draft(
+            draft_id,
+            actor_id,
+            expected_revision=revision,
+            wizard_state=next_state.name,
+            draft_data=_draft_payload(data),
+        )
+        saved_revision = saved.get("revision")
+        if not isinstance(saved_revision, int) or saved_revision < 1:
+            raise ValueError("draft response is invalid")
+        data[DRAFT_REVISION_KEY] = saved_revision
+    except (KeyError, ValueError, LegalCoreApiError) as exc:
+        logger.warning("intake draft save failed: %s", type(exc).__name__)
+        _clear_wizard(context)
+        await _reply(
+            update,
+            "⚠️ Черновик не удалось сохранить. Откройте /menu → «Мои черновики» и попробуйте снова.",
+        )
+        return ConversationHandler.END
+    return next_state
+
+
+def _persisted(
+    handler: Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, int]],
+) -> Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, int]]:
+    async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        return await _persist_transition(handler, update, context)
+
+    return wrapped
 
 
 def _legal_core(context: ContextTypes.DEFAULT_TYPE) -> LegalCoreClient:
@@ -446,7 +503,21 @@ async def case_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if actor.get("role") != "CLINIC_ADMIN":
         await _reply(update, "⚠️ Legal Core вернул некорректный ответ. Попробуйте позже.")
         return ConversationHandler.END
-    _user_data(context)[WIZARD_DATA_KEY] = {"workflow_id": str(uuid4())}
+    try:
+        draft = await _legal_core(context).create_intake_draft(actor_id)
+        draft_id = UUID(str(draft["id"]))
+        revision = draft.get("revision")
+        if draft.get("wizardState") != "INCIDENT" or not isinstance(revision, int) or revision < 1:
+            raise ValueError("draft response is invalid")
+    except (KeyError, ValueError, LegalCoreApiError) as exc:
+        logger.warning("intake draft create failed: %s", type(exc).__name__)
+        await _reply(update, "⚠️ Не удалось открыть черновик. Попробуйте ещё раз позже.")
+        return ConversationHandler.END
+    _user_data(context)[WIZARD_DATA_KEY] = {
+        "workflow_id": str(draft_id),
+        DRAFT_ID_KEY: str(draft_id),
+        DRAFT_REVISION_KEY: revision,
+    }
     await _reply(
         update,
         "📝 Новая карточка открыта. Кейс будет создан после вашей проверки.\n\n"
@@ -1021,6 +1092,11 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         client = _legal_core(context)
         workflow = await client.submit_workflow(workflow_id, facts, actor_id)
         await _send_workflow_report(update, client, workflow, actor_id)
+        await client.archive_intake_draft(
+            UUID(str(data[DRAFT_ID_KEY])),
+            actor_id,
+            expected_revision=int(data[DRAFT_REVISION_KEY]),
+        )
     except (KeyError, ValueError, LegalCoreApiError) as exc:
         if isinstance(exc, LegalCoreApiError) and exc.status_code == 403:
             _clear_wizard(context)
@@ -1159,74 +1235,93 @@ def build_application(token: str) -> TelegramApplication:
             entry_points=[CallbackQueryHandler(case_start, pattern=r"^case:start$")],
             states={
                 WizardState.INCIDENT: [
-                    CallbackQueryHandler(choose_incident, pattern=r"^case:incident:")
+                    CallbackQueryHandler(_persisted(choose_incident), pattern=r"^case:incident:")
                 ],
                 WizardState.SERVICE_TYPE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, record_service_type)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, _persisted(record_service_type))
                 ],
                 WizardState.SERVICE_DATE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, record_service_date)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, _persisted(record_service_date))
                 ],
                 WizardState.INCIDENT_DATE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, record_incident_date)
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, _persisted(record_incident_date)
+                    )
                 ],
                 WizardState.CLAIM_DATE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, record_claim_date)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, _persisted(record_claim_date))
                 ],
                 WizardState.PROBLEM_SUMMARY: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, record_summary)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, _persisted(record_summary))
                 ],
                 WizardState.PATIENT_DEMAND: [
-                    CallbackQueryHandler(choose_demand, pattern=r"^case:demand:")
+                    CallbackQueryHandler(_persisted(choose_demand), pattern=r"^case:demand:")
                 ],
                 WizardState.DEMAND_AMOUNT: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, record_demand_amount)
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, _persisted(record_demand_amount)
+                    )
                 ],
                 WizardState.FORMAL_CLAIM: [
-                    CallbackQueryHandler(choose_formal_claim, pattern=r"^case:formal:")
+                    CallbackQueryHandler(_persisted(choose_formal_claim), pattern=r"^case:formal:")
                 ],
                 WizardState.CLAIM_RECEIVED_AT: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, record_claim_received)
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, _persisted(record_claim_received)
+                    )
                 ],
                 WizardState.CLAIM_DEADLINE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, record_claim_deadline)
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, _persisted(record_claim_deadline)
+                    )
                 ],
                 WizardState.HARM: [
-                    CallbackQueryHandler(choose_harm, pattern=r"^case:harm:")
+                    CallbackQueryHandler(_persisted(choose_harm), pattern=r"^case:harm:")
                 ],
                 WizardState.HOSPITALIZATION: [
-                    CallbackQueryHandler(choose_hospitalization, pattern=r"^case:hospital:")
+                    CallbackQueryHandler(
+                        _persisted(choose_hospitalization), pattern=r"^case:hospital:"
+                    )
                 ],
                 WizardState.LAWYER: [
-                    CallbackQueryHandler(choose_lawyer, pattern=r"^case:lawyer:")
+                    CallbackQueryHandler(_persisted(choose_lawyer), pattern=r"^case:lawyer:")
                 ],
                 WizardState.REPRESENTATIVE_AUTHORITY: [
                     CallbackQueryHandler(
-                        choose_representative_authority, pattern=r"^case:representative:"
+                        _persisted(choose_representative_authority),
+                        pattern=r"^case:representative:",
                     )
                 ],
                 WizardState.LAWYER_DEADLINE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, record_lawyer_deadline)
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, _persisted(record_lawyer_deadline)
+                    )
                 ],
                 WizardState.AUTHORITY: [
-                    CallbackQueryHandler(choose_authority, pattern=r"^case:authority:")
+                    CallbackQueryHandler(_persisted(choose_authority), pattern=r"^case:authority:")
                 ],
                 WizardState.AUTHORITY_KIND: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, record_authority_kind)
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, _persisted(record_authority_kind)
+                    )
                 ],
                 WizardState.AUTHORITY_DATE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, record_authority_date)
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, _persisted(record_authority_date)
+                    )
                 ],
                 WizardState.AUTHORITY_DEADLINE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, record_authority_deadline)
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, _persisted(record_authority_deadline)
+                    )
                 ],
                 WizardState.REGULATOR_THREAT: [
                     CallbackQueryHandler(
-                        choose_regulator_threat, pattern=r"^case:regulator_threat:"
+                        _persisted(choose_regulator_threat), pattern=r"^case:regulator_threat:"
                     )
                 ],
                 WizardState.DOCUMENTS: [
-                    CallbackQueryHandler(choose_documents, pattern=r"^case:documents:")
+                    CallbackQueryHandler(_persisted(choose_documents), pattern=r"^case:documents:")
                 ],
                 WizardState.CONFIRM: [
                     CallbackQueryHandler(

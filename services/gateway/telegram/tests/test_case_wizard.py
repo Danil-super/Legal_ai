@@ -12,6 +12,7 @@ from telegram_gateway.bot import (
     LEGAL_CORE_CLIENT_KEY,
     WizardState,
     _draft_from_data,
+    _persist_transition,
     build_application,
     cancel_case,
     case_start,
@@ -76,6 +77,28 @@ class FakeLegalCore:
         del telegram_user_id, idempotency_key
         raise AssertionError("case must not be created before confirmation")
 
+    async def create_intake_draft(self, telegram_user_id: int) -> dict[str, Any]:
+        del telegram_user_id
+        if isinstance(self.response, Exception):
+            raise self.response
+        return {
+            "id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
+            "wizardState": "INCIDENT",
+            "revision": 1,
+        }
+
+    async def save_intake_draft(self, *args: object, **kwargs: object) -> dict[str, Any]:
+        del args, kwargs
+        if isinstance(self.response, Exception):
+            raise self.response
+        return {"revision": 2}
+
+    async def archive_intake_draft(self, *args: object, **kwargs: object) -> dict[str, Any]:
+        del args, kwargs
+        if isinstance(self.response, Exception):
+            raise self.response
+        return {"revision": 3}
+
     async def grant_subscription(
         self,
         telegram_user_id: int,
@@ -125,6 +148,11 @@ class FakeReportPipeline:
         del args
         self.steps.append("pdf")
         return b"%PDF-synthetic"
+
+    async def archive_intake_draft(self, *args: object, **kwargs: object) -> dict[str, Any]:
+        del args, kwargs
+        self.steps.append("archive")
+        return {"revision": 3}
 
 
 def test_parse_iso_date_accepts_only_real_non_future_iso_dates() -> None:
@@ -547,6 +575,32 @@ def test_hospitalization_answer_advances_to_the_lawyer_question() -> None:
     ]
 
 
+def test_accepted_wizard_transition_saves_the_draft_before_next_question() -> None:
+    message = FakeMessage()
+    query = FakeQuery("case:hospital:yes")
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+    context = SimpleNamespace(
+        bot_data={LEGAL_CORE_CLIENT_KEY: FakeLegalCore({"role": "CLINIC_ADMIN"})},
+        user_data={
+            "case_wizard": {
+                "workflow_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
+                "draft_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
+                "draft_revision": 1,
+                "harm_claimed": "YES",
+            }
+        },
+    )
+
+    result = asyncio.run(_persist_transition(choose_hospitalization, update, context))
+
+    assert result == WizardState.LAWYER
+    assert context.user_data["case_wizard"]["draft_revision"] == 2
+
+
 def test_case_start_explains_inactive_subscription_without_leaking_tenant_details() -> None:
     message = FakeMessage()
     query = FakeQuery("case:start")
@@ -650,8 +704,10 @@ def test_confirmation_finalizes_case_builds_report_and_returns_pdf() -> None:
     context = SimpleNamespace(
         bot_data={LEGAL_CORE_CLIENT_KEY: pipeline},
         user_data={
-            "case_wizard": {
-                "workflow_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
+                "case_wizard": {
+                    "workflow_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
+                    "draft_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
+                    "draft_revision": 2,
                 "incident_type": "QUALITY_COMPLAINT",
                 "service_type": "Установка коронки",
                 "service_date": "2026-06-01",
@@ -670,7 +726,7 @@ def test_confirmation_finalizes_case_builds_report_and_returns_pdf() -> None:
     result = asyncio.run(confirm_case(update, context))
 
     assert result == ConversationHandler.END
-    assert pipeline.steps == ["submit", "pdf"]
+    assert pipeline.steps == ["submit", "pdf", "archive"]
     assert any("АНАЛИЗ ЗАБЛОКИРОВАН" in text for text in message.text_replies)
     assert message.documents[0]["caption"].startswith("✅ Отчёт по кейсу DL-2026-000001")
     assert context.user_data == {}

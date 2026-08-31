@@ -377,6 +377,59 @@ class LegalCoreClient:
             payload=payload,
         )
 
+    async def create_intake_draft(self, telegram_user_id: int) -> dict[str, Any]:
+        return await self._json_request(
+            "POST",
+            "/v1/telegram-intake-drafts",
+            telegram_user_id=telegram_user_id,
+            idempotency_key=uuid4(),
+            payload={},
+        )
+
+    async def list_intake_drafts(self, telegram_user_id: int) -> dict[str, Any]:
+        return await self._json_request(
+            "GET", "/v1/telegram-intake-drafts", telegram_user_id=telegram_user_id
+        )
+
+    async def get_intake_draft(
+        self, draft_id: UUID, telegram_user_id: int
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "GET", f"/v1/telegram-intake-drafts/{draft_id}", telegram_user_id=telegram_user_id
+        )
+
+    async def save_intake_draft(
+        self,
+        draft_id: UUID,
+        telegram_user_id: int,
+        *,
+        expected_revision: int,
+        wizard_state: str,
+        draft_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "PUT",
+            f"/v1/telegram-intake-drafts/{draft_id}",
+            telegram_user_id=telegram_user_id,
+            idempotency_key=uuid4(),
+            payload={
+                "expectedRevision": expected_revision,
+                "wizardState": wizard_state,
+                "draftData": draft_data,
+            },
+        )
+
+    async def archive_intake_draft(
+        self, draft_id: UUID, telegram_user_id: int, *, expected_revision: int
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "POST",
+            f"/v1/telegram-intake-drafts/{draft_id}/archive",
+            telegram_user_id=telegram_user_id,
+            idempotency_key=uuid4(),
+            payload={"expectedRevision": expected_revision},
+        )
+
     async def submit_workflow(
         self,
         workflow_id: UUID,
