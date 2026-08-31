@@ -8,7 +8,9 @@ facts into a small bounded set of Russian lexical queries executed only by
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import date
 from typing import Final
+from uuid import UUID
 
 from legal_core.contracts import FactKey
 from legal_core.legal_retrieval import ApprovedLegalCorpusRepository, ApprovedLegalFragment
@@ -67,7 +69,7 @@ async def retrieve_planned_evidence(
     repository: ApprovedLegalCorpusRepository,
     *,
     queries: Sequence[str],
-    as_of_date,
+    as_of_date: date,
     limit_per_query: int = 5,
     max_fragments: int = 20,
 ) -> list[ApprovedLegalFragment]:
@@ -76,7 +78,7 @@ async def retrieve_planned_evidence(
     if not 1 <= max_fragments <= 30:
         raise ValueError("max_fragments must be between 1 and 30")
 
-    unique: dict[object, ApprovedLegalFragment] = {}
+    unique: dict[UUID, ApprovedLegalFragment] = {}
     for query in queries:
         for fragment in await repository.search(
             query,
