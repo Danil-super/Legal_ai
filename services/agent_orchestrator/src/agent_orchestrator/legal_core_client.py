@@ -12,9 +12,11 @@ from pydantic import ValidationError
 
 from agent_orchestrator.reasoning import ReasoningResult
 from legal_core.analysis_contracts import (
+    AnalysisClaimInput,
     AnalysisContextResponse,
     AnalysisSubmissionRequest,
     AnalysisSubmissionResponse,
+    SemanticReviewInput,
 )
 
 
@@ -126,29 +128,31 @@ class LegalCoreClient:
         telegram_user_id: int,
         idempotency_key: UUID,
     ) -> AnalysisSubmissionResponse:
+        claims = [
+            AnalysisClaimInput(
+                claimId=claim.claim_id,
+                kind=claim.kind.value,
+                text=claim.text,
+                evidenceFragmentIds=list(claim.evidence_fragment_ids),
+                requiredFactKeys=list(claim.required_fact_keys),
+            )
+            for claim in reasoning.claims
+        ]
+        semantic_reviews = [
+            SemanticReviewInput(
+                claimId=review.claim_id,
+                verdict=review.verdict.value,
+                reviewedFragmentIds=list(review.reviewed_fragment_ids),
+            )
+            for review in reasoning.semantic_reviews
+        ]
         request = AnalysisSubmissionRequest(
             asOfDate=context.as_of_date,
             expectedFactSnapshotSha256=context.fact_snapshot_sha256,
             expectedEvidenceTraceSha256=context.evidence_trace_sha256,
             expectedRiskPolicyVersion=context.risk_policy_version,
-            claims=[
-                {
-                    "claimId": claim.claim_id,
-                    "kind": claim.kind.value,
-                    "text": claim.text,
-                    "evidenceFragmentIds": list(claim.evidence_fragment_ids),
-                    "requiredFactKeys": list(claim.required_fact_keys),
-                }
-                for claim in reasoning.claims
-            ],
-            semanticReviews=[
-                {
-                    "claimId": review.claim_id,
-                    "verdict": review.verdict.value,
-                    "reviewedFragmentIds": list(review.reviewed_fragment_ids),
-                }
-                for review in reasoning.semantic_reviews
-            ],
+            claims=claims,
+            semanticReviews=semantic_reviews,
         )
         payload = await self._request_json(
             "POST",
