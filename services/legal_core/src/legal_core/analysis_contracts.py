@@ -12,6 +12,25 @@ from legal_core.api_contracts import LegalFragmentResponse, ReportResponse
 from legal_core.contracts import ContractModel, FactKey
 
 
+class ClinicDocumentContextResponse(ContractModel):
+    context_kind: Literal["CLINIC_DOCUMENT_CONTEXT"] = Field(
+        default="CLINIC_DOCUMENT_CONTEXT", alias="contextKind"
+    )
+    fragment_id: UUID = Field(alias="fragmentId")
+    version_id: UUID = Field(alias="versionId")
+    document_id: UUID = Field(alias="documentId")
+    document_key: str = Field(alias="documentKey", min_length=1, max_length=100)
+    document_type: str = Field(alias="documentType", min_length=1, max_length=80)
+    document_title: str = Field(alias="documentTitle", min_length=1, max_length=240)
+    version_no: int = Field(alias="versionNo", ge=1)
+    valid_from: date | None = Field(default=None, alias="validFrom")
+    valid_to: date | None = Field(default=None, alias="validTo")
+    structural_path: str = Field(alias="structuralPath", min_length=1, max_length=500)
+    text: str = Field(min_length=1, max_length=12_000)
+    text_sha256: str = Field(alias="textSha256", pattern=r"^[0-9a-f]{64}$")
+    raw_sha256: str = Field(alias="rawSha256", pattern=r"^[0-9a-f]{64}$")
+
+
 class AnalysisContextResponse(ContractModel):
     case_id: UUID = Field(alias="caseId")
     as_of_date: date = Field(alias="asOfDate")
@@ -23,6 +42,12 @@ class AnalysisContextResponse(ContractModel):
         alias="evidenceTraceSha256", pattern=r"^[0-9a-f]{64}$"
     )
     evidence: list[LegalFragmentResponse] = Field(min_length=1, max_length=30)
+    clinic_document_context_trace_sha256: str = Field(
+        alias="clinicDocumentContextTraceSha256", pattern=r"^[0-9a-f]{64}$"
+    )
+    clinic_document_context: list[ClinicDocumentContextResponse] = Field(
+        default_factory=list, alias="clinicDocumentContext", max_length=20
+    )
     risk_policy_version: str = Field(alias="riskPolicyVersion", min_length=1, max_length=80)
     high_demand_threshold_kopecks: int = Field(
         alias="highDemandThresholdKopecks", ge=1
@@ -77,6 +102,9 @@ class AnalysisSubmissionRequest(ContractModel):
     )
     expected_evidence_trace_sha256: str = Field(
         alias="expectedEvidenceTraceSha256", pattern=r"^[0-9a-f]{64}$"
+    )
+    expected_clinic_document_context_trace_sha256: str = Field(
+        alias="expectedClinicDocumentContextTraceSha256", pattern=r"^[0-9a-f]{64}$"
     )
     expected_risk_policy_version: str = Field(
         alias="expectedRiskPolicyVersion", min_length=1, max_length=80
