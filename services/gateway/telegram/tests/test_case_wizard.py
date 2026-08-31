@@ -15,6 +15,7 @@ from telegram_gateway.bot import (
     build_application,
     cancel_case,
     case_start,
+    choose_hospitalization,
     choose_lawyer,
     confirm_case,
     grant_access,
@@ -529,6 +530,21 @@ def test_grant_pilot_rejects_an_out_of_range_duration() -> None:
     asyncio.run(grant_pilot(update, context))
 
     assert "от 1 до 90" in message.text_replies[0]
+
+
+def test_hospitalization_answer_advances_to_the_lawyer_question() -> None:
+    message = FakeMessage()
+    query = FakeQuery("case:hospital:yes")
+    update = SimpleNamespace(callback_query=query, effective_message=message)
+    context = SimpleNamespace(user_data={"case_wizard": {"harm_claimed": "YES"}})
+
+    result = asyncio.run(choose_hospitalization(update, context))
+
+    assert result == WizardState.LAWYER
+    assert context.user_data["case_wizard"]["hospitalization"] == "YES"
+    assert message.text_replies == [
+        "9/12. Связывался ли с клиникой представитель или юрист пациента?"
+    ]
 
 
 def test_case_start_explains_inactive_subscription_without_leaking_tenant_details() -> None:

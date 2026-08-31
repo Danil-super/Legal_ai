@@ -342,7 +342,15 @@ YES_NO_KEYBOARDS = {
             [("❔ Неизвестно", f"case:{name}:unknown")],
         ]
     )
-    for name in ("formal", "harm", "hospital", "authority")
+    for name in (
+        "formal",
+        "harm",
+        "hospital",
+        "lawyer",
+        "representative",
+        "authority",
+        "regulator_threat",
+    )
 }
 DOCUMENTS_KEYBOARD = _keyboard(
     [
