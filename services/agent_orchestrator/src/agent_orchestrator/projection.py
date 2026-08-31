@@ -10,7 +10,10 @@ from uuid import UUID
 from agent_orchestrator.contracts import CaseProjection, EvidenceItem
 from legal_core.contracts import FactKey
 from legal_core.legal_retrieval import ApprovedLegalFragment
-from legal_core.pseudonymization import contains_obvious_direct_identifier, pseudonymize_text
+from legal_core.pseudonymization import (
+    contains_obvious_direct_identifier,
+    pseudonymize_text,
+)
 
 
 def _pseudonymize_value(
@@ -21,7 +24,8 @@ def _pseudonymize_value(
     if isinstance(value, str):
         redacted = pseudonymize_text(value, known_identifiers=known_identifiers).text
         if contains_obvious_direct_identifier(redacted):
-            raise ValueError("case fact still contains an obvious direct identifier after redaction")
+            message = "case fact still contains an obvious direct identifier after redaction"
+            raise ValueError(message)
         return redacted
     if isinstance(value, dict):
         return {
