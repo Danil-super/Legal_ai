@@ -5,11 +5,13 @@ from uuid import UUID
 
 import pytest
 from agent_orchestrator.contracts import CaseProjection, EvidenceItem
+from agent_orchestrator.hermes_client import HermesProtocolError
 from agent_orchestrator.reasoning import LegalReasoningOrchestrator
 from legal_core.verifier import SemanticVerdict
 
 
 FRAGMENT_ID = UUID("00000000-0000-0000-0000-000000000001")
+OTHER_FRAGMENT_ID = UUID("00000000-0000-0000-0000-000000000099")
 CASE_ID = UUID("00000000-0000-0000-0000-000000000010")
 
 
@@ -56,36 +58,38 @@ def _projection(*, summary: str = "Пациент сообщил о сколе �
     )
 
 
+def _claim_response(fragment_id: UUID = FRAGMENT_ID) -> dict[str, object]:
+    return {
+        "claims": [
+            {
+                "claimId": "c1",
+                "kind": "LEGAL",
+                "text": "Внутренний вывод.",
+                "evidenceFragmentIds": [str(fragment_id)],
+                "requiredFactKeys": ["FORMAL_CLAIM"],
+            }
+        ],
+        "internalRecommendations": ["Зафиксировать обращение."],
+        "patientDraft": "Здравствуйте. Предлагаем провести осмотр.",
+    }
+
+
+def _review_response(fragment_id: UUID = FRAGMENT_ID) -> dict[str, object]:
+    return {
+        "reviews": [
+            {
+                "claimId": "c1",
+                "verdict": "SUPPORTED",
+                "reviewedFragmentIds": [str(fragment_id)],
+            }
+        ]
+    }
+
+
 def test_two_pass_reasoning_returns_domain_claims_and_reviews() -> None:
     async def scenario() -> None:
-        researcher = FakeHermes(
-            name="researcher",
-            response={
-                "claims": [
-                    {
-                        "claimId": "c1",
-                        "kind": "LEGAL",
-                        "text": "Внутренний вывод.",
-                        "evidenceFragmentIds": [str(FRAGMENT_ID)],
-                        "requiredFactKeys": ["FORMAL_CLAIM"],
-                    }
-                ],
-                "internalRecommendations": ["Зафиксировать обращение."],
-                "patientDraft": "Здравствуйте. Предлагаем провести осмотр.",
-            },
-        )
-        reviewer = FakeHermes(
-            name="reviewer",
-            response={
-                "reviews": [
-                    {
-                        "claimId": "c1",
-                        "verdict": "SUPPORTED",
-                        "reviewedFragmentIds": [str(FRAGMENT_ID)],
-                    }
-                ]
-            },
-        )
+        researcher = FakeHermes(name="researcher", response=_claim_response())
+        reviewer = FakeHermes(name="reviewer", response=_review_response())
         orchestrator = LegalReasoningOrchestrator(  # type: ignore[arg-type]
             researcher=researcher,
             reviewer=reviewer,
@@ -136,5 +140,45 @@ def test_orchestrator_rejects_obvious_identifier_before_provider_call() -> None:
             await orchestrator.reason(_projection(summary="Телефон пациента +7 999 123-45-67"))
         assert researcher.calls == 0
         assert reviewer.calls == 0
+
+    asyncio.run(scenario())
+
+
+def test_researcher_cannot_reference_a_fragment_outside_legal_evidence() -> None:
+    async def scenario() -> None:
+        researcher = FakeHermes(
+            name="researcher",
+            response=_claim_response(OTHER_FRAGMENT_ID),
+        )
+        reviewer = FakeHermes(name="reviewer", response=_review_response())
+        orchestrator = LegalReasoningOrchestrator(  # type: ignore[arg-type]
+            researcher=researcher,
+            reviewer=reviewer,
+        )
+
+        with pytest.raises(HermesProtocolError, match="outside approved legal evidence"):
+            await orchestrator.reason(_projection())
+        assert researcher.calls == 1
+        assert reviewer.calls == 0
+
+    asyncio.run(scenario())
+
+
+def test_reviewer_cannot_reference_a_fragment_outside_the_claim() -> None:
+    async def scenario() -> None:
+        researcher = FakeHermes(name="researcher", response=_claim_response())
+        reviewer = FakeHermes(
+            name="reviewer",
+            response=_review_response(OTHER_FRAGMENT_ID),
+        )
+        orchestrator = LegalReasoningOrchestrator(  # type: ignore[arg-type]
+            researcher=researcher,
+            reviewer=reviewer,
+        )
+
+        with pytest.raises(HermesProtocolError, match="outside approved legal evidence"):
+            await orchestrator.reason(_projection())
+        assert researcher.calls == 1
+        assert reviewer.calls == 1
 
     asyncio.run(scenario())
