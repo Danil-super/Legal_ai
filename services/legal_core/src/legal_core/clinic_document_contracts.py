@@ -63,9 +63,12 @@ class CreateClinicDocumentTextVersionRequest(ContractModel):
 
     @model_validator(mode="after")
     def validate_dates(self) -> "CreateClinicDocumentTextVersionRequest":
-        if self.valid_from is not None and self.valid_to is not None:
-            if self.valid_to <= self.valid_from:
-                raise ValueError("validTo must be later than validFrom")
+        if (
+            self.valid_from is not None
+            and self.valid_to is not None
+            and self.valid_to <= self.valid_from
+        ):
+            raise ValueError("validTo must be later than validFrom")
         return self
 
 
