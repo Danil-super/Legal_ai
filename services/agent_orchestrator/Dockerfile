@@ -19,4 +19,4 @@ USER app
 
 EXPOSE 8010
 
-CMD ["uvicorn", "agent_orchestrator.main:app", "--host", "0.0.0.0", "--port", "8010"]
+CMD ["uvicorn", "agent_orchestrator.main:create_runtime_app", "--factory", "--host", "0.0.0.0", "--port", "8010"]
