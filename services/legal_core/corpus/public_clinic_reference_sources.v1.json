@@ -1,0 +1,140 @@
+{
+  "schema_version": "dental-public-clinic-reference.v1",
+  "created_at": "2026-08-31",
+  "purpose": "DEVELOPMENT_REFERENCE_ONLY",
+  "authority": "NOT_A_LEGAL_SOURCE",
+  "ingestion_policy": "METADATA_ONLY_NO_AUTOMATIC_RAG_INGESTION",
+  "raw_document_policy": "DO_NOT_MIRROR_OR_REPUBLISH_WITHOUT_PERMISSION_OR_CLEAR_LICENSE",
+  "use_policy": [
+    "Use source pages to study document taxonomy, structure, edge cases, and test coverage.",
+    "Do not treat another clinic's document as a rule of a tenant clinic.",
+    "Do not use these documents as legal authority.",
+    "For a production tenant, ingest only that clinic's own documents under an explicit onboarding agreement.",
+    "Any copied excerpt used in tests must be minimal, necessary, and separately reviewed."
+  ],
+  "clinics": [
+    {
+      "clinic_key": "klever",
+      "clinic_name": "Стоматологическая клиника «Клевер»",
+      "source_pages": [{"url": "https://dentklever.ru/documents/", "observed_document_types": ["CONTRACT", "PERSONAL_DATA_CONSENT", "INFORMED_CONSENT_GENERAL", "INFORMED_CONSENT_ANESTHESIA", "WARRANTY_POLICY", "HEALTH_QUESTIONNAIRE"]}],
+      "research_value": ["full_intake_pack", "warranty", "adult_and_child_forms"]
+    },
+    {
+      "clinic_key": "dentas",
+      "clinic_name": "Стоматологическая клиника «Дентас»",
+      "source_pages": [{"url": "https://dentas70.ru/klient/", "observed_document_types": ["CONTRACT", "PAID_SERVICES_POLICY", "PRICE_LIST", "WARRANTY_POLICY", "INFORMED_CONSENT_THERAPY", "INFORMED_CONSENT_SURGERY", "INFORMED_CONSENT_PROSTHODONTICS", "INFORMED_CONSENT_ORTHODONTICS", "INFORMED_CONSENT_RADIOLOGY", "INFORMED_CONSENT_ANESTHESIA", "PRIVACY_POLICY", "SOP_ORDER", "MEDICAL_COMMISSION_ORDER"]}],
+      "research_value": ["broad_document_taxonomy", "specialty_consents", "internal_governance_examples"]
+    },
+    {
+      "clinic_key": "medline-dent",
+      "clinic_name": "Стоматология «Медлайн-Дент»",
+      "source_pages": [{"url": "https://dent.medline.pro/clinic/patcientu", "observed_document_types": ["CONTRACT", "PRIVACY_POLICY", "PERSONAL_DATA_CONSENT", "WARRANTY_POLICY", "INFORMED_CONSENT_GENERAL", "QUALITY_POLICY", "PATIENT_RULES", "PAID_SERVICES_POLICY", "DIAGNOSTIC_PREPARATION_RULES"]}],
+      "research_value": ["comprehensive_public_pack", "warranty", "patient_rules", "quality_materials"]
+    },
+    {
+      "clinic_key": "refformat",
+      "clinic_name": "Клиника Refformat",
+      "source_pages": [{"url": "https://refformat.ru/patient/docs/", "observed_document_types": ["INFORMED_CONSENT_GENERAL", "INFORMED_CONSENT_WHITENING", "INFORMED_CONSENT_ENDODONTICS", "INFORMED_CONSENT_ORTHODONTICS", "INFORMED_CONSENT_PROSTHODONTICS", "INFORMED_CONSENT_PERIODONTICS", "INFORMED_CONSENT_SEDATION"]}],
+      "research_value": ["specialty_consent_library", "surgery_implant_focus"]
+    },
+    {
+      "clinic_key": "midental",
+      "clinic_name": "Стоматология «Мидентал»",
+      "source_pages": [{"url": "https://midental.ru/company/docs/", "observed_document_types": ["CONTRACT", "CONTRACT_THREE_PARTY", "CONTRACT_MINOR", "PATIENT_RULES", "PAID_SERVICES_POLICY", "WARRANTY_POLICY", "PATIENT_MEMO_EXTRACTION", "PATIENT_MEMO_BRACES", "PATIENT_MEMO_POST_SURGERY", "PATIENT_MEMO_PROSTHETICS"]}],
+      "research_value": ["contract_variants", "warranty", "post_treatment_memos"]
+    },
+    {
+      "clinic_key": "adamodental",
+      "clinic_name": "Стоматология «Адамодентал»",
+      "source_pages": [{"url": "https://adamodental-msk.ru/dokumenty/", "observed_document_types": ["PATIENT_RULES", "PAID_SERVICES_POLICY", "PRIVACY_POLICY", "CONTRACT", "INFORMED_CONSENT_GENERAL", "INFORMED_CONSENT_ANESTHESIA", "INFORMED_CONSENT_IMPLANT", "INFORMED_CONSENT_CARIES", "INFORMED_CONSENT_EXTRACTION", "WARRANTY_POLICY", "PERSONAL_DATA_CONSENT"]}],
+      "research_value": ["broad_private_clinic_pack", "implant_and_extraction_consents", "warranty"]
+    },
+    {
+      "clinic_key": "beleira",
+      "clinic_name": "Стоматология «Бел Эйра»",
+      "source_pages": [{"url": "https://beleira.ru/dokumenty/", "observed_document_types": ["HEALTH_QUESTIONNAIRE", "CONTRACT", "INFORMED_CONSENT_GENERAL", "WARRANTY_POLICY", "SERVICE_RESULT_USAGE_RULES", "PATIENT_RULES", "PERSONAL_DATA_CONSENT", "PUBLIC_OFFER"]}],
+      "research_value": ["mixed_formats_doc_rtf", "service_result_rules", "warranty"]
+    },
+    {
+      "clinic_key": "stomatologia24",
+      "clinic_name": "СТОМАТОЛОГИЯ24",
+      "source_pages": [{"url": "https://stomatologia24.ru/dokumenty/", "observed_document_types": ["HEALTH_QUESTIONNAIRE", "CONTRACT", "MEDICAL_RECORD_CONSENT_REFUSAL", "INFORMED_CONSENT_PROSTHODONTICS", "INFORMED_CONSENT_PERIODONTICS", "INFORMED_CONSENT_ANESTHESIA", "INFORMED_CONSENT_WHITENING", "INFORMED_CONSENT_THERAPY", "INFORMED_CONSENT_SURGERY", "INFORMED_CONSENT_ENDODONTICS"]}],
+      "research_value": ["specialty_consent_library", "legacy_public_pack"]
+    },
+    {
+      "clinic_key": "saint-dent",
+      "clinic_name": "Saint-Dent",
+      "source_pages": [{"url": "https://saint-dent.ru/docs/", "observed_document_types": ["CONTRACT", "HEALTH_QUESTIONNAIRE", "INFORMED_CONSENT_GENERAL", "INFORMED_CONSENT_ORTHODONTICS", "INFORMED_CONSENT_SURGERY", "INFORMED_CONSENT_ENDODONTICS", "INFORMED_CONSENT_THERAPY", "INFORMED_CONSENT_PROSTHODONTICS"]}],
+      "research_value": ["specialty_consents", "patient_questionnaire"]
+    },
+    {
+      "clinic_key": "agul",
+      "clinic_name": "Стоматологическая клиника «Агул»",
+      "source_pages": [{"url": "https://www.agulstom.ru/dokumenty/", "observed_document_types": ["CONTRACT", "INFORMED_CONSENT_GENERAL", "PERSONAL_DATA_CONSENT"]}],
+      "research_value": ["minimal_required_intake_pack", "patient_explanation_page"]
+    },
+    {
+      "clinic_key": "centerstom-el-dento",
+      "clinic_name": "Сеть клиник «Эль-Денто» / Центр стоматологии",
+      "source_pages": [{"url": "https://centerstom.ru/yuridicheskaya-informatsiya/", "observed_document_types": ["WARRANTY_POLICY", "PRIVACY_POLICY", "PERSONAL_DATA_POLICY", "INFORMED_CONSENT_HYGIENE", "INFORMED_CONSENT_PROSTHODONTICS", "INFORMED_CONSENT_WHITENING", "INFORMED_CONSENT_PERIODONTICS", "INFORMED_CONSENT_THERAPY", "INFORMED_CONSENT_SURGERY", "INFORMED_CONSENT_ORTHODONTICS", "INFORMED_CONSENT_IMPLANT", "INFORMED_CONSENT_RADIOLOGY", "INFORMED_CONSENT_SEDATION"]}],
+      "research_value": ["very_broad_consent_library", "implantation_and_sedation", "warranty"]
+    },
+    {
+      "clinic_key": "doctorsmile",
+      "clinic_name": "Doctor Smile",
+      "source_pages": [{"url": "https://doctorsmile.ru/clinic/dokumenty-dlya-patsientov/", "observed_document_types": ["WARRANTY_POLICY", "DENTAL_HISTORY", "PAID_SERVICES_TERM_POLICY", "LICENSE_INFORMATION"]}],
+      "research_value": ["warranty", "anamnesis_form", "service_term_policy"]
+    },
+    {
+      "clinic_key": "vilmadent",
+      "clinic_name": "Стоматология «Вилмадент»",
+      "source_pages": [{"url": "https://vilmadent.ru/about/dokumenty/", "observed_document_types": ["CONTRACT", "WARRANTY_POLICY", "SERVICE_WAITING_PERIOD_POLICY"]}],
+      "research_value": ["contract", "warranty", "service_timing"]
+    },
+    {
+      "clinic_key": "sdent-clinic",
+      "clinic_name": "Стоматологическая клиника SDent",
+      "source_pages": [{"url": "https://sdent-clinic.ru/documents/", "observed_document_types": ["CONTRACT", "PAID_SERVICES_POLICY", "PATIENT_RULES", "WARRANTY_POLICY", "LICENSE_INFORMATION"]}],
+      "research_value": ["core_patient_documents", "patient_rules", "warranty"]
+    },
+    {
+      "clinic_key": "central-stomatology-komi",
+      "clinic_name": "Центральная стоматология",
+      "source_pages": [{"url": "https://stomkomi.ru/patient", "observed_document_types": ["PAID_SERVICES_POLICY", "WARRANTY_POLICY", "CONTRACT", "INFORMED_CONSENT_SPECIALTY", "PATIENT_MEMO", "PERSONAL_DATA_CONSENT", "PHOTO_VIDEO_CONSENT", "SERVICE_NOTIFICATION_CONSENT"]}],
+      "research_value": ["patient_memos", "marketing_and_service_consents", "warranty"]
+    },
+    {
+      "clinic_key": "praktik-dent",
+      "clinic_name": "Стоматологическая клиника «Практик-Дент»",
+      "source_pages": [{"url": "https://praktikdent.spb.ru/dokumenty", "observed_document_types": ["WARRANTY_POLICY", "CONTRACT_REFERENCE", "SERVICE_TERM_INFORMATION"]}],
+      "research_value": ["warranty_terms", "service_term_information"]
+    },
+    {
+      "clinic_key": "anle-dent",
+      "clinic_name": "Стоматология «Анле-Дент»",
+      "source_pages": [{"url": "https://anle-dent.ru/o_nas/polozhenie-o-garantiyah/", "observed_document_types": ["WARRANTY_POLICY"]}],
+      "research_value": ["detailed_warranty_policy"]
+    },
+    {
+      "clinic_key": "stomatology-group-garant",
+      "clinic_name": "Стоматологическая группа «ГАРАНТ»",
+      "source_pages": [
+        {"url": "https://moigarant.ru/legal-information/contract", "observed_document_types": ["CONTRACT", "WARRANTY_POLICY"]},
+        {"url": "https://moigarant.ru/legal-information/guarantee_obligation", "observed_document_types": ["WARRANTY_POLICY"]}
+      ],
+      "research_value": ["contract_warranty_relationship", "detailed_warranty_policy"]
+    },
+    {
+      "clinic_key": "soliddent",
+      "clinic_name": "Стоматология SolidDent",
+      "source_pages": [{"url": "https://soliddent.ru/pravo", "observed_document_types": ["PAID_SERVICES_POLICY", "PRIVACY_POLICY", "LICENSE_INFORMATION"]}],
+      "research_value": ["service_rules", "public_legal_information"]
+    },
+    {
+      "clinic_key": "ssdent",
+      "clinic_name": "SSDent",
+      "source_pages": [{"url": "https://ssdent.ru/info", "observed_document_types": ["MEDICAL_RECORD_ACCESS_POLICY", "MEDICAL_RECORD_REQUEST_TEMPLATE", "CONTRACT_LEGAL_ENTITY", "CONTRACT_THREE_PARTY", "CONTRACT_MINOR", "PAID_SERVICES_POLICY", "PRICE_LIST"]}],
+      "research_value": ["medical_record_access", "contract_variants", "request_templates"]
+    }
+  ]
+}
