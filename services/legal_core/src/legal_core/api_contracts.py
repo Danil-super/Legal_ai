@@ -87,13 +87,26 @@ class ActorResponse(ContractModel):
 
 class PlatformSubscriptionGrantRequest(ContractModel):
     telegram_user_id: int = Field(alias="telegramUserId", gt=0, le=9_223_372_036_854_775_807)
+    plan_code: Literal["MVP_MANUAL", "FREE_PILOT"] = Field(
+        default="MVP_MANUAL", alias="planCode"
+    )
+    pilot_days: int | None = Field(default=None, alias="pilotDays", ge=1, le=90)
+
+    @model_validator(mode="after")
+    def validate_pilot_duration(self) -> "PlatformSubscriptionGrantRequest":
+        if self.plan_code == "FREE_PILOT" and self.pilot_days is None:
+            raise ValueError("pilotDays is required for FREE_PILOT")
+        if self.plan_code == "MVP_MANUAL" and self.pilot_days is not None:
+            raise ValueError("pilotDays is allowed only for FREE_PILOT")
+        return self
 
 
 class PlatformSubscriptionGrantResponse(ContractModel):
     telegram_user_id: int = Field(alias="telegramUserId")
     clinic_name: str = Field(alias="clinicName")
-    plan_code: Literal["MVP_MANUAL"] = Field(alias="planCode")
+    plan_code: Literal["MVP_MANUAL", "FREE_PILOT"] = Field(alias="planCode")
     status: Literal["ACTIVE"]
+    ends_at: datetime | None = Field(alias="endsAt")
 
 
 class LegalFragmentResponse(ContractModel):

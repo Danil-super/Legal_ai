@@ -134,7 +134,8 @@ def back_keyboard() -> InlineKeyboardMarkup:
 def admin_panel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("➕ Выдать доступ", callback_data="admin:grant")],
+            [InlineKeyboardButton("➕ Выдать полный доступ", callback_data="admin:grant")],
+            [InlineKeyboardButton("🎁 Выдать pilot на 30 дней", callback_data="admin:pilot")],
             [InlineKeyboardButton("← Главное меню", callback_data="menu")],
         ]
     )

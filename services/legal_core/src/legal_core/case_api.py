@@ -4,8 +4,8 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import Annotated, Any, Literal
+from datetime import UTC, datetime, timedelta
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, Response, status
@@ -47,7 +47,7 @@ from legal_core.subscription_provisioning import provision_entitlement_in_sessio
 
 TelegramUserId = Annotated[int, Header(alias="X-Telegram-User-Id", gt=0)]
 IdempotencyKey = Annotated[UUID, Header(alias="Idempotency-Key")]
-MANUAL_SUBSCRIPTION_PLAN: Literal["MVP_MANUAL"] = "MVP_MANUAL"
+FREE_PILOT_SUBSCRIPTION_PLAN = "FREE_PILOT"
 NEW_CLINIC_NAME = "Новая стоматология"
 
 
@@ -455,13 +455,20 @@ def create_case_router(
             await session.flush()
             clinic_name = clinic.name
 
+        starts_at = datetime.now(UTC)
+        if payload.plan_code == FREE_PILOT_SUBSCRIPTION_PLAN:
+            if payload.pilot_days is None:  # pragma: no cover - API contract rejects this.
+                raise RuntimeError("validated free-pilot request has no duration")
+            ends_at = starts_at + timedelta(days=payload.pilot_days)
+        else:
+            ends_at = None
         entitlement_id = await provision_entitlement_in_session(
             session,
             membership_id=membership.id,
-            plan_code=MANUAL_SUBSCRIPTION_PLAN,
+            plan_code=payload.plan_code,
             status="ACTIVE",
-            starts_at=datetime.now(UTC),
-            ends_at=None,
+            starts_at=starts_at,
+            ends_at=ends_at,
             performed_by_user_id=actor.user_id,
         )
         await session.execute(
@@ -470,8 +477,9 @@ def create_case_router(
         result = PlatformSubscriptionGrantResponse(
             telegramUserId=payload.telegram_user_id,
             clinicName=clinic_name,
-            planCode=MANUAL_SUBSCRIPTION_PLAN,
+            planCode=payload.plan_code,
             status="ACTIVE",
+            endsAt=ends_at,
         )
         _finish_idempotency(
             idempotency,

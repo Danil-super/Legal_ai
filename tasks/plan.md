@@ -78,9 +78,10 @@
 ### Proposed free-pilot and practical-case research track
 
 `SPEC-free-pilot-practice-research.md` defines a controlled free pilot and a reviewed practical
-scenario library. Public consultations may reveal taxonomy candidates, but are neither a legal
-source nor a scrape/train corpus. This track starts after product/legal/security approval and
-does not loosen the evidence or tenant gates.
+scenario library. Product approval for the owner-granted, time-limited pilot was recorded on
+2026-08-31. Public consultations may reveal taxonomy candidates, but are neither a legal source
+nor a scrape/train corpus. Legal/security approval remains required before a scenario library or
+external integration starts; the pilot does not loosen the evidence or tenant gates.
 
 ## Risks and Mitigations
 

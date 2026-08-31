@@ -56,6 +56,7 @@ ALLOWED_UPDATES = ["message", "callback_query"]
 LEGAL_CORE_CLIENT_KEY = "legal_core_client"
 WIZARD_DATA_KEY = "case_wizard"
 ADMIN_GRANT_ACCESS_KEY = "admin_grant_access"
+ADMIN_GRANT_PILOT_KEY = "admin_grant_pilot"
 LEGAL_CORE_TIMEOUT_SECONDS = 15.0
 
 
@@ -118,6 +119,7 @@ async def _reply(update: Update, text: str) -> None:
 def _clear_pending_admin_grant(context: ContextTypes.DEFAULT_TYPE | None) -> None:
     if context is not None and context.user_data is not None:
         context.user_data.pop(ADMIN_GRANT_ACCESS_KEY, None)
+        context.user_data.pop(ADMIN_GRANT_PILOT_KEY, None)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> None:
@@ -174,13 +176,21 @@ async def _grant_access_to_target(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     target_id: int,
+    *,
+    plan_code: str = "MVP_MANUAL",
+    pilot_days: int | None = None,
 ) -> None:
     owner_id = _actor_id(update)
     if owner_id is None:
         await _reply(update, "Не удалось определить владельца.")
         return
     try:
-        granted = await _legal_core(context).grant_subscription(owner_id, target_id)
+        granted = await _legal_core(context).grant_subscription(
+            owner_id,
+            target_id,
+            plan_code=plan_code,
+            pilot_days=pilot_days,
+        )
     except LegalCoreApiError as exc:
         if exc.code == "OWNER_REQUIRED":
             await _reply(update, "🔒 Эта панель доступна только владельцу сервиса.")
@@ -195,15 +205,22 @@ async def _grant_access_to_target(
     if granted.get("telegramUserId") != target_id or granted.get("status") != "ACTIVE":
         await _reply(update, "⚠️ Legal Core вернул некорректный ответ. Попробуйте позже.")
         return
-    await _reply(
-        update,
-        f"✅ Доступ выдан для Telegram ID {target_id}. "
-        "Попросите пользователя открыть /start и затем /menu.",
-    )
+    if plan_code == "FREE_PILOT":
+        await _reply(
+            update,
+            f"✅ Бесплатный pilot на {pilot_days} дней выдан для Telegram ID {target_id}. "
+            "Попросите пользователя открыть /start и затем /menu.",
+        )
+    else:
+        await _reply(
+            update,
+            f"✅ Доступ выдан для Telegram ID {target_id}. "
+            "Попросите пользователя открыть /start и затем /menu.",
+        )
 
 
 async def grant_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    arguments = context.args
+    arguments = context.args or []
     if len(arguments) != 1:
         await _reply(update, "Использование: /grant_access <Telegram_ID>")
         return
@@ -212,6 +229,33 @@ async def grant_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _reply(update, "Telegram ID указан некорректно.")
         return
     await _grant_access_to_target(update, context, target_id)
+
+
+async def grant_pilot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    arguments = context.args or []
+    if not 1 <= len(arguments) <= 2:
+        await _reply(update, "Использование: /grant_pilot <Telegram_ID> [дни 1-90]")
+        return
+    target_id = _target_telegram_id(arguments[0])
+    if target_id is None:
+        await _reply(update, "Telegram ID указан некорректно.")
+        return
+    pilot_days = 30
+    if len(arguments) == 2:
+        try:
+            pilot_days = int(arguments[1])
+        except ValueError:
+            pilot_days = 0
+    if not 1 <= pilot_days <= 90:
+        await _reply(update, "Длительность pilot должна быть от 1 до 90 дней.")
+        return
+    await _grant_access_to_target(
+        update,
+        context,
+        target_id,
+        plan_code="FREE_PILOT",
+        pilot_days=pilot_days,
+    )
 
 
 async def prompt_admin_grant_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -228,6 +272,19 @@ async def prompt_admin_grant_access(update: Update, context: ContextTypes.DEFAUL
     )
 
 
+async def prompt_admin_grant_pilot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if await _answer_callback(update) != "admin:pilot":
+        return
+    if WIZARD_DATA_KEY in _user_data(context):
+        await _reply(update, "Сначала завершите или отмените заполнение текущего кейса.")
+        return
+    _user_data(context)[ADMIN_GRANT_PILOT_KEY] = True
+    await _reply(
+        update,
+        "Введите Telegram ID пользователя одним числом. Будет выдан бесплатный pilot на 30 дней.",
+    )
+
+
 async def record_admin_grant_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     target_id = _target_telegram_id(_message_text(update))
     if target_id is None:
@@ -235,6 +292,21 @@ async def record_admin_grant_access(update: Update, context: ContextTypes.DEFAUL
         return
     _user_data(context).pop(ADMIN_GRANT_ACCESS_KEY, None)
     await _grant_access_to_target(update, context, target_id)
+
+
+async def record_admin_grant_pilot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    target_id = _target_telegram_id(_message_text(update))
+    if target_id is None:
+        await _reply(update, "Введите корректный Telegram ID одним положительным числом.")
+        return
+    _user_data(context).pop(ADMIN_GRANT_PILOT_KEY, None)
+    await _grant_access_to_target(
+        update,
+        context,
+        target_id,
+        plan_code="FREE_PILOT",
+        pilot_days=30,
+    )
 
 
 def _keyboard(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
@@ -993,6 +1065,9 @@ async def text_input(update: Update, context: ContextTypes.DEFAULT_TYPE | None) 
     if context is not None and _user_data(context).get(ADMIN_GRANT_ACCESS_KEY) is True:
         await record_admin_grant_access(update, context)
         return
+    if context is not None and _user_data(context).get(ADMIN_GRANT_PILOT_KEY) is True:
+        await record_admin_grant_pilot(update, context)
+        return
     await _reply(update, TEXT_INPUT_DISABLED_MESSAGE)
 
 
@@ -1179,8 +1254,12 @@ def build_application(token: str) -> TelegramApplication:
     application.add_handler(CommandHandler("whoami", whoami))
     application.add_handler(CommandHandler("admin", admin_panel))
     application.add_handler(CommandHandler("grant_access", grant_access))
+    application.add_handler(CommandHandler("grant_pilot", grant_pilot))
     application.add_handler(
         CallbackQueryHandler(prompt_admin_grant_access, pattern=r"^admin:grant$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(prompt_admin_grant_pilot, pattern=r"^admin:pilot$")
     )
     application.add_handler(
         CallbackQueryHandler(

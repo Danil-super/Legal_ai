@@ -356,14 +356,25 @@ class LegalCoreClient:
         )
 
     async def grant_subscription(
-        self, telegram_user_id: int, target_telegram_user_id: int
+        self,
+        telegram_user_id: int,
+        target_telegram_user_id: int,
+        *,
+        plan_code: str = "MVP_MANUAL",
+        pilot_days: int | None = None,
     ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "telegramUserId": target_telegram_user_id,
+            "planCode": plan_code,
+        }
+        if pilot_days is not None:
+            payload["pilotDays"] = pilot_days
         return await self._json_request(
             "POST",
             "/v1/platform/subscription-grants",
             telegram_user_id=telegram_user_id,
             idempotency_key=uuid4(),
-            payload={"telegramUserId": target_telegram_user_id},
+            payload=payload,
         )
 
     async def submit_workflow(

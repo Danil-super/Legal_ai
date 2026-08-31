@@ -18,8 +18,11 @@ from telegram_gateway.bot import (
     choose_lawyer,
     confirm_case,
     grant_access,
+    grant_pilot,
     prompt_admin_grant_access,
+    prompt_admin_grant_pilot,
     record_admin_grant_access,
+    record_admin_grant_pilot,
     record_lawyer_deadline,
     resume_workflow,
     whoami,
@@ -73,7 +76,12 @@ class FakeLegalCore:
         raise AssertionError("case must not be created before confirmation")
 
     async def grant_subscription(
-        self, telegram_user_id: int, target_telegram_user_id: int
+        self,
+        telegram_user_id: int,
+        target_telegram_user_id: int,
+        *,
+        plan_code: str = "MVP_MANUAL",
+        pilot_days: int | None = None,
     ) -> dict[str, Any]:
         del telegram_user_id
         if isinstance(self.response, Exception):
@@ -81,8 +89,9 @@ class FakeLegalCore:
         return {
             "telegramUserId": target_telegram_user_id,
             "clinicName": "Новая стоматология",
-            "planCode": "MVP_MANUAL",
+            "planCode": plan_code,
             "status": "ACTIVE",
+            "endsAt": None if pilot_days is None else "2026-09-30T00:00:00Z",
         }
 
 
@@ -481,6 +490,45 @@ def test_owner_panel_button_collects_id_and_grants_access_without_a_command() ->
     assert "введите telegram id" in message.text_replies[0].lower()
     assert "доступ выдан" in message.text_replies[1].lower()
     assert context.user_data == {}
+
+
+def test_owner_can_grant_a_thirty_day_free_pilot_from_the_admin_panel() -> None:
+    message = FakeMessage()
+    query = FakeQuery("admin:pilot")
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+    context = SimpleNamespace(
+        bot_data={LEGAL_CORE_CLIENT_KEY: FakeLegalCore({"role": "CLINIC_ADMIN"})},
+        user_data={},
+    )
+
+    asyncio.run(prompt_admin_grant_pilot(update, context))
+    message.text = "7000000002"
+    asyncio.run(record_admin_grant_pilot(update, context))
+
+    assert query.answers == [(None, False)]
+    assert "30 дней" in message.text_replies[0]
+    assert "pilot" in message.text_replies[1].lower()
+    assert context.user_data == {}
+
+
+def test_grant_pilot_rejects_an_out_of_range_duration() -> None:
+    message = FakeMessage()
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+    context = SimpleNamespace(
+        bot_data={LEGAL_CORE_CLIENT_KEY: FakeLegalCore({"role": "CLINIC_ADMIN"})},
+        args=["7000000002", "91"],
+    )
+
+    asyncio.run(grant_pilot(update, context))
+
+    assert "от 1 до 90" in message.text_replies[0]
 
 
 def test_case_start_explains_inactive_subscription_without_leaking_tenant_details() -> None:

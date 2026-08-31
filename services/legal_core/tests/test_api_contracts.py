@@ -1,5 +1,5 @@
 import pytest
-from legal_core.api_contracts import AddFactsRequest, FactInput
+from legal_core.api_contracts import AddFactsRequest, FactInput, PlatformSubscriptionGrantRequest
 from pydantic import ValidationError
 
 
@@ -68,4 +68,35 @@ def test_fact_input_rejects_a_date_value_when_precision_is_unknown() -> None:
             valueType="DATE",
             value={"date": "2026-08-22", "precision": "UNKNOWN"},
             sourceType="USER_STATEMENT",
+        )
+
+
+def test_free_pilot_grant_requires_a_bounded_explicit_duration() -> None:
+    request = PlatformSubscriptionGrantRequest(
+        telegramUserId=7_000_000_002,
+        planCode="FREE_PILOT",
+        pilotDays=30,
+    )
+
+    assert request.plan_code == "FREE_PILOT"
+    assert request.pilot_days == 30
+
+    with pytest.raises(ValidationError, match="pilotDays"):
+        PlatformSubscriptionGrantRequest(
+            telegramUserId=7_000_000_002,
+            planCode="FREE_PILOT",
+        )
+
+    with pytest.raises(ValidationError, match="pilotDays"):
+        PlatformSubscriptionGrantRequest(
+            telegramUserId=7_000_000_002,
+            planCode="MVP_MANUAL",
+            pilotDays=30,
+        )
+
+    with pytest.raises(ValidationError):
+        PlatformSubscriptionGrantRequest(
+            telegramUserId=7_000_000_002,
+            planCode="FREE_PILOT",
+            pilotDays=91,
         )

@@ -1,4 +1,5 @@
 import os
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -257,6 +258,7 @@ def test_platform_owner_can_grant_access_by_telegram_id_only(
         "clinicName": "Новая стоматология",
         "planCode": "MVP_MANUAL",
         "status": "ACTIVE",
+        "endsAt": None,
     }
     assert replayed.status_code == 200
     assert replayed.json() == granted.json()
@@ -308,6 +310,36 @@ def test_platform_owner_updates_the_target_single_existing_clinic(
     assert granted.json()["clinicName"] == "Синтетическая тестовая клиника"
     assert memberships == 1
     assert entitlement == (target_clinic_id, "MVP_MANUAL", "ACTIVE")
+
+
+def test_platform_owner_can_grant_a_time_limited_free_pilot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = 6_700_000_001 + uuid4().int % 100_000_000
+    target = 6_800_000_001 + uuid4().int % 100_000_000
+    seed_admin(owner)
+    monkeypatch.setenv("PLATFORM_OWNER_TELEGRAM_ID", str(owner))
+
+    with application_client() as client:
+        granted = client.post(
+            "/v1/platform/subscription-grants",
+            headers=actor_headers(owner, uuid4()),
+            json={
+                "telegramUserId": target,
+                "planCode": "FREE_PILOT",
+                "pilotDays": 30,
+            },
+        )
+        target_actor = client.get("/v1/actor", headers=actor_headers(target))
+
+    assert granted.status_code == 201
+    assert granted.json()["planCode"] == "FREE_PILOT"
+    assert granted.json()["status"] == "ACTIVE"
+    assert granted.json()["endsAt"] is not None
+    assert datetime.fromisoformat(granted.json()["endsAt"].replace("Z", "+00:00")) > datetime.now(
+        UTC
+    )
+    assert target_actor.status_code == 200
 
 
 @pytest.mark.parametrize(

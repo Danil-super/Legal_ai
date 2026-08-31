@@ -217,11 +217,11 @@ approved-only retrieval, applicable-date resolution and claim-to-evidence verifi
 ## Task 5.1: Controlled free-pilot entitlement
 
 **Acceptance criteria:**
-- [ ] Product owner approves owner-granted, time-limited `FREE_PILOT` access rather than open
+- [x] Product owner approves owner-granted, time-limited `FREE_PILOT` access rather than open
   public self-registration.
-- [ ] The existing user+clinic entitlement guard applies equally to free pilot access and cannot
+- [x] The existing user+clinic entitlement guard applies equally to free pilot access and cannot
   bypass evidence/risk/verifier gates.
-- [ ] Payment data and new user identity categories remain absent.
+- [x] Payment data and new user identity categories remain absent.
 
 **Dependencies:** `SPEC-free-pilot-practice-research.md`; product/security approval
 

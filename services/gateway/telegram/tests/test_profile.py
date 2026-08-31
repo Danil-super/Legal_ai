@@ -26,3 +26,4 @@ def test_telegram_command_menu_exposes_the_owner_panel_without_grant_shortcuts()
 
     assert {"start", "menu", "help", "whoami", "cancel", "admin"} <= names
     assert "grant_access" not in names
+    assert "grant_pilot" not in names

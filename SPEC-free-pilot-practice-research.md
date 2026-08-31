@@ -2,7 +2,9 @@
 
 ## Status
 
-**Proposed — requires product, legal and security approval before implementation.**
+**Partially approved — the product owner confirmed the controlled `FREE_PILOT` flow on
+2026-08-31. Legal and security approval remain required for the practical-case library,
+external providers and any new personal-data processing.**
 
 ## Objective
 
@@ -99,10 +101,11 @@ integration uses approved retrieval plus deterministic verifier/risk gates inste
 - A pilot's feedback can improve taxonomy and evaluation cases but cannot silently change law,
   policy or another clinic's data.
 
-## Required approvals before implementation
+## Approval record and remaining approvals
 
-1. Product owner confirms controlled free pilot (owner-granted `FREE_PILOT`) rather than open
-   public registration.
-2. Platform-side legal editor approves scenario taxonomy, reviewer criteria and source-use terms.
-3. Security/product owner approves any partner/contact, external collector, LLM provider or new
+1. **Confirmed 2026-08-31:** product owner selected a controlled free pilot (owner-granted,
+   time-limited `FREE_PILOT`) rather than open public registration.
+2. Platform-side legal editor must approve scenario taxonomy, reviewer criteria and source-use
+   terms before any practical-case library is admitted.
+3. Security/product owner must approve any partner/contact, external collector, LLM provider or new
    personal-data category before it is connected.
