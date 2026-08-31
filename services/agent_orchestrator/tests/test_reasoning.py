@@ -14,8 +14,18 @@ CASE_ID = UUID("00000000-0000-0000-0000-000000000010")
 
 
 class FakeHermes:
-    def __init__(self, *, name: str, response: dict[str, object]) -> None:
-        self.endpoint = SimpleNamespace(base_url=f"http://{name}:8642", model=name)
+    def __init__(
+        self,
+        *,
+        name: str,
+        response: dict[str, object],
+        base_url: str | None = None,
+        model: str | None = None,
+    ) -> None:
+        self.endpoint = SimpleNamespace(
+            base_url=base_url or f"http://{name}:8642",
+            model=model or name,
+        )
         self.response = response
         self.calls = 0
 
@@ -93,12 +103,23 @@ def test_two_pass_reasoning_returns_domain_claims_and_reviews() -> None:
     asyncio.run(scenario())
 
 
-def test_orchestrator_rejects_same_researcher_and_reviewer_identity() -> None:
-    client = FakeHermes(name="same", response={})
-    with pytest.raises(ValueError, match="distinct Hermes profile"):
+def test_orchestrator_rejects_same_researcher_and_reviewer_origin() -> None:
+    researcher = FakeHermes(
+        name="researcher",
+        base_url="http://same-hermes:8642",
+        model="researcher",
+        response={},
+    )
+    reviewer = FakeHermes(
+        name="reviewer",
+        base_url="http://same-hermes:8642",
+        model="reviewer",
+        response={},
+    )
+    with pytest.raises(ValueError, match="distinct Hermes endpoint origins"):
         LegalReasoningOrchestrator(  # type: ignore[arg-type]
-            researcher=client,
-            reviewer=client,
+            researcher=researcher,
+            reviewer=reviewer,
         )
 
 
