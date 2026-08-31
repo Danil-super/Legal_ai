@@ -56,20 +56,20 @@ jobs:
       postgres:
         image: pgvector/pgvector:0.8.1-pg16
         env:
-          POSTGRES_DB: dental_legal
+          POSTGRES_DB: dental_legal_test_ci
           POSTGRES_USER: dental_legal
           POSTGRES_PASSWORD: integration-only-password
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U dental_legal -d dental_legal"
+          --health-cmd "pg_isready -U dental_legal -d dental_legal_test_ci"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 12
     env:
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: '5432'
-      POSTGRES_DB: dental_legal
+      POSTGRES_DB: dental_legal_test_ci
       POSTGRES_USER: dental_legal
       POSTGRES_PASSWORD: integration-only-password
       POSTGRES_INTEGRATION: '1'
