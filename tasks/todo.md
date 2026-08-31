@@ -213,3 +213,25 @@ approved-only retrieval, applicable-date resolution and claim-to-evidence verifi
 - [ ] Fetch/parser/source-boundary failures are auditable and fail closed.
 
 **Dependencies:** Tasks 2.3, 3.0
+
+## Task 5.1: Controlled free-pilot entitlement
+
+**Acceptance criteria:**
+- [ ] Product owner approves owner-granted, time-limited `FREE_PILOT` access rather than open
+  public self-registration.
+- [ ] The existing user+clinic entitlement guard applies equally to free pilot access and cannot
+  bypass evidence/risk/verifier gates.
+- [ ] Payment data and new user identity categories remain absent.
+
+**Dependencies:** `SPEC-free-pilot-practice-research.md`; product/security approval
+
+## Task 5.2: Licensed and reviewed practical-scenario regression library
+
+**Acceptance criteria:**
+- [ ] Each scenario has documented provenance/rights, de-identification, two-person legal review,
+  official-source links, expected actions and expiry review date.
+- [ ] Public forum text is not scraped, stored as a corpus, used as production evidence or used
+  for training without written permission/licence.
+- [ ] P0 scenario failures block corpus/policy promotion; fixtures contain no real patient data.
+
+**Dependencies:** Task 3.0; legal/security approval

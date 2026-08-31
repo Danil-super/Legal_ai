@@ -75,6 +75,13 @@
 - Security, ПДн, врачебная тайна, локализация и legal review.
 - Controlled pilot для 3–5 клиник с обезличенными сценариями.
 
+### Proposed free-pilot and practical-case research track
+
+`SPEC-free-pilot-practice-research.md` defines a controlled free pilot and a reviewed practical
+scenario library. Public consultations may reveal taxonomy candidates, but are neither a legal
+source nor a scrape/train corpus. This track starts after product/legal/security approval and
+does not loosen the evidence or tenant gates.
+
 ## Risks and Mitigations
 
 | Risk | Impact | Mitigation |
