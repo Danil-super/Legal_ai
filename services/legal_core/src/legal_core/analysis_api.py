@@ -17,6 +17,7 @@ from legal_core.analysis_contracts import (
     AnalysisContextResponse,
     AnalysisSubmissionRequest,
     AnalysisSubmissionResponse,
+    ClinicDocumentContextResponse,
 )
 from legal_core.api_contracts import LegalFragmentResponse, ReportResponse
 from legal_core.case_api import (
@@ -33,6 +34,13 @@ from legal_core.case_api import (
     _new_idempotency_record,
     _tenant_case,
     resolve_actor,
+)
+from legal_core.clinic_document_retrieval import (
+    ApprovedClinicDocumentContextRepository,
+    ApprovedClinicDocumentFragment,
+    clinic_document_context_trace_sha256,
+    plan_clinic_document_queries,
+    retrieve_planned_clinic_context,
 )
 from legal_core.contracts import CanonicalReport, CaseStatus, FactKey
 from legal_core.intake import missing_facts_for
@@ -59,8 +67,10 @@ class AnalysisState:
     facts: dict[FactKey, object]
     as_of_date: date
     evidence: tuple[ApprovedLegalFragment, ...]
+    clinic_document_context: tuple[ApprovedClinicDocumentFragment, ...]
     fact_snapshot_sha256: str
     evidence_trace_sha256: str
+    clinic_document_context_trace_sha256: str
     risk_policy: ApprovedRiskPolicy
 
 
@@ -129,13 +139,30 @@ async def _load_analysis_state(session: AsyncSession, actor: Any, case_id: UUID)
             message="No approved date-applicable evidence was found for this case",
         )
 
+    clinic_repository = ApprovedClinicDocumentContextRepository(
+        session,
+        clinic_id=actor.clinic_id,
+    )
+    clinic_document_context = tuple(
+        await retrieve_planned_clinic_context(
+            clinic_repository,
+            queries=plan_clinic_document_queries(facts),
+            as_of_date=as_of_date,
+        )
+    )
+
     return AnalysisState(
         case=case,
         facts=facts,
         as_of_date=as_of_date,
         evidence=evidence,
+        clinic_document_context=clinic_document_context,
         fact_snapshot_sha256=fact_snapshot_sha256(facts),
         evidence_trace_sha256=evidence_trace_sha256(evidence, as_of_date=as_of_date),
+        clinic_document_context_trace_sha256=clinic_document_context_trace_sha256(
+            clinic_document_context,
+            as_of_date=as_of_date,
+        ),
         risk_policy=policy,
     )
 
@@ -150,6 +177,25 @@ def _context_response(state: AnalysisState) -> AnalysisContextResponse:
         evidence=[
             LegalFragmentResponse.model_validate(fragment, from_attributes=True)
             for fragment in state.evidence
+        ],
+        clinicDocumentContextTraceSha256=state.clinic_document_context_trace_sha256,
+        clinicDocumentContext=[
+            ClinicDocumentContextResponse(
+                fragmentId=fragment.fragment_id,
+                versionId=fragment.version_id,
+                documentId=fragment.document_id,
+                documentKey=fragment.document_key,
+                documentType=fragment.document_type,
+                documentTitle=fragment.document_title,
+                versionNo=fragment.version_no,
+                validFrom=fragment.valid_from,
+                validTo=fragment.valid_to,
+                structuralPath=fragment.structural_path,
+                text=fragment.fragment_text,
+                textSha256=fragment.text_sha256,
+                rawSha256=fragment.raw_sha256,
+            )
+            for fragment in state.clinic_document_context
         ],
         riskPolicyVersion=state.risk_policy.domain.version,
         highDemandThresholdKopecks=state.risk_policy.domain.high_demand_threshold_kopecks,
@@ -278,13 +324,15 @@ def create_analysis_router(
             payload.as_of_date != state.as_of_date
             or payload.expected_fact_snapshot_sha256 != state.fact_snapshot_sha256
             or payload.expected_evidence_trace_sha256 != state.evidence_trace_sha256
+            or payload.expected_clinic_document_context_trace_sha256
+            != state.clinic_document_context_trace_sha256
             or payload.expected_risk_policy_version != state.risk_policy.domain.version
         )
         if stale:
             raise ApiError(
                 status_code=status.HTTP_409_CONFLICT,
                 code="ANALYSIS_CONTEXT_STALE",
-                message="Case facts, evidence or risk policy changed during analysis",
+                message="Case facts, evidence, clinic context or risk policy changed during analysis",
             )
 
         claims = _domain_claims(payload)
@@ -412,6 +460,10 @@ def create_analysis_router(
                     "analysisAllowed": outcome.analysis_allowed,
                     "reportId": str(report.id),
                     "riskLevel": outcome.risk.level.value,
+                    "clinicDocumentContextCount": len(state.clinic_document_context),
+                    "clinicDocumentContextTraceSha256": (
+                        state.clinic_document_context_trace_sha256
+                    ),
                 },
             )
         )
