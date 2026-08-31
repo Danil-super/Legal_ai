@@ -35,7 +35,10 @@ def test_clinic_documents_require_same_tenant_approval_before_retrieval() -> Non
         try:
             async with factory() as session, session.begin():
                 await session.execute(
-                    text("INSERT INTO clinics (id, name) VALUES (:a, 'Clinic A'), (:b, 'Clinic B')"),
+                    text(
+                        "INSERT INTO clinics (id, name) "
+                        "VALUES (:a, 'Clinic A'), (:b, 'Clinic B')"
+                    ),
                     {"a": clinic_a, "b": clinic_b},
                 )
                 await session.execute(
