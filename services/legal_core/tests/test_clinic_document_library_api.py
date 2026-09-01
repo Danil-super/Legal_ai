@@ -163,24 +163,23 @@ def test_library_returns_only_current_tenant_and_latest_review_state() -> None:
                 text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
                 {"clinic_id": str(clinic_a)},
             )
-            with pytest.raises(ProgrammingError):
-                with connection.begin_nested():
-                    connection.execute(
-                        text(
-                            "INSERT INTO clinic_document_approval_events "
-                            "(event_seq,clinic_id,version_id,actor_membership_id,decision,"
-                            "reason_code,expected_raw_sha256,expected_normalized_text_sha256) "
-                            "VALUES (999999,:clinic_id,:version_id,:membership_id,'APPROVED',"
-                            "'CLINIC_REVIEW_PASSED',:raw_sha,:text_sha)"
-                        ),
-                        {
-                            "clinic_id": clinic_a,
-                            "version_id": version_a,
-                            "membership_id": membership_a,
-                            "raw_sha": "a" * 64,
-                            "text_sha": "c" * 64,
-                        },
-                    )
+            with pytest.raises(ProgrammingError), connection.begin_nested():
+                connection.execute(
+                    text(
+                        "INSERT INTO clinic_document_approval_events "
+                        "(event_seq,clinic_id,version_id,actor_membership_id,decision,"
+                        "reason_code,expected_raw_sha256,expected_normalized_text_sha256) "
+                        "VALUES (999999,:clinic_id,:version_id,:membership_id,'APPROVED',"
+                        "'CLINIC_REVIEW_PASSED',:raw_sha,:text_sha)"
+                    ),
+                    {
+                        "clinic_id": clinic_a,
+                        "version_id": version_a,
+                        "membership_id": membership_a,
+                        "raw_sha": "a" * 64,
+                        "text_sha": "c" * 64,
+                    },
+                )
     finally:
         owner.dispose()
 
