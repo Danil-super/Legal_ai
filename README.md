@@ -1,212 +1,24 @@
 # Dental Legal AI
 
-Специализированный ИИ-помощник для юридически значимых ситуаций в российских
-стоматологических клиниках. MVP использует Telegram как интерфейс, а проверенную,
-версионируемую нормативную базу хранит в отдельном Legal Core.
+> ⚠️ This repository is an early technical foundation for a dental legal-assistant platform. It is not a lawyer, does not provide final legal conclusions, and must not be used with real patient data until the production privacy/security review is complete.
 
-Проект находится на этапе разработки. До завершения юридической проверки, оценки требований к
-персональным данным и врачебной тайне, предусмотренных спецификацией, его нельзя применять к
-реальным кейсам пациентов или для принятия юридических решений.
+The system combines a tenant-isolated Legal Core, Telegram intake, versioned official-law corpus, deterministic risk rules, audited approvals, Hermes-based agent orchestration and clinic-owned document context.
 
-## Локальная разработка
+## Current scope
 
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.lock
-.venv/bin/python -m pip install -e '.[dev]' --no-deps
-.venv/bin/python -m pytest
-.venv/bin/python -m ruff check .
-.venv/bin/python -m mypy \
-  services/legal_core/src \
-  services/gateway/telegram/src \
-  services/agent_orchestrator/src
-```
+Implemented building blocks include:
 
-Архитектура и порядок реализации описаны в [CAPABILITY_MAP.md](CAPABILITY_MAP.md) и
-[tasks/plan.md](tasks/plan.md).
+- FastAPI Legal Core with health/readiness checks;
+- Telegram administrator workflow and durable drafts;
+- tenant identity, subscription gating and RLS;
+- versioned official legal corpus with human approval gates;
+- exact/FTS/pgvector legal retrieval;
+- deterministic risk assessment and escalation;
+- semantic claim verification;
+- pinned Hermes agent orchestration with pseudonymisation;
+- deterministic legal-source watcher/review queue;
+- tenant-owned Clinic Documents with immutable versions, approval states, MinIO raw storage and Telegram upload/library flows;
+- metadata-only public dental-clinic reference registry for development taxonomy research;
+- fully synthetic Clinic Documents fixture pack for parser, time-travel and retrieval regression tests.
 
-## Локальный запуск в контейнерах
-
-Скопируйте `.env.example` в `.env`, замените оба пароля-заглушки, добавьте токен Telegram-бота и
-запустите:
-
-```bash
-docker compose up -d --build
-curl --fail http://127.0.0.1:8000/health/live
-curl --fail http://127.0.0.1:8000/health/ready
-docker compose down
-```
-
-Обычный запуск не требует Hermes и сохраняет прежний intake-only режим. Анализ и watcher вынесены
-в отдельные Compose profiles и не включаются неявно.
-
-При запуске Legal Core применяет миграции и идемпотентно загружает защищённые контрольными суммами
-манифесты постановлений Правительства РФ № 736 и № 659 со статусом `REVIEW_REQUIRED`. Сейчас они
-содержат нормализованные выдержки для проверки, а не официальные исходные PDF, поэтому не могут
-быть одобрены. Граница применимости: `[2023-09-01, 2026-09-01)` для № 736 и
-`[2026-09-01, 2031-09-01)` для № 659. Загрузка никогда не одобряет норму для production-поиска.
-
-Одобрение — отдельная CLI-операция активного `LEGAL_EDITOR`. Она требует точной контрольной суммы
-официального документа, ожидаемых дат действия и четырёх явных человеческих подтверждений. База
-данных хранит успешные и заблокированные попытки в append-only аудите; production-поиск также
-требует `artifact_kind=OFFICIAL_RAW`.
-
-После ручного скачивания официального PDF подготовьте неизменяемый снимок до загрузки. Команда
-проверяет сигнатуру `%PDF-`, лимит 50 МБ, метаданные `pdfinfo`, опубликованные количество страниц
-и размер файла, независимо зафиксированную SHA-256, номер и дату акта в извлечённом полном тексте,
-а также точные фрагменты. Для публикаций-изображений предусмотрен явно помеченный русский OCR
-Tesseract; он не является источником истины и требует сверки с неизменяемым PDF. Команда создаёт
-только манифест `REVIEW_REQUIRED`:
-
-```bash
-mkdir -p services/legal_core/corpus/official
-docker compose run --rm --no-deps \
-  -v /absolute/path/to/downloads:/input:ro \
-  -v "$PWD/services/legal_core/corpus/official:/output" \
-  legal-core python -m legal_core.official_artifact \
-  --pdf /input/pp736.pdf \
-  --base-manifest /app/services/legal_core/corpus/initial_pp736.json \
-  --output-directory /output \
-  --retrieved-at 2026-08-22T12:00:00+00:00
-```
-
-Проверьте созданный нормализованный текст и фрагменты, затем загрузите JSON командой
-`python -m legal_core.corpus_loader`. Даже после этого материал не появляется в production-поиске:
-независимый gate одобрения `LEGAL_EDITOR` остаётся обязательным.
-
-## Проверяемый юридический анализ
-
-Analysis pipeline построен fail-closed. Legal Core сам выбирает только одобренные и применимые на
-дату кейса нормативные фрагменты, фиксирует SHA-256 фактов, evidence trace и версию risk-policy.
-Внешний агент не может прислать готовый уровень риска или присвоить claim статус `VERIFIED`.
-Researcher формирует claims, отдельный reviewer проверяет их по тем же фрагментам, после чего
-Legal Core повторно проверяет snapshot, запускает verifier и детерминированный risk engine.
-
-Перед вызовом внешнего agent boundary факты проходят локальную псевдонимизацию. Очевидные прямые
-идентификаторы после redaction блокируют запрос. Медицинский контекст при этом не считается
-анонимизированным: выбор LLM-провайдера и режим обработки данных должны соответствовать отдельной
-privacy/security политике.
-
-Risk-policy создаётся и одобряется только активным `LEGAL_EDITOR` с явными attestation-флагами:
-
-```bash
-docker compose exec legal-core python -m legal_core.risk_policy_approval \
-  --reviewer-telegram-id <LEGAL_EDITOR_TELEGRAM_ID> \
-  --threshold-rubles <ПОДТВЕРЖДЁННЫЙ_ПОРОГ> \
-  --incident-triggers-reviewed \
-  --monetary-threshold-reviewed \
-  --escalation-rules-reviewed
-```
-
-Для включения агента настройте две независимые Hermes API-конфигурации и общий внутренний ключ.
-В `.env` задайте как минимум:
-
-```text
-AGENT_ORCHESTRATOR_URL=http://agent-orchestrator:8010
-AGENT_INTERNAL_KEY=<случайный секрет длиной не менее 32 символов>
-HERMES_RESEARCHER_URL=<URL Hermes researcher>
-HERMES_RESEARCHER_API_KEY=<ключ>
-HERMES_RESEARCHER_MODEL=<researcher profile/model>
-HERMES_REVIEWER_URL=<URL Hermes reviewer>
-HERMES_REVIEWER_API_KEY=<ключ>
-HERMES_REVIEWER_MODEL=<reviewer profile/model>
-```
-
-Researcher и reviewer не должны указывать на один и тот же `(endpoint, profile)`. После настройки:
-
-```bash
-docker compose --profile analysis up -d --build
-```
-
-После обычного intake PDF Telegram показывает кнопку «⚖️ Запустить юридический анализ». В карточку
-анализа попадают только проверенные ACTION-claims, уровень риска и source cards. Черновик ответа
-пациенту намеренно остаётся заблокированным до отдельного draft-verifier; автоматическая отправка
-пациенту не реализована.
-
-## Автоматический watcher законодательства
-
-Profile `maintenance` проверяет публичную поверхность `publication.pravo.gov.ru`, валидирует
-HTTPS-host, JSON-контракт, EO number, PDF-сигнатуру, размер и SHA-256 и складывает совпадения в
-отдельный quarantine-volume. Watcher не подключён к PostgreSQL и не имеет кода, переводящего нормы
-в `APPROVED`.
-
-Правила поиска находятся в
-`services/legal_core/corpus/legal_watch_rules.v1.json`. Они ограничены по количеству результатов;
-если запрос заполняет целую страницу портала или превышает подтверждённый лимит, проход завершается
-ошибкой вместо неявного пропуска документов. Один EO number дедуплицируется между правилами, а
-изменение байтов PDF под уже известным EO number блокирует перезапись.
-
-Запуск:
-
-```bash
-docker compose --profile maintenance up -d --build legal-watcher
-```
-
-По умолчанию watcher проверяет окно «предыдущий UTC-день → текущий UTC-день» раз в 6 часов.
-Период задаётся `LEGAL_WATCH_INTERVAL_SECONDS`. Результат каждого совпадения содержит
-`candidate.json` со статусом `REVIEW_REQUIRED` и `autoPromotionAllowed=false` и неизменяемый
-`official.pdf`. Дальнейшая нормализация, regression checks и одобрение выполняются существующим
-человеческим `LEGAL_EDITOR` gate.
-
-## Подключение первого администратора клиники
-
-1. Откройте бота и отправьте `/whoami`.
-2. Укажите полученный числовой ID в `BOOTSTRAP_TELEGRAM_ADMIN_ID` файла `.env`, а также задайте
-   `BOOTSTRAP_CLINIC_NAME`.
-3. Выполните `docker compose up -d --force-recreate legal-core`.
-4. Запустите bootstrap ещё раз, чтобы получить напечатанный `membership_id` (операция идемпотентна):
-
-```bash
-docker compose exec legal-core python -m legal_core.bootstrap_admin
-```
-
-5. Укажите числовой Telegram ID владельца сервиса в `PLATFORM_OWNER_TELEGRAM_ID` файла `.env`.
-   Владелец также должен иметь активный доступ. Затем через `/admin` он может выбрать
-   «➕ Выдать доступ» и следующим сообщением отправить ID пользователя:
-
-```text
-/admin → ➕ Выдать доступ → <Telegram_ID>
-```
-
-Для неизвестного ID команда создаёт отдельную клинику «Новая стоматология», членство
-`CLINIC_ADMIN` и активное право `MVP_MANUAL`. Если у пользователя уже есть одно активное
-администраторское членство, право для соответствующей клиники продлевается. Права `LEGAL_EDITOR`
-никогда не выдаются. Если активных администраторских клиник несколько, требуется ручное решение,
-чтобы не выбирать tenant неявно.
-
-Внутренняя команда остаётся доступна для приостановки, отмены и явного изменения тарифа или срока.
-Она не хранит платёжные данные и не меняет роль пользователя:
-
-```bash
-docker compose exec legal-core python -m legal_core.subscription_provisioning \
-  --membership-id <membership_id> \
-  --plan-code MVP_MONTHLY \
-  --starts-at 2026-08-22T12:00:00+00:00
-```
-
-6. Новый администратор открывает `/start`, затем `/menu` и выбирает «📝 Создать кейс».
-
-Bootstrap идемпотентен и не регистрирует неизвестных пользователей Telegram автоматически.
-Администратор без активного права не может открывать кейсы или использовать поиск по правовой
-базе; бот показывает нейтральное сообщение. Для отключения доступа используйте ту же внутреннюю
-команду со `--status SUSPENDED` или `--status CANCELLED`. Платёжный checkout, банковские карты и
-webhook-и провайдера в MVP не реализованы.
-
-Имя бота, описания, команды и аватар задаются отдельной разовой операцией:
-
-```bash
-docker compose run --rm telegram-gateway python -m telegram_gateway.profile
-```
-
-Telegram ограничивает частоту изменений профиля, поэтому они намеренно не повторяются при каждом
-перезапуске polling-процесса.
-
-`docker compose down` сохраняет именованные тома данных. Добавляйте `--volumes` только при
-осознанном удалении локальных данных PostgreSQL, Redis, MinIO и quarantine watcher.
-
-Telegram gateway использует long polling и не публикует порт хоста. `/start` и `/menu` открывают
-оформленное inline-меню. `CLINIC_ADMIN` с активным доступом может заполнить обезличенную карточку,
-сохранить её как черновик, вернуться к ней через «📂 Мои черновики», подтвердить и получить
-канонический PDF. До подтверждения запись case в БД не создаётся. Без profile `analysis` PDF
-остаётся intake-карточкой. При включённом analysis profile юридический результат появляется только
-после одобренного корпуса, approved risk-policy и успешного verifier-gate.
+See `docs/`, `SPEC-*.md`, `tasks/` and `AGENTS.md` for architecture and safety rules.
