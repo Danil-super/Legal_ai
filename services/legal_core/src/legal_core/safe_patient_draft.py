@@ -24,6 +24,14 @@ _SAFE_TEXT = (
 )
 
 
+def _blocked(reason_code: str) -> DraftResponse:
+    return DraftResponse(
+        status="BLOCKED",
+        reasonCode=reason_code,
+        policyVersion=SAFE_OPERATIONAL_DRAFT_VERSION,
+    )
+
+
 def _positive(value: object) -> bool:
     if value is True or value == "YES":
         return True
@@ -39,9 +47,9 @@ def build_safe_patient_draft(
     """Return a bounded operational draft only when deterministic safety gates allow it."""
 
     if risk.level in {RiskLevel.HIGH, RiskLevel.CRITICAL}:
-        return DraftResponse(status="BLOCKED", reasonCode="HUMAN_LEGAL_REVIEW_REQUIRED")
+        return _blocked("HUMAN_LEGAL_REVIEW_REQUIRED")
     if risk.level is RiskLevel.UNAVAILABLE or not risk.external_draft_allowed:
-        return DraftResponse(status="BLOCKED", reasonCode="RISK_POLICY_BLOCKS_EXTERNAL_DRAFT")
+        return _blocked("RISK_POLICY_BLOCKS_EXTERNAL_DRAFT")
 
     # Defense in depth: these signals should already make the deterministic risk policy high or
     # critical. If policy configuration ever drifts, patient-facing text still fails closed.
@@ -55,6 +63,10 @@ def build_safe_patient_draft(
             FactKey.REGULATOR_OR_COURT,
         )
     ):
-        return DraftResponse(status="BLOCKED", reasonCode="PATIENT_DRAFT_SAFETY_SIGNAL")
+        return _blocked("PATIENT_DRAFT_SAFETY_SIGNAL")
 
-    return DraftResponse(status="AVAILABLE", text=_SAFE_TEXT)
+    return DraftResponse(
+        status="AVAILABLE",
+        text=_SAFE_TEXT,
+        policyVersion=SAFE_OPERATIONAL_DRAFT_VERSION,
+    )
