@@ -18,6 +18,7 @@ from legal_core.analysis_contracts import (
     AnalysisSubmissionRequest,
     AnalysisSubmissionResponse,
     ClinicDocumentContextResponse,
+    ClinicDocumentReadinessResponse,
 )
 from legal_core.analysis_freshness import (
     AnalysisContextFingerprint,
@@ -38,6 +39,12 @@ from legal_core.case_api import (
     _new_idempotency_record,
     _tenant_case,
     resolve_actor,
+)
+from legal_core.clinic_document_readiness import (
+    ClinicDocumentReadiness,
+    ClinicDocumentReadinessStatus,
+    assess_clinic_document_readiness,
+    plan_clinic_document_expectations,
 )
 from legal_core.clinic_document_retrieval import (
     ApprovedClinicDocumentContextRepository,
@@ -72,6 +79,7 @@ class AnalysisState:
     as_of_date: date
     evidence: tuple[ApprovedLegalFragment, ...]
     clinic_document_context: tuple[ApprovedClinicDocumentFragment, ...]
+    clinic_document_readiness: tuple[ClinicDocumentReadiness, ...]
     fact_snapshot_sha256: str
     evidence_trace_sha256: str
     clinic_document_context_trace_sha256: str
@@ -154,6 +162,12 @@ async def _load_analysis_state(session: AsyncSession, actor: Any, case_id: UUID)
             as_of_date=as_of_date,
         )
     )
+    available_clinic_documents = await clinic_repository.list_available(as_of_date=as_of_date)
+    clinic_document_readiness = assess_clinic_document_readiness(
+        plan_clinic_document_expectations(facts),
+        available_documents=available_clinic_documents,
+        retrieved_fragments=clinic_document_context,
+    )
 
     return AnalysisState(
         case=case,
@@ -161,6 +175,7 @@ async def _load_analysis_state(session: AsyncSession, actor: Any, case_id: UUID)
         as_of_date=as_of_date,
         evidence=evidence,
         clinic_document_context=clinic_document_context,
+        clinic_document_readiness=clinic_document_readiness,
         fact_snapshot_sha256=fact_snapshot_sha256(facts),
         evidence_trace_sha256=evidence_trace_sha256(evidence, as_of_date=as_of_date),
         clinic_document_context_trace_sha256=clinic_document_context_trace_sha256(
@@ -179,6 +194,23 @@ def _context_fingerprint(state: AnalysisState) -> AnalysisContextFingerprint:
         clinic_document_context_trace_sha256=state.clinic_document_context_trace_sha256,
         risk_policy_version=state.risk_policy.domain.version,
     )
+
+
+def _readiness_responses(
+    readiness: tuple[ClinicDocumentReadiness, ...],
+) -> list[ClinicDocumentReadinessResponse]:
+    return [
+        ClinicDocumentReadinessResponse(
+            expectationCode=item.expectation_code,
+            importance=item.importance.value,
+            acceptedDocumentTypes=list(item.accepted_document_types),
+            reasonCode=item.reason_code,
+            status=item.status.value,
+            matchedDocumentKeys=list(item.matched_document_keys),
+            analysisBlocking=False,
+        )
+        for item in readiness
+    ]
 
 
 def _context_response(state: AnalysisState) -> AnalysisContextResponse:
@@ -211,6 +243,7 @@ def _context_response(state: AnalysisState) -> AnalysisContextResponse:
             )
             for fragment in state.clinic_document_context
         ],
+        clinicDocumentReadiness=_readiness_responses(state.clinic_document_readiness),
         riskPolicyVersion=state.risk_policy.domain.version,
         highDemandThresholdKopecks=state.risk_policy.domain.high_demand_threshold_kopecks,
     )
@@ -464,6 +497,7 @@ def create_analysis_router(
             escalationRequired=(
                 outcome.risk.level in {RiskLevel.HIGH, RiskLevel.CRITICAL}
             ),
+            clinicDocumentReadiness=_readiness_responses(state.clinic_document_readiness),
             report=report,
         )
         _finish_idempotency(
@@ -471,6 +505,10 @@ def create_analysis_router(
             resource_type="CASE_ANALYSIS_RUN",
             resource_id=verifier_record.analysis_run_id,
             response_json=response_payload.model_dump(mode="json", by_alias=True),
+        )
+        missing_document_count = sum(
+            item.status is ClinicDocumentReadinessStatus.NOT_AVAILABLE
+            for item in state.clinic_document_readiness
         )
         session.add(
             _audit(
@@ -486,6 +524,8 @@ def create_analysis_router(
                     "clinicDocumentContextTraceSha256": (
                         state.clinic_document_context_trace_sha256
                     ),
+                    "clinicDocumentExpectationCount": len(state.clinic_document_readiness),
+                    "clinicDocumentNotAvailableCount": missing_document_count,
                     "draftPolicyVersion": canonical.draft_response.policy_version,
                 },
             )
