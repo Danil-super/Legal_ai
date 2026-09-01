@@ -109,6 +109,10 @@ def test_library_returns_only_current_tenant_and_latest_review_state() -> None:
                     },
                 )
             connection.execute(
+                text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
+                {"clinic_id": str(clinic_a)},
+            )
+            connection.execute(
                 text(
                     "INSERT INTO clinic_document_approval_events "
                     "(clinic_id,version_id,actor_membership_id,decision,reason_code,"
