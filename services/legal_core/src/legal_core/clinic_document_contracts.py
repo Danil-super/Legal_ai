@@ -9,6 +9,11 @@ from pydantic import Field, field_validator, model_validator
 from legal_core.contracts import ContractModel
 
 ClinicDocumentDecision = Literal["APPROVED", "RETIRED", "BLOCKED"]
+ClinicDocumentMimeType = Literal[
+    "text/plain",
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]
 
 
 class CreateClinicDocumentRequest(ContractModel):
@@ -77,10 +82,12 @@ class ClinicDocumentVersionResponse(ContractModel):
     document_id: UUID = Field(alias="documentId")
     version_no: int = Field(alias="versionNo")
     source_filename: str = Field(alias="sourceFilename")
-    mime_type: Literal["text/plain"] = Field(alias="mimeType")
-    raw_sha256: str = Field(alias="rawSha256")
-    normalized_text_sha256: str = Field(alias="normalizedTextSha256")
-    fragment_count: int = Field(alias="fragmentCount")
+    mime_type: ClinicDocumentMimeType = Field(alias="mimeType")
+    raw_sha256: str = Field(alias="rawSha256", pattern=r"^[0-9a-f]{64}$")
+    normalized_text_sha256: str = Field(
+        alias="normalizedTextSha256", pattern=r"^[0-9a-f]{64}$"
+    )
+    fragment_count: int = Field(alias="fragmentCount", ge=1)
     valid_from: date | None = Field(alias="validFrom")
     valid_to: date | None = Field(alias="validTo")
     created_at: datetime = Field(alias="createdAt")
