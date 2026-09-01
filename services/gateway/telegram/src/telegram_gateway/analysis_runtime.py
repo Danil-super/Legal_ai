@@ -22,6 +22,16 @@ logger = logging.getLogger(__name__)
 ANALYSIS_CALLBACK_PREFIX = "case:analyze:"
 ANALYSIS_TIMEOUT_SECONDS = 90.0
 _PATCHED = False
+_READINESS_LABELS = {
+    "CONTRACT": "договор на платные стоматологические услуги",
+    "GENERAL_CONSENT": "общее информированное согласие (ИДС)",
+    "WARRANTY_POLICY": "гарантийное положение",
+    "IMPLANT_CONSENT": "ИДС на имплантацию / хирургическое вмешательство",
+    "POST_IMPLANT_MEMO": "памятка после имплантации",
+    "MEDICAL_RECORD_ACCESS": "порядок предоставления медицинских документов",
+    "CLAIM_WORKFLOW": "внутренний регламент работы с претензиями",
+    "PATIENT_RULES": "правила для пациентов",
+}
 
 
 class AgentOrchestratorApiError(RuntimeError):
@@ -76,16 +86,56 @@ def _bounded_text(value: object, *, limit: int) -> str | None:
     return value[:limit] if value else None
 
 
+def _missing_clinic_document_lines(payload: dict[str, Any]) -> list[str]:
+    raw_readiness = payload.get("clinicDocumentReadiness", [])
+    if not isinstance(raw_readiness, list):
+        raise ValueError("analysis response has invalid clinic document readiness")
+
+    missing: list[tuple[str, str]] = []
+    for item in raw_readiness[:20]:
+        if not isinstance(item, dict):
+            continue
+        if item.get("status") != "NOT_AVAILABLE":
+            continue
+        code = _bounded_text(item.get("expectationCode"), limit=80)
+        importance = _bounded_text(item.get("importance"), limit=24) or "SUPPORTING"
+        if code is None:
+            continue
+        label = _READINESS_LABELS.get(code, code.replace("_", " ").lower())
+        missing.append((importance, label))
+
+    if not missing:
+        return []
+
+    ordered = sorted(
+        dict.fromkeys(missing),
+        key=lambda item: (
+            {"CORE": 0, "SCENARIO": 1, "SUPPORTING": 2}.get(item[0], 3),
+            item[1],
+        ),
+    )
+    lines = ["", "📎 Для разбора полезно добавить в базу клиники:"]
+    for importance, label in ordered[:8]:
+        prefix = "⚠️" if importance == "CORE" else "•"
+        lines.append(f"{prefix} {label}")
+    lines.append("Это внутренний checklist, а не перечень обязательных по закону документов.")
+    return lines
+
+
 def telegram_analysis_summary(payload: dict[str, Any]) -> str:
     """Render only the server-verified analysis fields returned by Legal Core."""
 
+    missing_document_lines = _missing_clinic_document_lines(payload)
     if payload.get("analysisAllowed") is not True:
         blocked_risk = _bounded_text(payload.get("riskLevel"), limit=24) or "UNAVAILABLE"
-        return (
-            "⚖️ Юридический анализ не прошёл проверку доказательств.\n"
-            f"Риск: {blocked_risk}\n\n"
-            "Бот не будет додумывать вывод. Проверьте недостающие факты или передайте кейс юристу."
-        )
+        lines = [
+            "⚖️ Юридический анализ не прошёл проверку доказательств.",
+            f"Риск: {blocked_risk}",
+            "",
+            "Бот не будет додумывать вывод. Проверьте недостающие факты или передайте кейс юристу.",
+            *missing_document_lines,
+        ]
+        return "\n".join(lines)
 
     report = payload.get("report")
     if not isinstance(report, dict):
@@ -193,6 +243,8 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
                 "Не являются нормативной правовой основой.",
             ]
         )
+
+    lines.extend(missing_document_lines)
 
     if draft_status == "AVAILABLE" and draft_text is not None:
         lines.extend(["", "💬 Черновик ответа пациенту:", draft_text])
