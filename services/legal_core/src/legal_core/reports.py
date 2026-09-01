@@ -381,14 +381,18 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
             )
 
         story.append(Paragraph("Правовая основа", heading))
-        for source in report.legal_basis.sources:
-            number = f" № {escape(source.official_number)}" if source.official_number else ""
+        for legal_source in report.legal_basis.sources:
+            number = (
+                f" № {escape(legal_source.official_number)}"
+                if legal_source.official_number
+                else ""
+            )
             story.append(
                 Paragraph(
-                    f"• {escape(source.document_title)}{number}; "
-                    f"{escape(source.structural_path)}; действует с "
-                    f"{source.effective_from.isoformat()}.<br/>"
-                    f"Источник: {escape(source.source_url)}",
+                    f"• {escape(legal_source.document_title)}{number}; "
+                    f"{escape(legal_source.structural_path)}; действует с "
+                    f"{legal_source.effective_from.isoformat()}.<br/>"
+                    f"Источник: {escape(legal_source.source_url)}",
                     body,
                 )
             )
@@ -401,34 +405,35 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
                     muted,
                 )
             )
-            for source in report.clinic_documents.sources:
+            for clinic_source in report.clinic_documents.sources:
                 period = ""
-                if source.valid_from is not None:
-                    period = f"; действует с {source.valid_from.isoformat()}"
-                if source.valid_to is not None:
-                    period += f" до {source.valid_to.isoformat()}"
+                if clinic_source.valid_from is not None:
+                    period = f"; действует с {clinic_source.valid_from.isoformat()}"
+                if clinic_source.valid_to is not None:
+                    period += f" до {clinic_source.valid_to.isoformat()}"
                 story.append(
                     Paragraph(
-                        f"• {escape(source.document_title)}; v{source.version_no}; "
-                        f"{escape(source.document_type)}; {escape(source.structural_path)}"
-                        f"{period}.",
+                        f"• {escape(clinic_source.document_title)}; v{clinic_source.version_no}; "
+                        f"{escape(clinic_source.document_type)}; "
+                        f"{escape(clinic_source.structural_path)}{period}.",
                         body,
                     )
                 )
 
-        story.extend(
-            [
-                Paragraph(
-                    f"Evidence trace SHA-256: {report.analysis.evidence_trace_sha256}",
-                    muted,
-                ),
+        story.append(
+            Paragraph(
+                f"Evidence trace SHA-256: {report.analysis.evidence_trace_sha256}",
+                muted,
+            )
+        )
+        if report.analysis.clinic_document_context_trace_sha256:
+            story.append(
                 Paragraph(
                     "Clinic context trace SHA-256: "
                     f"{report.analysis.clinic_document_context_trace_sha256}",
                     muted,
-                ),
-            ]
-        )
+                )
+            )
     else:
         reason = report.summary.analysis_availability.reason_code or "ANALYSIS_BLOCKED"
         story.extend(
