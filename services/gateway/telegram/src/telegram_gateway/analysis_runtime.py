@@ -117,6 +117,7 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
     sources = legal_basis_data.get("sources")
     draft_status = _bounded_text(draft_data.get("status"), limit=32)
     draft_reason = _bounded_text(draft_data.get("reasonCode"), limit=80)
+    draft_text = _bounded_text(draft_data.get("text"), limit=1_600)
     if (
         public_number is None
         or risk_level is None
@@ -126,6 +127,8 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
         or draft_status is None
     ):
         raise ValueError("canonical analysis report has invalid fields")
+    if draft_status == "AVAILABLE" and draft_text is None:
+        raise ValueError("available patient draft has no text")
 
     lines = [
         f"⚖️ АНАЛИЗ {public_number}",
@@ -158,9 +161,13 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
     if source_lines:
         lines.extend(["", "Правовая основа:", *source_lines])
 
-    lines.extend(["", f"Черновик пациенту: {draft_status}"])
-    if draft_reason:
-        lines.append(f"Причина: {draft_reason}")
+    if draft_status == "AVAILABLE" and draft_text is not None:
+        lines.extend(["", "💬 Черновик ответа пациенту:", draft_text])
+        lines.append("⚠️ Перед отправкой текст должен проверить сотрудник клиники.")
+    else:
+        lines.extend(["", f"Черновик пациенту: {draft_status}"])
+        if draft_reason:
+            lines.append(f"Причина: {draft_reason}")
     lines.append("Автоматическая отправка пациенту отключена.")
 
     rendered = "\n".join(lines)
