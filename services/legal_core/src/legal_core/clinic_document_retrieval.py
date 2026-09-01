@@ -72,6 +72,8 @@ _SEARCH_APPROVED_CLINIC_CONTEXT = text(
     """
 )
 
+_MAX_CLINIC_QUERIES = 8
+
 
 def _row_fragment(row: RowMapping) -> ApprovedClinicDocumentFragment:
     return ApprovedClinicDocumentFragment(**dict(row))
@@ -84,18 +86,58 @@ def _is_yes(value: object) -> bool:
 def _tokens(value: object) -> set[str]:
     if isinstance(value, str):
         return {value.upper()}
+    if isinstance(value, dict):
+        raw_values = value.get("values")
+        if isinstance(raw_values, (list, tuple, set)):
+            return {str(item).upper() for item in raw_values}
+        raw_value = value.get("value")
+        if isinstance(raw_value, str):
+            return {raw_value.upper()}
     if isinstance(value, (list, tuple, set)):
         return {str(item).upper() for item in value}
     return set()
 
 
-def plan_clinic_document_queries(facts: Mapping[FactKey, object]) -> tuple[str, ...]:
-    """Plan local-only searches over clinic-approved documents.
+def _service_specific_queries(value: object) -> list[str]:
+    if not isinstance(value, str) or not value.strip():
+        return []
+    service = value.strip()[:120]
+    folded = service.casefold()
+    queries = [service]
+    if "имплант" in folded:
+        queries.extend(["имплант", "после имплант"])
+    elif any(token in folded for token in ("корон", "винир", "протез")):
+        queries.extend(["протез", "гарант"])
+    elif any(token in folded for token in ("удален", "хирург")):
+        queries.extend(["хирург", "удален"])
+    elif any(token in folded for token in ("ортодонт", "брекет")):
+        queries.append("ортодонт")
+    elif any(token in folded for token in ("эндодонт", "канал")):
+        queries.append("эндодонт")
+    return queries
 
-    These strings are not legal queries and never cross an embedding/API boundary.
+
+def _warranty_sensitive_incident(facts: Mapping[FactKey, object]) -> bool:
+    incident_tokens = _tokens(facts.get(FactKey.INCIDENT_TYPES))
+    incident_tokens.update(_tokens(facts.get(FactKey.PRIMARY_INCIDENT_TYPE)))
+    return any(
+        marker in token
+        for token in incident_tokens
+        for marker in ("CROWN", "VENEER", "RESTORATION", "IMPLANT", "PROSTH")
+    )
+
+
+def plan_clinic_document_queries(facts: Mapping[FactKey, object]) -> tuple[str, ...]:
+    """Plan bounded, local-only searches over clinic-approved documents.
+
+    Case-specific documents are intentionally searched before generic contract/consent material so
+    the bounded context budget is spent on the documents most likely to matter for this incident.
+    These strings never cross an embedding/API boundary.
     """
 
-    queries = ["договор", "согласие", "гарант"]
+    queries: list[str] = []
+    queries.extend(_service_specific_queries(facts.get(FactKey.SERVICE_TYPE)))
+
     if _is_yes(facts.get(FactKey.FORMAL_CLAIM)):
         queries.append("претенз")
 
@@ -105,11 +147,12 @@ def plan_clinic_document_queries(facts: Mapping[FactKey, object]) -> tuple[str, 
     if any("DOCUMENT" in token or "RECORD" in token for token in demands):
         queries.append("документ")
 
-    service_type = facts.get(FactKey.SERVICE_TYPE)
-    if isinstance(service_type, str) and service_type.strip():
-        queries.append(service_type.strip()[:120])
+    if _warranty_sensitive_incident(facts):
+        queries.append("гарант")
 
-    return tuple(dict.fromkeys(query for query in queries if query))
+    queries.extend(["договор", "согласие", "гарант"])
+    unique = tuple(dict.fromkeys(query for query in queries if query.strip()))
+    return unique[:_MAX_CLINIC_QUERIES]
 
 
 class ApprovedClinicDocumentContextRepository:
