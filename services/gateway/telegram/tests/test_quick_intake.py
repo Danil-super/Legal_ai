@@ -129,9 +129,18 @@ def test_dates_are_only_extracted_when_not_future_and_context_is_clear() -> None
         today=TODAY,
     )
 
-    assert result.candidate_data["service_date"] == {"date": "2026-08-01", "precision": "EXACT"}
-    assert result.candidate_data["incident_date"] == {"date": "2026-08-20", "precision": "EXACT"}
-    assert result.candidate_data["claim_date"] == {"date": "2026-08-31", "precision": "EXACT"}
+    assert result.candidate_data["service_date"] == {
+        "date": "2026-08-01",
+        "precision": "EXACT",
+    }
+    assert result.candidate_data["incident_date"] == {
+        "date": "2026-08-20",
+        "precision": "EXACT",
+    }
+    assert result.candidate_data["claim_date"] == {
+        "date": "2026-08-31",
+        "precision": "EXACT",
+    }
 
     future = extract_quick_intake(
         "Дата установки коронки 2026-09-10. Потом коронка сломалась, пациент требует возврат.",
