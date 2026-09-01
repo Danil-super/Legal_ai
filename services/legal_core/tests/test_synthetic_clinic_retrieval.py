@@ -41,7 +41,8 @@ def _seed_admin(telegram_user_id: int) -> UUID:
                 text(
                     "INSERT INTO subscription_entitlements "
                     "(clinic_id,user_id,status,plan_code,starts_at) VALUES "
-                    "(:clinic_id,:user_id,'ACTIVE','MVP',timezone('utc', now())-INTERVAL '1 day')"
+                    "(:clinic_id,:user_id,'ACTIVE','MVP',"
+                    "timezone('utc', now())-INTERVAL '1 day')"
                 ),
                 {"clinic_id": clinic_id, "user_id": user_id},
             )
@@ -90,18 +91,24 @@ def _install_fixture_pack(api: TestClient, telegram_user_id: int) -> None:
             json={
                 "sourceFilename": fixture.filename,
                 "normalizedText": fixture.text,
-                "validFrom": None if fixture.valid_from is None else fixture.valid_from.isoformat(),
+                "validFrom": (
+                    None if fixture.valid_from is None else fixture.valid_from.isoformat()
+                ),
                 "validTo": None if fixture.valid_to is None else fixture.valid_to.isoformat(),
             },
         )
         assert version.status_code in {200, 201}
-        assert version.json()["rawSha256"] == fixture.sha256
+        assert version.json()["rawSha256"] == fixture.normalized_text_sha256
+        assert version.json()["normalizedTextSha256"] == fixture.normalized_text_sha256
         assert version.json()["versionNo"] == fixture.version_no
 
         approved = api.post(
             f"/v1/clinic-documents/versions/{version.json()['id']}/approval-events",
             headers=_headers(telegram_user_id),
-            json={"decision": "APPROVED", "reasonCode": "SYNTHETIC_FIXTURE_REVIEW_PASSED"},
+            json={
+                "decision": "APPROVED",
+                "reasonCode": "SYNTHETIC_FIXTURE_REVIEW_PASSED",
+            },
         )
         assert approved.status_code == 201
 
