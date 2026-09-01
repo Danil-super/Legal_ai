@@ -4,8 +4,6 @@ This endpoint intentionally exposes metadata and review state only. Raw bytes an
 remain behind the existing ingestion/retrieval boundaries.
 """
 
-from __future__ import annotations
-
 from datetime import date, datetime
 from typing import Annotated, Any
 from uuid import UUID
