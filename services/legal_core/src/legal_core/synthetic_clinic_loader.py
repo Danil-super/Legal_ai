@@ -61,7 +61,9 @@ def _load_documents() -> tuple[SyntheticFixtureDocument, ...]:
         raise SyntheticFixtureLoadError("synthetic fixture authority marker is missing")
     raw_documents = payload.get("documents")
     if not isinstance(raw_documents, list) or len(raw_documents) != 8:
-        raise SyntheticFixtureLoadError("synthetic fixture pack must contain exactly eight documents")
+        raise SyntheticFixtureLoadError(
+            "synthetic fixture pack must contain exactly eight documents"
+        )
 
     documents: list[SyntheticFixtureDocument] = []
     seen_keys: set[str] = set()
@@ -203,7 +205,9 @@ def load_synthetic_fixture_pack(
             try:
                 document_id = UUID(str(created["id"]))
             except (KeyError, ValueError) as exc:
-                raise SyntheticFixtureLoadError("Legal Core returned an invalid document id") from exc
+                raise SyntheticFixtureLoadError(
+                    "Legal Core returned an invalid document id"
+                ) from exc
 
             version = _json_object(
                 http.post(
@@ -221,7 +225,9 @@ def load_synthetic_fixture_pack(
                 version_id = UUID(str(version["id"]))
                 version_no = int(version["versionNo"])
             except (KeyError, TypeError, ValueError) as exc:
-                raise SyntheticFixtureLoadError("Legal Core returned invalid version metadata") from exc
+                raise SyntheticFixtureLoadError(
+                    "Legal Core returned invalid version metadata"
+                ) from exc
 
             approval = _json_object(
                 http.post(
@@ -274,7 +280,10 @@ def main() -> None:
     target = _validate_target(args.base_url)
     if not args.apply:
         print(f"Dry run: {len(documents)} synthetic documents are valid for {target}")
-        print("No writes performed. Add --apply and ALLOW_SYNTHETIC_CLINIC_FIXTURES=1 to seed them.")
+        print(
+            "No writes performed. Add --apply and ALLOW_SYNTHETIC_CLINIC_FIXTURES=1 "
+            "to seed them."
+        )
         return
     results = load_synthetic_fixture_pack(
         telegram_user_id=args.telegram_user_id,
