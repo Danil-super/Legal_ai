@@ -30,11 +30,14 @@ from reportlab.platypus import (  # type: ignore[import-untyped]
     TableStyle,
 )
 
+from legal_core.clinic_document_retrieval import ApprovedClinicDocumentFragment
 from legal_core.contracts import (
     AnalysisAvailability,
     AnalysisSnapshot,
     CanonicalReport,
     CaseStatus,
+    ClinicDocumentBasis,
+    ClinicDocumentSourceCard,
     DraftResponse,
     FactKey,
     LegalBasis,
@@ -119,6 +122,7 @@ def build_intake_report(
         recommendations=Recommendations(),
         draftResponse=DraftResponse(),
         legalBasis=LegalBasis(),
+        clinicDocuments=ClinicDocumentBasis(),
         factSnapshotSha256=facts_sha256,
         disclaimer=DISCLAIMER,
     )
@@ -144,6 +148,31 @@ def _source_cards(evidence: Sequence[ApprovedLegalFragment]) -> list[LegalSource
     ]
 
 
+def _clinic_document_cards(
+    context: Sequence[ApprovedClinicDocumentFragment],
+) -> list[ClinicDocumentSourceCard]:
+    unique: dict[UUID, ApprovedClinicDocumentFragment] = {}
+    for fragment in context:
+        unique.setdefault(fragment.fragment_id, fragment)
+    return [
+        ClinicDocumentSourceCard(
+            fragmentId=fragment.fragment_id,
+            versionId=fragment.version_id,
+            documentId=fragment.document_id,
+            documentKey=fragment.document_key,
+            documentType=fragment.document_type,
+            documentTitle=fragment.document_title,
+            versionNo=fragment.version_no,
+            validFrom=fragment.valid_from,
+            validTo=fragment.valid_to,
+            structuralPath=fragment.structural_path,
+            textSha256=fragment.text_sha256,
+            rawSha256=fragment.raw_sha256,
+        )
+        for fragment in unique.values()
+    ]
+
+
 def build_analysis_report(
     *,
     report_id: UUID,
@@ -159,6 +188,8 @@ def build_analysis_report(
     risk: RiskAssessment,
     evidence_trace_sha256: str,
     evidence: Sequence[ApprovedLegalFragment],
+    clinic_document_context_trace_sha256: str,
+    clinic_document_context: Sequence[ApprovedClinicDocumentFragment],
     verified_action_items: Sequence[str],
 ) -> CanonicalReport:
     """Build a user-visible report only after all server-side evidence gates passed."""
@@ -184,6 +215,12 @@ def build_analysis_report(
     escalation_required = risk.level in {RiskLevel.HIGH, RiskLevel.CRITICAL}
     draft_response = build_safe_patient_draft(facts, risk)
     risk_level = cast(RiskLevelLiteral, risk.level.value)
+    clinic_cards = _clinic_document_cards(clinic_document_context)
+    clinic_basis = (
+        ClinicDocumentBasis(status="USED", sources=clinic_cards)
+        if clinic_cards
+        else ClinicDocumentBasis()
+    )
 
     return CanonicalReport(
         reportId=report_id,
@@ -200,6 +237,7 @@ def build_analysis_report(
         recommendations=recommendation,
         draftResponse=draft_response,
         legalBasis=LegalBasis(status="AVAILABLE", sources=_source_cards(evidence)),
+        clinicDocuments=clinic_basis,
         risk=RiskSummary(
             level=risk_level,
             reasonCodes=list(risk.reason_codes),
@@ -211,6 +249,7 @@ def build_analysis_report(
             asOfDate=as_of_date,
             verifierStatus="PASSED",
             evidenceTraceSha256=evidence_trace_sha256,
+            clinicDocumentContextTraceSha256=clinic_document_context_trace_sha256,
         ),
         factSnapshotSha256=facts_sha256,
         disclaimer=DISCLAIMER,
@@ -333,6 +372,13 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
         else:
             reason = report.draft_response.reason_code or "NOT_AVAILABLE"
             story.append(Paragraph(f"Не сформирован: {escape(reason)}.", body))
+        if report.draft_response.policy_version:
+            story.append(
+                Paragraph(
+                    f"Draft policy: {escape(report.draft_response.policy_version)}",
+                    muted,
+                )
+            )
 
         story.append(Paragraph("Правовая основа", heading))
         for source in report.legal_basis.sources:
@@ -346,11 +392,42 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
                     body,
                 )
             )
-        story.append(
-            Paragraph(
-                f"Evidence trace SHA-256: {report.analysis.evidence_trace_sha256}",
-                muted,
+
+        if report.clinic_documents.status == "USED":
+            story.append(Paragraph("Документы клиники — внутренний контекст", heading))
+            story.append(
+                Paragraph(
+                    "Эти документы не являются нормативной правовой основой и не заменяют закон.",
+                    muted,
+                )
             )
+            for source in report.clinic_documents.sources:
+                period = ""
+                if source.valid_from is not None:
+                    period = f"; действует с {source.valid_from.isoformat()}"
+                if source.valid_to is not None:
+                    period += f" до {source.valid_to.isoformat()}"
+                story.append(
+                    Paragraph(
+                        f"• {escape(source.document_title)}; v{source.version_no}; "
+                        f"{escape(source.document_type)}; {escape(source.structural_path)}"
+                        f"{period}.",
+                        body,
+                    )
+                )
+
+        story.extend(
+            [
+                Paragraph(
+                    f"Evidence trace SHA-256: {report.analysis.evidence_trace_sha256}",
+                    muted,
+                ),
+                Paragraph(
+                    "Clinic context trace SHA-256: "
+                    f"{report.analysis.clinic_document_context_trace_sha256}",
+                    muted,
+                ),
+            ]
         )
     else:
         reason = report.summary.analysis_availability.reason_code or "ANALYSIS_BLOCKED"
