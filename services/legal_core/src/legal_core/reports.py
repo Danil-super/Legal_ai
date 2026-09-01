@@ -47,6 +47,7 @@ from legal_core.contracts import (
 )
 from legal_core.legal_retrieval import ApprovedLegalFragment
 from legal_core.risk_engine import RiskAssessment, RiskLevel
+from legal_core.safe_patient_draft import build_safe_patient_draft
 
 DISCLAIMER = (
     "Внутренняя карточка. Не является окончательным юридическим заключением "
@@ -181,11 +182,7 @@ def build_analysis_report(
         )
     )
     escalation_required = risk.level in {RiskLevel.HIGH, RiskLevel.CRITICAL}
-    draft_reason = (
-        "HUMAN_LEGAL_REVIEW_REQUIRED"
-        if escalation_required
-        else "DRAFT_VERIFIER_NOT_ENABLED"
-    )
+    draft_response = build_safe_patient_draft(facts, risk)
     risk_level = cast(RiskLevelLiteral, risk.level.value)
 
     return CanonicalReport(
@@ -201,7 +198,7 @@ def build_analysis_report(
         facts=serialized_facts,
         missingFacts=list(missing_facts),
         recommendations=recommendation,
-        draftResponse=DraftResponse(status="BLOCKED", reasonCode=draft_reason),
+        draftResponse=draft_response,
         legalBasis=LegalBasis(status="AVAILABLE", sources=_source_cards(evidence)),
         risk=RiskSummary(
             level=risk_level,
