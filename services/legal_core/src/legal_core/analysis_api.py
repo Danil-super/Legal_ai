@@ -53,7 +53,12 @@ from legal_core.clinic_document_retrieval import (
     plan_clinic_document_queries,
     retrieve_planned_clinic_context,
 )
-from legal_core.contracts import CanonicalReport, CaseStatus, FactKey
+from legal_core.contracts import (
+    CanonicalReport,
+    CaseStatus,
+    ClinicDocumentReadinessCard,
+    FactKey,
+)
 from legal_core.intake import missing_facts_for
 from legal_core.legal_retrieval import ApprovedLegalCorpusRepository, ApprovedLegalFragment
 from legal_core.models import Case, CaseReport
@@ -210,6 +215,17 @@ def _readiness_responses(
             analysisBlocking=False,
         )
         for item in readiness
+    ]
+
+
+def _readiness_cards(
+    readiness: tuple[ClinicDocumentReadiness, ...],
+) -> list[ClinicDocumentReadinessCard]:
+    return [
+        ClinicDocumentReadinessCard.model_validate(
+            item.model_dump(mode="json", by_alias=True)
+        )
+        for item in _readiness_responses(readiness)
     ]
 
 
@@ -478,6 +494,13 @@ def create_analysis_router(
                 block_reason_code=block_reason,
             )
 
+        canonical = canonical.model_copy(
+            update={
+                "clinic_document_readiness": _readiness_cards(
+                    state.clinic_document_readiness
+                )
+            }
+        )
         report = await _store_report(
             session,
             actor=actor,
