@@ -62,7 +62,7 @@ def test_blocked_intake_report_has_one_canonical_safe_shape() -> None:
     assert payload["analysis"] is None
 
 
-def test_verified_analysis_report_contains_risk_actions_and_sources_but_no_draft() -> None:
+def test_verified_low_risk_report_contains_safe_draft_actions_and_sources() -> None:
     report = build_analysis_report(
         report_id=UUID("00000000-0000-0000-0000-000000000010"),
         analysis_run_id=UUID("00000000-0000-0000-0000-000000000011"),
@@ -99,13 +99,11 @@ def test_verified_analysis_report_contains_risk_actions_and_sources_but_no_draft
         "status": "AVAILABLE",
         "items": ["Зафиксировать обращение и предложить осмотр."],
     }
-    assert payload["draftResponse"] == {
-        "status": "BLOCKED",
-        "text": None,
-        "isDraft": True,
-        "humanApprovalRequired": True,
-        "reasonCode": "DRAFT_VERIFIER_NOT_ENABLED",
-    }
+    assert payload["draftResponse"]["status"] == "AVAILABLE"
+    assert payload["draftResponse"]["reasonCode"] is None
+    assert payload["draftResponse"]["humanApprovalRequired"] is True
+    assert "не будем делать выводы о причинах" in payload["draftResponse"]["text"]
+    assert "Пациент сообщил о сколе винира" not in payload["draftResponse"]["text"]
     assert payload["legalBasis"]["status"] == "AVAILABLE"
     assert payload["legalBasis"]["sources"][0]["fragmentId"] == str(FRAGMENT_ID)
 
