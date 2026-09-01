@@ -34,7 +34,10 @@ def _evidence() -> ApprovedLegalFragment:
     )
 
 
-def _clinic_context() -> ApprovedClinicDocumentFragment:
+def _clinic_context(
+    *,
+    text: str = "Иванов Иван может обратиться по телефону +7 999 123-45-67.",
+) -> ApprovedClinicDocumentFragment:
     return ApprovedClinicDocumentFragment(
         fragment_id=CLINIC_FRAGMENT_ID,
         version_id=UUID("00000000-0000-0000-0000-000000000012"),
@@ -47,7 +50,7 @@ def _clinic_context() -> ApprovedClinicDocumentFragment:
         valid_to=None,
         ordinal=1,
         structural_path="text/fragment/1",
-        fragment_text="Иванов Иван может обратиться по телефону +7 999 123-45-67.",
+        fragment_text=text,
         text_sha256="c" * 64,
         raw_sha256="d" * 64,
     )
@@ -73,8 +76,31 @@ def test_projection_redacts_direct_identifiers_inside_nested_facts_and_clinic_co
     assert projection.clinic_document_context[0].text == (
         "[PATIENT_1] может обратиться по телефону [PHONE]."
     )
+    assert projection.clinic_document_context[0].conflict_hints == []
     clinic_payload = projection.clinic_document_context[0].model_dump(
         mode="json", by_alias=True
     )
     assert "fragmentId" not in clinic_payload
     assert str(CLINIC_FRAGMENT_ID) not in str(clinic_payload)
+
+
+def test_projection_marks_absolute_clinic_wording_without_making_it_citable() -> None:
+    projection = build_case_projection(
+        case_id=UUID("00000000-0000-0000-0000-000000000010"),
+        as_of_date=date(2026, 8, 31),
+        facts={FactKey.SERVICE_TYPE: "Установка коронки"},
+        evidence=[_evidence()],
+        clinic_document_context=[
+            _clinic_context(
+                text="Возврат денежных средств не осуществляется ни при каких обстоятельствах."
+            )
+        ],
+        known_identifiers={"Иванов Иван": "[PATIENT_1]"},
+    )
+
+    item = projection.clinic_document_context[0]
+    assert item.conflict_hints == ["ABSOLUTE_NO_REFUND"]
+    payload = item.model_dump(mode="json", by_alias=True)
+    assert payload["conflictHints"] == ["ABSOLUTE_NO_REFUND"]
+    assert "fragmentId" not in payload
+    assert str(CLINIC_FRAGMENT_ID) not in str(payload)
