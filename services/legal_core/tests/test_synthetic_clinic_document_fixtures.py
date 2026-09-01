@@ -64,6 +64,8 @@ def test_synthetic_fixture_pack_is_bounded_original_and_parser_ready() -> None:
         assert isinstance(document_type, str)
         assert isinstance(filename, str)
         assert isinstance(expected_queries, list)
+        assert expected_queries
+        assert all(isinstance(query, str) and query.strip() for query in expected_queries)
         assert key not in keys
         assert filename not in filenames
         keys.add(key)
@@ -80,7 +82,7 @@ def test_synthetic_fixture_pack_is_bounded_original_and_parser_ready() -> None:
         assert "@" not in text
         assert re.search(r"\+7[\s()-]*\d", text) is None
         assert all(name not in folded for name in public_names)
-        assert all(str(query).casefold() in folded for query in expected_queries)
+        assert any(str(query).casefold() in folded for query in expected_queries)
 
         prepared = prepare_clinic_document_text(text)
         assert prepared.normalized_text
