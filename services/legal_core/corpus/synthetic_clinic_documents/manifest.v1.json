@@ -1,0 +1,135 @@
+{
+  "schema_version": "synthetic-clinic-documents.v1",
+  "fixture_set": "SYNTHETIC_DENTAL_CLINIC_ALPHA",
+  "purpose": "DEVELOPMENT_AND_REGRESSION_ONLY",
+  "authority": "NOT_A_LEGAL_SOURCE",
+  "tenant_status": "NOT_A_REAL_TENANT",
+  "source_policy": "STRUCTURE_INFORMED_BY_PUBLIC_REFERENCE_TAXONOMY_NO_TEXT_COPIED",
+  "notes": [
+    "All fixture text is synthetic and was written specifically for this repository.",
+    "No fixture is a contract, policy, consent or instruction of a real clinic.",
+    "Fixtures may be used for parser, versioning, retrieval, provenance and case-analysis regression tests.",
+    "Fixtures must never be presented to a production tenant as its own clinic documents."
+  ],
+  "documents": [
+    {
+      "document_key": "service-contract",
+      "document_type": "CONTRACT",
+      "title": "Синтетический договор на платные стоматологические услуги",
+      "versions": [
+        {
+          "version_no": 1,
+          "file": "contract_v1.txt",
+          "valid_from": "2026-01-01",
+          "valid_to": "2026-07-01",
+          "sha256": "dfe86152937d36ae7d747176b512c1eb5aafa5bef2941c6440b6d16a195bf97d"
+        },
+        {
+          "version_no": 2,
+          "file": "contract_v2.txt",
+          "valid_from": "2026-07-01",
+          "valid_to": null,
+          "sha256": "90b55d41a3983817d6b4d15be781e4c2e6fe4fc504dfaf5e3164bde95e7e8ff8"
+        }
+      ]
+    },
+    {
+      "document_key": "warranty-main",
+      "document_type": "WARRANTY_POLICY",
+      "title": "Синтетическое положение о гарантиях",
+      "versions": [
+        {
+          "version_no": 1,
+          "file": "warranty_policy.txt",
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "sha256": "8dccbdb308396dfaa411d290c545f1b78f9435c1a603a54892b341c974f6e729"
+        }
+      ]
+    },
+    {
+      "document_key": "consent-general",
+      "document_type": "INFORMED_CONSENT_GENERAL",
+      "title": "Синтетическое общее ИДС",
+      "versions": [
+        {
+          "version_no": 1,
+          "file": "consent_general.txt",
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "sha256": "b593c3034ebc4e2eda23c85dd61810b3636ad241b2503a090f1fcef6ac5b3089"
+        }
+      ]
+    },
+    {
+      "document_key": "consent-implant",
+      "document_type": "INFORMED_CONSENT_IMPLANT",
+      "title": "Синтетическое ИДС на имплантацию",
+      "versions": [
+        {
+          "version_no": 1,
+          "file": "consent_implant.txt",
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "sha256": "c9df8cb2712739d05665b2b0d0b811090ce5822d7bd392f26932d692bead681e"
+        }
+      ]
+    },
+    {
+      "document_key": "patient-rules",
+      "document_type": "PATIENT_RULES",
+      "title": "Синтетические правила для пациентов",
+      "versions": [
+        {
+          "version_no": 1,
+          "file": "patient_rules.txt",
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "sha256": "6a0a21182b757bd316f143939c7f3cee01fc76a02ef0b46441e29ce7340bcaf2"
+        }
+      ]
+    },
+    {
+      "document_key": "medical-records",
+      "document_type": "MEDICAL_RECORD_ACCESS_POLICY",
+      "title": "Синтетический порядок выдачи медицинских документов",
+      "versions": [
+        {
+          "version_no": 1,
+          "file": "medical_records_policy.txt",
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "sha256": "ac13556fab4c0fc21c1817a3e8c0af008b907463e75c5c11741fa0d883533d59"
+        }
+      ]
+    },
+    {
+      "document_key": "claims-policy",
+      "document_type": "CLAIM_POLICY",
+      "title": "Синтетический регламент работы с претензиями",
+      "versions": [
+        {
+          "version_no": 1,
+          "file": "claims_policy.txt",
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "sha256": "30c4b42972942b5d4563d0ff97a74d35c0519e6328443d3c93b88f138e5ee1b0"
+        }
+      ]
+    },
+    {
+      "document_key": "post-implant-memo",
+      "document_type": "PATIENT_MEMO_IMPLANT",
+      "title": "Синтетическая памятка после имплантации",
+      "versions": [
+        {
+          "version_no": 1,
+          "file": "post_implant_memo.txt",
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "sha256": "6da96e19c81ca83bb4e6ef9adaa20e440a5188ac54b241cda841ee0084ebd362"
+        }
+      ]
+    }
+  ]
+}
