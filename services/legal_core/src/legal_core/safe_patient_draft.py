@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 """Deterministic, non-legal patient-facing draft for verified low/medium risk cases.
 
 This is intentionally not an LLM writer. It never echoes free-text case facts, never states fault,
