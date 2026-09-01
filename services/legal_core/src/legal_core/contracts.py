@@ -174,6 +174,22 @@ class ClinicDocumentBasis(ContractModel):
         return self
 
 
+class ClinicDocumentReadinessCard(ContractModel):
+    expectation_code: str = Field(alias="expectationCode", min_length=1, max_length=80)
+    importance: Literal["CORE", "SCENARIO", "SUPPORTING"]
+    accepted_document_types: list[str] = Field(
+        alias="acceptedDocumentTypes", min_length=1, max_length=10
+    )
+    reason_code: str = Field(alias="reasonCode", min_length=1, max_length=100)
+    status: Literal["RETRIEVED", "AVAILABLE_NOT_RETRIEVED", "NOT_AVAILABLE"]
+    matched_document_keys: list[str] = Field(
+        default_factory=list,
+        alias="matchedDocumentKeys",
+        max_length=20,
+    )
+    analysis_blocking: Literal[False] = Field(default=False, alias="analysisBlocking")
+
+
 class RiskSummary(ContractModel):
     level: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL", "UNAVAILABLE"]
     reason_codes: list[str] = Field(alias="reasonCodes", max_length=30)
@@ -212,6 +228,11 @@ class CanonicalReport(ContractModel):
     clinic_documents: ClinicDocumentBasis = Field(
         default_factory=ClinicDocumentBasis,
         alias="clinicDocuments",
+    )
+    clinic_document_readiness: list[ClinicDocumentReadinessCard] = Field(
+        default_factory=list,
+        alias="clinicDocumentReadiness",
+        max_length=20,
     )
     risk: RiskSummary | None = None
     analysis: AnalysisSnapshot | None = None
