@@ -1,6 +1,9 @@
 from legal_core.contracts import FactKey
 from legal_core.risk_engine import RiskAssessment, RiskLevel
-from legal_core.safe_patient_draft import build_safe_patient_draft
+from legal_core.safe_patient_draft import (
+    SAFE_OPERATIONAL_DRAFT_VERSION,
+    build_safe_patient_draft,
+)
 
 
 def _risk(
@@ -27,6 +30,7 @@ def test_low_risk_draft_is_generic_and_does_not_echo_free_text() -> None:
 
     assert draft.status == "AVAILABLE"
     assert draft.text is not None
+    assert draft.policy_version == SAFE_OPERATIONAL_DRAFT_VERSION
     assert "Иван Иванов" not in draft.text
     assert "+7 999" not in draft.text
     assert sensitive_summary not in draft.text
@@ -43,6 +47,7 @@ def test_high_and_critical_risk_drafts_require_human_legal_review() -> None:
 
         assert draft.status == "BLOCKED"
         assert draft.reason_code == "HUMAN_LEGAL_REVIEW_REQUIRED"
+        assert draft.policy_version == SAFE_OPERATIONAL_DRAFT_VERSION
         assert draft.text is None
 
 
@@ -54,6 +59,7 @@ def test_defense_in_depth_blocks_formal_claim_even_if_risk_configuration_drifts(
 
     assert draft.status == "BLOCKED"
     assert draft.reason_code == "PATIENT_DRAFT_SAFETY_SIGNAL"
+    assert draft.policy_version == SAFE_OPERATIONAL_DRAFT_VERSION
 
 
 def test_unavailable_or_policy_blocked_draft_fails_closed() -> None:
@@ -70,3 +76,5 @@ def test_unavailable_or_policy_blocked_draft_fails_closed() -> None:
     assert policy_blocked.status == "BLOCKED"
     assert unavailable.reason_code == "RISK_POLICY_BLOCKS_EXTERNAL_DRAFT"
     assert policy_blocked.reason_code == "RISK_POLICY_BLOCKS_EXTERNAL_DRAFT"
+    assert unavailable.policy_version == SAFE_OPERATIONAL_DRAFT_VERSION
+    assert policy_blocked.policy_version == SAFE_OPERATIONAL_DRAFT_VERSION
