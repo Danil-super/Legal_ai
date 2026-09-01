@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 from uuid import UUID
 
 import pytest
