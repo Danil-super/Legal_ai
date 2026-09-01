@@ -29,11 +29,6 @@ class ClinicDocumentContextResponse(ContractModel):
     text: str = Field(min_length=1, max_length=12_000)
     text_sha256: str = Field(alias="textSha256", pattern=r"^[0-9a-f]{64}$")
     raw_sha256: str = Field(alias="rawSha256", pattern=r"^[0-9a-f]{64}$")
-    conflict_hints: list[str] = Field(
-        default_factory=list,
-        alias="conflictHints",
-        max_length=10,
-    )
 
 
 class AnalysisContextResponse(ContractModel):
