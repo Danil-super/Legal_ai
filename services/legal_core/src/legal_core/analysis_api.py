@@ -332,7 +332,10 @@ def create_analysis_router(
             raise ApiError(
                 status_code=status.HTTP_409_CONFLICT,
                 code="ANALYSIS_CONTEXT_STALE",
-                message="Case facts, evidence, clinic context or risk policy changed during analysis",
+                message=(
+                    "Case facts, evidence, clinic context or risk policy changed "
+                    "during analysis"
+                ),
             )
 
         claims = _domain_claims(payload)
