@@ -80,7 +80,7 @@ def create_clinic_document_library_router(
                     "SELECT e.decision, e.reason_code, e.created_at "
                     "FROM clinic_document_approval_events AS e "
                     "WHERE e.clinic_id=v.clinic_id AND e.version_id=v.id "
-                    "ORDER BY e.created_at DESC, e.id DESC LIMIT 1"
+                    "ORDER BY e.event_seq DESC LIMIT 1"
                     ") AS review ON true "
                     "WHERE d.clinic_id=:clinic_id "
                     "ORDER BY d.document_type, d.document_key, v.version_no DESC, v.id"
