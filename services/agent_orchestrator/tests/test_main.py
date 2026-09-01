@@ -45,6 +45,7 @@ def _context() -> AnalysisContextResponse:
                 publicationDate=date(2026, 1, 1),
             )
         ],
+        clinicDocumentContextTraceSha256="f" * 64,
         riskPolicyVersion="dental-risk.v1",
         highDemandThresholdKopecks=10_000_000,
     )
