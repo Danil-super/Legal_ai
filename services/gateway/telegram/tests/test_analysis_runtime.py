@@ -68,6 +68,7 @@ def test_verified_analysis_summary_uses_only_canonical_server_report_fields() ->
                     "draftResponse": {
                         "status": "BLOCKED",
                         "reasonCode": "HUMAN_LEGAL_REVIEW_REQUIRED",
+                        "policyVersion": "safe-operational-draft.v1",
                     },
                 }
             },
@@ -80,6 +81,7 @@ def test_verified_analysis_summary_uses_only_canonical_server_report_fields() ->
     assert "Передать кейс ответственному юристу" in summary
     assert "publication.pravo.gov.ru" in summary
     assert "HUMAN_LEGAL_REVIEW_REQUIRED" in summary
+    assert "Draft policy: safe-operational-draft.v1" in summary
     assert "Автоматическая отправка пациенту отключена" in summary
 
 
@@ -110,6 +112,7 @@ def test_available_safe_patient_draft_is_shown_but_never_auto_sent() -> None:
                         "status": "AVAILABLE",
                         "text": draft,
                         "reasonCode": None,
+                        "policyVersion": "safe-operational-draft.v1",
                     },
                 }
             },
@@ -118,8 +121,52 @@ def test_available_safe_patient_draft_is_shown_but_never_auto_sent() -> None:
 
     assert "💬 Черновик ответа пациенту" in summary
     assert draft in summary
+    assert "Draft policy: safe-operational-draft.v1" in summary
     assert "Перед отправкой текст должен проверить сотрудник клиники" in summary
     assert "Автоматическая отправка пациенту отключена" in summary
+
+
+def test_clinic_document_provenance_is_separate_and_does_not_expose_text() -> None:
+    summary = telegram_analysis_summary(
+        {
+            "analysisAllowed": True,
+            "riskLevel": "LOW",
+            "report": {
+                "reportJson": {
+                    "case": {"publicNumber": "DL-2026-000045"},
+                    "risk": {
+                        "level": "LOW",
+                        "reasonCodes": [],
+                        "escalationRequired": False,
+                    },
+                    "recommendations": {"items": ["Проверить документы клиники."]},
+                    "legalBasis": {"sources": []},
+                    "clinicDocuments": {
+                        "status": "USED",
+                        "sources": [
+                            {
+                                "documentTitle": "Гарантийное положение",
+                                "documentType": "WARRANTY_POLICY",
+                                "versionNo": 2,
+                                "structuralPath": "section:3",
+                                "normalizedText": "SECRET CLINIC DOCUMENT CONTENT",
+                            }
+                        ],
+                    },
+                    "draftResponse": {
+                        "status": "AVAILABLE",
+                        "text": "Здравствуйте. Обращение зарегистрировано.",
+                        "policyVersion": "safe-operational-draft.v1",
+                    },
+                }
+            },
+        }
+    )
+
+    assert "📄 Документы клиники" in summary
+    assert "Гарантийное положение, v2 · WARRANTY_POLICY · section:3" in summary
+    assert "Не являются нормативной правовой основой" in summary
+    assert "SECRET CLINIC DOCUMENT CONTENT" not in summary
 
 
 def test_available_draft_without_text_is_rejected() -> None:
