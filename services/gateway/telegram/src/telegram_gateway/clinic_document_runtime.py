@@ -381,7 +381,8 @@ async def receive_clinic_document(
     if gateway_bot.WIZARD_DATA_KEY in (context.user_data or {}):
         await gateway_bot._reply(
             update,
-            "Во время заполнения кейса документы клиники не загружаются. Завершите кейс или /cancel.",
+            "Во время заполнения кейса документы клиники не загружаются. "
+            "Завершите кейс или /cancel.",
         )
         raise ApplicationHandlerStop
 
@@ -438,11 +439,11 @@ async def receive_clinic_document(
     except LegalCoreApiError as exc:
         logger.warning("clinic document upload failed: %s", exc.code)
         await gateway_bot._reply(update, f"⚠️ {_friendly_error(exc)}")
-        raise ApplicationHandlerStop
+        raise ApplicationHandlerStop from exc
     except (KeyError, TypeError, ValueError) as exc:
         logger.warning("clinic document upload response invalid: %s", type(exc).__name__)
         await gateway_bot._reply(update, "⚠️ Документ не прошёл внутреннюю проверку ответа.")
-        raise ApplicationHandlerStop
+        raise ApplicationHandlerStop from exc
 
     _clear_pending(context)
     await message.reply_text(
@@ -492,10 +493,10 @@ async def review_clinic_document_callback(
     except LegalCoreApiError as exc:
         logger.warning("clinic document review failed: %s", exc.code)
         await gateway_bot._reply(update, f"⚠️ {_friendly_error(exc)}")
-        raise ApplicationHandlerStop
-    except ValueError:
+        raise ApplicationHandlerStop from exc
+    except ValueError as exc:
         await gateway_bot._reply(update, "⚠️ Ответ проверки документа некорректен.")
-        raise ApplicationHandlerStop
+        raise ApplicationHandlerStop from exc
     finally:
         await core.aclose()
 
