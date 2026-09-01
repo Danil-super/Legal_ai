@@ -37,6 +37,11 @@ class ClinicDocumentContextItem(StrictModel):
     valid_to: date | None = Field(default=None, alias="validTo")
     structural_path: str = Field(alias="structuralPath", min_length=1, max_length=500)
     text: str = Field(min_length=1, max_length=12_000)
+    conflict_hints: list[str] = Field(
+        default_factory=list,
+        alias="conflictHints",
+        max_length=10,
+    )
 
 
 class CaseProjection(StrictModel):
