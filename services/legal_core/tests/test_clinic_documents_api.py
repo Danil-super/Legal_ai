@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from legal_core.clinic_document_parser import sha256_bytes
 from legal_core.database import database_url, owner_database_url
 from legal_core.main import create_app
 from sqlalchemy import create_engine, text
@@ -13,6 +14,32 @@ pytestmark = pytest.mark.skipif(
     os.getenv("POSTGRES_INTEGRATION") != "1",
     reason="set POSTGRES_INTEGRATION=1 to run clinic document API integration tests",
 )
+
+
+class FakeRawStore:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def put(
+        self,
+        *,
+        clinic_id: UUID,
+        document_id: UUID,
+        raw_sha256: str,
+        content: bytes,
+        content_type: str,
+    ) -> str:
+        assert sha256_bytes(content) == raw_sha256
+        self.calls.append(
+            {
+                "clinic_id": clinic_id,
+                "document_id": document_id,
+                "raw_sha256": raw_sha256,
+                "content": content,
+                "content_type": content_type,
+            }
+        )
+        return f"test/{clinic_id}/{document_id}/{raw_sha256}"
 
 
 def seed_admin(telegram_user_id: int) -> tuple[UUID, UUID, UUID]:
@@ -51,7 +78,7 @@ def seed_admin(telegram_user_id: int) -> tuple[UUID, UUID, UUID]:
     return clinic_id, user_id, membership_id
 
 
-def client() -> TestClient:
+def client(raw_store: object | None = None) -> TestClient:
     engine = create_async_engine(database_url())
     factory = async_sessionmaker(engine, expire_on_commit=False)
     return TestClient(
@@ -59,6 +86,7 @@ def client() -> TestClient:
             session_factory=factory,
             managed_engine=engine,
             enable_draft_retention=False,
+            clinic_document_store=raw_store,  # type: ignore[arg-type]
         )
     )
 
@@ -209,3 +237,100 @@ def test_clinic_document_text_version_requires_approval_and_stays_in_tenant() ->
 
     assert version_hashes == (expected_sha, expected_sha)
     assert approval_hashes == version_hashes
+
+
+def test_clinic_document_file_version_is_raw_hashed_stored_and_review_gated() -> None:
+    admin = 8_700_000_001 + uuid4().int % 100_000_000
+    clinic_id, _, _ = seed_admin(admin)
+    store = FakeRawStore()
+    raw = "\ufeffДоговор клиники.\r\n\r\nГарантийный срок — 30 дней.\r\n".encode("utf-8")
+    raw_sha = sha256_bytes(raw)
+    normalized = "Договор клиники.\n\nГарантийный срок — 30 дней."
+    normalized_sha = hashlib.sha256(normalized.encode()).hexdigest()
+
+    with client(store) as api:
+        created = api.post(
+            "/v1/clinic-documents",
+            headers=headers(admin),
+            json={
+                "documentKey": "contract-main",
+                "documentType": "SERVICE_CONTRACT",
+                "title": "Основной договор",
+            },
+        )
+        assert created.status_code == 201
+        document_id = created.json()["id"]
+
+        upload_headers = {
+            **headers(admin),
+            "X-Source-Filename": "contract.txt",
+            "Content-Type": "text/plain; charset=utf-8",
+        }
+        version = api.post(
+            f"/v1/clinic-documents/{document_id}/file-versions",
+            headers=upload_headers,
+            params={"valid_from": "2026-01-01"},
+            content=raw,
+        )
+        assert version.status_code == 201
+        version_id = version.json()["id"]
+        assert version.json()["mimeType"] == "text/plain"
+        assert version.json()["rawSha256"] == raw_sha
+        assert version.json()["normalizedTextSha256"] == normalized_sha
+        assert version.json()["fragmentCount"] >= 1
+        assert len(store.calls) == 1
+        assert store.calls[0]["clinic_id"] == clinic_id
+        assert store.calls[0]["content"] == raw
+
+        replay = api.post(
+            f"/v1/clinic-documents/{document_id}/file-versions",
+            headers=upload_headers,
+            params={"valid_from": "2026-01-01"},
+            content=raw,
+        )
+        assert replay.status_code == 200
+        assert replay.json() == version.json()
+        assert len(store.calls) == 1
+
+        hidden = api.get(
+            "/v1/clinic-documents/fragments",
+            headers=headers(admin),
+            params={"query": "Гарантийный", "as_of_date": "2026-08-31"},
+        )
+        assert hidden.status_code == 200
+        assert hidden.json() == {"items": []}
+
+        approved = api.post(
+            f"/v1/clinic-documents/versions/{version_id}/approval-events",
+            headers=headers(admin),
+            json={"decision": "APPROVED", "reasonCode": "CLINIC_REVIEW_PASSED"},
+        )
+        assert approved.status_code == 201
+
+        visible = api.get(
+            "/v1/clinic-documents/fragments",
+            headers=headers(admin),
+            params={"query": "Гарантийный", "as_of_date": "2026-08-31"},
+        )
+        assert visible.status_code == 200
+        assert len(visible.json()["items"]) == 1
+        assert visible.json()["items"][0]["versionId"] == version_id
+
+    owner_engine = create_engine(owner_database_url().set(drivername="postgresql+psycopg"))
+    try:
+        with owner_engine.connect() as connection:
+            stored = connection.execute(
+                text(
+                    "SELECT raw_object_key, raw_sha256, normalized_text_sha256, mime_type "
+                    "FROM clinic_document_versions "
+                    "WHERE clinic_id=:clinic_id AND id=:version_id"
+                ),
+                {"clinic_id": clinic_id, "version_id": version_id},
+            ).one()
+    finally:
+        owner_engine.dispose()
+
+    assert stored.raw_object_key == f"test/{clinic_id}/{document_id}/{raw_sha}"
+    assert stored.raw_sha256 == raw_sha
+    assert stored.normalized_text_sha256 == normalized_sha
+    assert stored.mime_type == "text/plain"
