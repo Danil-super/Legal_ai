@@ -18,6 +18,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 from legal_core import __version__
 from legal_core.analysis_api import create_analysis_router
 from legal_core.case_api import ApiError, create_case_router
+from legal_core.clinic_document_store import RawClinicDocumentStore
 from legal_core.clinic_documents_api import create_clinic_documents_router
 from legal_core.database import create_engine, create_session_factory
 from legal_core.draft_retention import purge_expired_intake_drafts
@@ -94,6 +95,7 @@ def create_app(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     managed_engine: AsyncEngine | None = None,
     enable_draft_retention: bool = True,
+    clinic_document_store: RawClinicDocumentStore | None = None,
 ) -> FastAPI:
     engine = managed_engine or create_engine()
     sessions = session_factory or create_session_factory(engine)
@@ -183,7 +185,12 @@ def create_app(
 
     app.include_router(create_case_router(sessions))
     app.include_router(create_legal_router(sessions))
-    app.include_router(create_clinic_documents_router(sessions))
+    app.include_router(
+        create_clinic_documents_router(
+            sessions,
+            raw_store=clinic_document_store,
+        )
+    )
     app.include_router(create_analysis_router(sessions))
 
     return app
