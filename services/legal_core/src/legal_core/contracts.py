@@ -107,12 +107,15 @@ class DraftResponse(ContractModel):
         default=True, alias="humanApprovalRequired"
     )
     reason_code: str | None = Field(default=None, alias="reasonCode")
+    policy_version: str | None = Field(default=None, alias="policyVersion", max_length=80)
 
     @model_validator(mode="after")
     def validate_state(self) -> "DraftResponse":
         if self.status == "AVAILABLE":
             if not self.text or self.reason_code is not None:
                 raise ValueError("AVAILABLE draft requires text and no block reason")
+            if not self.policy_version:
+                raise ValueError("AVAILABLE draft requires a policy version")
         elif self.text is not None:
             raise ValueError("unavailable/blocked draft cannot contain text")
         if self.status == "BLOCKED" and not self.reason_code:
@@ -145,6 +148,34 @@ class LegalBasis(ContractModel):
         return self
 
 
+class ClinicDocumentSourceCard(ContractModel):
+    fragment_id: UUID = Field(alias="fragmentId")
+    version_id: UUID = Field(alias="versionId")
+    document_id: UUID = Field(alias="documentId")
+    document_key: str = Field(alias="documentKey", min_length=1, max_length=100)
+    document_type: str = Field(alias="documentType", min_length=1, max_length=80)
+    document_title: str = Field(alias="documentTitle", min_length=1, max_length=240)
+    version_no: int = Field(alias="versionNo", ge=1)
+    valid_from: date | None = Field(alias="validFrom")
+    valid_to: date | None = Field(alias="validTo")
+    structural_path: str = Field(alias="structuralPath", min_length=1, max_length=500)
+    text_sha256: str = Field(alias="textSha256", pattern=r"^[0-9a-f]{64}$")
+    raw_sha256: str = Field(alias="rawSha256", pattern=r"^[0-9a-f]{64}$")
+
+
+class ClinicDocumentBasis(ContractModel):
+    status: Literal["NOT_USED", "USED"] = "NOT_USED"
+    sources: list[ClinicDocumentSourceCard] = Field(default_factory=list, max_length=30)
+
+    @model_validator(mode="after")
+    def validate_state(self) -> "ClinicDocumentBasis":
+        if self.status == "USED" and not self.sources:
+            raise ValueError("USED clinic document context requires sources")
+        if self.status == "NOT_USED" and self.sources:
+            raise ValueError("NOT_USED clinic document context cannot contain sources")
+        return self
+
+
 class RiskSummary(ContractModel):
     level: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL", "UNAVAILABLE"]
     reason_codes: list[str] = Field(alias="reasonCodes", max_length=30)
@@ -158,6 +189,9 @@ class AnalysisSnapshot(ContractModel):
     verifier_status: Literal["PASSED", "BLOCKED"] = Field(alias="verifierStatus")
     evidence_trace_sha256: str = Field(
         alias="evidenceTraceSha256", pattern=r"^[0-9a-f]{64}$"
+    )
+    clinic_document_context_trace_sha256: str = Field(
+        alias="clinicDocumentContextTraceSha256", pattern=r"^[0-9a-f]{64}$"
     )
 
 
@@ -175,6 +209,10 @@ class CanonicalReport(ContractModel):
     recommendations: Recommendations
     draft_response: DraftResponse = Field(alias="draftResponse")
     legal_basis: LegalBasis = Field(alias="legalBasis")
+    clinic_documents: ClinicDocumentBasis = Field(
+        default_factory=ClinicDocumentBasis,
+        alias="clinicDocuments",
+    )
     risk: RiskSummary | None = None
     analysis: AnalysisSnapshot | None = None
     fact_snapshot_sha256: str = Field(alias="factSnapshotSha256", pattern=r"^[0-9a-f]{64}$")
@@ -187,4 +225,6 @@ class CanonicalReport(ContractModel):
             raise ValueError("READY report requires risk and analysis snapshots")
         if not ready and (self.risk is not None or self.analysis is not None):
             raise ValueError("BLOCKED intake report cannot contain analysis snapshots")
+        if not ready and self.clinic_documents.status != "NOT_USED":
+            raise ValueError("BLOCKED intake report cannot expose clinic document analysis context")
         return self
