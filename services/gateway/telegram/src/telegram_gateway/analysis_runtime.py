@@ -99,6 +99,9 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
     recommendations_data = report_json.get("recommendations")
     legal_basis_data = report_json.get("legalBasis")
     draft_data = report_json.get("draftResponse")
+    clinic_documents_data = report_json.get("clinicDocuments")
+    if clinic_documents_data is None:
+        clinic_documents_data = {"status": "NOT_USED", "sources": []}
     if not isinstance(case_data, dict):
         raise ValueError("canonical analysis report has no case block")
     if not isinstance(risk_data, dict):
@@ -109,24 +112,33 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
         raise ValueError("canonical analysis report has no legal basis block")
     if not isinstance(draft_data, dict):
         raise ValueError("canonical analysis report has no draft block")
+    if not isinstance(clinic_documents_data, dict):
+        raise ValueError("canonical analysis report has invalid clinic document block")
 
     public_number = _bounded_text(case_data.get("publicNumber"), limit=64)
     risk_level = _bounded_text(risk_data.get("level"), limit=24)
     reason_codes = risk_data.get("reasonCodes")
     action_items = recommendations_data.get("items")
     sources = legal_basis_data.get("sources")
+    clinic_sources = clinic_documents_data.get("sources")
+    clinic_status = _bounded_text(clinic_documents_data.get("status"), limit=24)
     draft_status = _bounded_text(draft_data.get("status"), limit=32)
     draft_reason = _bounded_text(draft_data.get("reasonCode"), limit=80)
     draft_text = _bounded_text(draft_data.get("text"), limit=1_600)
+    draft_policy_version = _bounded_text(draft_data.get("policyVersion"), limit=80)
     if (
         public_number is None
         or risk_level is None
         or not isinstance(reason_codes, list)
         or not isinstance(action_items, list)
         or not isinstance(sources, list)
+        or not isinstance(clinic_sources, list)
+        or clinic_status is None
         or draft_status is None
     ):
         raise ValueError("canonical analysis report has invalid fields")
+    if clinic_status == "USED" and not clinic_sources:
+        raise ValueError("used clinic document context has no sources")
     if draft_status == "AVAILABLE" and draft_text is None:
         raise ValueError("available patient draft has no text")
 
@@ -161,6 +173,27 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
     if source_lines:
         lines.extend(["", "Правовая основа:", *source_lines])
 
+    clinic_lines: list[str] = []
+    if clinic_status == "USED":
+        for source in clinic_sources[:6]:
+            if not isinstance(source, dict):
+                continue
+            title = _bounded_text(source.get("documentTitle"), limit=160)
+            doc_type = _bounded_text(source.get("documentType"), limit=80)
+            path = _bounded_text(source.get("structuralPath"), limit=100)
+            version_no = source.get("versionNo")
+            if title and doc_type and path and isinstance(version_no, int):
+                clinic_lines.append(f"• {title}, v{version_no} · {doc_type} · {path}")
+    if clinic_lines:
+        lines.extend(
+            [
+                "",
+                "📄 Документы клиники (внутренний контекст):",
+                *clinic_lines,
+                "Не являются нормативной правовой основой.",
+            ]
+        )
+
     if draft_status == "AVAILABLE" and draft_text is not None:
         lines.extend(["", "💬 Черновик ответа пациенту:", draft_text])
         lines.append("⚠️ Перед отправкой текст должен проверить сотрудник клиники.")
@@ -168,6 +201,8 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
         lines.extend(["", f"Черновик пациенту: {draft_status}"])
         if draft_reason:
             lines.append(f"Причина: {draft_reason}")
+    if draft_policy_version:
+        lines.append(f"Draft policy: {draft_policy_version}")
     lines.append("Автоматическая отправка пациенту отключена.")
 
     rendered = "\n".join(lines)
