@@ -96,6 +96,14 @@ jobs:
       POSTGRES_APP_USER: dental_legal_app
       POSTGRES_APP_PASSWORD: integration-runtime-password-12345678901234567890
       POSTGRES_INTEGRATION: '1'
+      MINIO_HOST: 127.0.0.1
+      MINIO_PORT: '9000'
+      MINIO_ACCESS_KEY: clinic-storage-ci
+      MINIO_SECRET_KEY: integration-minio-password-12345678901234567890
+      MINIO_BUCKET: clinic-documents-ci
+      MINIO_SECURE: '0'
+      MINIO_REGION: us-east-1
+      MINIO_INTEGRATION: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -112,6 +120,23 @@ jobs:
           python -m pip install -r requirements.lock
           python -m pip install -e '.[dev]' --no-deps
 
+      - name: Start MinIO integration service
+        run: |
+          docker run -d --name minio-ci \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER="$MINIO_ACCESS_KEY" \
+            -e MINIO_ROOT_PASSWORD="$MINIO_SECRET_KEY" \
+            minio/minio:RELEASE.2025-04-22T22-12-26Z \
+            server /data
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs minio-ci
+          exit 1
+
       - name: Provision runtime database role
         run: python -m legal_core.runtime_db_role
 
@@ -121,5 +146,5 @@ jobs:
       - name: Refresh runtime database grants
         run: python -m legal_core.runtime_db_role
 
-      - name: PostgreSQL integration tests
+      - name: PostgreSQL and MinIO integration tests
         run: timeout 120s python -m pytest -vv services/legal_core/tests
