@@ -299,20 +299,20 @@ async def receive_quick_description(
         return
     try:
         result = extract_quick_intake(message.text)
-    except QuickIntakePrivacyError:
+    except QuickIntakePrivacyError as exc:
         await gateway_bot._reply(
             update,
             "⚠️ Похоже, в тексте есть ФИО. Удалите имена пациента/врача/представителя "
             "и отправьте описание ещё раз. Режим быстрого ввода остаётся включён.",
         )
-        raise ApplicationHandlerStop
-    except QuickIntakeError:
+        raise ApplicationHandlerStop from exc
+    except QuickIntakeError as exc:
         await gateway_bot._reply(
             update,
             "Описание должно содержать 10–1500 символов. Отправьте одно нейтральное "
             "обезличенное сообщение.",
         )
-        raise ApplicationHandlerStop
+        raise ApplicationHandlerStop from exc
 
     user_data.pop(_QUICK_PENDING_KEY, None)
     user_data[_QUICK_CANDIDATE_KEY] = _serialize_candidate(result)
