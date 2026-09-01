@@ -1,13 +1,16 @@
 from datetime import UTC, date, datetime
 from uuid import UUID
 
+from legal_core.clinic_document_retrieval import ApprovedClinicDocumentFragment
 from legal_core.contracts import CaseStatus, FactKey
 from legal_core.legal_retrieval import ApprovedLegalFragment
 from legal_core.reports import build_analysis_report, build_intake_report, render_report_pdf
 from legal_core.risk_engine import RiskAssessment, RiskLevel
+from legal_core.safe_patient_draft import SAFE_OPERATIONAL_DRAFT_VERSION
 
 
 FRAGMENT_ID = UUID("00000000-0000-0000-0000-000000000030")
+CLINIC_FRAGMENT_ID = UUID("00000000-0000-0000-0000-000000000040")
 
 
 def _evidence() -> ApprovedLegalFragment:
@@ -30,6 +33,25 @@ def _evidence() -> ApprovedLegalFragment:
         official_number="1",
         version_date=date(2026, 1, 1),
         publication_date=date(2026, 1, 1),
+    )
+
+
+def _clinic_context() -> ApprovedClinicDocumentFragment:
+    return ApprovedClinicDocumentFragment(
+        fragment_id=CLINIC_FRAGMENT_ID,
+        version_id=UUID("00000000-0000-0000-0000-000000000041"),
+        document_id=UUID("00000000-0000-0000-0000-000000000042"),
+        document_key="warranty-main",
+        document_type="WARRANTY_POLICY",
+        document_title="Синтетическое положение о гарантиях",
+        version_no=2,
+        valid_from=date(2026, 7, 1),
+        valid_to=None,
+        ordinal=1,
+        structural_path="section:3",
+        fragment_text="Синтетический внутренний контекст.",
+        text_sha256="f" * 64,
+        raw_sha256="0" * 64,
     )
 
 
@@ -56,8 +78,10 @@ def test_blocked_intake_report_has_one_canonical_safe_shape() -> None:
     }
     assert payload["recommendations"] == {"status": "NOT_AVAILABLE", "items": []}
     assert payload["draftResponse"]["text"] is None
+    assert payload["draftResponse"]["policyVersion"] is None
     assert payload["draftResponse"]["humanApprovalRequired"] is True
     assert payload["legalBasis"] == {"status": "NOT_AVAILABLE", "sources": []}
+    assert payload["clinicDocuments"] == {"status": "NOT_USED", "sources": []}
     assert payload["risk"] is None
     assert payload["analysis"] is None
 
@@ -86,6 +110,8 @@ def test_verified_low_risk_report_contains_safe_draft_actions_and_sources() -> N
         ),
         evidence_trace_sha256="d" * 64,
         evidence=[_evidence()],
+        clinic_document_context_trace_sha256="e" * 64,
+        clinic_document_context=[_clinic_context()],
         verified_action_items=["Зафиксировать обращение и предложить осмотр."],
     )
 
@@ -101,11 +127,21 @@ def test_verified_low_risk_report_contains_safe_draft_actions_and_sources() -> N
     }
     assert payload["draftResponse"]["status"] == "AVAILABLE"
     assert payload["draftResponse"]["reasonCode"] is None
+    assert payload["draftResponse"]["policyVersion"] == SAFE_OPERATIONAL_DRAFT_VERSION
     assert payload["draftResponse"]["humanApprovalRequired"] is True
     assert "не будем делать выводы о причинах" in payload["draftResponse"]["text"]
     assert "Пациент сообщил о сколе винира" not in payload["draftResponse"]["text"]
     assert payload["legalBasis"]["status"] == "AVAILABLE"
     assert payload["legalBasis"]["sources"][0]["fragmentId"] == str(FRAGMENT_ID)
+    assert payload["clinicDocuments"]["status"] == "USED"
+    clinic_source = payload["clinicDocuments"]["sources"][0]
+    assert clinic_source["fragmentId"] == str(CLINIC_FRAGMENT_ID)
+    assert clinic_source["documentKey"] == "warranty-main"
+    assert clinic_source["documentType"] == "WARRANTY_POLICY"
+    assert clinic_source["versionNo"] == 2
+    assert clinic_source["structuralPath"] == "section:3"
+    assert payload["analysis"]["evidenceTraceSha256"] == "d" * 64
+    assert payload["analysis"]["clinicDocumentContextTraceSha256"] == "e" * 64
 
 
 def test_high_risk_analysis_requires_escalation_and_human_review_for_draft() -> None:
@@ -129,6 +165,8 @@ def test_high_risk_analysis_requires_escalation_and_human_review_for_draft() -> 
         ),
         evidence_trace_sha256="d" * 64,
         evidence=[_evidence()],
+        clinic_document_context_trace_sha256="e" * 64,
+        clinic_document_context=[],
         verified_action_items=["Передать кейс ответственному юристу."],
     )
 
@@ -136,6 +174,8 @@ def test_high_risk_analysis_requires_escalation_and_human_review_for_draft() -> 
     assert report.risk.escalation_required is True
     assert report.draft_response.status == "BLOCKED"
     assert report.draft_response.reason_code == "HUMAN_LEGAL_REVIEW_REQUIRED"
+    assert report.draft_response.policy_version == SAFE_OPERATIONAL_DRAFT_VERSION
+    assert report.clinic_documents.status == "NOT_USED"
 
 
 def test_pdf_is_deterministic_and_uses_report_snapshot() -> None:
@@ -179,6 +219,8 @@ def test_verified_analysis_pdf_is_deterministic() -> None:
         ),
         evidence_trace_sha256="d" * 64,
         evidence=[_evidence()],
+        clinic_document_context_trace_sha256="e" * 64,
+        clinic_document_context=[_clinic_context()],
         verified_action_items=["Зафиксировать обращение."],
     )
 
