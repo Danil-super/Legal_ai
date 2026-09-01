@@ -19,6 +19,10 @@ from legal_core.analysis_contracts import (
     AnalysisSubmissionResponse,
     ClinicDocumentContextResponse,
 )
+from legal_core.analysis_freshness import (
+    AnalysisContextFingerprint,
+    analysis_context_is_stale,
+)
 from legal_core.api_contracts import LegalFragmentResponse, ReportResponse
 from legal_core.case_api import (
     ApiError,
@@ -164,6 +168,16 @@ async def _load_analysis_state(session: AsyncSession, actor: Any, case_id: UUID)
             as_of_date=as_of_date,
         ),
         risk_policy=policy,
+    )
+
+
+def _context_fingerprint(state: AnalysisState) -> AnalysisContextFingerprint:
+    return AnalysisContextFingerprint(
+        as_of_date=state.as_of_date,
+        fact_snapshot_sha256=state.fact_snapshot_sha256,
+        evidence_trace_sha256=state.evidence_trace_sha256,
+        clinic_document_context_trace_sha256=state.clinic_document_context_trace_sha256,
+        risk_policy_version=state.risk_policy.domain.version,
     )
 
 
@@ -320,15 +334,16 @@ def create_analysis_router(
             return AnalysisSubmissionResponse.model_validate(replay)
 
         state = await _load_analysis_state(session, actor, case_id)
-        stale = (
-            payload.as_of_date != state.as_of_date
-            or payload.expected_fact_snapshot_sha256 != state.fact_snapshot_sha256
-            or payload.expected_evidence_trace_sha256 != state.evidence_trace_sha256
-            or payload.expected_clinic_document_context_trace_sha256
-            != state.clinic_document_context_trace_sha256
-            or payload.expected_risk_policy_version != state.risk_policy.domain.version
+        expected_fingerprint = AnalysisContextFingerprint(
+            as_of_date=payload.as_of_date,
+            fact_snapshot_sha256=payload.expected_fact_snapshot_sha256,
+            evidence_trace_sha256=payload.expected_evidence_trace_sha256,
+            clinic_document_context_trace_sha256=(
+                payload.expected_clinic_document_context_trace_sha256
+            ),
+            risk_policy_version=payload.expected_risk_policy_version,
         )
-        if stale:
+        if analysis_context_is_stale(expected_fingerprint, _context_fingerprint(state)):
             raise ApiError(
                 status_code=status.HTTP_409_CONFLICT,
                 code="ANALYSIS_CONTEXT_STALE",
@@ -406,6 +421,10 @@ def create_analysis_router(
                 risk=outcome.risk,
                 evidence_trace_sha256=outcome.evidence_trace_sha256,
                 evidence=state.evidence,
+                clinic_document_context_trace_sha256=(
+                    state.clinic_document_context_trace_sha256
+                ),
+                clinic_document_context=state.clinic_document_context,
                 verified_action_items=_verified_action_items(claims, result_by_claim),
             )
         else:
@@ -467,6 +486,7 @@ def create_analysis_router(
                     "clinicDocumentContextTraceSha256": (
                         state.clinic_document_context_trace_sha256
                     ),
+                    "draftPolicyVersion": canonical.draft_response.policy_version,
                 },
             )
         )
