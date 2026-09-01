@@ -141,7 +141,11 @@ def _validate_docx_archive(archive: zipfile.ZipFile) -> None:
         total_uncompressed += info.file_size
         if total_uncompressed > MAX_DOCX_UNCOMPRESSED_BYTES:
             raise ValueError("DOCX archive expands beyond the supported size")
-        if info.compress_size > 0 and info.file_size / info.compress_size > MAX_DOCX_COMPRESSION_RATIO:
+        unsafe_ratio = (
+            info.compress_size > 0
+            and info.file_size / info.compress_size > MAX_DOCX_COMPRESSION_RATIO
+        )
+        if unsafe_ratio:
             raise ValueError("DOCX archive compression ratio is unsafe")
 
     if "[Content_Types].xml" not in names or "word/document.xml" not in names:
