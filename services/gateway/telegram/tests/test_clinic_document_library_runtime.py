@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 from uuid import UUID
 
 from telegram_gateway.clinic_document_library_runtime import render_library
