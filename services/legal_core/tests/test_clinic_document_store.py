@@ -88,7 +88,9 @@ def test_store_creates_bucket_once_and_signs_each_request() -> None:
         assert [request.method for request in requests] == ["HEAD", "PUT", "PUT", "PUT"]
         assert sum(request.url.path == "/clinic-documents" for request in requests) == 2
         object_requests = [
-            request for request in requests if request.url.path.startswith("/clinic-documents/clinic/")
+            request
+            for request in requests
+            if request.url.path.startswith("/clinic-documents/clinic/")
         ]
         assert len(object_requests) == 2
         for request in requests:
