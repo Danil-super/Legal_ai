@@ -44,6 +44,24 @@ class ClinicDocumentContextItem(StrictModel):
     )
 
 
+class ClinicDocumentReadinessItem(StrictModel):
+    """Non-blocking operational checklist; never a legal requirement or evidence."""
+
+    expectation_code: str = Field(alias="expectationCode", min_length=1, max_length=80)
+    importance: Literal["CORE", "SCENARIO", "SUPPORTING"]
+    accepted_document_types: list[str] = Field(
+        alias="acceptedDocumentTypes", min_length=1, max_length=10
+    )
+    reason_code: str = Field(alias="reasonCode", min_length=1, max_length=100)
+    status: Literal["RETRIEVED", "AVAILABLE_NOT_RETRIEVED", "NOT_AVAILABLE"]
+    matched_document_keys: list[str] = Field(
+        default_factory=list,
+        alias="matchedDocumentKeys",
+        max_length=20,
+    )
+    analysis_blocking: Literal[False] = Field(default=False, alias="analysisBlocking")
+
+
 class CaseProjection(StrictModel):
     """Minimal pseudonymous input that may be sent to a reasoning provider."""
 
@@ -53,6 +71,11 @@ class CaseProjection(StrictModel):
     evidence: list[EvidenceItem] = Field(min_length=1, max_length=30)
     clinic_document_context: list[ClinicDocumentContextItem] = Field(
         default_factory=list, alias="clinicDocumentContext", max_length=20
+    )
+    clinic_document_readiness: list[ClinicDocumentReadinessItem] = Field(
+        default_factory=list,
+        alias="clinicDocumentReadiness",
+        max_length=20,
     )
 
 
