@@ -1,0 +1,108 @@
+{
+  "schema_version": "synthetic-clinic-documents.v1",
+  "purpose": "DEVELOPMENT_AND_REGRESSION_ONLY",
+  "authority": "NOT_A_LEGAL_SOURCE",
+  "tenant_policy": "DO_NOT_USE_AS_REAL_CLINIC_POLICY",
+  "created_from": "PUBLIC_DOCUMENT_TAXONOMY_ONLY_NO_COPIED_TEXT",
+  "clinic": {
+    "clinic_key": "synthetic-dental-clinic",
+    "clinic_name": "Синтетическая стоматологическая клиника «Тест-Дент»"
+  },
+  "documents": [
+    {
+      "document_key": "contract-main",
+      "document_type": "CONTRACT",
+      "title": "Синтетический договор на платные стоматологические услуги",
+      "filename": "contract-main.txt",
+      "valid_from": "2026-01-01",
+      "expected_queries": ["договор", "возврат", "претенз"]
+    },
+    {
+      "document_key": "warranty-main",
+      "document_type": "WARRANTY_POLICY",
+      "title": "Синтетическое положение о гарантиях и сроках службы",
+      "filename": "warranty-main.txt",
+      "valid_from": "2026-01-01",
+      "expected_queries": ["гарант", "корон", "винир", "протез"]
+    },
+    {
+      "document_key": "consent-general",
+      "document_type": "INFORMED_CONSENT_GENERAL",
+      "title": "Синтетическое общее информированное добровольное согласие",
+      "filename": "consent-general.txt",
+      "valid_from": "2026-01-01",
+      "expected_queries": ["согласие", "лечение", "риск"]
+    },
+    {
+      "document_key": "consent-implant",
+      "document_type": "INFORMED_CONSENT_IMPLANT",
+      "title": "Синтетическое информированное согласие на имплантацию",
+      "filename": "consent-implant.txt",
+      "valid_from": "2026-01-01",
+      "expected_queries": ["имплант", "согласие", "осмотр"]
+    },
+    {
+      "document_key": "patient-rules",
+      "document_type": "PATIENT_RULES",
+      "title": "Синтетические правила для пациентов клиники",
+      "filename": "patient-rules.txt",
+      "valid_from": "2026-01-01",
+      "expected_queries": ["правила", "претенз", "осмотр"]
+    },
+    {
+      "document_key": "medical-record-access",
+      "document_type": "MEDICAL_RECORD_ACCESS_POLICY",
+      "title": "Синтетический порядок предоставления медицинских документов",
+      "filename": "medical-record-access.txt",
+      "valid_from": "2026-01-01",
+      "expected_queries": ["документ", "копи", "медицинск"]
+    },
+    {
+      "document_key": "memo-implant",
+      "document_type": "PATIENT_MEMO_POST_IMPLANT",
+      "title": "Синтетическая памятка после имплантации",
+      "filename": "memo-implant.txt",
+      "valid_from": "2026-01-01",
+      "expected_queries": ["после имплант", "имплант", "рекомендац"]
+    },
+    {
+      "document_key": "claims-policy",
+      "document_type": "CLAIM_POLICY",
+      "title": "Синтетический внутренний порядок работы с претензиями",
+      "filename": "claims-policy.txt",
+      "valid_from": "2026-01-01",
+      "expected_queries": ["претенз", "обращен", "ответ"]
+    }
+  ],
+  "regression_scenarios": [
+    {
+      "scenario_id": "clinic-docs-implant-001",
+      "service_type": "Имплантация зуба",
+      "incident_markers": ["IMPLANT_PROBLEM"],
+      "patient_demand": ["REMAKE"],
+      "expected_document_keys": ["consent-implant", "memo-implant", "warranty-main", "contract-main"]
+    },
+    {
+      "scenario_id": "clinic-docs-crown-001",
+      "service_type": "Установка коронки",
+      "incident_markers": ["CROWN_PROBLEM"],
+      "patient_demand": ["REFUND"],
+      "expected_document_keys": ["warranty-main", "contract-main"]
+    },
+    {
+      "scenario_id": "clinic-docs-records-001",
+      "service_type": "Терапевтическое лечение",
+      "incident_markers": ["RECORDS_REQUEST"],
+      "patient_demand": ["DOCUMENTS"],
+      "expected_document_keys": ["medical-record-access", "contract-main", "consent-general"]
+    },
+    {
+      "scenario_id": "clinic-docs-claim-001",
+      "service_type": "Ортопедическое лечение",
+      "incident_markers": ["FORMAL_CLAIM"],
+      "patient_demand": ["REFUND"],
+      "formal_claim": true,
+      "expected_document_keys": ["claims-policy", "contract-main", "warranty-main"]
+    }
+  ]
+}
