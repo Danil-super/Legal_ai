@@ -82,6 +82,68 @@ def test_verified_analysis_summary_uses_only_canonical_server_report_fields() ->
     assert "Автоматическая отправка пациенту отключена" in summary
 
 
+def test_available_safe_patient_draft_is_shown_but_never_auto_sent() -> None:
+    draft = (
+        "Здравствуйте. Мы получили и зарегистрировали ваше обращение. "
+        "До завершения проверки мы не будем делать выводы о причинах возникшей ситуации."
+    )
+    summary = telegram_analysis_summary(
+        {
+            "analysisAllowed": True,
+            "riskLevel": "LOW",
+            "escalationRequired": False,
+            "report": {
+                "reportJson": {
+                    "case": {"publicNumber": "DL-2026-000043"},
+                    "risk": {
+                        "level": "LOW",
+                        "reasonCodes": ["NO_ESCALATION_TRIGGER"],
+                        "escalationRequired": False,
+                    },
+                    "recommendations": {
+                        "status": "AVAILABLE",
+                        "items": ["Предложить контрольный осмотр."],
+                    },
+                    "legalBasis": {"status": "AVAILABLE", "sources": []},
+                    "draftResponse": {
+                        "status": "AVAILABLE",
+                        "text": draft,
+                        "reasonCode": None,
+                    },
+                }
+            },
+        }
+    )
+
+    assert "💬 Черновик ответа пациенту" in summary
+    assert draft in summary
+    assert "Перед отправкой текст должен проверить сотрудник клиники" in summary
+    assert "Автоматическая отправка пациенту отключена" in summary
+
+
+def test_available_draft_without_text_is_rejected() -> None:
+    with pytest.raises(ValueError, match="available patient draft has no text"):
+        telegram_analysis_summary(
+            {
+                "analysisAllowed": True,
+                "riskLevel": "LOW",
+                "report": {
+                    "reportJson": {
+                        "case": {"publicNumber": "DL-2026-000044"},
+                        "risk": {
+                            "level": "LOW",
+                            "reasonCodes": [],
+                            "escalationRequired": False,
+                        },
+                        "recommendations": {"items": []},
+                        "legalBasis": {"sources": []},
+                        "draftResponse": {"status": "AVAILABLE", "text": None},
+                    }
+                },
+            }
+        )
+
+
 def test_blocked_analysis_summary_refuses_to_invent_a_conclusion() -> None:
     summary = telegram_analysis_summary(
         {
