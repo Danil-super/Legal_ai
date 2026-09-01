@@ -145,11 +145,13 @@ def test_synthetic_loader_uses_public_api_and_is_replay_safe() -> None:
 
 
 def test_injected_client_cannot_bypass_target_guard() -> None:
-    with httpx.Client(base_url="http://legal-core:8000") as client:
-        with pytest.raises(SyntheticFixtureLoadError, match="does not match guarded target"):
-            load_synthetic_fixture_pack(
-                telegram_user_id=123,
-                base_url="http://localhost:8000",
-                client=client,
-                environment={"ALLOW_SYNTHETIC_CLINIC_FIXTURES": "1"},
-            )
+    with (
+        httpx.Client(base_url="http://legal-core:8000") as client,
+        pytest.raises(SyntheticFixtureLoadError, match="does not match guarded target"),
+    ):
+        load_synthetic_fixture_pack(
+            telegram_user_id=123,
+            base_url="http://localhost:8000",
+            client=client,
+            environment={"ALLOW_SYNTHETIC_CLINIC_FIXTURES": "1"},
+        )
