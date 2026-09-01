@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from legal_core.database import database_url, owner_database_url
 from legal_core.main import create_app
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 pytestmark = pytest.mark.skipif(
@@ -144,6 +145,42 @@ def test_library_returns_only_current_tenant_and_latest_review_state() -> None:
                     "text_sha": "c" * 64,
                 },
             )
+
+        with owner.connect() as connection:
+            events = connection.execute(
+                text(
+                    "SELECT decision, event_seq FROM clinic_document_approval_events "
+                    "WHERE clinic_id=:clinic_id AND version_id=:version_id "
+                    "ORDER BY event_seq"
+                ),
+                {"clinic_id": clinic_a, "version_id": version_a},
+            ).all()
+        assert [row[0] for row in events] == ["APPROVED", "BLOCKED"]
+        assert events[0][1] < events[1][1]
+
+        with owner.begin() as connection:
+            connection.execute(
+                text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
+                {"clinic_id": str(clinic_a)},
+            )
+            with pytest.raises(ProgrammingError):
+                with connection.begin_nested():
+                    connection.execute(
+                        text(
+                            "INSERT INTO clinic_document_approval_events "
+                            "(event_seq,clinic_id,version_id,actor_membership_id,decision,"
+                            "reason_code,expected_raw_sha256,expected_normalized_text_sha256) "
+                            "VALUES (999999,:clinic_id,:version_id,:membership_id,'APPROVED',"
+                            "'CLINIC_REVIEW_PASSED',:raw_sha,:text_sha)"
+                        ),
+                        {
+                            "clinic_id": clinic_a,
+                            "version_id": version_a,
+                            "membership_id": membership_a,
+                            "raw_sha": "a" * 64,
+                            "text_sha": "c" * 64,
+                        },
+                    )
     finally:
         owner.dispose()
 
