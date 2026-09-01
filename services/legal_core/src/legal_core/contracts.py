@@ -114,8 +114,6 @@ class DraftResponse(ContractModel):
         if self.status == "AVAILABLE":
             if not self.text or self.reason_code is not None:
                 raise ValueError("AVAILABLE draft requires text and no block reason")
-            if not self.policy_version:
-                raise ValueError("AVAILABLE draft requires a policy version")
         elif self.text is not None:
             raise ValueError("unavailable/blocked draft cannot contain text")
         if self.status == "BLOCKED" and not self.reason_code:
@@ -190,8 +188,10 @@ class AnalysisSnapshot(ContractModel):
     evidence_trace_sha256: str = Field(
         alias="evidenceTraceSha256", pattern=r"^[0-9a-f]{64}$"
     )
-    clinic_document_context_trace_sha256: str = Field(
-        alias="clinicDocumentContextTraceSha256", pattern=r"^[0-9a-f]{64}$"
+    clinic_document_context_trace_sha256: str | None = Field(
+        default=None,
+        alias="clinicDocumentContextTraceSha256",
+        pattern=r"^[0-9a-f]{64}$",
     )
 
 
