@@ -7,7 +7,7 @@ remain behind the existing ingestion/retrieval boundaries.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -58,10 +58,12 @@ def create_clinic_document_library_router(
         async with session_factory() as session:
             yield session
 
+    Session = Annotated[AsyncSession, Depends(get_session)]
+
     @router.get("", response_model=ClinicDocumentLibraryResponse)
     async def library(
         telegram_user_id: TelegramUserId,
-        session: AsyncSession = Depends(get_session),
+        session: Session,
     ) -> ClinicDocumentLibraryResponse:
         actor = await resolve_actor(session, telegram_user_id)
         rows = (
