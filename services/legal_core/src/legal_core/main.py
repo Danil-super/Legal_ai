@@ -18,6 +18,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 from legal_core import __version__
 from legal_core.analysis_api import create_analysis_router
 from legal_core.case_api import ApiError, create_case_router
+from legal_core.clinic_document_library import create_clinic_document_library_router
 from legal_core.clinic_document_store import RawClinicDocumentStore
 from legal_core.clinic_documents_api import create_clinic_documents_router
 from legal_core.database import create_engine, create_session_factory
@@ -85,7 +86,6 @@ async def _draft_purge_loop(session_factory: async_sessionmaker[AsyncSession]) -
         try:
             await purge_expired_intake_drafts(session_factory)
         except Exception:  # pragma: no cover - operator-visible process log is the recovery path.
-            # Retention must not make the Legal Core unavailable; the next interval retries it.
             logging.getLogger(__name__).exception("Telegram draft retention purge failed")
         await asyncio.sleep(DRAFT_PURGE_INTERVAL_SECONDS)
 
@@ -102,8 +102,6 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-        # FastAPI recommends lifespan for resource cleanup instead of deprecated events.
-        # Source: https://fastapi.tiangolo.com/advanced/events/#lifespan
         del application
         retention_task = (
             asyncio.create_task(_draft_purge_loop(sessions)) if enable_draft_retention else None
@@ -191,6 +189,7 @@ def create_app(
             raw_store=clinic_document_store,
         )
     )
+    app.include_router(create_clinic_document_library_router(sessions))
     app.include_router(create_analysis_router(sessions))
 
     return app
