@@ -1,0 +1,42 @@
+{
+  "schema_version": "dental-public-clinic-reference-verification.v1",
+  "verified_at": "2026-09-01",
+  "purpose": "DEVELOPMENT_REFERENCE_SOURCE_LIVENESS_ONLY",
+  "authority": "NOT_A_LEGAL_SOURCE",
+  "automatic_ingestion": false,
+  "notes": [
+    "Verification confirms only that a public source page exposes useful document metadata or examples.",
+    "It does not validate the legal correctness of a clinic document and does not approve it for production use.",
+    "Third-party raw files must not be mirrored into the repository without permission or a clear licence.",
+    "Tenant Clinic Documents must still come from the tenant clinic itself."
+  ],
+  "checked_sources": [
+    {"clinic_key":"klever","url":"https://dentklever.ru/documents/","status":"LIVE_VERIFIED","coverage":["CONTRACT","PERSONAL_DATA_CONSENT","INFORMED_CONSENT_GENERAL","INFORMED_CONSENT_ANESTHESIA","WARRANTY_POLICY"]},
+    {"clinic_key":"dentas","url":"https://dentas70.ru/klient/","status":"LIVE_VERIFIED","coverage":["CONTRACT","PAID_SERVICES_POLICY","WARRANTY_POLICY","INFORMED_CONSENT_THERAPY","INFORMED_CONSENT_SURGERY","INFORMED_CONSENT_PROSTHODONTICS","INFORMED_CONSENT_ORTHODONTICS","INFORMED_CONSENT_RADIOLOGY","INFORMED_CONSENT_ANESTHESIA"]},
+    {"clinic_key":"medline-dent","url":"https://dent.medline.pro/clinic/patcientu","status":"LIVE_VERIFIED","coverage":["CONTRACT","INFORMED_CONSENT_GENERAL","PERSONAL_DATA_CONSENT","PRIVACY_POLICY","MEDICAL_RECORD_ACCESS_POLICY"]},
+    {"clinic_key":"refformat","url":"https://refformat.ru/patient/docs/","status":"LIVE_VERIFIED","coverage":["INFORMED_CONSENT_GENERAL","INFORMED_CONSENT_ENDODONTICS","INFORMED_CONSENT_ORTHODONTICS","INFORMED_CONSENT_PROSTHODONTICS","INFORMED_CONSENT_PERIODONTICS","INFORMED_CONSENT_SEDATION"]},
+    {"clinic_key":"midental","url":"https://midental.ru/company/docs/","status":"LIVE_VERIFIED","coverage":["CONTRACT","CONTRACT_THREE_PARTY","CONTRACT_MINOR","WARRANTY_POLICY","PATIENT_MEMO"]},
+    {"clinic_key":"adamodental","url":"https://adamodental-msk.ru/dokumenty/","status":"LIVE_VERIFIED_SEARCH","coverage":["PATIENT_RULES","PAID_SERVICES_POLICY","PRIVACY_POLICY","CONTRACT","INFORMED_CONSENT_ANESTHESIA","INFORMED_CONSENT_IMPLANT","INFORMED_CONSENT_CARIES","INFORMED_CONSENT_EXTRACTION","INFORMED_CONSENT_GENERAL","WARRANTY_POLICY","PERSONAL_DATA_CONSENT"]},
+    {"clinic_key":"stomatologia24","url":"https://stomatologia24.ru/dokumenty/","status":"LIVE_VERIFIED","coverage":["CONTRACT","HEALTH_QUESTIONNAIRE","INFORMED_CONSENT_PROSTHODONTICS","INFORMED_CONSENT_PERIODONTICS","INFORMED_CONSENT_ANESTHESIA","INFORMED_CONSENT_THERAPY","INFORMED_CONSENT_SURGERY","INFORMED_CONSENT_ENDODONTICS"]},
+    {"clinic_key":"saint-dent","url":"https://saint-dent.ru/docs/","status":"LIVE_VERIFIED","coverage":["CONTRACT","HEALTH_QUESTIONNAIRE","INFORMED_CONSENT_GENERAL","INFORMED_CONSENT_ORTHODONTICS","INFORMED_CONSENT_SURGERY","INFORMED_CONSENT_ENDODONTICS","INFORMED_CONSENT_THERAPY","INFORMED_CONSENT_PROSTHODONTICS"]},
+    {"clinic_key":"agul","url":"https://www.agulstom.ru/dokumenty/","status":"LIVE_VERIFIED","coverage":["CONTRACT","INFORMED_CONSENT_GENERAL","PERSONAL_DATA_CONSENT"]},
+    {"clinic_key":"centerstom-el-dento","url":"https://centerstom.ru/yuridicheskaya-informatsiya/","status":"LIVE_VERIFIED","coverage":["PATIENT_RULES","PAID_SERVICES_POLICY","WARRANTY_POLICY","PRIVACY_POLICY","INFORMED_CONSENT_PROSTHODONTICS","INFORMED_CONSENT_THERAPY","INFORMED_CONSENT_SURGERY","INFORMED_CONSENT_ORTHODONTICS","INFORMED_CONSENT_IMPLANT","INFORMED_CONSENT_RADIOLOGY","INFORMED_CONSENT_SEDATION"]},
+    {"clinic_key":"doctorsmile","url":"https://doctorsmile.ru/clinic/dokumenty-dlya-patsientov/","status":"LIVE_VERIFIED","coverage":["CONTRACT","WARRANTY_POLICY","DENTAL_HISTORY","PAID_SERVICES_TERM_POLICY","PATIENT_RULES","INFORMED_CONSENT_GENERAL"]},
+    {"clinic_key":"vilmadent","url":"https://vilmadent.ru/about/dokumenty/","status":"LIVE_VERIFIED","coverage":["CONTRACT","WARRANTY_POLICY","SERVICE_WAITING_PERIOD_POLICY"]},
+    {"clinic_key":"sdent-clinic","url":"https://sdent-clinic.ru/documents/","status":"LIVE_VERIFIED","coverage":["CONTRACT","PAID_SERVICES_POLICY","PATIENT_RULES","WARRANTY_POLICY","PRIVACY_POLICY"]},
+    {"clinic_key":"central-stomatology-komi","url":"https://stomkomi.ru/patient","status":"LIVE_VERIFIED","coverage":["CONTRACT","WARRANTY_POLICY","INFORMED_CONSENT_SPECIALTY","PATIENT_MEMO","PERSONAL_DATA_CONSENT"]},
+    {"clinic_key":"praktik-dent","url":"https://praktikdent.spb.ru/dokumenty","status":"LIVE_VERIFIED","coverage":["WARRANTY_POLICY","CONTRACT_REFERENCE","SERVICE_TERM_INFORMATION"]},
+    {"clinic_key":"anle-dent","url":"https://anle-dent.ru/o_nas/polozhenie-o-garantiyah/","status":"LIVE_VERIFIED_SEARCH","coverage":["WARRANTY_POLICY"]},
+    {"clinic_key":"stomatology-group-garant","url":"https://moigarant.ru/legal-information/contract","status":"LIVE_VERIFIED","coverage":["CONTRACT","WARRANTY_POLICY"]},
+    {"clinic_key":"soliddent","url":"https://soliddent.ru/pravo","status":"LIVE_VERIFIED","coverage":["PAID_SERVICES_POLICY","PRIVACY_POLICY","LICENSE_INFORMATION"]},
+    {"clinic_key":"ssdent","url":"https://ssdent.ru/info","status":"LIVE_VERIFIED","coverage":["CONTRACT","CONTRACT_LEGAL_ENTITY","CONTRACT_THREE_PARTY","CONTRACT_MINOR","WARRANTY_POLICY","MEDICAL_RECORD_ACCESS_POLICY","MEDICAL_RECORD_REQUEST_TEMPLATE","PAID_SERVICES_POLICY","PRICE_LIST"]}
+  ],
+  "excluded_or_recheck": [
+    {"clinic_key":"beleira","url":"https://beleira.ru/dokumenty/","status":"RECHECK_REQUIRED","reason":"The dedicated documents page could not be independently retrieved during the 2026-09-01 verification pass; service pages remain public but are not a substitute for a document library."}
+  ],
+  "replacement_candidates": [
+    {"clinic_key":"klinika-estet","clinic_name":"Клиника Эстет","url":"https://klinika-estet.ru/legal/","status":"LIVE_VERIFIED","coverage":["CONTRACT","CONTRACT_EDITABLE_DOCX","WARRANTY_POLICY","SERVICE_TERM_POLICY","PATIENT_RULES"],"research_value":["current_2026_contract_form","docx_parser_fixture_design","warranty_and_patient_rules"]},
+    {"clinic_key":"ordento","clinic_name":"Ordento","url":"https://ordento.ru/","status":"LIVE_VERIFIED_SEARCH","coverage":["CONTRACT","CONTRACT_MINOR","INFORMED_CONSENT_GENERAL","INFORMED_CONSENT_GENERAL_MINOR","WARRANTY_POLICY"],"research_value":["adult_minor_contract_pair","adult_minor_consent_pair","warranty"]},
+    {"clinic_key":"nadezniy-doc","clinic_name":"Надёжный Доктор","url":"https://nadezniy-doc.ru/o-klinike/yuridicheskaya-informatsiya","status":"LIVE_VERIFIED","coverage":["CONTRACT","INFORMED_CONSENT_GENERAL","PERSONAL_DATA_CONSENT","WARRANTY_POLICY","PATIENT_RULES","PAID_SERVICES_POLICY"],"research_value":["compact_complete_pack","patient_rules","general_consent"]}
+  ]
+}
