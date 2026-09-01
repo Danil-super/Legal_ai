@@ -13,6 +13,7 @@ from agent_orchestrator.contracts import (
     EvidenceItem,
 )
 from legal_core.analysis_contracts import AnalysisContextResponse
+from legal_core.clinic_document_conflicts import detect_potential_clinic_document_conflicts
 from legal_core.clinic_document_retrieval import ApprovedClinicDocumentFragment
 from legal_core.contracts import FactKey
 from legal_core.legal_retrieval import ApprovedLegalFragment
@@ -52,11 +53,23 @@ def _redact_clinic_text(value: str, *, known_identifiers: dict[str, str]) -> str
     return redacted
 
 
+def _conflict_reason_codes(text: str) -> list[str]:
+    return [
+        hint.reason_code
+        for hint in detect_potential_clinic_document_conflicts(text)
+        if hint.review_required
+    ]
+
+
 def _clinic_context_item(
     fragment: ApprovedClinicDocumentFragment,
     *,
     known_identifiers: dict[str, str],
 ) -> ClinicDocumentContextItem:
+    redacted_text = _redact_clinic_text(
+        fragment.fragment_text,
+        known_identifiers=known_identifiers,
+    )
     return ClinicDocumentContextItem(
         documentType=fragment.document_type,
         documentTitle=_redact_clinic_text(
@@ -67,10 +80,8 @@ def _clinic_context_item(
         validFrom=fragment.valid_from,
         validTo=fragment.valid_to,
         structuralPath=fragment.structural_path,
-        text=_redact_clinic_text(
-            fragment.fragment_text,
-            known_identifiers=known_identifiers,
-        ),
+        text=redacted_text,
+        conflictHints=_conflict_reason_codes(redacted_text),
     )
 
 
@@ -141,24 +152,27 @@ def build_projection_from_context(
         )
         for fragment in context.evidence
     ]
-    projected_clinic_context = [
-        ClinicDocumentContextItem(
-            documentType=fragment.document_type,
-            documentTitle=_redact_clinic_text(
-                fragment.document_title,
-                known_identifiers=identifiers,
-            ),
-            versionNo=fragment.version_no,
-            validFrom=fragment.valid_from,
-            validTo=fragment.valid_to,
-            structuralPath=fragment.structural_path,
-            text=_redact_clinic_text(
-                fragment.text,
-                known_identifiers=identifiers,
-            ),
+    projected_clinic_context: list[ClinicDocumentContextItem] = []
+    for fragment in context.clinic_document_context:
+        redacted_text = _redact_clinic_text(
+            fragment.text,
+            known_identifiers=identifiers,
         )
-        for fragment in context.clinic_document_context
-    ]
+        projected_clinic_context.append(
+            ClinicDocumentContextItem(
+                documentType=fragment.document_type,
+                documentTitle=_redact_clinic_text(
+                    fragment.document_title,
+                    known_identifiers=identifiers,
+                ),
+                versionNo=fragment.version_no,
+                validFrom=fragment.valid_from,
+                validTo=fragment.valid_to,
+                structuralPath=fragment.structural_path,
+                text=redacted_text,
+                conflictHints=_conflict_reason_codes(redacted_text),
+            )
+        )
     return CaseProjection(
         caseId=context.case_id,
         asOfDate=context.as_of_date,
