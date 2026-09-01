@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from legal_core.clinic_documents import normalize_clinic_document_text
+
 _FIXTURE_ROOT = Path(__file__).parents[2] / "corpus" / "synthetic_clinic_documents"
 _MANIFEST = _FIXTURE_ROOT / "manifest.v1.json"
 
@@ -21,7 +23,8 @@ class SyntheticClinicDocumentVersion:
     filename: str
     valid_from: date | None
     valid_to: date | None
-    sha256: str
+    raw_sha256: str
+    normalized_text_sha256: str
     text: str
 
     def applies_on(self, as_of_date: date) -> bool:
@@ -50,6 +53,13 @@ def _safe_fixture_path(filename: object) -> Path:
     if candidate.parent != root:
         raise ValueError("synthetic fixture path escaped fixture root")
     return candidate
+
+
+def _hash_field(version: dict[object, object], key: str) -> str:
+    value = version.get(key)
+    if not isinstance(value, str) or len(value) != 64:
+        raise ValueError(f"synthetic fixture {key} must be a SHA-256 hex digest")
+    return value
 
 
 def load_synthetic_clinic_versions() -> tuple[SyntheticClinicDocumentVersion, ...]:
@@ -104,22 +114,29 @@ def load_synthetic_clinic_versions() -> tuple[SyntheticClinicDocumentVersion, ..
                 raise ValueError("synthetic fixture version_no must be unique per document")
             seen_version_numbers.add(version_no)
 
-            filename_value = version.get("file")
-            path = _safe_fixture_path(filename_value)
+            path = _safe_fixture_path(version.get("file"))
             filename = path.name
             if filename in seen_files:
                 raise ValueError("synthetic fixture files must be unique")
             seen_files.add(filename)
-            text = path.read_text(encoding="utf-8")
-            if not text.startswith("СИНТЕТИЧ"):
+            raw_text = path.read_text(encoding="utf-8")
+            if not raw_text.startswith("СИНТЕТИЧ"):
                 raise ValueError("synthetic fixture must carry an explicit synthetic marker")
-            if "http://" in text or "https://" in text:
+            if "http://" in raw_text or "https://" in raw_text:
                 raise ValueError("synthetic fixture text must not embed source URLs")
 
-            expected_sha = version.get("sha256")
-            actual_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
-            if not isinstance(expected_sha, str) or expected_sha != actual_sha:
-                raise ValueError("synthetic fixture SHA-256 mismatch")
+            raw_sha256 = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+            expected_raw_sha256 = _hash_field(version, "raw_sha256")
+            if raw_sha256 != expected_raw_sha256:
+                raise ValueError("synthetic fixture raw SHA-256 mismatch")
+
+            normalized_text = normalize_clinic_document_text(raw_text)
+            normalized_text_sha256 = hashlib.sha256(
+                normalized_text.encode("utf-8")
+            ).hexdigest()
+            expected_normalized_sha256 = _hash_field(version, "normalized_text_sha256")
+            if normalized_text_sha256 != expected_normalized_sha256:
+                raise ValueError("synthetic fixture normalized SHA-256 mismatch")
 
             valid_from = _optional_date(version.get("valid_from"))
             valid_to = _optional_date(version.get("valid_to"))
@@ -135,8 +152,9 @@ def load_synthetic_clinic_versions() -> tuple[SyntheticClinicDocumentVersion, ..
                     filename=filename,
                     valid_from=valid_from,
                     valid_to=valid_to,
-                    sha256=actual_sha,
-                    text=text,
+                    raw_sha256=raw_sha256,
+                    normalized_text_sha256=normalized_text_sha256,
+                    text=raw_text,
                 )
             )
 
