@@ -12,7 +12,8 @@ def test_synthetic_clinic_fixture_pack_is_complete_and_hash_locked() -> None:
 
     assert len(versions) == 9
     assert len({item.filename for item in versions}) == 9
-    assert len({item.sha256 for item in versions}) == 9
+    assert len({item.raw_sha256 for item in versions}) == 9
+    assert len({item.normalized_text_sha256 for item in versions}) == 9
     assert {
         "CONTRACT",
         "WARRANTY_POLICY",
@@ -29,7 +30,7 @@ def test_synthetic_clinic_fixture_pack_is_complete_and_hash_locked() -> None:
         assert "https://" not in item.text
         assert "http://" not in item.text
         prepared = prepare_clinic_document_text(item.text)
-        assert prepared.content_sha256 == item.sha256
+        assert prepared.content_sha256 == item.normalized_text_sha256
         assert prepared.fragments
 
 
