@@ -11,6 +11,15 @@ The machine-readable registry is:
 
 `services/legal_core/corpus/public_clinic_reference_sources.v1.json`
 
+A separate liveness/coverage verification snapshot checked on **2026-09-01** is stored in:
+
+`services/legal_core/corpus/public_clinic_reference_verification.v1.json`
+
+The verification snapshot does not approve the legal correctness of third-party documents. It only
+records whether a public source page could be independently observed and what document categories
+were visible during the verification pass. Sources marked `RECHECK_REQUIRED` must not be selected
+for new development fixtures until they are independently verified again.
+
 ## Hard boundaries
 
 - Do not mirror or republish third-party clinic documents into this repository without explicit
@@ -22,6 +31,8 @@ The machine-readable registry is:
   onboarding UX design.
 - Production Clinic Documents must come from the tenant clinic itself under the onboarding/data
   agreement for that clinic.
+- Liveness verification is not legal review and must never be interpreted as `APPROVED` tenant
+  content.
 
 ## Selected public sources
 
@@ -33,7 +44,7 @@ The machine-readable registry is:
 | 4 | Refformat | https://refformat.ru/patient/docs/ | Specialty consent library including endodontics, orthodontics, prosthodontics, sedation |
 | 5 | Мидентал | https://midental.ru/company/docs/ | Contract variants, warranty and post-treatment memos |
 | 6 | Адамодентал | https://adamodental-msk.ru/dokumenty/ | Contract, warranty, patient rules, implant/extraction/anaesthesia consents |
-| 7 | Бел Эйра | https://beleira.ru/dokumenty/ | Contract, IDS, warranty, patient behaviour and service-result rules |
+| 7 | Бел Эйра | https://beleira.ru/dokumenty/ | Historical registry entry; dedicated documents page is `RECHECK_REQUIRED` as of 2026-09-01 |
 | 8 | СТОМАТОЛОГИЯ24 | https://stomatologia24.ru/dokumenty/ | Large specialty consent set and patient questionnaire |
 | 9 | Saint-Dent | https://saint-dent.ru/docs/ | General and specialty consents plus questionnaire |
 | 10 | Агул | https://www.agulstom.ru/dokumenty/ | Minimal intake pack: contract, IDS and personal-data consent |
@@ -47,6 +58,20 @@ The machine-readable registry is:
 | 18 | Стоматологическая группа ГАРАНТ | https://moigarant.ru/legal-information/contract | Contract/warranty relationship and detailed guarantee clauses |
 | 19 | SolidDent | https://soliddent.ru/pravo | Paid-service rules, privacy and legal-information structure |
 | 20 | SSDent | https://ssdent.ru/info | Medical-record access/request templates and multiple contract variants |
+
+## Verified replacement candidates
+
+The liveness pass found several stronger current examples that can replace weak or unavailable
+entries when building development fixtures:
+
+- **Клиника Эстет** — `https://klinika-estet.ru/legal/`: current 2026 contract forms, editable DOCX,
+  warranty policy, service-term policy and patient rules.
+- **Ordento** — `https://ordento.ru/`: adult/minor contracts, adult/minor general informed consent
+  forms and warranty policy.
+- **Надёжный Доктор** — `https://nadezniy-doc.ru/o-klinike/yuridicheskaya-informatsiya`: compact
+  public pack with contract, general IDS, personal-data consent, warranty and patient rules.
+
+These remain development references only and are not automatically mirrored or indexed.
 
 ## Coverage represented by the set
 
@@ -78,3 +103,7 @@ Build a separate `clinic-documents` tenant module with:
 8. conflict detection where a clinic document appears inconsistent with mandatory law;
 9. source cards containing clinic document name, version and clause path;
 10. no cross-tenant retrieval.
+
+The tenant module now exists in `main`; the next development use of this public registry is to design
+**synthetic** fixtures and onboarding examples from the observed document taxonomy. Third-party
+clinic text must not be copied wholesale into those fixtures.
