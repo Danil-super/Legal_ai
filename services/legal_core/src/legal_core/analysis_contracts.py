@@ -31,6 +31,22 @@ class ClinicDocumentContextResponse(ContractModel):
     raw_sha256: str = Field(alias="rawSha256", pattern=r"^[0-9a-f]{64}$")
 
 
+class ClinicDocumentReadinessResponse(ContractModel):
+    expectation_code: str = Field(alias="expectationCode", min_length=1, max_length=80)
+    importance: Literal["CORE", "SCENARIO", "SUPPORTING"]
+    accepted_document_types: list[str] = Field(
+        alias="acceptedDocumentTypes", min_length=1, max_length=10
+    )
+    reason_code: str = Field(alias="reasonCode", min_length=1, max_length=100)
+    status: Literal["RETRIEVED", "AVAILABLE_NOT_RETRIEVED", "NOT_AVAILABLE"]
+    matched_document_keys: list[str] = Field(
+        default_factory=list,
+        alias="matchedDocumentKeys",
+        max_length=20,
+    )
+    analysis_blocking: Literal[False] = Field(default=False, alias="analysisBlocking")
+
+
 class AnalysisContextResponse(ContractModel):
     case_id: UUID = Field(alias="caseId")
     as_of_date: date = Field(alias="asOfDate")
@@ -47,6 +63,11 @@ class AnalysisContextResponse(ContractModel):
     )
     clinic_document_context: list[ClinicDocumentContextResponse] = Field(
         default_factory=list, alias="clinicDocumentContext", max_length=20
+    )
+    clinic_document_readiness: list[ClinicDocumentReadinessResponse] = Field(
+        default_factory=list,
+        alias="clinicDocumentReadiness",
+        max_length=20,
     )
     risk_policy_version: str = Field(alias="riskPolicyVersion", min_length=1, max_length=80)
     high_demand_threshold_kopecks: int = Field(
@@ -137,4 +158,9 @@ class AnalysisSubmissionResponse(ContractModel):
         alias="riskLevel"
     )
     escalation_required: bool = Field(alias="escalationRequired")
+    clinic_document_readiness: list[ClinicDocumentReadinessResponse] = Field(
+        default_factory=list,
+        alias="clinicDocumentReadiness",
+        max_length=20,
+    )
     report: ReportResponse
