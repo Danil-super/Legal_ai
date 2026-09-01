@@ -4,7 +4,11 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
-from agent_orchestrator.contracts import CaseProjection, EvidenceItem
+from agent_orchestrator.contracts import (
+    CaseProjection,
+    ClinicDocumentContextItem,
+    EvidenceItem,
+)
 from agent_orchestrator.hermes_client import HermesProtocolError
 from agent_orchestrator.reasoning import LegalReasoningOrchestrator
 from legal_core.verifier import SemanticVerdict
@@ -12,6 +16,7 @@ from legal_core.verifier import SemanticVerdict
 
 FRAGMENT_ID = UUID("00000000-0000-0000-0000-000000000001")
 OTHER_FRAGMENT_ID = UUID("00000000-0000-0000-0000-000000000099")
+CLINIC_FRAGMENT_ID = UUID("00000000-0000-0000-0000-000000000777")
 CASE_ID = UUID("00000000-0000-0000-0000-000000000010")
 
 
@@ -30,11 +35,13 @@ class FakeHermes:
         )
         self.response = response
         self.calls = 0
+        self.users: list[str] = []
 
     async def complete_json(self, *, system: str, user: str) -> dict[str, object]:
         assert system
         assert user
         self.calls += 1
+        self.users.append(user)
         return self.response
 
 
@@ -55,6 +62,25 @@ def _projection(*, summary: str = "Пациент сообщил о сколе �
                 sourceUrl="https://publication.pravo.gov.ru/synthetic",
             )
         ],
+    )
+
+
+def _projection_with_clinic_context() -> CaseProjection:
+    projection = _projection()
+    return projection.model_copy(
+        update={
+            "clinic_document_context": [
+                ClinicDocumentContextItem(
+                    documentType="WARRANTY_POLICY",
+                    documentTitle="Синтетическое положение о гарантиях",
+                    versionNo=2,
+                    validFrom=date(2026, 7, 1),
+                    validTo=None,
+                    structuralPath="section:3",
+                    text="При сколе конструкции администратор организует осмотр.",
+                )
+            ]
+        }
     )
 
 
@@ -180,5 +206,44 @@ def test_reviewer_cannot_reference_a_fragment_outside_the_claim() -> None:
             await orchestrator.reason(_projection())
         assert researcher.calls == 1
         assert reviewer.calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_clinic_document_context_is_visible_to_researcher_but_hidden_from_reviewer() -> None:
+    async def scenario() -> None:
+        researcher = FakeHermes(name="researcher", response=_claim_response())
+        reviewer = FakeHermes(name="reviewer", response=_review_response())
+        orchestrator = LegalReasoningOrchestrator(  # type: ignore[arg-type]
+            researcher=researcher,
+            reviewer=reviewer,
+        )
+
+        await orchestrator.reason(_projection_with_clinic_context())
+
+        assert "Синтетическое положение о гарантиях" in researcher.users[0]
+        assert "При сколе конструкции" in researcher.users[0]
+        assert "Синтетическое положение о гарантиях" not in reviewer.users[0]
+        assert "При сколе конструкции" not in reviewer.users[0]
+
+    asyncio.run(scenario())
+
+
+def test_researcher_cannot_promote_a_clinic_document_id_to_legal_evidence() -> None:
+    async def scenario() -> None:
+        researcher = FakeHermes(
+            name="researcher",
+            response=_claim_response(CLINIC_FRAGMENT_ID),
+        )
+        reviewer = FakeHermes(name="reviewer", response=_review_response())
+        orchestrator = LegalReasoningOrchestrator(  # type: ignore[arg-type]
+            researcher=researcher,
+            reviewer=reviewer,
+        )
+
+        with pytest.raises(HermesProtocolError, match="outside approved legal evidence"):
+            await orchestrator.reason(_projection_with_clinic_context())
+        assert researcher.calls == 1
+        assert reviewer.calls == 0
 
     asyncio.run(scenario())
