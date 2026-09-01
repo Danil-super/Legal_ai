@@ -52,7 +52,6 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "services/gateway/telegram/src/telegram_gateway/ui.py" = ["RUF001"]
-"services/gateway/telegram/src/telegram_gateway/quick_intake.py" = ["RUF005"]
 "services/gateway/telegram/tests/test_analysis_runtime.py" = ["I001"]
 "services/legal_core/src/legal_core/reports.py" = ["RUF001"]
 "services/legal_core/src/legal_core/pseudonymization.py" = ["RUF001", "I001"]
