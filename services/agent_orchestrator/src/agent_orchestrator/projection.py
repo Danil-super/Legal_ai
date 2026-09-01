@@ -10,6 +10,7 @@ from uuid import UUID
 from agent_orchestrator.contracts import (
     CaseProjection,
     ClinicDocumentContextItem,
+    ClinicDocumentReadinessItem,
     EvidenceItem,
 )
 from legal_core.analysis_contracts import AnalysisContextResponse
@@ -173,10 +174,23 @@ def build_projection_from_context(
                 conflictHints=_conflict_reason_codes(redacted_text),
             )
         )
+    readiness = [
+        ClinicDocumentReadinessItem(
+            expectationCode=item.expectation_code,
+            importance=item.importance,
+            acceptedDocumentTypes=list(item.accepted_document_types),
+            reasonCode=item.reason_code,
+            status=item.status,
+            matchedDocumentKeys=list(item.matched_document_keys),
+            analysisBlocking=False,
+        )
+        for item in context.clinic_document_readiness
+    ]
     return CaseProjection(
         caseId=context.case_id,
         asOfDate=context.as_of_date,
         facts=projected_facts,
         evidence=projected_evidence,
         clinicDocumentContext=projected_clinic_context,
+        clinicDocumentReadiness=readiness,
     )
