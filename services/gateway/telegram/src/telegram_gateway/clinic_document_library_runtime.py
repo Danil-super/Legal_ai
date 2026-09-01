@@ -180,10 +180,10 @@ async def show_clinic_documents(
     except LegalCoreApiError as exc:
         logger.warning("clinic document library failed: %s", exc.code)
         if exc.status_code == 403:
-            message = "Доступ администратора не активирован."
+            error_message = "Доступ администратора не активирован."
         else:
-            message = "Не удалось получить библиотеку документов клиники."
-        await gateway_bot._reply(update, f"⚠️ {message}")
+            error_message = "Не удалось получить библиотеку документов клиники."
+        await gateway_bot._reply(update, f"⚠️ {error_message}")
         return
     except ValueError:
         await gateway_bot._reply(update, "⚠️ Ответ библиотеки документов некорректен.")
@@ -191,10 +191,10 @@ async def show_clinic_documents(
     finally:
         await client.aclose()
 
-    message = update.effective_message
-    if message is None:
+    telegram_message = update.effective_message
+    if telegram_message is None:
         return
-    await message.reply_text(text, reply_markup=keyboard)
+    await telegram_message.reply_text(text, reply_markup=keyboard)
 
 
 def build_application_with_clinic_document_library(token: str) -> gateway_bot.TelegramApplication:
