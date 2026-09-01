@@ -40,6 +40,12 @@ clinicDocumentContext — это одобренные клиникой дого�
 internalRecommendations и patientDraft. Нельзя обосновывать ими LEGAL/ACTION claims и нельзя
 пытаться использовать идентификаторы из clinicDocumentContext как evidenceFragmentIds.
 
+clinicDocumentReadiness — это НЕ перечень юридически обязательных документов и НЕ evidence. Это
+неблокирующий внутренний checklist для разбора кейса. NOT_AVAILABLE означает только, что Legal Core
+не видит подходящий одобренный документ клиники на дату кейса. AVAILABLE_NOT_RETRIEVED означает,
+что документ есть в tenant-базе, но его текст не вошёл в текущий bounded context: не придумывай его
+содержание. В internalRecommendations можно предложить сотруднику проверить/добавить такой документ.
+
 Если у элемента clinicDocumentContext есть conflictHints, это НЕ вывод о незаконности документа.
 Это deterministic warning, что абсолютную внутреннюю формулировку нельзя применять без сверки с
 обязательным правом. Не повторяй такую формулировку пациенту как установленное правило; отдай
