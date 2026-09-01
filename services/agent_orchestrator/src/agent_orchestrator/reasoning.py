@@ -40,6 +40,11 @@ clinicDocumentContext — это одобренные клиникой дого�
 internalRecommendations и patientDraft. Нельзя обосновывать ими LEGAL/ACTION claims и нельзя
 пытаться использовать идентификаторы из clinicDocumentContext как evidenceFragmentIds.
 
+Если у элемента clinicDocumentContext есть conflictHints, это НЕ вывод о незаконности документа.
+Это deterministic warning, что абсолютную внутреннюю формулировку нельзя применять без сверки с
+обязательным правом. Не повторяй такую формулировку пациенту как установленное правило; отдай
+предпочтение evidence и предложи внутреннюю проверку документа клиники.
+
 Верни ТОЛЬКО JSON-объект следующей формы:
 {
   "claims": [
