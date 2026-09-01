@@ -12,11 +12,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CommandHandler, ContextTypes
 
 from telegram_gateway import bot as gateway_bot
-from telegram_gateway.clinic_document_runtime import (
-    build_application_with_clinic_documents,
-    review_keyboard,
-)
 from telegram_gateway.case_wizard import LegalCoreApiError
+from telegram_gateway.clinic_document_runtime import build_application_with_clinic_documents
 
 logger = logging.getLogger(__name__)
 _MAX_DOCUMENTS = 20
@@ -74,7 +71,11 @@ class ClinicDocumentLibraryClient:
                 raw_code = payload["error"].get("code")
                 if isinstance(raw_code, str) and raw_code:
                     code = raw_code
-            raise LegalCoreApiError(response.status_code, code, "Legal Core rejected library request")
+            raise LegalCoreApiError(
+                response.status_code,
+                code,
+                "Legal Core rejected library request",
+            )
         if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
             raise LegalCoreApiError(
                 502,
@@ -134,9 +135,7 @@ def render_library(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMarkup |
         state = str(latest.get("reviewState") or "PENDING")
         version_no = latest.get("versionNo")
         filename = str(latest.get("sourceFilename") or "—")[:120]
-        lines.append(
-            f"  {_state_icon(state)} v{version_no} · {state} · {filename}"
-        )
+        lines.append(f"  {_state_icon(state)} v{version_no} · {state} · {filename}")
         lines.append(f"  SHA: {_short_sha(latest.get('rawSha256'))}")
         lines.append("")
         try:
