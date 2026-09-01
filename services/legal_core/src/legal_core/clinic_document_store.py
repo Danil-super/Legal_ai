@@ -65,7 +65,7 @@ class MinioSettings:
         return f"{self.host}:{self.port}"
 
     @classmethod
-    def from_environment(cls) -> "MinioSettings":
+    def from_environment(cls) -> MinioSettings:
         access_key = os.getenv("MINIO_ACCESS_KEY", "").strip()
         secret_key = os.getenv("MINIO_SECRET_KEY", "")
         if not access_key or not secret_key:
@@ -252,9 +252,7 @@ class MinioRawClinicDocumentStore:
             raw_sha256=raw_sha256,
         )
         await self._ensure_bucket()
-        canonical_uri = (
-            self._bucket_uri() + "/" + quote(object_key, safe="/-_.~")
-        )
+        canonical_uri = self._bucket_uri() + "/" + quote(object_key, safe="/-_.~")
         response = await self._request(
             "PUT",
             canonical_uri,
