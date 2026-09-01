@@ -167,6 +167,10 @@ def load_synthetic_fixture_pack(
     target = _validate_target(base_url)
     documents = _load_documents()
     headers = {"X-Telegram-User-Id": str(telegram_user_id)}
+    if client is not None:
+        injected_target = str(client.base_url).rstrip("/")
+        if _validate_target(injected_target) != target:
+            raise SyntheticFixtureLoadError("injected HTTP client does not match guarded target")
     owns_client = client is None
     http = client or httpx.Client(
         base_url=target,
