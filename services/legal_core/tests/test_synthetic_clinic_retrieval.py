@@ -1,8 +1,14 @@
+import asyncio
 import os
+from datetime import date
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from legal_core.clinic_document_retrieval import (
+    ApprovedClinicDocumentContextRepository,
+    clinic_document_context_trace_sha256,
+)
 from legal_core.database import database_url, owner_database_url
 from legal_core.main import create_app
 from legal_core.synthetic_clinic_fixtures import load_synthetic_clinic_versions
@@ -67,8 +73,12 @@ def _headers(telegram_user_id: int) -> dict[str, str]:
     return {"X-Telegram-User-Id": str(telegram_user_id)}
 
 
-def _install_fixture_pack(api: TestClient, telegram_user_id: int) -> None:
+def _install_fixture_pack(
+    api: TestClient,
+    telegram_user_id: int,
+) -> dict[tuple[str, int], str]:
     document_ids: dict[str, str] = {}
+    version_ids: dict[tuple[str, int], str] = {}
     for fixture in load_synthetic_clinic_versions():
         document_id = document_ids.get(fixture.document_key)
         if document_id is None:
@@ -101,6 +111,7 @@ def _install_fixture_pack(api: TestClient, telegram_user_id: int) -> None:
         assert version.json()["rawSha256"] == fixture.normalized_text_sha256
         assert version.json()["normalizedTextSha256"] == fixture.normalized_text_sha256
         assert version.json()["versionNo"] == fixture.version_no
+        version_ids[(fixture.document_key, fixture.version_no)] = version.json()["id"]
 
         approved = api.post(
             f"/v1/clinic-documents/versions/{version.json()['id']}/approval-events",
@@ -111,6 +122,7 @@ def _install_fixture_pack(api: TestClient, telegram_user_id: int) -> None:
             },
         )
         assert approved.status_code == 201
+    return version_ids
 
 
 def _search(
@@ -128,14 +140,48 @@ def _search(
     return response.json()["items"]
 
 
+async def _clinic_trace(
+    clinic_id: UUID,
+    *,
+    query: str,
+    as_of_date: date,
+) -> tuple[str, tuple[UUID, ...]]:
+    engine = create_async_engine(database_url())
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as session, session.begin():
+            await session.execute(
+                text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
+                {"clinic_id": str(clinic_id)},
+            )
+            repository = ApprovedClinicDocumentContextRepository(
+                session,
+                clinic_id=clinic_id,
+            )
+            fragments = await repository.search(
+                query,
+                as_of_date=as_of_date,
+                limit=20,
+            )
+            return (
+                clinic_document_context_trace_sha256(
+                    fragments,
+                    as_of_date=as_of_date,
+                ),
+                tuple(fragment.version_id for fragment in fragments),
+            )
+    finally:
+        await engine.dispose()
+
+
 def test_synthetic_fixture_pack_supports_time_travel_and_tenant_retrieval() -> None:
     admin_a = 9_300_000_001 + uuid4().int % 100_000_000
     admin_b = 9_400_000_001 + uuid4().int % 100_000_000
-    _seed_admin(admin_a)
+    clinic_a = _seed_admin(admin_a)
     _seed_admin(admin_b)
 
     with _client() as api:
-        _install_fixture_pack(api, admin_a)
+        version_ids = _install_fixture_pack(api, admin_a)
 
         june_contracts = _search(api, admin_a, "договор", "2026-06-30")
         july_contracts = _search(api, admin_a, "договор", "2026-07-01")
@@ -163,3 +209,33 @@ def test_synthetic_fixture_pack_supports_time_travel_and_tenant_retrieval() -> N
 
         cross_tenant = _search(api, admin_b, "договор", "2026-09-01")
         assert cross_tenant == []
+
+        warranty_version_id = UUID(version_ids[("warranty-main", 1)])
+        trace_before, versions_before = asyncio.run(
+            _clinic_trace(
+                clinic_a,
+                query="гарант",
+                as_of_date=date(2026, 9, 1),
+            )
+        )
+        assert warranty_version_id in versions_before
+
+        blocked = api.post(
+            f"/v1/clinic-documents/versions/{warranty_version_id}/approval-events",
+            headers=_headers(admin_a),
+            json={
+                "decision": "BLOCKED",
+                "reasonCode": "SYNTHETIC_FIXTURE_REVOKED",
+            },
+        )
+        assert blocked.status_code == 201
+
+        trace_after, versions_after = asyncio.run(
+            _clinic_trace(
+                clinic_a,
+                query="гарант",
+                as_of_date=date(2026, 9, 1),
+            )
+        )
+        assert trace_after != trace_before
+        assert warranty_version_id not in versions_after
