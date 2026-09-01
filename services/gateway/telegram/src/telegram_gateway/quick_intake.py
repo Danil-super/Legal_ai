@@ -23,17 +23,22 @@ _LABELED_NAME: Final = re.compile(
     rf"представител(?:ь|я|ю|ем))\s*[:—-]?\s+{_NAME_WORD}\s+{_NAME_WORD}",
     re.IGNORECASE,
 )
-_FULL_NAME: Final = re.compile(rf"(?<![А-ЯЁа-яё]){_NAME_WORD}\s+{_NAME_WORD}\s+{_NAME_WORD}(?![А-ЯЁа-яё])")
+_FULL_NAME: Final = re.compile(
+    rf"(?<![А-ЯЁа-яё]){_NAME_WORD}\s+{_NAME_WORD}\s+{_NAME_WORD}(?![А-ЯЁа-яё])"
+)
 _INITIALS_NAME: Final = re.compile(
-    rf"(?:{_NAME_WORD}\s+[А-ЯЁ]\.[А-ЯЁ]\. |[А-ЯЁ]\.[А-ЯЁ]\.\s+{_NAME_WORD})".replace(
-        "\. ", "\."
-    )
+    rf"(?:{_NAME_WORD}\s+[А-ЯЁ]\.[А-ЯЁ]\.|[А-ЯЁ]\.[А-ЯЁ]\.\s+{_NAME_WORD})"
 )
 _DATE: Final = re.compile(r"(?<!\d)(\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})(?!\d)")
-_MONEY: Final = re.compile(
-    r"(?<!\d)(\d{1,3}(?:[\s\u00a0]\d{3})+|\d+(?:[.,]\d{1,2})?)\s*"
-    r"(тыс(?:яч[аи]?)?\.?|млн\.?|миллион(?:а|ов)?)?\s*"
-    r"(?:₽|руб(?:л(?:ей|я|ь)?)?\.?)?",
+_NUMBER = r"(\d{1,3}(?:[\s\u00a0]\d{3})+|\d+(?:[.,]\d{1,2})?)"
+_MULTIPLIER = r"(тыс(?:яч[аи]?)?\.?|млн\.?|миллион(?:а|ов)?)"
+_CURRENCY = r"(?:₽|руб(?:л(?:ей|я|ь)?)?\.?)"
+_MONEY_WITH_MULTIPLIER: Final = re.compile(
+    rf"(?<!\d){_NUMBER}\s*{_MULTIPLIER}(?:\s*{_CURRENCY})?",
+    re.IGNORECASE,
+)
+_MONEY_WITH_CURRENCY: Final = re.compile(
+    rf"(?<!\d){_NUMBER}\s*{_CURRENCY}",
     re.IGNORECASE,
 )
 
@@ -92,7 +97,8 @@ class QuickIntakeResult:
 def contains_probable_person_name(text: str) -> bool:
     """Conservatively reject likely Russian FIO before persistent quick-intake storage."""
 
-    return any(pattern.search(text) is not None for pattern in (_LABELED_NAME, _FULL_NAME, _INITIALS_NAME))
+    patterns = (_LABELED_NAME, _FULL_NAME, _INITIALS_NAME)
+    return any(pattern.search(text) is not None for pattern in patterns)
 
 
 def _normalize_date(raw: str, *, today: date) -> str | None:
@@ -112,6 +118,19 @@ def _normalize_date(raw: str, *, today: date) -> str | None:
 def _date_context_score(context: str, keywords: tuple[str, ...]) -> int:
     folded = context.casefold()
     return sum(1 for keyword in keywords if keyword in folded)
+
+
+def _sentence_context(text: str, *, start: int, end: int) -> str:
+    """Return the closest sentence/clause around a date instead of a broad overlapping window."""
+
+    separators = ".;!?\n"
+    left = start
+    while left > 0 and text[left - 1] not in separators:
+        left -= 1
+    right = end
+    while right < len(text) and text[right] not in separators:
+        right += 1
+    return text[left:right].strip()
 
 
 def _extract_labeled_dates(text: str, *, today: date) -> dict[str, dict[str, str]]:
@@ -153,7 +172,7 @@ def _extract_labeled_dates(text: str, *, today: date) -> dict[str, dict[str, str
         normalized = _normalize_date(match.group(1), today=today)
         if normalized is None:
             continue
-        context = text[max(0, match.start() - 80) : min(len(text), match.end() + 80)]
+        context = _sentence_context(text, start=match.start(), end=match.end())
         scores = {
             field: _date_context_score(context, keywords)
             for field, keywords in categories.items()
@@ -173,7 +192,10 @@ def _incident_type(folded: str) -> str:
         return "PERSONAL_DATA"
     if any(token in folded for token in _INCIDENT_QUALITY):
         return "QUALITY_COMPLAINT"
-    if any(token in folded for token in ("идс", "информированн", "согласие", "медицинск документ")):
+    if any(
+        token in folded
+        for token in ("идс", "информированн", "согласие", "медицинск документ")
+    ):
         return "INFORMED_CONSENT"
     if any(token in folded for token in ("возврат", "вернуть деньги", "оплат", "счет", "счёт")):
         return "PAYMENT_DISPUTE"
@@ -193,12 +215,37 @@ def _demand(folded: str) -> str | None:
         matched.append("COMPENSATION_DEMAND")
     if any(token in folded for token in ("возврат", "вернуть деньги", "деньги обратно")):
         matched.append("REFUND_DEMAND")
-    if any(token in folded for token in ("передел", "заменить бесплатно", "повторное леч", "исправить бесплатно")):
+    if any(
+        token in folded
+        for token in ("передел", "заменить бесплатно", "повторное леч", "исправить бесплатно")
+    ):
         matched.append("REWORK_DEMAND")
-    if any(token in folded for token in ("ничего не требует", "требований нет", "требований пока нет")):
+    if any(
+        token in folded
+        for token in ("ничего не требует", "требований нет", "требований пока нет")
+    ):
         matched.append("NO_SPECIFIC_DEMAND")
     unique = list(dict.fromkeys(matched))
     return unique[0] if len(unique) == 1 else None
+
+
+def _money_value(number_raw: str, multiplier_raw: str | None) -> int | None:
+    raw = number_raw.replace(" ", "").replace("\u00a0", "").replace(",", ".")
+    try:
+        amount = float(raw)
+    except ValueError:
+        return None
+    multiplier = 1
+    normalized_multiplier = (multiplier_raw or "").casefold()
+    if normalized_multiplier.startswith("тыс"):
+        multiplier = 1_000
+    elif normalized_multiplier.startswith("млн") or normalized_multiplier.startswith("миллион"):
+        multiplier = 1_000_000
+    rubles = amount * multiplier
+    if not 100 <= rubles <= 1_000_000_000:
+        return None
+    kopecks = round(rubles * 100)
+    return kopecks if abs(kopecks / 100 - rubles) < 0.001 else None
 
 
 def _money_kopecks(text: str, folded: str) -> int | None:
@@ -208,29 +255,32 @@ def _money_kopecks(text: str, folded: str) -> int | None:
     )
     if not demand_context:
         return None
+
     candidates: list[int] = []
-    for match in _MONEY.finditer(text):
-        raw = match.group(1).replace(" ", "").replace("\u00a0", "").replace(",", ".")
-        try:
-            amount = float(raw)
-        except ValueError:
+    occupied: list[tuple[int, int]] = []
+    for match in _MONEY_WITH_MULTIPLIER.finditer(text):
+        value = _money_value(match.group(1), match.group(2))
+        if value is not None:
+            candidates.append(value)
+            occupied.append(match.span())
+
+    for match in _MONEY_WITH_CURRENCY.finditer(text):
+        if any(start <= match.start() and match.end() <= end for start, end in occupied):
             continue
-        multiplier_raw = (match.group(2) or "").casefold()
-        multiplier = 1
-        if multiplier_raw.startswith("тыс"):
-            multiplier = 1_000
-        elif multiplier_raw.startswith("млн") or multiplier_raw.startswith("миллион"):
-            multiplier = 1_000_000
-        rubles = amount * multiplier
-        if 0.01 <= rubles <= 1_000_000_000 and rubles >= 100:
-            kopecks = round(rubles * 100)
-            if abs(kopecks / 100 - rubles) < 0.001:
-                candidates.append(kopecks)
+        value = _money_value(match.group(1), None)
+        if value is not None:
+            candidates.append(value)
+
     unique = list(dict.fromkeys(candidates))
     return unique[0] if len(unique) == 1 else None
 
 
-def _explicit_signal(folded: str, *, positive: tuple[str, ...], negative: tuple[str, ...]) -> str | None:
+def _explicit_signal(
+    folded: str,
+    *,
+    positive: tuple[str, ...],
+    negative: tuple[str, ...],
+) -> str | None:
     if any(token in folded for token in negative):
         return "NO"
     if any(token in folded for token in positive):
@@ -260,7 +310,13 @@ def _formal_claim(folded: str) -> str | None:
 def _harm_claim(folded: str) -> str | None:
     return _explicit_signal(
         folded,
-        positive=("вред здоров", "ущерб здоров", "причинен вред", "причинён вред", "заявляет о вред"),
+        positive=(
+            "вред здоров",
+            "ущерб здоров",
+            "причинен вред",
+            "причинён вред",
+            "заявляет о вред",
+        ),
         negative=("о вреде здоровью не заяв", "вред здоровью не заяв"),
     )
 
@@ -274,7 +330,11 @@ def _lawyer_contact(folded: str) -> str | None:
         "представитель пациента написал",
         "представитель пациента связ",
     )
-    negative = ("юрист не обращался", "представитель не обращался", "адвокат не обращался")
+    negative = (
+        "юрист не обращался",
+        "представитель не обращался",
+        "адвокат не обращался",
+    )
     return _explicit_signal(folded, positive=positive, negative=negative)
 
 
@@ -302,7 +362,9 @@ def _regulator_signals(folded: str) -> tuple[str | None, str | None]:
             "подала в суд",
             "иск подан",
             "исковое заяв",
-            "получили запрос",
+            "получил запрос",
+            "получен запрос",
+            "поступил запрос",
             "пришел запрос",
             "пришёл запрос",
             "получили предпис",
@@ -318,9 +380,15 @@ def _regulator_signals(folded: str) -> tuple[str | None, str | None]:
 
 
 def _documents_status(folded: str) -> str | None:
-    if any(token in folded for token in ("документов нет", "нет договора и карты", "договор и идс отсутств")):
+    if any(
+        token in folded
+        for token in ("документов нет", "нет договора и карты", "договор и идс отсутств")
+    ):
         return "NONE"
-    if any(token in folded for token in ("есть не все документы", "есть не всё", "часть документов")):
+    if any(
+        token in folded
+        for token in ("есть не все документы", "есть не всё", "часть документов")
+    ):
         return "PARTIAL"
     complete_markers = (
         "договор, карта и идс есть",
@@ -345,7 +413,10 @@ def _next_state(data: dict[str, object]) -> str:
     ):
         if field not in data:
             return state
-    if data["patient_demand"] in {"REFUND_DEMAND", "COMPENSATION_DEMAND"} and "demand_amount_kopecks" not in data:
+    if (
+        data["patient_demand"] in {"REFUND_DEMAND", "COMPENSATION_DEMAND"}
+        and "demand_amount_kopecks" not in data
+    ):
         return "DEMAND_AMOUNT"
     if "formal_claim" not in data:
         return "FORMAL_CLAIM"
@@ -394,7 +465,10 @@ def _prefix_fields_for_state(state: str, data: dict[str, object]) -> set[str]:
         return allowed
     if "formal_claim" in data:
         allowed.add("formal_claim")
-    if data.get("formal_claim") == "YES" or state in {"CLAIM_RECEIVED_AT", "CLAIM_DEADLINE"}:
+    if data.get("formal_claim") == "YES" or state in {
+        "CLAIM_RECEIVED_AT",
+        "CLAIM_DEADLINE",
+    }:
         return allowed
     if state == "HARM":
         return allowed
@@ -408,13 +482,20 @@ def _prefix_fields_for_state(state: str, data: dict[str, object]) -> set[str]:
         return allowed
     if "lawyer_contact" in data:
         allowed.add("lawyer_contact")
-    if data.get("lawyer_contact") == "YES" or state in {"REPRESENTATIVE_AUTHORITY", "LAWYER_DEADLINE"}:
+    if data.get("lawyer_contact") == "YES" or state in {
+        "REPRESENTATIVE_AUTHORITY",
+        "LAWYER_DEADLINE",
+    }:
         return allowed
     if state == "AUTHORITY":
         return allowed
     if "regulator_or_court" in data:
         allowed.add("regulator_or_court")
-    if data.get("regulator_or_court") == "YES" or state in {"AUTHORITY_KIND", "AUTHORITY_DATE", "AUTHORITY_DEADLINE"}:
+    if data.get("regulator_or_court") == "YES" or state in {
+        "AUTHORITY_KIND",
+        "AUTHORITY_DATE",
+        "AUTHORITY_DEADLINE",
+    }:
         return allowed
     if state == "REGULATOR_THREAT":
         return allowed
