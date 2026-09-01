@@ -38,6 +38,18 @@ class ApprovedClinicDocumentFragment:
     raw_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class AvailableClinicDocument:
+    document_id: UUID
+    version_id: UUID
+    document_key: str
+    document_type: str
+    document_title: str
+    version_no: int
+    valid_from: date | None
+    valid_to: date | None
+
+
 _FRAGMENT_COLUMNS = """
     fragment_id, version_id, document_id, document_key, document_type,
     document_title, version_no, valid_from, valid_to, ordinal,
@@ -72,11 +84,35 @@ _SEARCH_APPROVED_CLINIC_CONTEXT = text(
     """
 )
 
+_LIST_APPROVED_CLINIC_DOCUMENTS = text(
+    """
+    SELECT DISTINCT ON (document_id)
+           document_id,
+           version_id,
+           document_key,
+           document_type,
+           document_title,
+           version_no,
+           valid_from,
+           valid_to
+      FROM approved_clinic_document_fragments
+     WHERE clinic_id = :clinic_id
+       AND (CAST(:as_of_date AS date) IS NULL
+            OR ((valid_from IS NULL OR valid_from <= CAST(:as_of_date AS date))
+                AND (valid_to IS NULL OR valid_to > CAST(:as_of_date AS date))))
+     ORDER BY document_id, version_no DESC, version_id
+    """
+)
+
 _MAX_CLINIC_QUERIES = 8
 
 
 def _row_fragment(row: RowMapping) -> ApprovedClinicDocumentFragment:
     return ApprovedClinicDocumentFragment(**dict(row))
+
+
+def _row_available_document(row: RowMapping) -> AvailableClinicDocument:
+    return AvailableClinicDocument(**dict(row))
 
 
 def _is_yes(value: object) -> bool:
@@ -186,6 +222,20 @@ class ApprovedClinicDocumentContextRepository:
             },
         )
         return [_row_fragment(row) for row in result.mappings()]
+
+    async def list_available(
+        self,
+        *,
+        as_of_date: date | None,
+    ) -> list[AvailableClinicDocument]:
+        result = await self._session.execute(
+            _LIST_APPROVED_CLINIC_DOCUMENTS,
+            {
+                "clinic_id": self._clinic_id,
+                "as_of_date": as_of_date,
+            },
+        )
+        return [_row_available_document(row) for row in result.mappings()]
 
 
 async def retrieve_planned_clinic_context(
