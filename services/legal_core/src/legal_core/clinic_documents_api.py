@@ -82,6 +82,35 @@ async def _existing_version(
     ).mappings().first()
 
 
+def _validate_existing_version_replay(
+    existing: Any,
+    *,
+    source_filename: str,
+    mime_type: str,
+    normalized_text_sha256: str,
+    valid_from: date | None,
+    valid_to: date | None,
+) -> None:
+    if existing["normalized_text_sha256"] != normalized_text_sha256:
+        raise ApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="CLINIC_DOCUMENT_REPROCESSING_CONFLICT",
+            message="The same raw clinic document produced different normalized content",
+        )
+    metadata_matches = (
+        existing["source_filename"] == source_filename
+        and existing["mime_type"] == mime_type
+        and existing["valid_from"] == valid_from
+        and existing["valid_to"] == valid_to
+    )
+    if not metadata_matches:
+        raise ApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="CLINIC_DOCUMENT_VERSION_METADATA_CONFLICT",
+            message="The same raw clinic document already exists with different version metadata",
+        )
+
+
 async def _fragment_count(
     session: AsyncSession,
     *,
@@ -377,6 +406,14 @@ def create_clinic_documents_router(
             raw_sha256=prepared.content_sha256,
         )
         if existing is not None:
+            _validate_existing_version_replay(
+                existing,
+                source_filename=payload.source_filename,
+                mime_type="text/plain",
+                normalized_text_sha256=prepared.content_sha256,
+                valid_from=payload.valid_from,
+                valid_to=payload.valid_to,
+            )
             response.status_code = status.HTTP_200_OK
             return _version_response(
                 existing,
@@ -472,6 +509,14 @@ def create_clinic_documents_router(
             raw_sha256=parsed.raw_sha256,
         )
         if existing is not None:
+            _validate_existing_version_replay(
+                existing,
+                source_filename=parsed.source_filename,
+                mime_type=parsed.mime_type,
+                normalized_text_sha256=prepared.content_sha256,
+                valid_from=valid_from,
+                valid_to=valid_to,
+            )
             response.status_code = status.HTTP_200_OK
             return _version_response(
                 existing,
