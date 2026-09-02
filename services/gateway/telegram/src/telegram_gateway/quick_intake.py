@@ -19,9 +19,8 @@ _MIN_DESCRIPTION = 10
 _MAX_DESCRIPTION = 1500
 _NAME_WORD = r"[А-ЯЁ][а-яё]{1,30}(?:-[А-ЯЁ][а-яё]{1,30})?"
 _LABELED_NAME: Final = re.compile(
-    rf"\b(?:фио|пациент(?:а|у|ом)?|врач(?:а|у|ом)?|доктор(?:а|у|ом)?|"
-    rf"представител(?:ь|я|ю|ем))\s*[:—-]?\s+{_NAME_WORD}\s+{_NAME_WORD}",
-    re.IGNORECASE,
+    rf"\b(?i:фио|пациент(?:а|у|ом)?|врач(?:а|у|ом)?|доктор(?:а|у|ом)?|"
+    rf"представител(?:ь|я|ю|ем))\s*[:—-]?\s+{_NAME_WORD}\s+{_NAME_WORD}"
 )
 _FULL_NAME: Final = re.compile(
     rf"(?<![А-ЯЁа-яё]){_NAME_WORD}\s+{_NAME_WORD}\s+{_NAME_WORD}(?![А-ЯЁа-яё])"
