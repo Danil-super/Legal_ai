@@ -9,7 +9,7 @@ The system combines a tenant-isolated Legal Core, Telegram intake, versioned off
 Implemented building blocks include:
 
 - FastAPI Legal Core with health/readiness checks;
-- Telegram administrator workflow and durable drafts;
+- Telegram administrator workflow, durable drafts and local one-message quick intake without LLM;
 - tenant identity, subscription gating and RLS;
 - versioned official legal corpus with human approval gates;
 - exact/FTS/pgvector legal retrieval;

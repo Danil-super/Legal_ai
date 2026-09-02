@@ -21,9 +21,19 @@ def test_avatar_sync_uploads_file_content_instead_of_a_local_path() -> None:
     assert isinstance(bot.profile_photo.photo, InputFile)
 
 
-def test_telegram_command_menu_exposes_the_owner_panel_without_grant_shortcuts() -> None:
+def test_telegram_command_menu_exposes_quick_intake_and_owner_panel_without_grant_shortcuts(
+) -> None:
     names = {command.command for command in BOT_COMMANDS}
 
-    assert {"start", "menu", "help", "whoami", "cancel", "admin"} <= names
+    assert {
+        "start",
+        "menu",
+        "help",
+        "whoami",
+        "cancel",
+        "describe_case",
+        "cancel_quick",
+        "admin",
+    } <= names
     assert "grant_access" not in names
     assert "grant_pilot" not in names

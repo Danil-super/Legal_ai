@@ -117,6 +117,7 @@ def test_help_returns_concise_safety_scoped_instructions() -> None:
 
     assert help_message.text_replies == [(HELP_MESSAGE, None)]
     assert "чернов" in HELP_MESSAGE.lower()
+    assert "/describe_case" in HELP_MESSAGE
 
 
 def test_free_text_is_not_echoed_or_processed_before_case_core() -> None:
@@ -133,9 +134,9 @@ def test_main_menu_exposes_frequent_actions_as_clear_allowlisted_buttons() -> No
     keyboard = main_menu_keyboard()
     buttons = [button for row in keyboard.inline_keyboard for button in row]
 
-    assert len(buttons) == 8
+    assert len(buttons) == 9
     assert {button.callback_data for button in buttons} == MAIN_MENU_CALLBACKS
-    assert {"case:start", "case:drafts", "account:id", "help"} <= MAIN_MENU_CALLBACKS
+    assert {"case:start", "quick:start", "case:drafts", "account:id", "help"} <= MAIN_MENU_CALLBACKS
     assert all(button.text.strip() for button in buttons)
     assert all(
         isinstance(button.callback_data, str) and len(button.callback_data.encode()) <= 64

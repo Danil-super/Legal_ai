@@ -279,6 +279,18 @@ async def start_quick_intake(
     )
 
 
+async def start_quick_intake_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    query = update.callback_query
+    if query is None or query.data != "quick:start":
+        raise ApplicationHandlerStop
+    await query.answer()
+    await start_quick_intake(update, context)
+    raise ApplicationHandlerStop
+
+
 async def cancel_quick_intake(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -423,6 +435,10 @@ def build_application_with_quick_intake(token: str) -> gateway_bot.TelegramAppli
             quick_candidate_callback,
             pattern=r"^quick:(accept|manual|cancel)$",
         ),
+        group=-3,
+    )
+    application.add_handler(
+        CallbackQueryHandler(start_quick_intake_callback, pattern=r"^quick:start$"),
         group=-3,
     )
     application.add_handler(

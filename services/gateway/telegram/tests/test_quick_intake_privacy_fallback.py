@@ -1,7 +1,8 @@
+# ruff: noqa: RUF001
+
 from datetime import date
 
 from telegram_gateway.quick_intake import extract_quick_intake
-
 
 TODAY = date(2026, 9, 2)
 

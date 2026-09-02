@@ -15,6 +15,7 @@ from telegram_gateway.quick_intake_runtime import (
     quick_candidate_callback,
     receive_quick_description,
     render_quick_candidate,
+    start_quick_intake_callback,
 )
 
 DRAFT_ID = UUID("00000000-0000-0000-0000-000000000123")
@@ -44,6 +45,10 @@ class FakeLegalCoreClient:
         self.created = 0
         self.saved: list[dict[str, object]] = []
         self.archived: list[tuple[UUID, int, int]] = []
+
+    async def get_actor(self, telegram_user_id: int) -> dict[str, object]:
+        assert telegram_user_id == 777
+        return {"role": "CLINIC_ADMIN"}
 
     async def create_intake_draft(self, telegram_user_id: int) -> dict[str, object]:
         self.created += 1
@@ -159,6 +164,22 @@ def test_quick_description_stores_only_local_candidate_after_explicit_mode() -> 
     asyncio.run(scenario())
 
 
+def test_quick_start_callback_answers_and_enters_explicit_mode() -> None:
+    async def scenario() -> None:
+        context = _context()
+        update = _update(callback="quick:start")
+
+        with pytest.raises(ApplicationHandlerStop):
+            await start_quick_intake_callback(update, context)  # type: ignore[arg-type]
+
+        assert update.callback_query.answered == 1
+        assert context.user_data[_QUICK_PENDING_KEY] is True
+        assert update.effective_message.replies
+        assert "ОДНИМ сообщением" in update.effective_message.replies[-1][0]
+
+    asyncio.run(scenario())
+
+
 def test_accept_creates_and_saves_real_durable_draft_prefix() -> None:
     async def scenario() -> None:
         client = FakeLegalCoreClient()
@@ -195,4 +216,10 @@ def test_application_registers_quick_handlers_before_existing_wizard() -> None:
     assert "CommandHandler" in handler_names
     assert "CallbackQueryHandler" in handler_names
     assert "MessageHandler" in handler_names
+    callback_patterns = {
+        getattr(handler.pattern, "pattern", None)
+        for handler in application.handlers[-3]
+        if type(handler).__name__ == "CallbackQueryHandler"
+    }
+    assert r"^quick:start$" in callback_patterns
     assert 0 in application.handlers

@@ -1,11 +1,13 @@
 import hashlib
 import json
+import asyncio
 
 import pytest
 from pydantic import ValidationError
 
 from legal_core.risk_policy_approval import (
     RiskPolicyApproval,
+    approve_risk_policy,
     policy_content_sha256,
     policy_payload,
     rubles_to_kopecks,
@@ -41,6 +43,20 @@ def test_policy_payload_matches_runtime_v1_schema() -> None:
 def test_policy_approval_requires_all_human_review_flags() -> None:
     with pytest.raises(ValidationError, match="review attestations"):
         _approval(escalation_rules_reviewed=False)
+
+
+def test_policy_approval_blocks_p0_regression_before_database_access() -> None:
+    class UnusedSessionFactory:
+        def __call__(self):
+            raise AssertionError("P0 regression check must run before database access")
+
+    with pytest.raises(ValueError, match="risk-medium-compensation-below-threshold"):
+        asyncio.run(
+            approve_risk_policy(
+                UnusedSessionFactory(),
+                _approval(high_demand_threshold_kopecks=9_999_900),
+            )
+        )
 
 
 @pytest.mark.parametrize(

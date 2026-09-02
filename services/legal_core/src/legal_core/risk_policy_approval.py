@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.database import create_engine, create_session_factory
 from legal_core.models import RiskPolicyEvent, RiskPolicyVersion, User
+from legal_core.risk_engine import RiskPolicy
+from legal_core.synthetic_risk_scenarios import assert_p0_synthetic_risk_regressions
 
 POLICY_KEY = "dental-risk"
 SCHEMA_VERSION = "risk-policy.v1"
@@ -62,6 +64,11 @@ async def approve_risk_policy(
 ) -> UUID:
     payload = policy_payload(approval)
     digest = policy_content_sha256(payload)
+    candidate_policy = RiskPolicy(
+        version=f"{POLICY_KEY}.v{approval.version}",
+        high_demand_threshold_kopecks=approval.high_demand_threshold_kopecks,
+    )
+    assert_p0_synthetic_risk_regressions(candidate_policy)
 
     async with session_factory() as session, session.begin():
         reviewer = await session.scalar(

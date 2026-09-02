@@ -23,6 +23,8 @@ BOT_COMMANDS = [
     BotCommand("help", "Показать справку"),
     BotCommand("whoami", "Показать Telegram ID"),
     BotCommand("cancel", "Отменить заполнение кейса"),
+    BotCommand("describe_case", "Быстро описать ситуацию"),
+    BotCommand("cancel_quick", "Отменить быстрое описание"),
     BotCommand("admin", "Панель владельца"),
 ]
 

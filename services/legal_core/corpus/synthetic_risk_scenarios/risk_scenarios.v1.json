@@ -1,0 +1,336 @@
+{
+  "schema_version": "synthetic-risk-scenarios.v1",
+  "fixture_set": "SYNTHETIC_DENTAL_RISK_ALPHA",
+  "purpose": "DEVELOPMENT_AND_REGRESSION_ONLY",
+  "authority": "NOT_A_LEGAL_SOURCE",
+  "source_policy": "AUTHORED_SYNTHETIC_NO_EXTERNAL_CASE_TEXT",
+  "policy": {
+    "version": "risk-policy.v1",
+    "high_demand_threshold_kopecks": 10000000
+  },
+  "scenarios": [
+    {
+      "id": "risk-low-aesthetic",
+      "priority": "P1",
+      "facts": {
+        "HARM_CLAIMED": "NO",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["AESTHETIC_DISSATISFACTION"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "LOW", "reason_codes": ["NO_ESCALATION_TRIGGER"], "external_draft_allowed": true}
+    },
+    {
+      "id": "risk-low-rework",
+      "priority": "P1",
+      "facts": {
+        "HARM_CLAIMED": "NO",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["REWORK_DEMAND"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "LOW", "reason_codes": ["NO_ESCALATION_TRIGGER"], "external_draft_allowed": true}
+    },
+    {
+      "id": "risk-medium-refund",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "NO",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["REFUND_DEMAND"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "MEDIUM", "reason_codes": ["PATIENT_DEMAND_REQUIRES_REVIEW"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-medium-compensation-below-threshold",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "NO",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["COMPENSATION_DEMAND"],
+        "DEMAND_AMOUNT": {"amountKopecks": 9999900, "currency": "RUB"},
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "MEDIUM", "reason_codes": ["PATIENT_DEMAND_REQUIRES_REVIEW"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-medium-regulator-threat",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "NO",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "YES",
+        "PATIENT_DEMAND": ["AESTHETIC_DISSATISFACTION"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "MEDIUM", "reason_codes": ["REGULATOR_THREAT_REPORTED"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-medium-missing-record",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "NO",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["AESTHETIC_DISSATISFACTION"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "MISSING", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "MEDIUM", "reason_codes": ["RELEVANT_DOCUMENT_MISSING"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-medium-combined",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "NO",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "YES",
+        "PATIENT_DEMAND": ["REFUND_DEMAND"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "MISSING", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "MEDIUM", "reason_codes": ["PATIENT_DEMAND_REQUIRES_REVIEW", "REGULATOR_THREAT_REPORTED", "RELEVANT_DOCUMENT_MISSING"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-medium-negative-review-pressure",
+      "priority": "P1",
+      "facts": {
+        "HARM_CLAIMED": "NO",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["NEGATIVE_REVIEW_PRESSURE"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "MEDIUM", "reason_codes": ["PATIENT_DEMAND_REQUIRES_REVIEW"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-high-formal-claim",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "NO",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "YES",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["REFUND_DEMAND"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "HIGH", "reason_codes": ["FORMAL_CLAIM_RECEIVED"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-high-lawyer-contact",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "NO",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "YES",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["AESTHETIC_DISSATISFACTION"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "HIGH", "reason_codes": ["LAWYER_OR_REPRESENTATIVE_CONTACT"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-high-harm-reported",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "YES",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["COMPENSATION_DEMAND"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "HIGH", "reason_codes": ["HARM_REPORTED"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-high-threshold-demand",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "NO",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["COMPENSATION_DEMAND"],
+        "DEMAND_AMOUNT": {"amountKopecks": 10000000, "currency": "RUB"},
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "HIGH", "reason_codes": ["HIGH_DEMAND_AMOUNT"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-high-combined-triggers",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "YES",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "YES",
+        "FORMAL_CLAIM": "YES",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["COMPENSATION_DEMAND"],
+        "DEMAND_AMOUNT": {"amountKopecks": 10000000, "currency": "RUB"},
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "HIGH", "reason_codes": ["LAWYER_OR_REPRESENTATIVE_CONTACT", "FORMAL_CLAIM_RECEIVED", "HARM_REPORTED", "HIGH_DEMAND_AMOUNT"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-critical-hospitalization",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "YES",
+        "HOSPITALIZATION": "YES",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["COMPENSATION_DEMAND"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "CRITICAL", "reason_codes": ["HOSPITALIZATION_REPORTED"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-critical-regulator-request",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "NO",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "YES",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["AESTHETIC_DISSATISFACTION"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "CRITICAL", "reason_codes": ["OFFICIAL_REGULATOR_OR_COURT_SIGNAL"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-critical-court-signal",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "NO",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "YES",
+        "REGULATOR_THREAT": "YES",
+        "PATIENT_DEMAND": ["REFUND_DEMAND"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "CRITICAL", "reason_codes": ["OFFICIAL_REGULATOR_OR_COURT_SIGNAL"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-unavailable-evidence",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "NO",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["AESTHETIC_DISSATISFACTION"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": false,
+      "expected": {"level": "UNAVAILABLE", "reason_codes": ["EVIDENCE_NOT_VERIFIED"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-unavailable-formal-claim-unknown",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "NO",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "UNKNOWN",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["REFUND_DEMAND"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "UNAVAILABLE", "reason_codes": ["FORMAL_CLAIM_UNKNOWN"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-unavailable-harm-unknown",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "UNKNOWN",
+        "HOSPITALIZATION": "NO",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["COMPENSATION_DEMAND"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "UNAVAILABLE", "reason_codes": ["HARM_CLAIMED_UNKNOWN"], "external_draft_allowed": false}
+    },
+    {
+      "id": "risk-unavailable-hospitalization-unknown",
+      "priority": "P0",
+      "facts": {
+        "HARM_CLAIMED": "YES",
+        "HOSPITALIZATION": "UNKNOWN",
+        "LAWYER_CONTACT": "NO",
+        "FORMAL_CLAIM": "NO",
+        "REGULATOR_OR_COURT": "NO",
+        "REGULATOR_THREAT": "NO",
+        "PATIENT_DEMAND": ["COMPENSATION_DEMAND"],
+        "CLINIC_DOCUMENTS": {"CONTRACT": "AVAILABLE", "MEDICAL_RECORD": "AVAILABLE", "INFORMED_CONSENT": "AVAILABLE"}
+      },
+      "evidence_verified": true,
+      "expected": {"level": "UNAVAILABLE", "reason_codes": ["HOSPITALIZATION_UNKNOWN"], "external_draft_allowed": false}
+    }
+  ]
+}

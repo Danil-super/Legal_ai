@@ -105,6 +105,16 @@ def test_quick_intake_leaves_ambiguous_multiple_demands_for_wizard_confirmation(
     assert result.next_wizard_state in {"SERVICE_DATE", "PATIENT_DEMAND"}
 
 
+def test_quick_intake_does_not_classify_returning_a_prosthesis_as_a_money_demand() -> None:
+    result = extract_quick_intake(
+        "Пациент просит вернуть коронку после примерки, денежного требования не заявляет.",
+        today=TODAY,
+    )
+
+    assert "patient_demand" not in result.candidate_data
+    assert "demand_amount_kopecks" not in result.candidate_data
+
+
 @pytest.mark.parametrize(
     ("description", "expected_kopecks"),
     [

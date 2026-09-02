@@ -40,6 +40,10 @@ _MONEY_WITH_CURRENCY: Final = re.compile(
     rf"(?<!\d){_NUMBER}\s*{_CURRENCY}",
     re.IGNORECASE,
 )
+_RETURN_MONEY: Final = re.compile(
+    r"\bвернуть\s+(?:(?:денежные\s+)?средства|деньги|сумму\s+|\d)",
+    re.IGNORECASE,
+)
 
 _INCIDENT_QUALITY = (
     "скол",
@@ -208,11 +212,13 @@ def _service_type(folded: str) -> str | None:
     return None
 
 
-def _demand(folded: str) -> str | None:
+def _demand(text: str, folded: str) -> str | None:
     matched: list[str] = []
     if any(token in folded for token in ("компенсац", "моральн", "возместить ущерб")):
         matched.append("COMPENSATION_DEMAND")
-    if any(token in folded for token in ("возврат", "вернуть деньги", "деньги обратно")):
+    if any(token in folded for token in ("возврат", "вернуть деньги", "деньги обратно")) or (
+        _RETURN_MONEY.search(text) is not None
+    ):
         matched.append("REFUND_DEMAND")
     if any(
         token in folded
@@ -362,6 +368,7 @@ def _regulator_signals(folded: str) -> tuple[str | None, str | None]:
             "иск подан",
             "исковое заяв",
             "получил запрос",
+            "получила запрос",
             "получен запрос",
             "поступил запрос",
             "пришел запрос",
@@ -528,7 +535,7 @@ def extract_quick_intake(text: str, *, today: date | None = None) -> QuickIntake
         candidates["service_type"] = service
     candidates.update(_extract_labeled_dates(sanitized, today=current_day))
 
-    demand = _demand(folded)
+    demand = _demand(sanitized, folded)
     if demand is not None:
         candidates["patient_demand"] = demand
         if demand in {"REFUND_DEMAND", "COMPENSATION_DEMAND"}:

@@ -53,6 +53,13 @@ SCREENS = {
         "по шагам. Не отправляйте ФИО, телефоны, адреса, номера медкарт "
         "и файлы пациента."
     ),
+    "quick:start": (
+        "🧩  БЫСТРОЕ ОПИСАНИЕ\n\n"
+        "Отправьте одно обезличенное описание ситуации. Бот локально выделит "
+        "кандидаты фактов без LLM, а затем попросит подтвердить их в обычном "
+        "мастере кейса.\n\n"
+        "Не отправляйте ФИО, контакты, адреса, номера медкарт или файлы пациента."
+    ),
     "privacy": (
         "🛡  КОНФИДЕНЦИАЛЬНОСТЬ\n\n"
         "Медицинские сведения и данные пациента требуют особой защиты.\n\n"
@@ -82,7 +89,9 @@ HELP_MESSAGE = (
     "/menu — показать главное меню\n"
     "/help — показать эту справку\n\n"
     "/whoami — показать Telegram ID\n"
-    "/cancel — сохранить и выйти из заполнения\n\n"
+    "/cancel — сохранить и выйти из заполнения\n"
+    "/describe_case — быстро описать обезличенную ситуацию\n"
+    "/cancel_quick — отменить быстрое описание\n\n"
     "/admin — панель владельца сервиса\n\n"
     "Юридические рекомендации и черновики не формируются без проверенной правовой базы."
 )
@@ -96,6 +105,7 @@ MAIN_MENU_CALLBACKS = {
     "features",
     "workflow",
     "case:start",
+    "quick:start",
     "case:drafts",
     "privacy",
     "about",
@@ -107,6 +117,12 @@ MAIN_MENU_CALLBACKS = {
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
+            [
+                InlineKeyboardButton(
+                    "🧩 Описать ситуацию одним сообщением",
+                    callback_data="quick:start",
+                )
+            ],
             [InlineKeyboardButton("📝 Создать кейс", callback_data="case:start")],
             [InlineKeyboardButton("📂 Мои черновики", callback_data="case:drafts")],
             [
