@@ -73,6 +73,13 @@ _FIELD_LABELS = {
 }
 _SIGNAL_LABELS = {"YES": "да", "NO": "нет", "UNKNOWN": "неизвестно"}
 _DOCUMENT_LABELS = {"COMPLETE": "есть", "PARTIAL": "есть не всё", "NONE": "нет"}
+_URGENT_SIGNALS = {
+    "formal_claim",
+    "harm_claimed",
+    "hospitalization",
+    "lawyer_contact",
+    "regulator_or_court",
+}
 
 
 def _user_data(context: ContextTypes.DEFAULT_TYPE) -> dict[Any, Any]:
@@ -159,6 +166,31 @@ def _candidate_value(field: str, value: object) -> str:
     return str(value)[:300]
 
 
+def _immediate_guidance(candidate_data: dict[str, object]) -> list[str]:
+    """Return operational first aid, never a legal conclusion or risk decision."""
+    urgent = any(candidate_data.get(field) == "YES" for field in _URGENT_SIGNALS)
+    lines = [
+        "⚡ Что сделать сейчас:",
+        "• Зафиксируйте обращение и время его получения.",
+        "• Сохраните переписку и файлы; не меняйте первичные записи.",
+        "• Соберите доступные договор, согласия, медкарту и материалы по услуге.",
+        "",
+        "⛔ Чего не делать:",
+        "• Не признавайте вину и не обещайте возврат или компенсацию.",
+        "• Не удаляйте переписку, документы или вложения.",
+    ]
+    if urgent:
+        lines.extend(
+            [
+                "",
+                "🔴 В описании есть признак повышенной срочности. Не отправляйте "
+                "самостоятельный юридический ответ: после сохранения материалов передайте "
+                "ситуацию руководителю/юристу.",
+            ]
+        )
+    return lines
+
+
 def render_quick_candidate(result: QuickIntakeResult) -> str:
     lines = [
         "🧩 Предварительно распознано",
@@ -166,6 +198,8 @@ def render_quick_candidate(result: QuickIntakeResult) -> str:
         "Это НЕ юридический анализ. Бот только выделил кандидаты фактов локально, без LLM.",
         "",
     ]
+    lines.extend(_immediate_guidance(result.candidate_data))
+    lines.append("")
     ordered_fields = (
         "incident_type",
         "service_type",
@@ -275,7 +309,8 @@ async def start_quick_intake(
         "есть ли письменная претензия, вред здоровью, юрист/представитель, обращение или "
         "угроза обращения в суд/Роспотребнадзор/Росздравнадзор.\n\n"
         "Не пишите ФИО, адрес, номер карты или другие персональные данные. Телефон/e-mail/ID "
-        "будут локально удалены. На этом шаге никакого юридического ответа не формируется."
+        "будут локально удалены. На этом шаге бот даст только безопасный организационный "
+        "чек-лист; юридический вывод формируется после подтверждения фактов и проверки источников."
     )
 
 

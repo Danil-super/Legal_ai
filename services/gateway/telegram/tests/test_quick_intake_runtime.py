@@ -120,6 +120,21 @@ def test_render_quick_candidate_is_explicitly_non_legal_and_bounded() -> None:
     assert "возврат денег" in rendered
     assert "70 000.00 ₽" in rendered
     assert "повторно подтверждены обычным wizard" in rendered
+    assert "⚡ Что сделать сейчас" in rendered
+    assert "⛔ Чего не делать" in rendered
+    assert "Не признавайте вину" in rendered
+
+
+def test_render_quick_candidate_marks_explicit_critical_signals_as_urgent() -> None:
+    result = extract_quick_intake(
+        "Пациент прислал письменную претензию и сообщил о госпитализации после процедуры."
+    )
+
+    rendered = render_quick_candidate(result)
+
+    assert "признак повышенной срочности" in rendered
+    assert "руководителю/юристу" in rendered
+    assert "юридический анализ" in rendered
 
 
 def test_continue_keyboard_targets_existing_durable_draft_entrypoint() -> None:
