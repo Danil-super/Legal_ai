@@ -7,7 +7,9 @@ from telegram_gateway.analysis_runtime import (
     analysis_keyboard,
     build_application_with_analysis,
     load_analysis_settings,
+    telegram_analysis_messages,
     telegram_analysis_summary,
+    telegram_lawyer_handoff_summary,
 )
 
 
@@ -83,6 +85,91 @@ def test_verified_analysis_summary_uses_only_canonical_server_report_fields() ->
     assert "HUMAN_LEGAL_REVIEW_REQUIRED" in summary
     assert "Draft policy: safe-operational-draft.v1" in summary
     assert "Автоматическая отправка пациенту отключена" in summary
+
+
+def test_high_risk_handoff_is_deidentified_and_has_only_verified_metadata() -> None:
+    payload = {
+        "analysisAllowed": True,
+        "riskLevel": "HIGH",
+        "escalationRequired": True,
+        "clinicDocumentReadiness": [
+            {
+                "expectationCode": "CONTRACT",
+                "importance": "CORE",
+                "status": "NOT_AVAILABLE",
+                "analysisBlocking": False,
+            }
+        ],
+        "report": {
+            "reportJson": {
+                "case": {
+                    "publicNumber": "DL-2026-000046",
+                    "neutralDescription": "Пациент Иванов И. И. требует 90 000 рублей.",
+                },
+                "risk": {
+                    "level": "HIGH",
+                    "reasonCodes": ["FORMAL_CLAIM_RECEIVED"],
+                    "escalationRequired": True,
+                },
+                "recommendations": {
+                    "status": "AVAILABLE",
+                    "items": ["Вернуть Иванову 90 000 рублей."],
+                },
+                "legalBasis": {
+                    "status": "AVAILABLE",
+                    "sources": [
+                        {
+                            "documentTitle": "Проверенный акт",
+                            "structuralPath": "point:34",
+                            "sourceUrl": "https://publication.pravo.gov.ru/example",
+                        }
+                    ]
+                },
+                "clinicDocuments": {
+                    "status": "USED",
+                    "sources": [{"normalizedText": "PRIVATE MEDICAL RECORD"}]
+                },
+                "draftResponse": {
+                    "status": "AVAILABLE",
+                    "text": "Здравствуйте, Иванов И. И.",
+                },
+            }
+        },
+    }
+
+    handoff = telegram_lawyer_handoff_summary(payload)
+
+    assert handoff is not None
+    assert "DL-2026-000046" in handoff
+    assert "FORMAL_CLAIM_RECEIVED" in handoff
+    assert "договор на платные стоматологические услуги" in handoff
+    assert "publication.pravo.gov.ru" in handoff
+    assert "Иванов" not in handoff
+    assert "90 000" not in handoff
+    assert "PRIVATE MEDICAL RECORD" not in handoff
+    assert "Вернуть" not in handoff
+    assert "согласованный защищённый канал" in handoff
+    assert telegram_analysis_messages(payload)[-1] == handoff
+
+
+def test_low_risk_analysis_does_not_create_lawyer_handoff() -> None:
+    payload = {
+        "analysisAllowed": True,
+        "escalationRequired": False,
+        "clinicDocumentReadiness": [],
+        "report": {
+            "reportJson": {
+                "case": {"publicNumber": "DL-2026-000047"},
+                "risk": {"level": "LOW", "reasonCodes": [], "escalationRequired": False},
+                "recommendations": {"items": []},
+                "legalBasis": {"sources": []},
+                "draftResponse": {"status": "BLOCKED", "reasonCode": "NOT_REQUIRED"},
+            }
+        },
+    }
+
+    assert telegram_lawyer_handoff_summary(payload) is None
+    assert len(telegram_analysis_messages(payload)) == 1
 
 
 def test_available_safe_patient_draft_is_shown_but_never_auto_sent() -> None:

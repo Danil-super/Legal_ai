@@ -263,6 +263,94 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
     return rendered
 
 
+def telegram_lawyer_handoff_summary(payload: dict[str, Any]) -> str | None:
+    """Build a copyable, de-identified handoff only for a verified escalation.
+
+    The handoff intentionally excludes the free-text case description, recommendations, patient
+    draft and clinic-document text: those fields may contain patient data. A clinic administrator
+    chooses a separately agreed protected channel for any further exchange with the lawyer.
+    """
+
+    if payload.get("analysisAllowed") is not True or payload.get("escalationRequired") is not True:
+        return None
+
+    report = payload.get("report")
+    if not isinstance(report, dict):
+        raise ValueError("analysis response has no report")
+    report_json = report.get("reportJson")
+    if not isinstance(report_json, dict):
+        raise ValueError("analysis response has no canonical report")
+
+    case_data = report_json.get("case")
+    risk_data = report_json.get("risk")
+    legal_basis_data = report_json.get("legalBasis")
+    if (
+        not isinstance(case_data, dict)
+        or not isinstance(risk_data, dict)
+        or not isinstance(legal_basis_data, dict)
+    ):
+        raise ValueError("canonical analysis report has invalid handoff fields")
+
+    public_number = _bounded_text(case_data.get("publicNumber"), limit=64)
+    risk_level = _bounded_text(risk_data.get("level"), limit=24)
+    reason_codes = risk_data.get("reasonCodes")
+    sources = legal_basis_data.get("sources")
+    if (
+        public_number is None
+        or risk_level not in {"HIGH", "CRITICAL"}
+        or risk_data.get("escalationRequired") is not True
+        or not isinstance(reason_codes, list)
+        or not isinstance(sources, list)
+    ):
+        raise ValueError("canonical analysis report is not a verified escalation")
+
+    lines = [
+        f"⚖️ ПАКЕТ ДЛЯ ЮРИСТА · {public_number}",
+        f"Риск: {risk_level}",
+        "Статус: требуется юридическая проверка.",
+    ]
+    safe_reasons = [
+        item[:80] for item in reason_codes[:8] if isinstance(item, str) and item.strip()
+    ]
+    if safe_reasons:
+        lines.extend(["", "Триггеры эскалации:", *(f"• {item}" for item in safe_reasons)])
+
+    source_lines: list[str] = []
+    for source in sources[:6]:
+        if not isinstance(source, dict):
+            continue
+        title = _bounded_text(source.get("documentTitle"), limit=180)
+        path = _bounded_text(source.get("structuralPath"), limit=100)
+        url = _bounded_text(source.get("sourceUrl"), limit=500)
+        if title and path and url:
+            source_lines.append(f"• {title}, {path}\n  {url}")
+    if source_lines:
+        lines.extend(["", "Проверенная правовая основа:", *source_lines])
+
+    missing_document_lines = _missing_clinic_document_lines(payload)
+    if missing_document_lines:
+        lines.extend(missing_document_lines)
+
+    lines.extend(
+        [
+            "",
+            "В пакет не включены описание обращения, ФИО, контакты, меддокументы "
+            "и черновик ответа пациенту.",
+            "Передавайте дополнительные материалы только через согласованный защищённый "
+            "канал клиники. Автоматическая отправка отключена.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def telegram_analysis_messages(payload: dict[str, Any]) -> tuple[str, ...]:
+    """Return the user-visible verified card and, when required, its safe lawyer handoff."""
+
+    summary = telegram_analysis_summary(payload)
+    handoff = telegram_lawyer_handoff_summary(payload)
+    return (summary,) if handoff is None else (summary, handoff)
+
+
 async def _call_analysis(
     settings: AnalysisSettings,
     *,
@@ -326,7 +414,8 @@ async def analyze_case_callback(
             "⚖️ Проверяю факты, применимую редакцию права и уровень риска…",
         )
         payload = await _call_analysis(settings, case_id=case_id, telegram_user_id=actor.id)
-        await gateway_bot._reply(update, telegram_analysis_summary(payload))
+        for message in telegram_analysis_messages(payload):
+            await gateway_bot._reply(update, message)
     except (ValueError, AgentOrchestratorApiError) as exc:
         logger.warning("case analysis failed: %s", type(exc).__name__)
         if isinstance(exc, AgentOrchestratorApiError):
