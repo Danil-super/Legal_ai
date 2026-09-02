@@ -19,6 +19,13 @@ _PHONE: Final = re.compile(
 _PASSPORT: Final = re.compile(r"(?<!\d)\d{4}[\s-]?\d{6}(?!\d)")
 _SNILS: Final = re.compile(r"(?<!\d)\d{3}[ -]?\d{3}[ -]?\d{3}[ -]?\d{2}(?!\d)")
 _LONG_IDENTIFIER: Final = re.compile(r"(?<!\d)\d{14,20}(?!\d)")
+_RUSSIAN_NAME_WORD = r"[А-ЯЁ][а-яё]{1,30}(?:-[А-ЯЁ][а-яё]{1,30})?"
+_INITIALS_NAME: Final = re.compile(
+    rf"(?<![А-ЯЁа-яё])(?:"
+    rf"{_RUSSIAN_NAME_WORD}\s+[А-ЯЁ]\.\s*[А-ЯЁ]\.|"
+    rf"[А-ЯЁ]\.\s*[А-ЯЁ]\.\s*{_RUSSIAN_NAME_WORD}"
+    rf")(?![А-ЯЁа-яё])"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +64,7 @@ def pseudonymize_text(
         ("passport", _PASSPORT, "[PASSPORT]"),
         ("snils", _SNILS, "[SNILS]"),
         ("long_identifier", _LONG_IDENTIFIER, "[IDENTIFIER]"),
+        ("initials_name", _INITIALS_NAME, "[PERSON_NAME]"),
     ):
         result, count = _replace(pattern, result, placeholder)
         counts[label] = count
@@ -78,4 +86,7 @@ def pseudonymize_text(
 def contains_obvious_direct_identifier(text: str) -> bool:
     """Conservative post-redaction guard used immediately before an external provider call."""
 
-    return any(pattern.search(text) is not None for pattern in (_EMAIL, _PHONE, _PASSPORT, _SNILS))
+    return any(
+        pattern.search(text) is not None
+        for pattern in (_EMAIL, _PHONE, _PASSPORT, _SNILS, _INITIALS_NAME)
+    )
