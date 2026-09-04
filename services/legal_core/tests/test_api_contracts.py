@@ -5,6 +5,8 @@ from legal_core.api_contracts import (
     EscalationDiscussionMessageRequest,
     EscalationQueueItemResponse,
     FactInput,
+    LegalLibraryDocumentResponse,
+    LegalLibraryResponse,
     PlatformSubscriptionGrantRequest,
     TelegramIntakeDraftUpdateRequest,
 )
@@ -132,6 +134,27 @@ def test_escalation_queue_entry_has_only_deidentified_review_metadata() -> None:
 
     assert item.public_number == "DL-2026-000001"
     assert item.risk_level == "HIGH"
+
+
+def test_legal_library_contract_exposes_auditable_metadata_without_legal_text() -> None:
+    document = LegalLibraryDocumentResponse(
+        documentId="00000000-0000-0000-0000-000000000001",
+        versionId="00000000-0000-0000-0000-000000000002",
+        documentTitle="Синтетический нормативный документ",
+        issuer="Тестовый орган",
+        officialNumber="123",
+        effectiveFrom="2026-09-01",
+        effectiveTo=None,
+        sourceUrl="https://example.test/official.pdf",
+        rawSha256="a" * 64,
+        fragmentCount=3,
+    )
+    response = LegalLibraryResponse(asOfDate="2026-09-04", items=[document])
+
+    serialized = response.model_dump(by_alias=True)
+
+    assert serialized["items"][0]["fragmentCount"] == 3
+    assert "fragmentText" not in serialized["items"][0]
 
 
 def test_intake_draft_update_accepts_only_a_bounded_known_snapshot() -> None:

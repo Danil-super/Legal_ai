@@ -227,6 +227,13 @@ approved-only retrieval, applicable-date resolution and claim-to-evidence verifi
 
 ## Task 5.2: Licensed and reviewed practical-scenario regression library
 
+**Progress note (2026-09-04):**
+- [x] Public-topic discovery is recorded in
+  `docs/legal-review/practical-scenario-discovery-2026-09-04.md` without copying posts,
+  treating them as legal evidence, or adding them to the corpus/training set.
+- [ ] Convert only licensed, de-identified and independently reviewed candidates into executable
+  regression fixtures.
+
 **Acceptance criteria:**
 - [ ] Each scenario has documented provenance/rights, de-identification, two-person legal review,
   official-source links, expected actions and expiry review date.

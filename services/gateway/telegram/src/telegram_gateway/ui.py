@@ -65,6 +65,11 @@ SCREENS = {
         "Откройте этот раздел в основном интерфейсе бота. Загрузка документов необязательна, "
         "но одобренные шаблоны помогают точнее сформировать внутренний отчёт."
     ),
+    "legalbase:open": (
+        "📜 НОРМАТИВНАЯ БАЗА\n\n"
+        "Этот раздел доступен в полном защищённом контуре только юристу и владельцу клиники. "
+        "Он показывает одобренные официальные источники, а не внутренние документы клиники."
+    ),
     "privacy": (
         "🛡  КОНФИДЕНЦИАЛЬНОСТЬ\n\n"
         "Медицинские сведения и данные пациента требуют особой защиты.\n\n"
@@ -99,6 +104,7 @@ HELP_MESSAGE = (
     "/cancel_quick — отменить быстрое описание\n\n"
     "/admin — панель владельца сервиса\n\n"
     "/team — команда клиники (только владелец клиники)\n\n"
+    "/legal_base — нормативная база (юрист и владелец клиники)\n\n"
     "Юридические рекомендации и черновики не формируются без проверенной правовой базы."
 )
 
@@ -118,6 +124,7 @@ MAIN_MENU_CALLBACKS = {
     "account:id",
     "case:escalations",
     "clinicdocs:open",
+    "legalbase:open",
     "team:open",
     "help",
 }
@@ -143,6 +150,11 @@ def main_menu_keyboard(role: str | None = None) -> InlineKeyboardMarkup:
                 [
                     InlineKeyboardButton(
                         "⚖️ Критические кейсы", callback_data="case:escalations"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "📜 Нормативная база", callback_data="legalbase:open"
                     )
                 ],
                 *shared_rows,
@@ -172,6 +184,13 @@ def main_menu_keyboard(role: str | None = None) -> InlineKeyboardMarkup:
             [InlineKeyboardButton("⚖️ Критические кейсы", callback_data="case:escalations")]
         )
     if role == "CLINIC_OWNER":
+        case_rows.append(
+            [
+                InlineKeyboardButton(
+                    "📜 Нормативная база", callback_data="legalbase:open"
+                )
+            ]
+        )
         case_rows.append([InlineKeyboardButton("👥 Команда клиники", callback_data="team:open")])
 
     return InlineKeyboardMarkup(

@@ -526,6 +526,40 @@ def test_legal_fragment_search_is_authenticated_validated_and_approved_only() ->
     assert denied.status_code == 403
 
 
+def test_legal_library_is_visible_only_to_clinic_lawyer_and_owner() -> None:
+    lawyer = 4_100_000_001 + uuid4().int % 100_000_000
+    owner = 4_200_000_001 + uuid4().int % 100_000_000
+    administrator = 4_300_000_001 + uuid4().int % 100_000_000
+    seed_admin(lawyer, role="CLINIC_LAWYER")
+    seed_admin(owner, role="CLINIC_OWNER")
+    seed_admin(administrator)
+
+    with application_client() as client:
+        lawyer_response = client.get(
+            "/v1/legal/library",
+            headers=actor_headers(lawyer),
+            params={"as_of_date": "2026-09-04"},
+        )
+        owner_response = client.get(
+            "/v1/legal/library",
+            headers=actor_headers(owner),
+            params={"as_of_date": "2026-09-04"},
+        )
+        administrator_response = client.get(
+            "/v1/legal/library",
+            headers=actor_headers(administrator),
+            params={"as_of_date": "2026-09-04"},
+        )
+
+    assert lawyer_response.status_code == 200
+    assert owner_response.status_code == 200
+    assert lawyer_response.json()["asOfDate"] == "2026-09-04"
+    assert owner_response.json()["asOfDate"] == "2026-09-04"
+    assert all("fragmentText" not in item for item in lawyer_response.json()["items"])
+    assert administrator_response.status_code == 403
+    assert administrator_response.json()["error"]["code"] == "LEGAL_LIBRARY_NOT_ALLOWED"
+
+
 def test_case_intake_report_and_cross_tenant_boundary() -> None:
     admin_a = 7_000_000_001 + uuid4().int % 100_000_000
     admin_b = 8_000_000_001 + uuid4().int % 100_000_000

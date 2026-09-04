@@ -151,6 +151,7 @@ def test_lawyer_menu_exposes_only_review_workspace_actions() -> None:
     callbacks = {button.callback_data for row in keyboard.inline_keyboard for button in row}
 
     assert "case:escalations" in callbacks
+    assert "legalbase:open" in callbacks
     assert "case:start" not in callbacks
     assert "quick:start" not in callbacks
     assert "case:drafts" not in callbacks
@@ -165,6 +166,14 @@ def test_administrator_menu_exposes_optional_clinic_document_library() -> None:
     ]
 
     assert "clinicdocs:open" in callbacks
+    assert "legalbase:open" not in callbacks
+
+
+def test_owner_menu_combines_administrator_and_lawyer_actions() -> None:
+    keyboard = main_menu_keyboard("CLINIC_OWNER")
+    callbacks = {button.callback_data for row in keyboard.inline_keyboard for button in row}
+
+    assert {"case:start", "clinicdocs:open", "case:escalations", "legalbase:open", "team:open"} <= callbacks
 
 
 def test_known_callback_answers_and_edits_the_welcome_caption() -> None:

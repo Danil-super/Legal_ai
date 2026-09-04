@@ -46,6 +46,22 @@ class ApprovedLegalFragment:
     publication_date: date | None
 
 
+@dataclass(frozen=True, slots=True)
+class ApprovedLegalLibraryDocument:
+    """Metadata-only view of a document version eligible for report evidence."""
+
+    document_id: UUID
+    version_id: UUID
+    document_title: str
+    issuer: str
+    official_number: str | None
+    effective_from: date
+    effective_to: date | None
+    source_url: str
+    raw_sha256: str
+    fragment_count: int
+
+
 _FRAGMENT_COLUMNS = """
     fragment_id, version_id, document_id, article, part, point,
     structural_path, fragment_text, text_sha256, effective_from,
@@ -113,6 +129,35 @@ _SEARCH_APPROVED_VECTOR = text(
      ORDER BY e.embedding <=> CAST(:embedding AS vector),
               p.document_id,
               p.fragment_id
+     LIMIT :limit
+    """
+)
+
+_LIST_APPROVED_LIBRARY_DOCUMENTS = text(
+    """
+    SELECT document_id,
+           version_id,
+           document_title,
+           issuer,
+           official_number,
+           effective_from,
+           effective_to,
+           source_url,
+           raw_sha256,
+           count(*)::integer AS fragment_count
+      FROM production_legal_fragments
+     WHERE effective_from <= :as_of_date
+       AND (effective_to IS NULL OR :as_of_date < effective_to)
+     GROUP BY document_id,
+              version_id,
+              document_title,
+              issuer,
+              official_number,
+              effective_from,
+              effective_to,
+              source_url,
+              raw_sha256
+     ORDER BY document_title, official_number NULLS LAST, document_id, version_id
      LIMIT :limit
     """
 )
@@ -189,6 +234,25 @@ class ApprovedLegalCorpusRepository:
             {"query": query, "as_of_date": as_of_date, "limit": limit},
         )
         return [_row_fragment(row) for row in result.mappings()]
+
+    async def list_documents(
+        self,
+        *,
+        as_of_date: date,
+        limit: int = 50,
+    ) -> list[ApprovedLegalLibraryDocument]:
+        """Return metadata only; draft/review versions never enter this view."""
+
+        if not 1 <= limit <= 50:
+            raise ValueError("legal library limit must be between 1 and 50")
+        result = await self._session.execute(
+            _LIST_APPROVED_LIBRARY_DOCUMENTS,
+            {"as_of_date": as_of_date, "limit": limit},
+        )
+        return [
+            ApprovedLegalLibraryDocument(**dict(row))
+            for row in result.mappings()
+        ]
 
     async def _semantic(
         self,

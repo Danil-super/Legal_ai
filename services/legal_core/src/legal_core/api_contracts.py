@@ -276,6 +276,28 @@ class LegalFragmentSearchResponse(ContractModel):
     items: list[LegalFragmentResponse]
 
 
+class LegalLibraryDocumentResponse(ContractModel):
+    """One approved legal-document version currently eligible for report retrieval."""
+
+    document_id: UUID = Field(alias="documentId")
+    version_id: UUID = Field(alias="versionId")
+    document_title: str = Field(alias="documentTitle", min_length=1, max_length=1_000)
+    issuer: str = Field(min_length=1, max_length=240)
+    official_number: str | None = Field(default=None, alias="officialNumber", max_length=80)
+    effective_from: date = Field(alias="effectiveFrom")
+    effective_to: date | None = Field(default=None, alias="effectiveTo")
+    source_url: str = Field(alias="sourceUrl", min_length=1, max_length=2_000)
+    raw_sha256: str = Field(alias="rawSha256", pattern=r"^[0-9a-f]{64}$")
+    fragment_count: int = Field(alias="fragmentCount", ge=1, le=10_000)
+
+
+class LegalLibraryResponse(ContractModel):
+    """Read-only legal-base index for the lawyer and clinic owner workspace."""
+
+    as_of_date: date = Field(alias="asOfDate")
+    items: list[LegalLibraryDocumentResponse] = Field(default_factory=list, max_length=50)
+
+
 class FactInput(ContractModel):
     fact_key: FactKey = Field(alias="factKey")
     value_type: Literal[
