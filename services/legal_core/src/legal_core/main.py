@@ -18,6 +18,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 from legal_core import __version__
 from legal_core.analysis_api import create_analysis_router
 from legal_core.case_api import ApiError, create_case_router
+from legal_core.case_retention import purge_expired_case_content
 from legal_core.clinic_document_library import create_clinic_document_library_router
 from legal_core.clinic_document_store import RawClinicDocumentStore
 from legal_core.clinic_documents_api import create_clinic_documents_router
@@ -79,14 +80,18 @@ async def probe_dependencies() -> ReadinessChecks:
     return dict(zip(endpoints, results, strict=True))
 
 
-async def _draft_purge_loop(session_factory: async_sessionmaker[AsyncSession]) -> None:
-    """Run retention at startup and periodically without handling draft contents."""
+async def _retention_purge_loop(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    """Run bounded retention at startup and hourly without reading retained contents."""
 
     while True:
         try:
             await purge_expired_intake_drafts(session_factory)
         except Exception:  # pragma: no cover - operator-visible process log is the recovery path.
             logging.getLogger(__name__).exception("Telegram draft retention purge failed")
+        try:
+            await purge_expired_case_content(session_factory)
+        except Exception:  # pragma: no cover - operator-visible process log is the recovery path.
+            logging.getLogger(__name__).exception("Case content retention purge failed")
         await asyncio.sleep(DRAFT_PURGE_INTERVAL_SECONDS)
 
 
@@ -104,7 +109,7 @@ def create_app(
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         del application
         retention_task = (
-            asyncio.create_task(_draft_purge_loop(sessions)) if enable_draft_retention else None
+            asyncio.create_task(_retention_purge_loop(sessions)) if enable_draft_retention else None
         )
         try:
             yield

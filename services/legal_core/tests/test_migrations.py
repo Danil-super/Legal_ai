@@ -40,6 +40,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
             "case_escalation_messages",
             "case_analysis_runs",
             "case_analysis_claims",
+            "case_retention_events",
             "cases",
             "case_facts",
             "case_reports",
@@ -73,7 +74,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                     "'telegram_case_workflows','telegram_intake_drafts','subscription_entitlements',"
                     "'subscription_entitlement_events','case_risk_assessments','case_escalations',"
                     "'case_escalation_messages',"
-                    "'case_analysis_runs','case_analysis_claims')"
+                    "'case_analysis_runs','case_analysis_claims','case_retention_events')"
                 )
             ).scalars()
             triggers = connection.execute(
@@ -106,7 +107,8 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                         "SELECT proname FROM pg_proc WHERE proname IN "
                         "('legal_canonical_jsonb','legal_regression_result_sha256',"
                         "'legal_approval_event_is_current',"
-                        "'purge_expired_telegram_intake_drafts')"
+                        "'purge_expired_telegram_intake_drafts',"
+                        "'purge_expired_case_content')"
                     )
                 ).scalars()
             )
@@ -125,6 +127,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 "case_escalation_messages",
                 "case_analysis_runs",
                 "case_analysis_claims",
+                "case_retention_events",
             }
             assert set(triggers) == {
                 "case_facts",
@@ -157,6 +160,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 "legal_regression_result_sha256",
                 "legal_approval_event_is_current",
                 "purge_expired_telegram_intake_drafts",
+                "purge_expired_case_content",
             }
 
         command.downgrade(config, "f19b4c6e7d20")

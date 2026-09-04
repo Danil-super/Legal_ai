@@ -70,8 +70,20 @@ FREE_PILOT_SUBSCRIPTION_PLAN = "FREE_PILOT"
 NEW_CLINIC_NAME = "Новая стоматология"
 DRAFT_RETENTION = timedelta(days=30)
 DRAFT_ACTIVE_LIMIT = 20
+ACTIVE_CASE_LIMIT_PER_ADMIN = 5
+CONFIRMED_CASE_MONTHLY_LIMIT_PER_CLINIC = 30
+FINALIZED_CASE_RETENTION = timedelta(days=90)
 CLINIC_ACTOR_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN", "CLINIC_LAWYER"})
 CASE_INTAKE_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN"})
+ACTIVE_CASE_STATUSES = frozenset(
+    {
+        CaseStatus.COLLECTING.value,
+        CaseStatus.NEEDS_INFORMATION.value,
+        CaseStatus.INTAKE_COMPLETE.value,
+        CaseStatus.READY_FOR_ANALYSIS.value,
+        CaseStatus.ANALYZING.value,
+    }
+)
 
 
 class ApiError(Exception):
@@ -213,6 +225,96 @@ def _require_clinic_owner(actor: ActorContext) -> None:
         )
 
 
+def _require_case_intake_actor(actor: ActorContext) -> None:
+    if actor.role not in CASE_INTAKE_ROLES:
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="CASE_INTAKE_NOT_ALLOWED",
+            message="Only clinic owners and administrators may create or change case intake",
+        )
+
+
+def _set_case_retention_due(case: Case, now: datetime) -> None:
+    """Start the fixed retention period exactly once, at case confirmation."""
+
+    if case.closed_at is None:
+        case.closed_at = now
+        case.retention_due_at = now + FINALIZED_CASE_RETENTION
+
+
+def _require_finalized_case(case: Case) -> None:
+    if case.closed_at is None:
+        raise ApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="CASE_NOT_FINALIZED",
+            message="Case intake must be confirmed before a report or analysis is created",
+        )
+
+
+async def _enforce_case_limits(
+    session: AsyncSession,
+    actor: ActorContext,
+    *,
+    enforce_active_limit: bool,
+    enforce_monthly_limit: bool,
+) -> None:
+    """Serialize lifecycle transitions so owner and admin cannot bypass shared limits."""
+
+    await session.execute(
+        select(
+            func.pg_advisory_xact_lock(
+                func.hashtextextended(f"case-quota:{actor.clinic_id}", 0)
+            )
+        )
+    )
+    if enforce_active_limit:
+        active_count = await session.scalar(
+            select(func.count())
+            .select_from(Case)
+            .where(
+                Case.clinic_id == actor.clinic_id,
+                Case.created_by_membership_id == actor.membership_id,
+                Case.closed_at.is_(None),
+                Case.status.in_(ACTIVE_CASE_STATUSES),
+            )
+        )
+        if int(active_count or 0) >= ACTIVE_CASE_LIMIT_PER_ADMIN:
+            raise ApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="ACTIVE_CASE_LIMIT_REACHED",
+                message="The administrator active case limit was reached",
+                details={
+                    "limit": ACTIVE_CASE_LIMIT_PER_ADMIN,
+                    "activeCaseCount": int(active_count or 0),
+                },
+            )
+
+    if enforce_monthly_limit:
+        monthly_count = await session.scalar(
+            select(func.count())
+            .select_from(Case)
+            .where(
+                Case.clinic_id == actor.clinic_id,
+                Case.closed_at
+                >= func.date_trunc("month", func.timezone("UTC", func.now())),
+            )
+        )
+        if int(monthly_count or 0) >= CONFIRMED_CASE_MONTHLY_LIMIT_PER_CLINIC:
+            raise ApiError(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                code="CLINIC_MONTHLY_CASE_LIMIT_REACHED",
+                message=(
+                    "The clinic confirmed case limit for the current UTC calendar month "
+                    "was reached"
+                ),
+                details={
+                    "limit": CONFIRMED_CASE_MONTHLY_LIMIT_PER_CLINIC,
+                    "confirmedCaseCount": int(monthly_count or 0),
+                    "period": "CURRENT_UTC_CALENDAR_MONTH",
+                },
+            )
+
+
 async def _discussion_escalation(
     session: AsyncSession, actor: ActorContext, escalation_id: UUID
 ) -> CaseEscalation:
@@ -346,6 +448,12 @@ async def _tenant_case(session: AsyncSession, actor: ActorContext, case_id: UUID
             status_code=status.HTTP_404_NOT_FOUND,
             code="CASE_NOT_FOUND",
             message="Case not found",
+        )
+    if case.content_purged_at is not None:
+        raise ApiError(
+            status_code=status.HTTP_410_GONE,
+            code="CASE_CONTENT_PURGED",
+            message="Case content is no longer available under the retention policy",
         )
     return case
 
@@ -1051,6 +1159,7 @@ def create_case_router(
         session: Session,
     ) -> CaseResponse:
         actor = await resolve_actor(session, telegram_user_id)
+        _require_case_intake_actor(actor)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         replay = await _idempotency_replay(
             session,
@@ -1062,6 +1171,12 @@ def create_case_router(
         if replay is not None:
             response.status_code = status.HTTP_200_OK
             return CaseResponse.model_validate(replay)
+        await _enforce_case_limits(
+            session,
+            actor,
+            enforce_active_limit=True,
+            enforce_monthly_limit=False,
+        )
 
         idempotency = _new_idempotency_record(
             actor=actor,
@@ -1114,6 +1229,7 @@ def create_case_router(
         session: Session,
     ) -> IntakeResponse:
         actor = await resolve_actor(session, telegram_user_id)
+        _require_case_intake_actor(actor)
         case = await _tenant_case(session, actor, case_id)
         return _intake_response(case, _domain_facts(await _current_fact_rows(session, case.id)))
 
@@ -1126,6 +1242,7 @@ def create_case_router(
         session: Session,
     ) -> IntakeResponse:
         actor = await resolve_actor(session, telegram_user_id)
+        _require_case_intake_actor(actor)
         case = await _tenant_case(session, actor, case_id)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         scope = f"cases:{case_id}:facts"
@@ -1204,6 +1321,7 @@ def create_case_router(
         session: Session,
     ) -> CaseResponse:
         actor = await resolve_actor(session, telegram_user_id)
+        _require_case_intake_actor(actor)
         case = await _tenant_case(session, actor, case_id)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         scope = f"cases:{case_id}:finalize"
@@ -1225,6 +1343,12 @@ def create_case_router(
                 message="Карточку пока нельзя подтвердить",
                 details={"missingFactKeys": [item.fact_key.value for item in missing]},
             )
+        await _enforce_case_limits(
+            session,
+            actor,
+            enforce_active_limit=False,
+            enforce_monthly_limit=True,
+        )
 
         idempotency = _new_idempotency_record(
             actor=actor,
@@ -1232,8 +1356,10 @@ def create_case_router(
             key=idempotency_key,
             request_hash=request_hash,
         )
+        now = datetime.now(UTC)
         case.status = CaseStatus.ANALYSIS_BLOCKED.value
-        case.updated_at = datetime.now(UTC)
+        case.updated_at = now
+        _set_case_retention_due(case, now)
         result = _case_response(case)
         response_json = result.model_dump(mode="json", by_alias=True)
         _finish_idempotency(
@@ -1271,7 +1397,9 @@ def create_case_router(
         session: Session,
     ) -> ReportResponse:
         actor = await resolve_actor(session, telegram_user_id)
+        _require_case_intake_actor(actor)
         case = await _tenant_case(session, actor, case_id)
+        _require_finalized_case(case)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         scope = f"cases:{case_id}:reports"
         replay = await _idempotency_replay(
@@ -1378,6 +1506,7 @@ def create_case_router(
         session: Session,
     ) -> TelegramWorkflowResponse:
         actor = await resolve_actor(session, telegram_user_id)
+        _require_case_intake_actor(actor)
         request_json = payload.model_dump(mode="json", by_alias=True)
         request_hash = _canonical_hash(request_json)
 
@@ -1415,12 +1544,21 @@ def create_case_router(
                 message="Карточку пока нельзя подтвердить",
                 details={"missingFactKeys": [item.fact_key.value for item in missing]},
             )
+        await _enforce_case_limits(
+            session,
+            actor,
+            enforce_active_limit=True,
+            enforce_monthly_limit=True,
+        )
 
+        now = datetime.now(UTC)
         case = Case(
             clinic_id=actor.clinic_id,
             created_by_membership_id=actor.membership_id,
             status=CaseStatus.ANALYSIS_BLOCKED.value,
             intake_schema_version=payload.intake_schema_version,
+            closed_at=now,
+            retention_due_at=now + FINALIZED_CASE_RETENTION,
         )
         session.add(case)
         await session.flush()

@@ -171,6 +171,8 @@ class Case(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retention_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    content_purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class CaseFact(Base):
@@ -492,6 +494,28 @@ class AuditEvent(Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     correlation_id: Mapped[UUID] = mapped_column(UUID_PK)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
+class CaseRetentionEvent(Base):
+    """Metadata-only trace of an automated, policy-driven case-content purge."""
+
+    __tablename__ = "case_retention_events"
+    __table_args__ = (
+        Index("ix_case_retention_events_tenant_time", "clinic_id", "created_at", "id"),
+        Index("ix_case_retention_events_purge_after", "audit_purge_after", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    case_id: Mapped[UUID] = mapped_column(UUID_PK)
+    case_no: Mapped[int] = mapped_column(BigInteger)
+    facts_purged: Mapped[int] = mapped_column(Integer)
+    reports_purged: Mapped[int] = mapped_column(Integer)
+    discussion_messages_purged: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+    audit_purge_after: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class IdempotencyRecord(Base):

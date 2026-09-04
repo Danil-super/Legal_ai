@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from legal_core.database import database_url, owner_database_url
+from legal_core.case_retention import purge_expired_case_content
 from legal_core.draft_retention import purge_expired_intake_drafts
 from legal_core.main import create_app
 from sqlalchemy import create_engine, text
@@ -22,6 +23,7 @@ def seed_admin(
     *,
     entitlement_status: str | None = "ACTIVE",
     entitlement_is_expired: bool = False,
+    role: str = "CLINIC_ADMIN",
 ) -> tuple[UUID, UUID]:
     clinic_id = uuid4()
     user_id = uuid4()
@@ -40,9 +42,14 @@ def seed_admin(
             connection.execute(
                 text(
                     "INSERT INTO clinic_users (id,clinic_id,user_id,role) "
-                    "VALUES (:id,:clinic_id,:user_id,'CLINIC_ADMIN')"
+                    "VALUES (:id,:clinic_id,:user_id,:role)"
                 ),
-                {"id": membership_id, "clinic_id": clinic_id, "user_id": user_id},
+                {
+                    "id": membership_id,
+                    "clinic_id": clinic_id,
+                    "user_id": user_id,
+                    "role": role,
+                },
             )
             if entitlement_status is not None:
                 ends_at_sql = (
@@ -558,6 +565,14 @@ def test_case_intake_report_and_cross_tenant_boundary() -> None:
         assert facts_response.status_code == 200
         assert facts_response.json()["missingFacts"] == []
 
+        report_before_confirmation = client.post(
+            f"/v1/cases/{case_id}/reports",
+            headers=actor_headers(admin_a, uuid4()),
+            json={"locale": "ru-RU"},
+        )
+        assert report_before_confirmation.status_code == 409
+        assert report_before_confirmation.json()["error"]["code"] == "CASE_NOT_FINALIZED"
+
         finalised = client.post(
             f"/v1/cases/{case_id}/intake-finalizations",
             headers=actor_headers(admin_a, uuid4()),
@@ -583,6 +598,162 @@ def test_case_intake_report_and_cross_tenant_boundary() -> None:
         assert pdf.status_code == 200
         assert pdf.headers["content-type"] == "application/pdf"
         assert pdf.content.startswith(b"%PDF-")
+
+
+def test_active_case_limit_blocks_the_sixth_unfinished_case() -> None:
+    administrator = 7_200_000_001 + uuid4().int % 100_000_000
+    seed_admin(administrator)
+    payload = {"intakeSchemaVersion": "dental-case-intake.v1", "channel": "TELEGRAM"}
+
+    with application_client() as client:
+        created = [
+            client.post("/v1/cases", headers=actor_headers(administrator, uuid4()), json=payload)
+            for _ in range(5)
+        ]
+        blocked = client.post(
+            "/v1/cases", headers=actor_headers(administrator, uuid4()), json=payload
+        )
+
+    assert [response.status_code for response in created] == [201] * 5
+    assert blocked.status_code == 409
+    assert blocked.json()["error"] == {
+        "code": "ACTIVE_CASE_LIMIT_REACHED",
+        "message": "The administrator active case limit was reached",
+        "details": {"limit": 5, "activeCaseCount": 5},
+        "correlationId": blocked.json()["error"]["correlationId"],
+    }
+
+
+def test_monthly_confirmed_case_limit_also_blocks_clinic_owner() -> None:
+    owner = 7_300_000_001 + uuid4().int % 100_000_000
+    clinic_id, membership_id = seed_admin(owner, role="CLINIC_OWNER")
+    engine = create_engine(owner_database_url().set(drivername="postgresql+psycopg"))
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO cases "
+                    "(clinic_id, created_by_membership_id, status, closed_at, retention_due_at) "
+                    "SELECT :clinic_id, :membership_id, 'ANALYSIS_BLOCKED', "
+                    "timezone('utc', now()), timezone('utc', now()) + INTERVAL '90 days' "
+                    "FROM generate_series(1, 30)"
+                ),
+                {"clinic_id": clinic_id, "membership_id": membership_id},
+            )
+    finally:
+        engine.dispose()
+
+    with application_client() as client:
+        blocked = client.post(
+            f"/v1/telegram-case-workflows/{uuid4()}/submissions",
+            headers=actor_headers(owner),
+            json=workflow_submission(),
+        )
+
+    assert blocked.status_code == 429
+    assert blocked.json()["error"]["code"] == "CLINIC_MONTHLY_CASE_LIMIT_REACHED"
+    assert blocked.json()["error"]["details"] == {
+        "limit": 30,
+        "confirmedCaseCount": 30,
+        "period": "CURRENT_UTC_CALENDAR_MONTH",
+    }
+
+
+def test_retention_purges_confirmed_case_content_but_keeps_bounded_metadata() -> None:
+    administrator = 7_400_000_001 + uuid4().int % 100_000_000
+    seed_admin(administrator)
+    workflow_id = uuid4()
+
+    with application_client() as client:
+        submitted = client.post(
+            f"/v1/telegram-case-workflows/{workflow_id}/submissions",
+            headers=actor_headers(administrator),
+            json=workflow_submission(),
+        )
+    case_id = submitted.json()["case"]["id"]
+
+    engine = create_engine(owner_database_url().set(drivername="postgresql+psycopg"))
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE cases SET retention_due_at = timezone('utc', now()) - INTERVAL '1 second' "
+                    "WHERE id = :case_id"
+                ),
+                {"case_id": case_id},
+            )
+    finally:
+        engine.dispose()
+
+    async_engine = create_async_engine(database_url())
+    try:
+        purged = asyncio.run(
+            purge_expired_case_content(async_sessionmaker(async_engine, expire_on_commit=False))
+        )
+    finally:
+        asyncio.run(async_engine.dispose())
+
+    engine = create_engine(owner_database_url().set(drivername="postgresql+psycopg"))
+    try:
+        with engine.connect() as connection:
+            retained_case = connection.execute(
+                text(
+                    "SELECT status, content_purged_at IS NOT NULL, title, incident_date, "
+                    "retention_due_at FROM cases WHERE id = :case_id"
+                ),
+                {"case_id": case_id},
+            ).one()
+            child_counts = tuple(
+                int(
+                    connection.execute(
+                        text(f"SELECT count(*) FROM {table} WHERE case_id = :case_id"),
+                        {"case_id": case_id},
+                    ).scalar_one()
+                )
+                for table in ("case_facts", "case_reports", "telegram_case_workflows")
+            )
+            retention_event = connection.execute(
+                text(
+                    "SELECT facts_purged, reports_purged, discussion_messages_purged "
+                    "FROM case_retention_events WHERE case_id = :case_id"
+                ),
+                {"case_id": case_id},
+            ).one()
+    finally:
+        engine.dispose()
+
+    with application_client() as client:
+        unavailable = client.get(f"/v1/cases/{case_id}", headers=actor_headers(administrator))
+
+    assert submitted.status_code == 201
+    assert purged == 1
+    assert retained_case == ("CONTENT_PURGED", True, None, None, None)
+    assert child_counts == (0, 0, 0)
+    assert retention_event == (len(workflow_submission()["facts"]), 1, 0)
+    assert unavailable.status_code == 410
+    assert unavailable.json()["error"]["code"] == "CASE_CONTENT_PURGED"
+
+
+def test_clinic_lawyer_cannot_create_or_submit_case_intake() -> None:
+    lawyer = 7_500_000_001 + uuid4().int % 100_000_000
+    seed_admin(lawyer, role="CLINIC_LAWYER")
+
+    with application_client() as client:
+        create_blocked = client.post(
+            "/v1/cases",
+            headers=actor_headers(lawyer, uuid4()),
+            json={"intakeSchemaVersion": "dental-case-intake.v1", "channel": "TELEGRAM"},
+        )
+        submit_blocked = client.post(
+            f"/v1/telegram-case-workflows/{uuid4()}/submissions",
+            headers=actor_headers(lawyer),
+            json=workflow_submission(),
+        )
+
+    assert create_blocked.status_code == 403
+    assert submit_blocked.status_code == 403
+    assert create_blocked.json()["error"]["code"] == "CASE_INTAKE_NOT_ALLOWED"
+    assert submit_blocked.json()["error"]["code"] == "CASE_INTAKE_NOT_ALLOWED"
 
 
 def test_unknown_telegram_user_is_denied_without_tenant_details() -> None:

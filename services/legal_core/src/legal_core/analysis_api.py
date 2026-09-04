@@ -37,6 +37,7 @@ from legal_core.case_api import (
     _finish_idempotency,
     _idempotency_replay,
     _new_idempotency_record,
+    _require_finalized_case,
     _tenant_case,
     resolve_actor,
 )
@@ -119,6 +120,7 @@ def _analysis_date(facts: dict[FactKey, object]) -> date:
 
 async def _load_analysis_state(session: AsyncSession, actor: Any, case_id: UUID) -> AnalysisState:
     case = await _tenant_case(session, actor, case_id)
+    _require_finalized_case(case)
     facts = _domain_facts(await _current_fact_rows(session, case.id))
     missing = missing_facts_for(facts)
     if missing:

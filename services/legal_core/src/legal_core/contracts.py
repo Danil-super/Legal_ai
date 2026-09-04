@@ -23,6 +23,7 @@ class CaseStatus(StrEnum):
     ESCALATION_REQUIRED = "ESCALATION_REQUIRED"
     CLOSED = "CLOSED"
     CANCELLED = "CANCELLED"
+    CONTENT_PURGED = "CONTENT_PURGED"
 
 
 class FactKey(StrEnum):
