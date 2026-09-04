@@ -93,6 +93,7 @@ HELP_MESSAGE = (
     "/describe_case — быстро описать обезличенную ситуацию\n"
     "/cancel_quick — отменить быстрое описание\n\n"
     "/admin — панель владельца сервиса\n\n"
+    "/team — команда клиники (только владелец клиники)\n\n"
     "Юридические рекомендации и черновики не формируются без проверенной правовой базы."
 )
 
@@ -150,6 +151,16 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("➕ Выдать полный доступ", callback_data="admin:grant")],
             [InlineKeyboardButton("🎁 Выдать pilot на 30 дней", callback_data="admin:pilot")],
+            [InlineKeyboardButton("← Главное меню", callback_data="menu")],
+        ]
+    )
+
+
+def clinic_team_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("➕ Добавить администратора", callback_data="team:add:admin")],
+            [InlineKeyboardButton("➕ Добавить юриста", callback_data="team:add:lawyer")],
             [InlineKeyboardButton("← Главное меню", callback_data="menu")],
         ]
     )

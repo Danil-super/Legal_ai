@@ -15,6 +15,7 @@ from legal_core.database import create_engine, create_session_factory
 from legal_core.models import ClinicUser, SubscriptionEntitlement, SubscriptionEntitlementEvent
 
 _STATUSES = frozenset({"ACTIVE", "SUSPENDED", "CANCELLED"})
+_MEMBER_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN", "CLINIC_LAWYER"})
 _PLAN_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,79}$")
 
 
@@ -53,8 +54,8 @@ async def _membership_for_provisioning(
     membership = await session.scalar(
         select(ClinicUser).where(ClinicUser.id == membership_id).with_for_update()
     )
-    if membership is None or membership.status != "ACTIVE" or membership.role != "CLINIC_ADMIN":
-        raise ValueError("membership must be an active CLINIC_ADMIN")
+    if membership is None or membership.status != "ACTIVE" or membership.role not in _MEMBER_ROLES:
+        raise ValueError("membership must be an active clinic member")
     await session.execute(
         select(func.set_config("app.current_clinic_id", str(membership.clinic_id), True))
     )

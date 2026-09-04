@@ -44,6 +44,7 @@ from telegram_gateway.ui import (
     WELCOME_IMAGE,
     admin_panel_keyboard,
     back_keyboard,
+    clinic_team_keyboard,
     main_menu_keyboard,
 )
 
@@ -59,7 +60,9 @@ DRAFT_ID_KEY = "draft_id"
 DRAFT_REVISION_KEY = "draft_revision"
 ADMIN_GRANT_ACCESS_KEY = "admin_grant_access"
 ADMIN_GRANT_PILOT_KEY = "admin_grant_pilot"
+TEAM_MEMBER_ROLE_KEY = "team_member_role"
 LEGAL_CORE_TIMEOUT_SECONDS = 15.0
+CASE_INTAKE_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN"})
 
 
 class WizardState(IntEnum):
@@ -122,6 +125,7 @@ def _clear_pending_admin_grant(context: ContextTypes.DEFAULT_TYPE | None) -> Non
     if context is not None and context.user_data is not None:
         context.user_data.pop(ADMIN_GRANT_ACCESS_KEY, None)
         context.user_data.pop(ADMIN_GRANT_PILOT_KEY, None)
+        context.user_data.pop(TEAM_MEMBER_ROLE_KEY, None)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> None:
@@ -165,6 +169,62 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE | None)
             "Выберите действие. Права владельца дополнительно проверяет Legal Core.",
             reply_markup=admin_panel_keyboard(),
         )
+
+
+async def clinic_team(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> None:
+    _clear_pending_admin_grant(context)
+    actor_id = _actor_id(update)
+    if actor_id is None:
+        await _reply(update, "Не удалось определить пользователя.")
+        return
+    try:
+        actor = await _legal_core(cast(ContextTypes.DEFAULT_TYPE, context)).get_actor(actor_id)
+    except LegalCoreApiError:
+        await _reply(update, "⚠️ Не удалось открыть команду клиники. Попробуйте позже.")
+        return
+    if actor.get("role") != "CLINIC_OWNER":
+        await _reply(update, "🔒 Управление командой доступно владельцу клиники.")
+        return
+    await _reply(
+        update,
+        "👥 КОМАНДА КЛИНИКИ\n\nДобавьте сотрудника по Telegram ID. Администратор создаёт "
+        "и ведёт кейсы; юрист получает только критические кейсы и внутренний диалог по ним.",
+        reply_markup=clinic_team_keyboard(),
+    )
+
+
+async def prompt_team_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    callback = await _answer_callback(update)
+    roles = {"team:add:admin": "CLINIC_ADMIN", "team:add:lawyer": "CLINIC_LAWYER"}
+    role = roles.get(callback or "")
+    if role is None:
+        return
+    _user_data(context)[TEAM_MEMBER_ROLE_KEY] = role
+    title = "администратора" if role == "CLINIC_ADMIN" else "юриста"
+    await _reply(update, f"Введите Telegram ID {title} одним числом.")
+
+
+async def record_team_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    role = _user_data(context).get(TEAM_MEMBER_ROLE_KEY)
+    target_id = _target_telegram_id(_message_text(update))
+    if role not in {"CLINIC_ADMIN", "CLINIC_LAWYER"} or target_id is None:
+        await _reply(update, "Введите корректный Telegram ID одним положительным числом.")
+        return
+    actor_id = _actor_id(update)
+    if actor_id is None:
+        await _reply(update, "Не удалось определить владельца клиники.")
+        return
+    try:
+        member = await _legal_core(context).add_clinic_member(actor_id, target_id, role=role)
+    except LegalCoreApiError as exc:
+        if exc.code == "CLINIC_OWNER_REQUIRED":
+            await _reply(update, "🔒 Управление командой доступно владельцу клиники.")
+        else:
+            await _reply(update, "⚠️ Не удалось добавить пользователя. Попробуйте позже.")
+        return
+    _user_data(context).pop(TEAM_MEMBER_ROLE_KEY, None)
+    label = "администратор" if member.get("role") == "CLINIC_ADMIN" else "юрист"
+    await _reply(update, f"✅ Пользователь {target_id} добавлен в команду: {label}.")
 
 
 def _target_telegram_id(raw_value: str) -> int | None:
@@ -500,7 +560,7 @@ async def case_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await _reply(update, "⚠️ Legal Core временно недоступен. Попробуйте открыть кейс позже.")
         return ConversationHandler.END
 
-    if actor.get("role") != "CLINIC_ADMIN":
+    if actor.get("role") not in CASE_INTAKE_ROLES:
         await _reply(update, "⚠️ Legal Core вернул некорректный ответ. Попробуйте позже.")
         return ConversationHandler.END
     try:
@@ -1343,6 +1403,12 @@ async def text_input(update: Update, context: ContextTypes.DEFAULT_TYPE | None) 
     if context is not None and _user_data(context).get(ADMIN_GRANT_PILOT_KEY) is True:
         await record_admin_grant_pilot(update, context)
         return
+    if context is not None and _user_data(context).get(TEAM_MEMBER_ROLE_KEY) in {
+        "CLINIC_ADMIN",
+        "CLINIC_LAWYER",
+    }:
+        await record_team_member(update, context)
+        return
     await _reply(update, TEXT_INPUT_DISABLED_MESSAGE)
 
 
@@ -1556,6 +1622,7 @@ def build_application(token: str) -> TelegramApplication:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("whoami", whoami))
     application.add_handler(CommandHandler("admin", admin_panel))
+    application.add_handler(CommandHandler("team", clinic_team))
     application.add_handler(CommandHandler("grant_access", grant_access))
     application.add_handler(CommandHandler("grant_pilot", grant_pilot))
     application.add_handler(
@@ -1563,6 +1630,9 @@ def build_application(token: str) -> TelegramApplication:
     )
     application.add_handler(
         CallbackQueryHandler(prompt_admin_grant_pilot, pattern=r"^admin:pilot$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(prompt_team_member, pattern=r"^team:add:(admin|lawyer)$")
     )
     application.add_handler(
         CallbackQueryHandler(

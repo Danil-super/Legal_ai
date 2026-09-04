@@ -130,8 +130,25 @@ class CaseResponse(ContractModel):
     created_at: datetime = Field(alias="createdAt")
 
 
+ClinicRole = Literal["CLINIC_OWNER", "CLINIC_ADMIN", "CLINIC_LAWYER"]
+
+
 class ActorResponse(ContractModel):
-    role: Literal["CLINIC_ADMIN"]
+    role: ClinicRole
+
+
+class ClinicMemberResponse(ContractModel):
+    telegram_user_id: int = Field(alias="telegramUserId")
+    role: ClinicRole
+
+
+class ClinicMemberListResponse(ContractModel):
+    items: list[ClinicMemberResponse]
+
+
+class ClinicMemberCreateRequest(ContractModel):
+    telegram_user_id: int = Field(alias="telegramUserId", gt=0, le=9_223_372_036_854_775_807)
+    role: Literal["CLINIC_ADMIN", "CLINIC_LAWYER"]
 
 
 class TelegramIntakeDraftUpdateRequest(ContractModel):

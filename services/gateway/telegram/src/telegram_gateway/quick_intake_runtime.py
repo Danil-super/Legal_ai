@@ -285,7 +285,7 @@ async def start_quick_intake(
         return
     try:
         actor = await _legal_core(context).get_actor(actor_id)
-        if actor.get("role") != "CLINIC_ADMIN":
+        if actor.get("role") not in gateway_bot.CASE_INTAKE_ROLES:
             raise ValueError("unexpected actor role")
     except LegalCoreApiError as exc:
         logger.warning("quick intake actor authorization failed: %s", exc.code)

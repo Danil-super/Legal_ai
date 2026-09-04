@@ -47,7 +47,7 @@ def test_bootstrap_admin_is_idempotent_and_creates_one_active_membership() -> No
                     .where(
                         User.telegram_user_id == telegram_id,
                         ClinicUser.status == "ACTIVE",
-                        ClinicUser.role == "CLINIC_ADMIN",
+                        ClinicUser.role == "CLINIC_OWNER",
                     )
                 )
                 clinic_name = await session.scalar(

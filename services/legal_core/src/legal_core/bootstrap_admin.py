@@ -32,7 +32,7 @@ def configured_admin(environment: Mapping[str, str]) -> tuple[int, str] | None:
     return telegram_user_id, clinic_name
 
 
-async def _active_admin_memberships(
+async def _active_owner_memberships(
     session: AsyncSession, user_id: UUID
 ) -> list[ClinicUser]:
     return list(
@@ -41,7 +41,7 @@ async def _active_admin_memberships(
                 select(ClinicUser).where(
                     ClinicUser.user_id == user_id,
                     ClinicUser.status == "ACTIVE",
-                    ClinicUser.role == "CLINIC_ADMIN",
+                    ClinicUser.role == "CLINIC_OWNER",
                 )
             )
         ).all()
@@ -53,7 +53,7 @@ async def bootstrap_admin(
     telegram_user_id: int,
     clinic_name: str,
 ) -> UUID:
-    """Create exactly one server-owned clinic membership, or return the existing one."""
+    """Create exactly one server-owned clinic owner membership, or return the existing one."""
 
     if telegram_user_id <= 0:
         raise ValueError("telegram_user_id must be positive")
@@ -75,11 +75,24 @@ async def bootstrap_admin(
         elif user.status != "ACTIVE":
             raise RuntimeError("configured Telegram user is not active")
 
-        memberships = await _active_admin_memberships(session, user.id)
+        memberships = await _active_owner_memberships(session, user.id)
         if len(memberships) > 1:
             raise RuntimeError("configured Telegram user has multiple active admin memberships")
         if memberships:
             return memberships[0].id
+
+        existing_admin = await session.scalar(
+            select(ClinicUser)
+            .where(
+                ClinicUser.user_id == user.id,
+                ClinicUser.status == "ACTIVE",
+                ClinicUser.role == "CLINIC_ADMIN",
+            )
+            .with_for_update()
+        )
+        if existing_admin is not None:
+            existing_admin.role = "CLINIC_OWNER"
+            return existing_admin.id
 
         clinic = Clinic(name=normalized_name)
         session.add(clinic)
@@ -87,7 +100,7 @@ async def bootstrap_admin(
         membership = ClinicUser(
             clinic_id=clinic.id,
             user_id=user.id,
-            role="CLINIC_ADMIN",
+            role="CLINIC_OWNER",
         )
         session.add(membership)
         await session.flush()

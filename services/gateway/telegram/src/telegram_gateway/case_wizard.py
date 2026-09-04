@@ -355,6 +355,21 @@ class LegalCoreClient:
             telegram_user_id=telegram_user_id,
         )
 
+    async def list_clinic_members(self, telegram_user_id: int) -> dict[str, Any]:
+        return await self._json_request(
+            "GET", "/v1/clinic/members", telegram_user_id=telegram_user_id
+        )
+
+    async def add_clinic_member(
+        self, telegram_user_id: int, target_telegram_user_id: int, *, role: str
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "POST",
+            "/v1/clinic/members",
+            telegram_user_id=telegram_user_id,
+            payload={"telegramUserId": target_telegram_user_id, "role": role},
+        )
+
     async def grant_subscription(
         self,
         telegram_user_id: int,

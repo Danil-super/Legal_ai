@@ -18,6 +18,9 @@ from legal_core.api_contracts import (
     ActorResponse,
     AddFactsRequest,
     CaseResponse,
+    ClinicMemberCreateRequest,
+    ClinicMemberListResponse,
+    ClinicMemberResponse,
     CreateCaseRequest,
     CreateReportRequest,
     FinalizeRequest,
@@ -59,6 +62,8 @@ FREE_PILOT_SUBSCRIPTION_PLAN = "FREE_PILOT"
 NEW_CLINIC_NAME = "Новая стоматология"
 DRAFT_RETENTION = timedelta(days=30)
 DRAFT_ACTIVE_LIMIT = 20
+CLINIC_ACTOR_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN", "CLINIC_LAWYER"})
+CASE_INTAKE_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN"})
 
 
 class ApiError(Exception):
@@ -155,7 +160,7 @@ async def resolve_actor(session: AsyncSession, telegram_user_id: int) -> ActorCo
             User.telegram_user_id == telegram_user_id,
             User.status == "ACTIVE",
             ClinicUser.status == "ACTIVE",
-            ClinicUser.role == "CLINIC_ADMIN",
+            ClinicUser.role.in_(CLINIC_ACTOR_ROLES),
         )
     )
     memberships = result.all()
@@ -189,6 +194,15 @@ async def resolve_actor(session: AsyncSession, telegram_user_id: int) -> ActorCo
         clinic_id=clinic_id,
         role=role,
     )
+
+
+def _require_clinic_owner(actor: ActorContext) -> None:
+    if actor.role != "CLINIC_OWNER":
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="CLINIC_OWNER_REQUIRED",
+            message="Clinic owner access is required",
+        )
 
 
 def _configured_platform_owner_telegram_id() -> int:
@@ -404,8 +418,104 @@ def create_case_router(
         telegram_user_id: TelegramUserId,
         session: Session,
     ) -> ActorResponse:
-        await resolve_actor(session, telegram_user_id)
-        return ActorResponse(role="CLINIC_ADMIN")
+        actor = await resolve_actor(session, telegram_user_id)
+        return ActorResponse(role=actor.role)
+
+    @router.get("/clinic/members", response_model=ClinicMemberListResponse)
+    async def list_clinic_members(
+        telegram_user_id: TelegramUserId,
+        session: Session,
+    ) -> ClinicMemberListResponse:
+        actor = await resolve_actor(session, telegram_user_id)
+        _require_clinic_owner(actor)
+        rows = list(
+            (
+                await session.execute(
+                    select(User.telegram_user_id, ClinicUser.role)
+                    .join(ClinicUser, ClinicUser.user_id == User.id)
+                    .where(
+                        ClinicUser.clinic_id == actor.clinic_id,
+                        ClinicUser.status == "ACTIVE",
+                        User.status == "ACTIVE",
+                        ClinicUser.role.in_(CLINIC_ACTOR_ROLES),
+                    )
+                    .order_by(User.telegram_user_id)
+                )
+            ).all()
+        )
+        return ClinicMemberListResponse(
+            items=[ClinicMemberResponse(telegramUserId=row[0], role=row[1]) for row in rows]
+        )
+
+    @router.post(
+        "/clinic/members",
+        response_model=ClinicMemberResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def add_clinic_member(
+        payload: ClinicMemberCreateRequest,
+        telegram_user_id: TelegramUserId,
+        session: Session,
+    ) -> ClinicMemberResponse:
+        actor = await resolve_actor(session, telegram_user_id)
+        _require_clinic_owner(actor)
+        await session.execute(select(func.pg_advisory_xact_lock(payload.telegram_user_id)))
+        member_user = await session.scalar(
+            select(User).where(User.telegram_user_id == payload.telegram_user_id).with_for_update()
+        )
+        if member_user is None:
+            member_user = User(telegram_user_id=payload.telegram_user_id)
+            session.add(member_user)
+            await session.flush()
+        elif member_user.status != "ACTIVE":
+            raise ApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="TARGET_USER_INACTIVE",
+                message="Target Telegram user is inactive",
+            )
+        membership = await session.scalar(
+            select(ClinicUser)
+            .where(ClinicUser.clinic_id == actor.clinic_id, ClinicUser.user_id == member_user.id)
+            .with_for_update()
+        )
+        if membership is None:
+            membership = ClinicUser(
+                clinic_id=actor.clinic_id,
+                user_id=member_user.id,
+                role=payload.role,
+                status="ACTIVE",
+            )
+            session.add(membership)
+            await session.flush()
+        elif membership.role == "CLINIC_OWNER":
+            raise ApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="OWNER_ROLE_PROTECTED",
+                message="The clinic owner role cannot be changed here",
+            )
+        else:
+            membership.role = payload.role
+            membership.status = "ACTIVE"
+        await provision_entitlement_in_session(
+            session,
+            membership_id=membership.id,
+            plan_code="CLINIC_MEMBER",
+            status="ACTIVE",
+            starts_at=datetime.now(UTC),
+            ends_at=None,
+            performed_by_user_id=actor.user_id,
+        )
+        session.add(
+            _audit(
+                actor=actor,
+                action="CLINIC_MEMBER_ADDED",
+                resource_type="CLINIC_USER",
+                resource_id=membership.id,
+                metadata={"role": payload.role},
+            )
+        )
+        await session.commit()
+        return ClinicMemberResponse(telegramUserId=member_user.telegram_user_id, role=membership.role)
 
     @router.post(
         "/telegram-intake-drafts",
@@ -420,6 +530,12 @@ def create_case_router(
         session: Session,
     ) -> TelegramIntakeDraftResponse:
         actor = await resolve_actor(session, telegram_user_id)
+        if actor.role not in CASE_INTAKE_ROLES:
+            raise ApiError(
+                status_code=status.HTTP_403_FORBIDDEN,
+                code="CASE_INTAKE_NOT_ALLOWED",
+                message="Only clinic administrators may create intake drafts",
+            )
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         replay = await _idempotency_replay(
             session,
