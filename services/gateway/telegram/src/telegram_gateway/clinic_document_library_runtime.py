@@ -251,7 +251,10 @@ def document_usage_help() -> str:
         "Документы клиники — внутренний контекст, а не источник права: закон и проверенная "
         "нормативная база всегда имеют приоритет. Отсутствие документов не блокирует анализ, "
         "но бот покажет полезный checklist. Загружать весь список сразу не нужно: добавляйте "
-        "только доступные и актуальные шаблоны, остальные можно загрузить позже."
+        "только доступные и актуальные шаблоны, остальные можно загрузить позже.\n\n"
+        "Если шаблон устарел, нажмите «Снять с использования» и подтвердите действие. Версия "
+        "сразу исключается из новых анализов, но остаётся в истории; затем загрузите замену "
+        "через «Добавить документ»."
     )
 
 
@@ -314,17 +317,28 @@ def render_library(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMarkup |
             version_id = UUID(str(latest["id"]))
         except (KeyError, TypeError, ValueError):
             continue
-        row = [
-            InlineKeyboardButton(
-                f"✅ Одобрить {key}"[:60],
-                callback_data=f"clinicdoc:approve:{version_id}",
-            ),
-            InlineKeyboardButton(
-                f"⛔ Блок {key}"[:60],
-                callback_data=f"clinicdoc:block:{version_id}",
-            ),
-        ]
-        buttons.append(row)
+        if state == "PENDING":
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"✅ Одобрить {key}"[:60],
+                        callback_data=f"clinicdoc:approve:{version_id}",
+                    ),
+                    InlineKeyboardButton(
+                        f"⛔ Блок {key}"[:60],
+                        callback_data=f"clinicdoc:block:{version_id}",
+                    ),
+                ]
+            )
+        elif state == "APPROVED":
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"🗄 Снять с использования {key}"[:60],
+                        callback_data=f"clinicdoc:retire:{version_id}",
+                    )
+                ]
+            )
         if document_id is not None:
             buttons.append(
                 [

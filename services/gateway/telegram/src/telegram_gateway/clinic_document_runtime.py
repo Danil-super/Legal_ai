@@ -39,7 +39,7 @@ _MAX_UPLOAD_BYTES = 15_000_000
 _DOCUMENT_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{2,99}$")
 _DOCUMENT_TYPE_RE = re.compile(r"^[A-Z0-9_]{3,80}$")
 _REVIEW_CALLBACK_RE = re.compile(
-    r"^clinicdoc:(approve|block):"
+    r"^clinicdoc:(approve|block|retire|retire-confirm|retire-cancel):"
     r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
 )
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -89,6 +89,27 @@ def review_keyboard(version_id: UUID) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("✅ Одобрить", callback_data=approve),
                 InlineKeyboardButton("⛔ Заблокировать", callback_data=block),
             ]
+        ]
+    )
+
+
+def retire_keyboard(version_id: UUID) -> InlineKeyboardMarkup:
+    callback_data = f"clinicdoc:retire:{version_id}"
+    if len(callback_data.encode()) > 64:
+        raise ValueError("clinic document callback data is too long")
+    button = InlineKeyboardButton("🗄 Снять с использования", callback_data=callback_data)
+    return InlineKeyboardMarkup([[button]])
+
+
+def retire_confirmation_keyboard(version_id: UUID) -> InlineKeyboardMarkup:
+    confirm = f"clinicdoc:retire-confirm:{version_id}"
+    cancel = f"clinicdoc:retire-cancel:{version_id}"
+    if len(confirm.encode()) > 64 or len(cancel.encode()) > 64:
+        raise ValueError("clinic document callback data is too long")
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Да, снять", callback_data=confirm)],
+            [InlineKeyboardButton("Отмена", callback_data=cancel)],
         ]
     )
 
@@ -540,12 +561,39 @@ async def review_clinic_document_callback(
     await query.answer()
     action, version_text = match.groups()
     version_id = UUID(version_text)
+    if action == "retire":
+        text = (
+            "🗄 СНЯТЬ ВЕРСИЮ С ИСПОЛЬЗОВАНИЯ?\n\n"
+            "Она сразу перестанет попадать в новые анализы и отчёты. Исходный файл, "
+            "версия и история решений сохранятся для аудита. Прошлые отчёты не изменятся.\n\n"
+            "После отзыва можно загрузить новую версию через «База документов клиники»."
+        )
+        try:
+            await query.edit_message_text(
+                text=text,
+                reply_markup=retire_confirmation_keyboard(version_id),
+            )
+        except Exception:  # pragma: no cover - fallback is safe and operator-visible.
+            logger.exception("clinic document retirement confirmation edit failed")
+            await gateway_bot._reply(update, text)
+        raise ApplicationHandlerStop
+    if action == "retire-cancel":
+        text = "Отзыв отменён. Версия продолжает использоваться в новых анализах."
+        try:
+            await query.edit_message_text(text=text)
+        except Exception:  # pragma: no cover - fallback is safe and operator-visible.
+            logger.exception("clinic document retirement cancellation edit failed")
+            await gateway_bot._reply(update, text)
+        raise ApplicationHandlerStop
     if action == "approve":
         decision = "APPROVED"
         reason_code = "CLINIC_REVIEW_PASSED"
-    else:
+    elif action == "block":
         decision = "BLOCKED"
         reason_code = "CLINIC_DOCUMENT_REVOKED"
+    else:
+        decision = "RETIRED"
+        reason_code = "CLINIC_DOCUMENT_RETIRED"
 
     core = ClinicDocumentCoreClient()
     try:
@@ -572,8 +620,13 @@ async def review_clinic_document_callback(
             "✅ Документ одобрен. Теперь его актуальная версия может использоваться "
             "как внутренний контекст вашей клиники. Нормативной правовой базой он не является."
         )
-    else:
+    elif decision == "BLOCKED":
         text = "⛔ Версия заблокирована и не будет попадать в контекст анализа."
+    else:
+        text = (
+            "🗄 Версия снята с использования и не будет попадать в новые анализы. "
+            "История и исходный файл сохранены для аудита; для замены загрузите новую версию."
+        )
     try:
         await query.edit_message_text(text=text)
     except Exception:  # pragma: no cover - fallback is safe and operator-visible.
@@ -600,7 +653,7 @@ def build_application_with_clinic_documents(token: str) -> gateway_bot.TelegramA
         CallbackQueryHandler(
             review_clinic_document_callback,
             pattern=(
-                r"^clinicdoc:(approve|block):"
+                r"^clinicdoc:(approve|block|retire|retire-confirm|retire-cancel):"
                 r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
                 r"[0-9a-f]{4}-[0-9a-f]{12}$"
             ),

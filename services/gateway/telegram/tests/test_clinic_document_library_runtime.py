@@ -61,6 +61,7 @@ def test_empty_library_explains_nonblocking_value_and_offers_button_upload() -> 
 
 def test_document_usage_help_and_category_buttons_are_nontechnical() -> None:
     assert "не блокирует" in document_usage_help()
+    assert "Снять с использования" in document_usage_help()
     template_keyboard = document_template_keyboard()
     buttons = [button.text for row in template_keyboard.inline_keyboard for button in row]
     assert "Договор на услуги" in buttons
@@ -109,9 +110,28 @@ def test_library_renders_metadata_without_document_content() -> None:
         for row in keyboard.inline_keyboard
         for button in row
     ]
+    assert f"clinicdoc:retire:{VERSION_ID}" in callback_values
+    assert f"clinicdoc:approve:{VERSION_ID}" not in callback_values
+    assert f"clinicdoc:block:{VERSION_ID}" not in callback_values
+    assert f"cliniclib:history:{DOCUMENT_ID}" in callback_values
+
+
+def test_library_shows_review_controls_only_for_the_latest_pending_version() -> None:
+    payload = _payload()
+    latest = payload["items"][0]["versions"][0]
+    latest["reviewState"] = "PENDING"
+    text, keyboard = render_library(payload)
+
+    assert "PENDING" in text
+    assert keyboard is not None
+    callback_values = [
+        button.callback_data
+        for row in keyboard.inline_keyboard
+        for button in row
+    ]
     assert f"clinicdoc:approve:{VERSION_ID}" in callback_values
     assert f"clinicdoc:block:{VERSION_ID}" in callback_values
-    assert f"cliniclib:history:{DOCUMENT_ID}" in callback_values
+    assert f"clinicdoc:retire:{VERSION_ID}" not in callback_values
 
 
 def test_document_history_shows_reviewed_versions_without_contents() -> None:

@@ -213,6 +213,29 @@ def test_clinic_document_text_version_requires_approval_and_stays_in_tenant() ->
         assert hidden_after_block.status_code == 200
         assert hidden_after_block.json() == {"items": []}
 
+        reapproved = api.post(
+            f"/v1/clinic-documents/versions/{version_id}/approval-events",
+            headers=headers(admin_a),
+            json={"decision": "APPROVED", "reasonCode": "CLINIC_REVIEW_RESTORED"},
+        )
+        assert reapproved.status_code == 201
+
+        retired = api.post(
+            f"/v1/clinic-documents/versions/{version_id}/approval-events",
+            headers=headers(admin_a),
+            json={"decision": "RETIRED", "reasonCode": "CLINIC_DOCUMENT_RETIRED"},
+        )
+        assert retired.status_code == 201
+        assert retired.json()["decision"] == "RETIRED"
+
+        hidden_after_retirement = api.get(
+            "/v1/clinic-documents/fragments",
+            headers=headers(admin_a),
+            params={"query": "Гарантийный"},
+        )
+        assert hidden_after_retirement.status_code == 200
+        assert hidden_after_retirement.json() == {"items": []}
+
     owner_engine = create_engine(owner_database_url().set(drivername="postgresql+psycopg"))
     try:
         with owner_engine.connect() as connection:

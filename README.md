@@ -21,4 +21,5 @@ Implemented building blocks include:
 - metadata-only public dental-clinic reference registry for development taxonomy research;
 - fully synthetic Clinic Documents fixture pack for parser, time-travel and retrieval regression tests.
 
-See `docs/`, `SPEC-*.md`, `tasks/` and `AGENTS.md` for architecture and safety rules.
+See `docs/`, `SPEC-*.md`, `tasks/` and `AGENTS.md` for architecture and safety rules. Before any
+closed pilot, follow [the operational readiness checklist](docs/closed-pilot-readiness.md).
