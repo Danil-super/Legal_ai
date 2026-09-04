@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import date
 from pathlib import PurePosixPath
 from typing import Any
 from uuid import UUID
@@ -33,6 +34,7 @@ from telegram_gateway.case_wizard import LegalCoreApiError
 logger = logging.getLogger(__name__)
 
 _PENDING_KEY = "clinic_document_upload"
+CLINIC_DOCUMENT_DATE_PENDING_KEY = "clinic_document_effective_date_pending"
 _MAX_UPLOAD_BYTES = 15_000_000
 _DOCUMENT_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{2,99}$")
 _DOCUMENT_TYPE_RE = re.compile(r"^[A-Z0-9_]{3,80}$")
@@ -46,6 +48,7 @@ _EXTENSION_MIME = {
     ".pdf": "application/pdf",
     ".docx": _DOCX_MIME,
 }
+_DOCUMENT_EDITOR_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +56,7 @@ class PendingClinicDocumentUpload:
     document_key: str
     document_type: str
     title: str
+    valid_from: date | None = None
 
 
 def parse_upload_command(arguments: list[str]) -> PendingClinicDocumentUpload:
@@ -97,12 +101,19 @@ def _pending(context: ContextTypes.DEFAULT_TYPE) -> PendingClinicDocumentUpload 
     if not isinstance(raw, dict):
         return None
     try:
+        valid_from_raw = raw.get("valid_from")
+        valid_from = (
+            date.fromisoformat(valid_from_raw)
+            if isinstance(valid_from_raw, str)
+            else None
+        )
         return PendingClinicDocumentUpload(
             document_key=str(raw["document_key"]),
             document_type=str(raw["document_type"]),
             title=str(raw["title"]),
+            valid_from=valid_from,
         )
-    except KeyError:
+    except (KeyError, ValueError):
         return None
 
 
@@ -116,6 +127,7 @@ def _set_pending(
         "document_key": pending.document_key,
         "document_type": pending.document_type,
         "title": pending.title,
+        "valid_from": None if pending.valid_from is None else pending.valid_from.isoformat(),
     }
 
 
@@ -252,10 +264,14 @@ class ClinicDocumentCoreClient:
         source_filename: str,
         content_type: str,
         content: bytes,
+        valid_from: date | None,
     ) -> dict[str, Any]:
+        path = f"/v1/clinic-documents/{document_id}/file-versions"
+        if valid_from is not None:
+            path += f"?valid_from={valid_from.isoformat()}"
         return await self._request_json(
             "POST",
-            f"/v1/clinic-documents/{document_id}/file-versions",
+            path,
             telegram_user_id=telegram_user_id,
             content=content,
             content_type=content_type,
@@ -331,28 +347,70 @@ async def start_clinic_document_upload(
         )
         return
 
+    await arm_clinic_document_upload(update, context, pending)
+
+
+async def arm_clinic_document_upload(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    pending: PendingClinicDocumentUpload,
+) -> bool:
+    """Authorise and arm one explicit tenant document upload.
+
+    This is also used by the button-led document library.  The file itself is still accepted
+    only by ``receive_clinic_document`` so arbitrary Telegram attachments cannot become context.
+    """
+
+    actor_id = _actor_id(update)
+    if actor_id is None:
+        await gateway_bot._reply(update, "Не удалось определить администратора.")
+        return False
+    if gateway_bot.WIZARD_DATA_KEY in (context.user_data or {}):
+        await gateway_bot._reply(
+            update,
+            "Сначала завершите или отмените заполнение текущего кейса.",
+        )
+        return False
+
     core = ClinicDocumentCoreClient()
     try:
-        await core.get_actor(actor_id)
+        actor = await core.get_actor(actor_id)
     except LegalCoreApiError as exc:
         logger.warning("clinic document upload authorization failed: %s", exc.code)
         await gateway_bot._reply(update, f"⚠️ {_friendly_error(exc)}")
-        return
+        return False
     finally:
         await core.aclose()
 
+    if actor.get("role") not in _DOCUMENT_EDITOR_ROLES:
+        await gateway_bot._reply(
+            update,
+            "🔒 Базу документов ведут владелец или администратор клиники.",
+        )
+        return False
+
     _set_pending(context, pending)
+    validity_message = (
+        f"Версия будет применяться к кейсам с {pending.valid_from.isoformat()}.\n\n"
+        if pending.valid_from is not None
+        else (
+            "Дата начала действия не задана: используйте кнопку «База документов клиники» "
+            "для точной датировки версии.\n\n"
+        )
+    )
     await gateway_bot._reply(
         update,
         "📄 Режим загрузки документа включён.\n\n"
         f"Ключ: {pending.document_key}\n"
         f"Тип: {pending.document_type}\n"
         f"Название: {pending.title}\n\n"
-        "Теперь отправьте ОДИН файл .txt, .pdf или .docx до 15 МБ.\n"
+        + validity_message
+        + "Теперь отправьте ОДИН файл .txt, .pdf или .docx до 15 МБ.\n"
         "Важно: загружайте шаблон/политику клиники, а не документы конкретного пациента. "
         "Не отправляйте ФИО, телефон, медицинскую карту или другие персональные данные.\n\n"
         "После загрузки файл НЕ попадёт в анализ автоматически — потребуется отдельное одобрение.",
     )
+    return True
 
 
 async def cancel_clinic_document_upload(
@@ -360,6 +418,8 @@ async def cancel_clinic_document_upload(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
     _clear_pending(context)
+    if context.user_data is not None:
+        context.user_data.pop(CLINIC_DOCUMENT_DATE_PENDING_KEY, None)
     await gateway_bot._reply(update, "Загрузка документа отменена.")
 
 
@@ -427,6 +487,7 @@ async def receive_clinic_document(
                 source_filename=source_filename,
                 content_type=content_type,
                 content=raw,
+                valid_from=pending.valid_from,
             )
         finally:
             await core.aclose()
@@ -446,13 +507,19 @@ async def receive_clinic_document(
         raise ApplicationHandlerStop from exc
 
     _clear_pending(context)
+    validity_message = (
+        f"Дата начала действия: {pending.valid_from.isoformat()}\n\n"
+        if pending.valid_from is not None
+        else ""
+    )
     await message.reply_text(
         "✅ Версия сохранена, но пока НЕ одобрена.\n\n"
         f"Версия: {version_no}\n"
         f"Фрагментов: {fragment_count}\n"
         f"Raw SHA-256: {raw_sha[:16]}…\n"
         f"Text SHA-256: {text_sha[:16]}…\n\n"
-        "Одобрение означает, что документ можно использовать как внутренний контекст клиники. "
+        + validity_message
+        + "Одобрение означает, что документ можно использовать как внутренний контекст клиники. "
         "Он НЕ становится нормативным источником и не может подтверждать юридическую норму.",
         reply_markup=review_keyboard(version_id),
     )

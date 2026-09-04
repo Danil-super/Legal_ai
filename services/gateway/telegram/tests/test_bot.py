@@ -156,6 +156,17 @@ def test_lawyer_menu_exposes_only_review_workspace_actions() -> None:
     assert "case:drafts" not in callbacks
 
 
+def test_administrator_menu_exposes_optional_clinic_document_library() -> None:
+    keyboard = main_menu_keyboard("CLINIC_ADMIN")
+    callbacks = [
+        button.callback_data
+        for row in keyboard.inline_keyboard
+        for button in row
+    ]
+
+    assert "clinicdocs:open" in callbacks
+
+
 def test_known_callback_answers_and_edits_the_welcome_caption() -> None:
     query = FakeCallbackQuery("privacy")
 

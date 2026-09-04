@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
+from datetime import date
 from typing import Any
 from uuid import UUID
 
@@ -15,11 +17,18 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError
-from telegram_gateway.clinic_document_runtime import build_application_with_clinic_documents
+from telegram_gateway.clinic_document_runtime import (
+    CLINIC_DOCUMENT_DATE_PENDING_KEY,
+    PendingClinicDocumentUpload,
+    arm_clinic_document_upload,
+    build_application_with_clinic_documents,
+)
 
 logger = logging.getLogger(__name__)
 _MAX_DOCUMENTS = 20
@@ -28,6 +37,80 @@ _MAX_MESSAGE = 3900
 _HISTORY_CALLBACK_RE = re.compile(
     r"^cliniclib:history:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
 )
+_LIBRARY_CALLBACK_RE = re.compile(
+    r"^(clinicdocs:open|cliniclib:(open|upload|how|category:[a-z-]+|date:(today|manual|cancel)))$"
+)
+_DATE_PENDING_KEY = CLINIC_DOCUMENT_DATE_PENDING_KEY
+
+
+@dataclass(frozen=True, slots=True)
+class ClinicDocumentTemplate:
+    key: str
+    document_key: str
+    document_type: str
+    title: str
+    button_text: str
+
+
+_DOCUMENT_TEMPLATES: tuple[ClinicDocumentTemplate, ...] = (
+    ClinicDocumentTemplate(
+        "contract",
+        "service-contract",
+        "CONTRACT",
+        "Договор на платные стоматологические услуги",
+        "Договор на услуги",
+    ),
+    ClinicDocumentTemplate(
+        "general-consent",
+        "general-informed-consent",
+        "INFORMED_CONSENT_GENERAL",
+        "Общее информированное добровольное согласие",
+        "Общее ИДС",
+    ),
+    ClinicDocumentTemplate(
+        "implant-consent",
+        "implant-informed-consent",
+        "INFORMED_CONSENT_IMPLANT",
+        "ИДС на имплантацию",
+        "ИДС на имплантацию",
+    ),
+    ClinicDocumentTemplate(
+        "warranty",
+        "warranty-policy",
+        "WARRANTY_POLICY",
+        "Положение о гарантиях",
+        "Гарантийное положение",
+    ),
+    ClinicDocumentTemplate(
+        "claim-policy",
+        "claim-policy",
+        "CLAIM_POLICY",
+        "Регламент работы с претензиями",
+        "Регламент претензий",
+    ),
+    ClinicDocumentTemplate(
+        "patient-rules",
+        "patient-rules",
+        "PATIENT_RULES",
+        "Правила для пациентов",
+        "Правила для пациентов",
+    ),
+    ClinicDocumentTemplate(
+        "records-policy",
+        "medical-record-access",
+        "MEDICAL_RECORD_ACCESS_POLICY",
+        "Порядок выдачи медицинских документов",
+        "Выдача меддокументов",
+    ),
+    ClinicDocumentTemplate(
+        "post-implant-memo",
+        "post-implant-memo",
+        "PATIENT_MEMO_POST_IMPLANT",
+        "Памятка пациенту после имплантации",
+        "Памятка после имплантации",
+    ),
+)
+_TEMPLATES_BY_KEY = {item.key: item for item in _DOCUMENT_TEMPLATES}
 
 
 class ClinicDocumentLibraryClient:
@@ -115,6 +198,62 @@ def _bounded(text: str) -> str:
     return text[: _MAX_MESSAGE - 40].rstrip() + "\n\n…список сокращён."
 
 
+def document_library_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("📥 Добавить документ", callback_data="cliniclib:upload")],
+            [InlineKeyboardButton("ℹ️ Как документы влияют на отчёт", callback_data="cliniclib:how")],
+            [InlineKeyboardButton("← Главное меню", callback_data="menu")],
+        ]
+    )
+
+
+def document_template_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                item.button_text,
+                callback_data=f"cliniclib:category:{item.key}",
+            )
+        ]
+        for item in _DOCUMENT_TEMPLATES
+    ]
+    rows.append([InlineKeyboardButton("← К базе документов", callback_data="cliniclib:open")])
+    return InlineKeyboardMarkup(rows)
+
+
+def document_effective_date_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "Сегодня", callback_data="cliniclib:date:today"
+                ),
+                InlineKeyboardButton(
+                    "Ввести дату", callback_data="cliniclib:date:manual"
+                ),
+            ],
+            [InlineKeyboardButton("Отменить", callback_data="cliniclib:date:cancel")],
+        ]
+    )
+
+
+def document_usage_help() -> str:
+    return (
+        "ℹ️ КАК ДОКУМЕНТЫ ВЛИЯЮТ НА ОТЧЁТ\n\n"
+        "1. После загрузки файл безопасно разбирается, сохраняется как версия и ждёт одобрения.\n"
+        "2. При анализе Legal Core берёт только одобренную версию вашей клиники, "
+        "действующую на дату случая.\n"
+        "3. Он ищет только релевантные фрагменты: например, гарантию — для случая с "
+        "коронкой/имплантом, ИДС — для вопроса о согласии.\n"
+        "4. Если документ использован, в отчёте будет раздел «Документы клиники» с "
+        "названием, версией и разделом документа.\n\n"
+        "Документы клиники — внутренний контекст, а не источник права: закон и проверенная "
+        "нормативная база всегда имеют приоритет. Отсутствие документов не блокирует анализ, "
+        "но бот покажет полезный checklist."
+    )
+
+
 def render_library(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMarkup | None]:
     raw_items = payload.get("items")
     if not isinstance(raw_items, list):
@@ -122,12 +261,15 @@ def render_library(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMarkup |
     if not raw_items:
         return (
             "📚 База документов клиники пока пуста.\n\n"
-            "Добавить документ: /upload_clinic_doc <key> <TYPE> <название>",
-            None,
+            "Это не блокирует создание кейсов, но одобренные шаблоны помогают точнее "
+            "сформировать внутренний отчёт.",
+            document_library_keyboard(),
         )
 
     lines = [
         "📚 Документы клиники",
+        "",
+        "Загрузка необязательна, но одобренные шаблоны могут сделать внутренний отчёт точнее.",
         "",
         "Показывается только метадата. Содержимое и raw-файлы здесь не выдаются.",
         "",
@@ -194,7 +336,8 @@ def render_library(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMarkup |
 
     if len(raw_items) > _MAX_DOCUMENTS:
         lines.append(f"…и ещё {len(raw_items) - _MAX_DOCUMENTS} документов.")
-    keyboard = InlineKeyboardMarkup(buttons) if buttons else None
+    buttons.extend(document_library_keyboard().inline_keyboard)
+    keyboard = InlineKeyboardMarkup(buttons)
     return _bounded("\n".join(lines)), keyboard
 
 
@@ -277,6 +420,159 @@ async def show_clinic_documents(
     await telegram_message.reply_text(text, reply_markup=keyboard)
 
 
+async def clinic_document_library_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    query = update.callback_query
+    user = update.effective_user
+    if query is None or user is None or not isinstance(query.data, str):
+        raise ApplicationHandlerStop
+    match = _LIBRARY_CALLBACK_RE.fullmatch(query.data)
+    if match is None:
+        raise ApplicationHandlerStop
+    await query.answer()
+    action = "open" if match.group(1) == "clinicdocs:open" else match.group(2)
+    if action is None:
+        raise ApplicationHandlerStop
+    if action == "open":
+        await show_clinic_documents(update, context)
+        raise ApplicationHandlerStop
+    if action == "upload":
+        await gateway_bot._reply(
+            update,
+            "📥 ВЫБЕРИТЕ ТИП ДОКУМЕНТА\n\n"
+            "Выберите подходящий шаблон. Если нужного вида здесь нет, пока не используйте "
+            "техническую команду: сначала согласуем его тип, чтобы он корректно участвовал в "
+            "отчёте. Загрузка необязательна.",
+        )
+        message = update.effective_message
+        if message is not None:
+            await message.reply_text("Доступные типы:", reply_markup=document_template_keyboard())
+        raise ApplicationHandlerStop
+    if action == "how":
+        await gateway_bot._reply(update, document_usage_help())
+        raise ApplicationHandlerStop
+
+    if action == "date:cancel":
+        if context.user_data is not None:
+            context.user_data.pop(_DATE_PENDING_KEY, None)
+        await gateway_bot._reply(update, "Выбор даты отменён. Документ не поставлен в очередь.")
+        raise ApplicationHandlerStop
+    if action == "date:today":
+        pending = _date_pending(context)
+        if pending is None:
+            await gateway_bot._reply(update, "⚠️ Выбор документа истёк. Откройте базу и начните заново.")
+            raise ApplicationHandlerStop
+        _clear_date_pending(context)
+        await arm_clinic_document_upload(
+            update,
+            context,
+            PendingClinicDocumentUpload(
+                document_key=pending.document_key,
+                document_type=pending.document_type,
+                title=pending.title,
+                valid_from=date.today(),
+            ),
+        )
+        raise ApplicationHandlerStop
+    if action == "date:manual":
+        if _date_pending(context) is None:
+            await gateway_bot._reply(update, "⚠️ Выбор документа истёк. Откройте базу и начните заново.")
+            raise ApplicationHandlerStop
+        await gateway_bot._reply(
+            update,
+            "Введите дату начала действия версии в формате ГГГГ-ММ-ДД, например 2026-09-04. "
+            "Для версии, которая ещё не действует, укажите будущую дату.",
+        )
+        raise ApplicationHandlerStop
+
+    template_key = action.removeprefix("category:")
+    template = _TEMPLATES_BY_KEY.get(template_key)
+    if template is None:
+        await gateway_bot._reply(update, "⚠️ Тип документа больше недоступен. Откройте базу заново.")
+        raise ApplicationHandlerStop
+    pending = PendingClinicDocumentUpload(
+        document_key=template.document_key,
+        document_type=template.document_type,
+        title=template.title,
+    )
+    _set_date_pending(context, pending)
+    await gateway_bot._reply(
+        update,
+        "📅 Укажите дату, с которой действует именно эта версия. "
+        "Это нужно, чтобы документ не использовался в отчёте по более раннему кейсу.",
+    )
+    message = update.effective_message
+    if message is not None:
+        await message.reply_text("Дата начала действия:", reply_markup=document_effective_date_keyboard())
+    raise ApplicationHandlerStop
+
+
+def _date_pending(context: ContextTypes.DEFAULT_TYPE) -> PendingClinicDocumentUpload | None:
+    data = context.user_data
+    if not isinstance(data, dict):
+        return None
+    raw = data.get(_DATE_PENDING_KEY)
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return PendingClinicDocumentUpload(
+            document_key=str(raw["document_key"]),
+            document_type=str(raw["document_type"]),
+            title=str(raw["title"]),
+        )
+    except KeyError:
+        return None
+
+
+def _set_date_pending(
+    context: ContextTypes.DEFAULT_TYPE,
+    pending: PendingClinicDocumentUpload,
+) -> None:
+    if context.user_data is not None:
+        context.user_data[_DATE_PENDING_KEY] = {
+            "document_key": pending.document_key,
+            "document_type": pending.document_type,
+            "title": pending.title,
+        }
+
+
+def _clear_date_pending(context: ContextTypes.DEFAULT_TYPE) -> None:
+    if context.user_data is not None:
+        context.user_data.pop(_DATE_PENDING_KEY, None)
+
+
+async def receive_document_effective_date(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    pending = _date_pending(context)
+    message = update.effective_message
+    if pending is None or message is None or not isinstance(message.text, str):
+        return
+    try:
+        valid_from = date.fromisoformat(message.text.strip())
+    except ValueError:
+        await gateway_bot._reply(
+            update,
+            "Введите дату строго в формате ГГГГ-ММ-ДД, например 2026-09-04, или отмените выбор кнопкой.",
+        )
+        raise ApplicationHandlerStop
+    _clear_date_pending(context)
+    await arm_clinic_document_upload(
+        update,
+        context,
+        PendingClinicDocumentUpload(
+            document_key=pending.document_key,
+            document_type=pending.document_type,
+            title=pending.title,
+            valid_from=valid_from,
+        ),
+    )
+    raise ApplicationHandlerStop
+
+
 async def show_document_history_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -315,6 +611,20 @@ async def show_document_history_callback(
 def build_application_with_clinic_document_library(token: str) -> gateway_bot.TelegramApplication:
     application = build_application_with_clinic_documents(token)
     application.add_handler(CommandHandler("clinic_docs", show_clinic_documents), group=-2)
+    application.add_handler(
+        CallbackQueryHandler(
+            clinic_document_library_callback,
+            pattern=(
+                r"^(clinicdocs:open|cliniclib:(open|upload|how|category:[a-z-]+|"
+                r"date:(today|manual|cancel)))$"
+            ),
+        ),
+        group=-2,
+    )
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, receive_document_effective_date),
+        group=-2,
+    )
     application.add_handler(
         CallbackQueryHandler(
             show_document_history_callback,

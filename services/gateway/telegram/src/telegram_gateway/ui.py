@@ -60,6 +60,11 @@ SCREENS = {
         "мастере кейса.\n\n"
         "Не отправляйте ФИО, контакты, адреса, номера медкарт или файлы пациента."
     ),
+    "clinicdocs:open": (
+        "📚 БАЗА ДОКУМЕНТОВ КЛИНИКИ\n\n"
+        "Откройте этот раздел в основном интерфейсе бота. Загрузка документов необязательна, "
+        "но одобренные шаблоны помогают точнее сформировать внутренний отчёт."
+    ),
     "privacy": (
         "🛡  КОНФИДЕНЦИАЛЬНОСТЬ\n\n"
         "Медицинские сведения и данные пациента требуют особой защиты.\n\n"
@@ -112,6 +117,7 @@ MAIN_MENU_CALLBACKS = {
     "about",
     "account:id",
     "case:escalations",
+    "clinicdocs:open",
     "team:open",
     "help",
 }
@@ -154,6 +160,14 @@ def main_menu_keyboard(role: str | None = None) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📂 Мои черновики", callback_data="case:drafts")],
     ]
     if role in {"CLINIC_OWNER", "CLINIC_ADMIN"}:
+        case_rows.append(
+            [
+                InlineKeyboardButton(
+                    "📚 База документов клиники",
+                    callback_data="clinicdocs:open",
+                )
+            ]
+        )
         case_rows.append(
             [InlineKeyboardButton("⚖️ Критические кейсы", callback_data="case:escalations")]
         )
