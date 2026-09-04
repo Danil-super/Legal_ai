@@ -1,6 +1,8 @@
 import pytest
 from legal_core.api_contracts import (
     AddFactsRequest,
+    ClinicMemberCreateRequest,
+    EscalationDiscussionMessageRequest,
     FactInput,
     PlatformSubscriptionGrantRequest,
     TelegramIntakeDraftUpdateRequest,
@@ -105,6 +107,17 @@ def test_free_pilot_grant_requires_a_bounded_explicit_duration() -> None:
             planCode="FREE_PILOT",
             pilotDays=91,
         )
+
+
+def test_clinic_member_and_escalation_discussion_contracts_are_bounded() -> None:
+    member = ClinicMemberCreateRequest(telegramUserId=7_000_000_003, role="CLINIC_LAWYER")
+    message = EscalationDiscussionMessageRequest(body="  Уточните дату получения претензии.  ")
+
+    assert member.role == "CLINIC_LAWYER"
+    assert message.body == "Уточните дату получения претензии."
+
+    with pytest.raises(ValidationError):
+        EscalationDiscussionMessageRequest(body=" " * 5)
 
 
 def test_intake_draft_update_accepts_only_a_bounded_known_snapshot() -> None:

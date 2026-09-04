@@ -340,6 +340,7 @@ class CaseEscalation(Base):
 
     __tablename__ = "case_escalations"
     __table_args__ = (
+        UniqueConstraint("clinic_id", "id"),
         UniqueConstraint("clinic_id", "case_risk_assessment_id"),
         ForeignKeyConstraint(
             ["clinic_id", "case_id"], ["cases.clinic_id", "cases.id"], ondelete="RESTRICT"
@@ -363,6 +364,35 @@ class CaseEscalation(Base):
     level: Mapped[str] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(20), server_default="REQUIRED")
     reason_codes_json: Mapped[list[str]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
+class CaseEscalationMessage(Base):
+    """Append-only, tenant-scoped discussion for one required human escalation."""
+
+    __tablename__ = "case_escalation_messages"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["clinic_id", "escalation_id"],
+            ["case_escalations.clinic_id", "case_escalations.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "author_membership_id"],
+            ["clinic_users.clinic_id", "clinic_users.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("char_length(body) BETWEEN 1 AND 1500"),
+        Index("ix_case_escalation_messages_tenant_thread", "clinic_id", "escalation_id", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    escalation_id: Mapped[UUID] = mapped_column(UUID_PK)
+    author_membership_id: Mapped[UUID] = mapped_column(UUID_PK)
+    body: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 

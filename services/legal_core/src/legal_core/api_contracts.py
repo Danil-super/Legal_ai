@@ -151,6 +151,29 @@ class ClinicMemberCreateRequest(ContractModel):
     role: Literal["CLINIC_ADMIN", "CLINIC_LAWYER"]
 
 
+class EscalationDiscussionMessageRequest(ContractModel):
+    body: str = Field(min_length=1, max_length=1500)
+
+    @field_validator("body")
+    @classmethod
+    def normalize_body(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("body must not be blank")
+        return normalized
+
+
+class EscalationDiscussionMessageResponse(ContractModel):
+    id: UUID
+    author_role: ClinicRole = Field(alias="authorRole")
+    body: str
+    created_at: datetime = Field(alias="createdAt")
+
+
+class EscalationDiscussionResponse(ContractModel):
+    items: list[EscalationDiscussionMessageResponse]
+
+
 class TelegramIntakeDraftUpdateRequest(ContractModel):
     expected_revision: int = Field(alias="expectedRevision", ge=1)
     wizard_state: TelegramDraftWizardState = Field(alias="wizardState")

@@ -17,6 +17,7 @@ def test_required_domain_tables_are_declared() -> None:
         "risk_policy_events",
         "case_risk_assessments",
         "case_escalations",
+        "case_escalation_messages",
         "case_analysis_runs",
         "case_analysis_claims",
         "legal_sources",
@@ -77,6 +78,7 @@ def test_every_tenant_owned_table_has_clinic_id() -> None:
         "telegram_intake_drafts",
         "case_risk_assessments",
         "case_escalations",
+        "case_escalation_messages",
         "case_analysis_runs",
         "case_analysis_claims",
     ):

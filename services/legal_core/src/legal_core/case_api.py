@@ -21,6 +21,9 @@ from legal_core.api_contracts import (
     ClinicMemberCreateRequest,
     ClinicMemberListResponse,
     ClinicMemberResponse,
+    EscalationDiscussionMessageRequest,
+    EscalationDiscussionMessageResponse,
+    EscalationDiscussionResponse,
     CreateCaseRequest,
     CreateReportRequest,
     FinalizeRequest,
@@ -43,6 +46,8 @@ from legal_core.intake import missing_facts_for
 from legal_core.models import (
     AuditEvent,
     Case,
+    CaseEscalation,
+    CaseEscalationMessage,
     CaseFact,
     CaseReport,
     Clinic,
@@ -54,6 +59,7 @@ from legal_core.models import (
     User,
 )
 from legal_core.reports import build_intake_report, render_report_pdf
+from legal_core.pseudonymization import pseudonymize_text
 from legal_core.subscription_provisioning import provision_entitlement_in_session
 
 TelegramUserId = Annotated[int, Header(alias="X-Telegram-User-Id", gt=0)]
@@ -203,6 +209,30 @@ def _require_clinic_owner(actor: ActorContext) -> None:
             code="CLINIC_OWNER_REQUIRED",
             message="Clinic owner access is required",
         )
+
+
+async def _discussion_escalation(
+    session: AsyncSession, actor: ActorContext, escalation_id: UUID
+) -> CaseEscalation:
+    escalation = await session.scalar(
+        select(CaseEscalation)
+        .join(Case, (Case.clinic_id == CaseEscalation.clinic_id) & (Case.id == CaseEscalation.case_id))
+        .where(
+            CaseEscalation.id == escalation_id,
+            CaseEscalation.clinic_id == actor.clinic_id,
+        )
+    )
+    if escalation is None:
+        raise ApiError(status_code=404, code="ESCALATION_NOT_FOUND", message="Escalation not found")
+    if actor.role == "CLINIC_ADMIN":
+        created_by = await session.scalar(
+            select(Case.created_by_membership_id).where(
+                Case.clinic_id == actor.clinic_id, Case.id == escalation.case_id
+            )
+        )
+        if created_by != actor.membership_id:
+            raise ApiError(status_code=404, code="ESCALATION_NOT_FOUND", message="Escalation not found")
+    return escalation
 
 
 def _configured_platform_owner_telegram_id() -> int:
@@ -516,6 +546,96 @@ def create_case_router(
         )
         await session.commit()
         return ClinicMemberResponse(telegramUserId=member_user.telegram_user_id, role=membership.role)
+
+    @router.get(
+        "/case-escalations/{escalation_id}/discussion",
+        response_model=EscalationDiscussionResponse,
+    )
+    async def get_escalation_discussion(
+        escalation_id: UUID,
+        telegram_user_id: TelegramUserId,
+        session: Session,
+    ) -> EscalationDiscussionResponse:
+        actor = await resolve_actor(session, telegram_user_id)
+        await _discussion_escalation(session, actor, escalation_id)
+        messages = list(
+            (
+                await session.scalars(
+                    select(CaseEscalationMessage)
+                    .where(
+                        CaseEscalationMessage.clinic_id == actor.clinic_id,
+                        CaseEscalationMessage.escalation_id == escalation_id,
+                    )
+                    .order_by(CaseEscalationMessage.id)
+                    .limit(100)
+                )
+            ).all()
+        )
+        roles = dict(
+            (
+                await session.execute(
+                    select(ClinicUser.id, ClinicUser.role).where(
+                        ClinicUser.clinic_id == actor.clinic_id,
+                        ClinicUser.id.in_([message.author_membership_id for message in messages]),
+                    )
+                )
+            ).all()
+        )
+        return EscalationDiscussionResponse(
+            items=[
+                EscalationDiscussionMessageResponse(
+                    id=message.id,
+                    authorRole=roles[message.author_membership_id],
+                    body=message.body,
+                    createdAt=message.created_at,
+                )
+                for message in messages
+            ]
+        )
+
+    @router.post(
+        "/case-escalations/{escalation_id}/discussion",
+        response_model=EscalationDiscussionMessageResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def post_escalation_discussion_message(
+        escalation_id: UUID,
+        payload: EscalationDiscussionMessageRequest,
+        telegram_user_id: TelegramUserId,
+        session: Session,
+    ) -> EscalationDiscussionMessageResponse:
+        actor = await resolve_actor(session, telegram_user_id)
+        await _discussion_escalation(session, actor, escalation_id)
+        if pseudonymize_text(payload.body).changed:
+            raise ApiError(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                code="DIRECT_IDENTIFIER_NOT_ALLOWED",
+                message="Discussion messages must not contain direct identifiers",
+            )
+        message = CaseEscalationMessage(
+            clinic_id=actor.clinic_id,
+            escalation_id=escalation_id,
+            author_membership_id=actor.membership_id,
+            body=payload.body,
+        )
+        session.add(message)
+        await session.flush()
+        session.add(
+            _audit(
+                actor=actor,
+                action="ESCALATION_DISCUSSION_MESSAGE_CREATED",
+                resource_type="CASE_ESCALATION_MESSAGE",
+                resource_id=message.id,
+                metadata={"bodySha256": hashlib.sha256(message.body.encode()).hexdigest()},
+            )
+        )
+        await session.commit()
+        return EscalationDiscussionMessageResponse(
+            id=message.id,
+            authorRole=actor.role,
+            body=message.body,
+            createdAt=message.created_at,
+        )
 
     @router.post(
         "/telegram-intake-drafts",
