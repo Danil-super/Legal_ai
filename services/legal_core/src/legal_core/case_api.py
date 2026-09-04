@@ -24,6 +24,8 @@ from legal_core.api_contracts import (
     EscalationDiscussionMessageRequest,
     EscalationDiscussionMessageResponse,
     EscalationDiscussionResponse,
+    EscalationQueueItemResponse,
+    EscalationQueueResponse,
     CreateCaseRequest,
     CreateReportRequest,
     FinalizeRequest,
@@ -546,6 +548,44 @@ def create_case_router(
         )
         await session.commit()
         return ClinicMemberResponse(telegramUserId=member_user.telegram_user_id, role=membership.role)
+
+    @router.get(
+        "/case-escalations",
+        response_model=EscalationQueueResponse,
+    )
+    async def list_case_escalations(
+        telegram_user_id: TelegramUserId,
+        session: Session,
+    ) -> EscalationQueueResponse:
+        """List only the de-identified human-review queue visible to this actor."""
+
+        actor = await resolve_actor(session, telegram_user_id)
+        statement = (
+            select(CaseEscalation, Case)
+            .join(
+                Case,
+                (Case.clinic_id == CaseEscalation.clinic_id)
+                & (Case.id == CaseEscalation.case_id),
+            )
+            .where(CaseEscalation.clinic_id == actor.clinic_id)
+            .order_by(CaseEscalation.created_at.desc(), CaseEscalation.id.desc())
+            .limit(100)
+        )
+        if actor.role == "CLINIC_ADMIN":
+            statement = statement.where(Case.created_by_membership_id == actor.membership_id)
+        rows = list((await session.execute(statement)).all())
+        return EscalationQueueResponse(
+            items=[
+                EscalationQueueItemResponse(
+                    escalationId=escalation.id,
+                    publicNumber=_case_response(case).public_number,
+                    riskLevel=escalation.level,
+                    reasonCodes=list(escalation.reason_codes_json),
+                    createdAt=escalation.created_at,
+                )
+                for escalation, case in rows
+            ]
+        )
 
     @router.get(
         "/case-escalations/{escalation_id}/discussion",

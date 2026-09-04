@@ -370,6 +370,30 @@ class LegalCoreClient:
             payload={"telegramUserId": target_telegram_user_id, "role": role},
         )
 
+    async def list_case_escalations(self, telegram_user_id: int) -> dict[str, Any]:
+        return await self._json_request(
+            "GET", "/v1/case-escalations", telegram_user_id=telegram_user_id
+        )
+
+    async def get_escalation_discussion(
+        self, escalation_id: UUID, telegram_user_id: int
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "GET",
+            f"/v1/case-escalations/{escalation_id}/discussion",
+            telegram_user_id=telegram_user_id,
+        )
+
+    async def post_escalation_discussion_message(
+        self, escalation_id: UUID, telegram_user_id: int, *, body: str
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "POST",
+            f"/v1/case-escalations/{escalation_id}/discussion",
+            telegram_user_id=telegram_user_id,
+            payload={"body": body},
+        )
+
     async def grant_subscription(
         self,
         telegram_user_id: int,

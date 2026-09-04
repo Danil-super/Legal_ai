@@ -36,6 +36,16 @@ def test_pseudonymizer_redacts_russian_initials_with_optional_spaces() -> None:
     assert contains_obvious_direct_identifier(result.text) is False
 
 
+def test_pseudonymizer_redacts_full_name_when_patient_context_is_present() -> None:
+    source = "Пациент Иван Иванов просит передать вопрос юристу."
+    result = pseudonymize_text(source)
+
+    assert result.changed is True
+    assert result.text == "[PERSON_NAME] просит передать вопрос юристу."
+    assert result.replacement_counts["identified_full_name"] == 1
+    assert contains_obvious_direct_identifier(source) is True
+
+
 def test_pseudonymizer_ignores_too_short_known_values() -> None:
     result = pseudonymize_text("Пациент ИИ сообщил о сколе.", known_identifiers={"ИИ": "[NAME]"})
 

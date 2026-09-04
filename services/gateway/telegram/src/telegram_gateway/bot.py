@@ -126,6 +126,7 @@ def _clear_pending_admin_grant(context: ContextTypes.DEFAULT_TYPE | None) -> Non
         context.user_data.pop(ADMIN_GRANT_ACCESS_KEY, None)
         context.user_data.pop(ADMIN_GRANT_PILOT_KEY, None)
         context.user_data.pop(TEAM_MEMBER_ROLE_KEY, None)
+        context.user_data.pop("escalation_discussion_id", None)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> None:
@@ -138,7 +139,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> No
         await message.reply_photo(
             photo=WELCOME_IMAGE,
             caption=START_MESSAGE,
-            reply_markup=main_menu_keyboard(),
+            reply_markup=await _main_menu_for_actor(update, context),
         )
 
 
@@ -518,6 +519,23 @@ def _legal_core(context: ContextTypes.DEFAULT_TYPE) -> LegalCoreClient:
     if client is None:
         raise LegalCoreApiError(503, "LEGAL_CORE_UNAVAILABLE", "Legal Core unavailable")
     return cast(LegalCoreClient, client)
+
+
+async def _main_menu_for_actor(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE | None,
+) -> InlineKeyboardMarkup:
+    """Use a role-aware surface when Legal Core is reachable; otherwise stay usable."""
+
+    actor_id = _actor_id(update)
+    if context is None or actor_id is None:
+        return main_menu_keyboard()
+    try:
+        actor = await _legal_core(context).get_actor(actor_id)
+    except (LegalCoreApiError, AttributeError):
+        return main_menu_keyboard()
+    role = actor.get("role")
+    return main_menu_keyboard(role if isinstance(role, str) else None)
 
 
 def _actor_id(update: Update) -> int | None:
@@ -1429,7 +1447,16 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE | Non
     if callback_data == "menu":
         _clear_pending_admin_grant(context)
         caption = START_MESSAGE
-        keyboard = main_menu_keyboard()
+        keyboard = await _main_menu_for_actor(update, context)
+    elif callback_data == "team:open":
+        await clinic_team(update, context)
+        return
+    elif callback_data == "case:escalations":
+        caption = (
+            "⚖️ КРИТИЧЕСКИЕ КЕЙСЫ\n\n"
+            "Очередь юридической проверки подключается вместе с модулем анализа."
+        )
+        keyboard = back_keyboard()
     elif callback_data == "account:id":
         actor_id = _actor_id(update)
         caption = (

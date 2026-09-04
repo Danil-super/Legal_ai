@@ -135,13 +135,25 @@ def test_main_menu_exposes_frequent_actions_as_clear_allowlisted_buttons() -> No
     buttons = [button for row in keyboard.inline_keyboard for button in row]
 
     assert len(buttons) == 9
-    assert {button.callback_data for button in buttons} == MAIN_MENU_CALLBACKS
-    assert {"case:start", "quick:start", "case:drafts", "account:id", "help"} <= MAIN_MENU_CALLBACKS
+    assert {button.callback_data for button in buttons} <= MAIN_MENU_CALLBACKS
+    assert {"case:start", "quick:start", "case:drafts", "account:id", "help"} <= {
+        button.callback_data for button in buttons
+    }
     assert all(button.text.strip() for button in buttons)
     assert all(
         isinstance(button.callback_data, str) and len(button.callback_data.encode()) <= 64
         for button in buttons
     )
+
+
+def test_lawyer_menu_exposes_only_review_workspace_actions() -> None:
+    keyboard = main_menu_keyboard("CLINIC_LAWYER")
+    callbacks = {button.callback_data for row in keyboard.inline_keyboard for button in row}
+
+    assert "case:escalations" in callbacks
+    assert "case:start" not in callbacks
+    assert "quick:start" not in callbacks
+    assert "case:drafts" not in callbacks
 
 
 def test_known_callback_answers_and_edits_the_welcome_caption() -> None:

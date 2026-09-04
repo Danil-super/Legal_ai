@@ -520,6 +520,7 @@ def create_analysis_router(
             escalationRequired=(
                 outcome.risk.level in {RiskLevel.HIGH, RiskLevel.CRITICAL}
             ),
+            escalationId=risk_record.escalation_id,
             clinicDocumentReadiness=_readiness_responses(state.clinic_document_readiness),
             report=report,
         )

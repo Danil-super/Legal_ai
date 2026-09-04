@@ -3,6 +3,7 @@ from legal_core.api_contracts import (
     AddFactsRequest,
     ClinicMemberCreateRequest,
     EscalationDiscussionMessageRequest,
+    EscalationQueueItemResponse,
     FactInput,
     PlatformSubscriptionGrantRequest,
     TelegramIntakeDraftUpdateRequest,
@@ -118,6 +119,19 @@ def test_clinic_member_and_escalation_discussion_contracts_are_bounded() -> None
 
     with pytest.raises(ValidationError):
         EscalationDiscussionMessageRequest(body=" " * 5)
+
+
+def test_escalation_queue_entry_has_only_deidentified_review_metadata() -> None:
+    item = EscalationQueueItemResponse(
+        escalationId="00000000-0000-0000-0000-000000000001",
+        publicNumber="DL-2026-000001",
+        riskLevel="HIGH",
+        reasonCodes=["FORMAL_CLAIM_RECEIVED"],
+        createdAt="2026-09-04T10:00:00Z",
+    )
+
+    assert item.public_number == "DL-2026-000001"
+    assert item.risk_level == "HIGH"
 
 
 def test_intake_draft_update_accepts_only_a_bounded_known_snapshot() -> None:

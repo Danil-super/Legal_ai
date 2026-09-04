@@ -174,6 +174,18 @@ class EscalationDiscussionResponse(ContractModel):
     items: list[EscalationDiscussionMessageResponse]
 
 
+class EscalationQueueItemResponse(ContractModel):
+    escalation_id: UUID = Field(alias="escalationId")
+    public_number: str = Field(alias="publicNumber", min_length=1, max_length=40)
+    risk_level: Literal["HIGH", "CRITICAL"] = Field(alias="riskLevel")
+    reason_codes: list[str] = Field(alias="reasonCodes", min_length=1, max_length=20)
+    created_at: datetime = Field(alias="createdAt")
+
+
+class EscalationQueueResponse(ContractModel):
+    items: list[EscalationQueueItemResponse] = Field(default_factory=list, max_length=100)
+
+
 class TelegramIntakeDraftUpdateRequest(ContractModel):
     expected_revision: int = Field(alias="expectedRevision", ge=1)
     wizard_state: TelegramDraftWizardState = Field(alias="wizardState")

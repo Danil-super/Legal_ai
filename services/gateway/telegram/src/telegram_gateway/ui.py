@@ -111,33 +111,61 @@ MAIN_MENU_CALLBACKS = {
     "privacy",
     "about",
     "account:id",
+    "case:escalations",
+    "team:open",
     "help",
 }
 
 
-def main_menu_keyboard() -> InlineKeyboardMarkup:
+def main_menu_keyboard(role: str | None = None) -> InlineKeyboardMarkup:
+    """Keep the administrator workspace short and give lawyers only review actions."""
+
+    shared_rows = [
+        [
+            InlineKeyboardButton("👤 Мой Telegram ID", callback_data="account:id"),
+            InlineKeyboardButton("❓ Справка", callback_data="help"),
+        ],
+        [
+            InlineKeyboardButton("🧭 Как это работает", callback_data="workflow"),
+            InlineKeyboardButton("🛡 Конфиденциальность", callback_data="privacy"),
+        ],
+        [InlineKeyboardButton("ℹ️ О проекте", callback_data="about")],
+    ]
+    if role == "CLINIC_LAWYER":
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "⚖️ Критические кейсы", callback_data="case:escalations"
+                    )
+                ],
+                *shared_rows,
+            ]
+        )
+
+    case_rows = [
+        [
+            InlineKeyboardButton(
+                "🧩 Описать ситуацию одним сообщением",
+                callback_data="quick:start",
+            )
+        ],
+        [InlineKeyboardButton("📝 Создать кейс", callback_data="case:start")],
+        [InlineKeyboardButton("📂 Мои черновики", callback_data="case:drafts")],
+    ]
+    if role in {"CLINIC_OWNER", "CLINIC_ADMIN"}:
+        case_rows.append(
+            [InlineKeyboardButton("⚖️ Критические кейсы", callback_data="case:escalations")]
+        )
+    if role == "CLINIC_OWNER":
+        case_rows.append([InlineKeyboardButton("👥 Команда клиники", callback_data="team:open")])
+
     return InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton(
-                    "🧩 Описать ситуацию одним сообщением",
-                    callback_data="quick:start",
-                )
-            ],
-            [InlineKeyboardButton("📝 Создать кейс", callback_data="case:start")],
-            [InlineKeyboardButton("📂 Мои черновики", callback_data="case:drafts")],
-            [
-                InlineKeyboardButton("👤 Мой Telegram ID", callback_data="account:id"),
-                InlineKeyboardButton("❓ Справка", callback_data="help"),
-            ],
-            [
-                InlineKeyboardButton("⚖️ Возможности", callback_data="features"),
-                InlineKeyboardButton("🧭 Как это работает", callback_data="workflow"),
-            ],
-            [
-                InlineKeyboardButton("🛡 Конфиденциальность", callback_data="privacy"),
-                InlineKeyboardButton("ℹ️ О проекте", callback_data="about"),
-            ],
+            *case_rows,
+            *shared_rows[:1],
+            [InlineKeyboardButton("⚖️ Возможности", callback_data="features")],
+            *shared_rows[1:],
         ]
     )
 

@@ -26,6 +26,13 @@ _INITIALS_NAME: Final = re.compile(
     rf"[А-ЯЁ]\.\s*[А-ЯЁ]\.\s*{_RUSSIAN_NAME_WORD}"
     rf")(?![А-ЯЁа-яё])"
 )
+_IDENTIFIED_FULL_NAME: Final = re.compile(
+    rf"(?<![А-ЯЁа-яё])(?:Пациент(?:а|у|ом|е)?|пациент(?:а|у|ом|е)?|ФИО|фио|"
+    rf"Ф\.?\s*И\.?\s*О\.?|ф\.?\s*и\.?\s*о\.?|"
+    rf"Фамилия\s+имя(?:\s+отчество)?|фамилия\s+имя(?:\s+отчество)?)\s*[:—-]?\s*"
+    rf"{_RUSSIAN_NAME_WORD}(?:\s+{_RUSSIAN_NAME_WORD}){{1,2}}"
+    rf"(?![А-ЯЁа-яё])"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +86,11 @@ def pseudonymize_text(
         result, count = re.subn(re.escape(normalized), placeholder, result, flags=re.IGNORECASE)
         known_count += count
     counts["known_identifier"] = known_count
+    result, counts["identified_full_name"] = _replace(
+        _IDENTIFIED_FULL_NAME,
+        result,
+        "[PERSON_NAME]",
+    )
 
     return PseudonymizedText(text=result, replacement_counts=counts)
 
@@ -88,5 +100,12 @@ def contains_obvious_direct_identifier(text: str) -> bool:
 
     return any(
         pattern.search(text) is not None
-        for pattern in (_EMAIL, _PHONE, _PASSPORT, _SNILS, _INITIALS_NAME)
+        for pattern in (
+            _EMAIL,
+            _PHONE,
+            _PASSPORT,
+            _SNILS,
+            _INITIALS_NAME,
+            _IDENTIFIED_FULL_NAME,
+        )
     )

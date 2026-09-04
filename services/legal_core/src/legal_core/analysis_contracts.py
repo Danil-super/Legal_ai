@@ -6,7 +6,7 @@ from datetime import date
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from legal_core.api_contracts import LegalFragmentResponse, ReportResponse
 from legal_core.contracts import ContractModel, FactKey
@@ -158,9 +158,18 @@ class AnalysisSubmissionResponse(ContractModel):
         alias="riskLevel"
     )
     escalation_required: bool = Field(alias="escalationRequired")
+    escalation_id: UUID | None = Field(default=None, alias="escalationId")
     clinic_document_readiness: list[ClinicDocumentReadinessResponse] = Field(
         default_factory=list,
         alias="clinicDocumentReadiness",
         max_length=20,
     )
     report: ReportResponse
+
+    @model_validator(mode="after")
+    def escalation_pointer_matches_requirement(self) -> "AnalysisSubmissionResponse":
+        if self.escalation_required and self.escalation_id is None:
+            raise ValueError("an escalation-required analysis must include escalationId")
+        if not self.escalation_required and self.escalation_id is not None:
+            raise ValueError("a non-escalated analysis cannot include escalationId")
+        return self

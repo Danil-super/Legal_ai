@@ -1,5 +1,7 @@
-from datetime import date
+from datetime import UTC, date, datetime
 from uuid import UUID
+
+import pytest
 
 from legal_core.analysis_api import (
     _analysis_date,
@@ -7,7 +9,8 @@ from legal_core.analysis_api import (
     _semantic_reviews,
     _verified_action_items,
 )
-from legal_core.analysis_contracts import AnalysisSubmissionRequest
+from legal_core.analysis_contracts import AnalysisSubmissionRequest, AnalysisSubmissionResponse
+from legal_core.api_contracts import ReportResponse
 from legal_core.contracts import FactKey
 from legal_core.verifier import ClaimKind, SemanticVerdict, VerificationResult
 
@@ -78,3 +81,43 @@ def test_submission_contract_maps_to_domain_and_verified_actions() -> None:
         claims,
         {"action-1": VerificationResult.UNSUPPORTED},
     ) == []
+
+
+def _report_response() -> ReportResponse:
+    return ReportResponse(
+        id=UUID("00000000-0000-0000-0000-000000000010"),
+        caseId=UUID("00000000-0000-0000-0000-000000000011"),
+        reportVersion=1,
+        reportJson={"schemaVersion": "dental-case-report.v1"},
+        pdfSha256="d" * 64,
+        createdAt=datetime(2026, 9, 4, tzinfo=UTC),
+    )
+
+
+def test_analysis_response_exposes_only_a_consistent_server_escalation_pointer() -> None:
+    escalation_id = UUID("00000000-0000-0000-0000-000000000012")
+    response = AnalysisSubmissionResponse(
+        analysisAllowed=True,
+        riskLevel="HIGH",
+        escalationRequired=True,
+        escalationId=escalation_id,
+        report=_report_response(),
+    )
+
+    assert response.escalation_id == escalation_id
+
+    with pytest.raises(ValueError, match="must include escalationId"):
+        AnalysisSubmissionResponse(
+            analysisAllowed=True,
+            riskLevel="HIGH",
+            escalationRequired=True,
+            report=_report_response(),
+        )
+    with pytest.raises(ValueError, match="cannot include escalationId"):
+        AnalysisSubmissionResponse(
+            analysisAllowed=True,
+            riskLevel="LOW",
+            escalationRequired=False,
+            escalationId=escalation_id,
+            report=_report_response(),
+        )

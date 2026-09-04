@@ -6,7 +6,10 @@ from telegram.ext import CallbackQueryHandler
 from telegram_gateway.analysis_runtime import (
     analysis_keyboard,
     build_application_with_analysis,
+    escalation_discussion_keyboard,
+    escalation_id_from_analysis,
     load_analysis_settings,
+    telegram_escalation_queue_summary,
     telegram_analysis_messages,
     telegram_analysis_summary,
     telegram_lawyer_handoff_summary,
@@ -37,6 +40,41 @@ def test_analysis_keyboard_callback_fits_telegram_limit() -> None:
     assert button.callback_data == f"case:analyze:{CASE_ID}"
     assert len(button.callback_data.encode()) <= 64
     assert "юридический анализ" in button.text.lower()
+
+
+def test_escalation_pointer_and_discussion_button_are_opaque_and_bounded() -> None:
+    escalation_id = UUID("00000000-0000-0000-0000-000000000020")
+    parsed = escalation_id_from_analysis(
+        {"escalationRequired": True, "escalationId": str(escalation_id)}
+    )
+    button = escalation_discussion_keyboard(escalation_id).inline_keyboard[0][0]
+
+    assert parsed == escalation_id
+    assert button.callback_data == f"case:escalation:{escalation_id}"
+    assert len(button.callback_data.encode()) <= 64
+    assert escalation_id_from_analysis({"escalationRequired": False, "escalationId": None}) is None
+    with pytest.raises(ValueError, match="no valid escalation id"):
+        escalation_id_from_analysis({"escalationRequired": True, "escalationId": None})
+
+
+def test_escalation_queue_summary_excludes_case_description_and_patient_data() -> None:
+    summary = telegram_escalation_queue_summary(
+        {
+            "items": [
+                {
+                    "escalationId": "00000000-0000-0000-0000-000000000020",
+                    "publicNumber": "DL-2026-000020",
+                    "riskLevel": "CRITICAL",
+                    "reasonCodes": ["HOSPITALIZATION_REPORTED"],
+                    "description": "Пациент Иванов И. И. сообщил о госпитализации.",
+                }
+            ]
+        }
+    )
+
+    assert "обезличенный диалог" in summary
+    assert "Иванов" not in summary
+    assert "госпитализации" not in summary
 
 
 def test_verified_analysis_summary_uses_only_canonical_server_report_fields() -> None:
