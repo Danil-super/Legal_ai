@@ -65,6 +65,7 @@ def test_document_usage_help_and_category_buttons_are_nontechnical() -> None:
     buttons = [button.text for row in template_keyboard.inline_keyboard for button in row]
     assert "Договор на услуги" in buttons
     assert "Общее ИДС" in buttons
+    assert "✅ Пока достаточно" in buttons
     assert all(
         len(button.callback_data.encode()) <= 64
         for row in template_keyboard.inline_keyboard
