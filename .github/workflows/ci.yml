@@ -15,10 +15,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.11'
           cache: pip
@@ -42,6 +42,9 @@ jobs:
       - name: Unit tests
         run: python -m pytest
 
+      - name: Dependency vulnerability audit
+        run: python -m pip_audit --strict -r requirements.lock
+
       - name: Validate Compose
         env:
           POSTGRES_PASSWORD: ci-only-postgres-password
@@ -49,6 +52,18 @@ jobs:
           MINIO_ROOT_PASSWORD: ci-only-minio-password
           TELEGRAM_BOT_TOKEN: 123456:ci_config_validation_token_1234567890
         run: docker compose config --quiet
+
+      - name: Validate production Compose overlay
+        env:
+          POSTGRES_PASSWORD: ci-only-postgres-password
+          POSTGRES_APP_PASSWORD: ci-only-runtime-database-password-1234567890
+          MINIO_ROOT_PASSWORD: ci-only-minio-password
+          TELEGRAM_BOT_TOKEN: 123456:ci_config_validation_token_1234567890
+        run: >-
+          docker compose
+          -f docker-compose.yml
+          -f ops/deploy/docker-compose.production.yml
+          config --quiet
 
       - name: Validate pinned Hermes overlay
         env:
@@ -106,10 +121,10 @@ jobs:
       MINIO_INTEGRATION: '1'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.11'
           cache: pip
@@ -148,3 +163,53 @@ jobs:
 
       - name: PostgreSQL and MinIO integration tests
         run: timeout 120s python -m pytest -vv services/legal_core/tests
+
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@a35ac6e6798d72df5475948b28efb89edc2e19ca # v4.37.9
+        with:
+          languages: python
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@a35ac6e6798d72df5475948b28efb89edc2e19ca # v4.37.9
+        with:
+          category: /language:python
+
+  deploy-production:
+    name: Deploy production
+    needs: [quality, postgres-integration, codeql]
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout pinned deployment host key
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Deploy verified main revision
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          eval "$(ssh-agent -s)"
+          trap 'ssh-agent -k' EXIT
+          ssh-add - <<<"$DEPLOY_SSH_PRIVATE_KEY"
+          install -d -m 0700 "$HOME/.ssh"
+          install -m 0600 ops/deploy/known_hosts.production "$HOME/.ssh/known_hosts"
+          ssh -o BatchMode=yes -o IdentitiesOnly=yes deploy@84.201.153.147 "deploy $DEPLOY_SHA"
