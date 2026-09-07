@@ -265,15 +265,15 @@ approved-only retrieval, applicable-date resolution and claim-to-evidence verifi
 ## Task 0.6: Controlled GitHub-to-VPS deployment
 
 **Acceptance criteria:**
-- [ ] Every pull request and `main` update runs Ruff, mypy, pytest, Compose validation, PostgreSQL/MinIO integration tests, dependency audit and CodeQL.
-- [ ] A successful `main` build may deploy only through the protected `production` environment and a key-only, forced-command server account.
-- [ ] Production runtime secrets remain only in a root-owned server file and are absent from Git, workflow logs and GitHub repository variables.
-- [ ] Deploy validates that the requested commit is reachable from `origin/main`, runs the base Compose profile and proves `/health/ready`.
-- [ ] Rollback is an explicit production workflow and deployment steps are documented.
+- [x] Every pull request and `main` update runs Ruff, mypy, pytest, Compose validation, PostgreSQL/MinIO integration tests, dependency audit and CodeQL.
+- [x] A successful `main` build may deploy only through the protected `production` environment and a key-only, forced-command server account.
+- [x] Production runtime secrets remain only in a root-owned server file and are absent from Git, workflow logs and GitHub repository variables.
+- [x] Deploy validates that the requested commit is reachable from `origin/main`, runs the base Compose profile and proves `/health/ready`.
+- [x] Rollback is an explicit production workflow and deployment steps are documented.
 
 **Verification:**
-- [ ] Workflow files pass static validation and the full local quality bar passes.
-- [ ] Server Docker/Compose installation and restricted deployment account are verified without enabling the application.
+- [x] Workflow files pass static validation and the full local quality bar passes.
+- [x] Server Docker/Compose installation and restricted deployment account are verified without enabling the application.
 - [ ] A commit after runtime configuration reaches a healthy base-profile deployment; Hermes and maintenance profiles remain disabled.
 
 **Dependencies:** Task 0.5; explicit human provision of Telegram production configuration
