@@ -835,6 +835,11 @@ def test_unknown_dates_and_signals_are_persisted_without_becoming_negative_evide
             headers=actor_headers(admin, uuid4()),
             json=batch,
         )
+        finalized = client.post(
+            f"/v1/cases/{case_id}/intake-finalizations",
+            headers=actor_headers(admin, uuid4()),
+            json={},
+        )
         report = client.post(
             f"/v1/cases/{case_id}/reports",
             headers=actor_headers(admin, uuid4()),
@@ -844,6 +849,8 @@ def test_unknown_dates_and_signals_are_persisted_without_becoming_negative_evide
     assert created.status_code == 201
     assert recorded.status_code == 200
     assert recorded.json()["missingFacts"] == []
+    assert finalized.status_code == 200
+    assert finalized.json()["status"] == "ANALYSIS_BLOCKED"
     assert report.status_code == 201
     assert report.json()["reportJson"]["facts"]["SERVICE_DATE"] == {
         "date": None,
