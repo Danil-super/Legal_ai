@@ -97,11 +97,7 @@ def escalation_discussion_keyboard(escalation_id: UUID) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("💬 Обсудить с юристом", callback_data=callback)],
-            [
-                InlineKeyboardButton(
-                    "⚖️ Критические кейсы", callback_data=ESCALATION_QUEUE_CALLBACK
-                )
-            ],
+            [InlineKeyboardButton("⚖️ Критические кейсы", callback_data=ESCALATION_QUEUE_CALLBACK)],
         ]
     )
 
@@ -187,7 +183,8 @@ def _discussion_summary(payload: dict[str, Any]) -> str:
     }
     lines = [
         "💬 ВНУТРЕННИЙ ДИАЛОГ ПО КРИТИЧЕСКОМУ КЕЙСУ",
-        "Пишите только обезличенные вопросы и ответы: без ФИО, контактов, номеров карт и меддокументов.",
+        "Пишите только обезличенные вопросы и ответы: без ФИО, контактов, "
+        "номеров карт и меддокументов.",
     ]
     for item in raw_items[-20:]:
         if not isinstance(item, dict):
@@ -483,7 +480,9 @@ async def _show_escalation_queue(
         items = _queue_items(payload)
     except (LegalCoreApiError, ValueError) as exc:
         logger.warning("case escalation queue failed: %s", type(exc).__name__)
-        await gateway_bot._reply(update, "⚠️ Не удалось загрузить критические кейсы. Попробуйте позже.")
+        await gateway_bot._reply(
+            update, "⚠️ Не удалось загрузить критические кейсы. Попробуйте позже."
+        )
         return
 
     rows = [
@@ -539,10 +538,12 @@ async def open_escalation_discussion(
         rendered = _discussion_summary(payload)
     except (LegalCoreApiError, ValueError) as exc:
         logger.warning("case escalation discussion open failed: %s", type(exc).__name__)
-        await gateway_bot._reply(update, "⚠️ Этот критический кейс недоступен или диалог не загрузился.")
-        raise ApplicationHandlerStop
+        await gateway_bot._reply(
+            update, "⚠️ Этот критический кейс недоступен или диалог не загрузился."
+        )
+        raise ApplicationHandlerStop from exc
 
-    context.user_data[ESCALATION_DISCUSSION_KEY] = str(escalation_id)
+    gateway_bot._user_data(context)[ESCALATION_DISCUSSION_KEY] = str(escalation_id)
     message = update.effective_message
     if message is not None:
         await message.reply_text(rendered, reply_markup=_active_discussion_keyboard(escalation_id))
@@ -555,7 +556,7 @@ async def close_escalation_discussion(
 ) -> None:
     if await gateway_bot._answer_callback(update) != ESCALATION_DISCUSSION_CLOSE_CALLBACK:
         raise ApplicationHandlerStop
-    context.user_data.pop(ESCALATION_DISCUSSION_KEY, None)
+    gateway_bot._user_data(context).pop(ESCALATION_DISCUSSION_KEY, None)
     await gateway_bot._reply(
         update,
         "Диалог закрыт в этом чате. Сообщения сохранены во внутреннем журнале кейса.",
@@ -567,7 +568,8 @@ async def post_escalation_discussion_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    raw_id = context.user_data.get(ESCALATION_DISCUSSION_KEY)
+    user_data = gateway_bot._user_data(context)
+    raw_id = user_data.get(ESCALATION_DISCUSSION_KEY)
     if not isinstance(raw_id, str):
         return
     actor_id = gateway_bot._actor_id(update)
@@ -587,12 +589,12 @@ async def post_escalation_discussion_message(
         if exc.code == "DIRECT_IDENTIFIER_NOT_ALLOWED":
             detail = "Не сохраняю сообщение: удалите ФИО, контакты и номера документов пациента."
         elif exc.code == "ESCALATION_NOT_FOUND":
-            context.user_data.pop(ESCALATION_DISCUSSION_KEY, None)
+            user_data.pop(ESCALATION_DISCUSSION_KEY, None)
             detail = "Этот кейс больше недоступен для обсуждения."
         else:
             detail = "Не удалось сохранить сообщение. Попробуйте ещё раз позже."
         await gateway_bot._reply(update, f"⚠️ {detail}")
-        raise ApplicationHandlerStop
+        raise ApplicationHandlerStop from exc
 
     await gateway_bot._reply(
         update,

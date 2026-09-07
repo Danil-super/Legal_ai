@@ -9,6 +9,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler
 from telegram_gateway.bot import (
     ADMIN_GRANT_ACCESS_KEY,
     ALLOWED_UPDATES,
+    _reply,
     admin_panel,
     build_application,
     help_command,
@@ -89,6 +90,15 @@ def test_load_token_returns_stripped_configured_value() -> None:
     token = load_token({"TELEGRAM_BOT_TOKEN": "  123456:unit_test_token_value_1234567890  "})
 
     assert token == "123456:unit_test_token_value_1234567890"
+
+
+def test_reply_passes_an_optional_keyboard_to_telegram() -> None:
+    message = FakeMessage()
+    keyboard = admin_panel_keyboard()
+
+    asyncio.run(_reply(FakeUpdate(message=message), "Выберите действие", reply_markup=keyboard))
+
+    assert message.text_replies == [("Выберите действие", keyboard)]
 
 
 @pytest.mark.parametrize(

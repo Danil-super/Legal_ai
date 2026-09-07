@@ -68,6 +68,8 @@ def downgrade() -> None:
     op.execute(
         "DROP TRIGGER IF EXISTS case_escalation_messages_immutable ON case_escalation_messages"
     )
-    op.drop_index("ix_case_escalation_messages_tenant_thread", table_name="case_escalation_messages")
+    op.drop_index(
+        "ix_case_escalation_messages_tenant_thread", table_name="case_escalation_messages"
+    )
     op.drop_table("case_escalation_messages")
     op.drop_constraint("uq_case_escalations_tenant_id", "case_escalations", type_="unique")

@@ -46,12 +46,18 @@ BEGIN
         BEGIN
             EXECUTE 'ALTER TABLE public.case_facts DISABLE TRIGGER case_facts_immutable';
             EXECUTE 'ALTER TABLE public.case_reports DISABLE TRIGGER case_reports_immutable';
-            EXECUTE 'ALTER TABLE public.telegram_case_workflows DISABLE TRIGGER telegram_case_workflows_immutable';
-            EXECUTE 'ALTER TABLE public.case_escalation_messages DISABLE TRIGGER case_escalation_messages_immutable';
-            EXECUTE 'ALTER TABLE public.case_analysis_claims DISABLE TRIGGER case_analysis_claims_immutable';
-            EXECUTE 'ALTER TABLE public.case_analysis_runs DISABLE TRIGGER case_analysis_runs_immutable';
-            EXECUTE 'ALTER TABLE public.case_escalations DISABLE TRIGGER case_escalations_immutable';
-            EXECUTE 'ALTER TABLE public.case_risk_assessments DISABLE TRIGGER case_risk_assessments_immutable';
+            EXECUTE 'ALTER TABLE public.telegram_case_workflows DISABLE '
+                    'TRIGGER telegram_case_workflows_immutable';
+            EXECUTE 'ALTER TABLE public.case_escalation_messages DISABLE '
+                    'TRIGGER case_escalation_messages_immutable';
+            EXECUTE 'ALTER TABLE public.case_analysis_claims DISABLE '
+                    'TRIGGER case_analysis_claims_immutable';
+            EXECUTE 'ALTER TABLE public.case_analysis_runs DISABLE '
+                    'TRIGGER case_analysis_runs_immutable';
+            EXECUTE 'ALTER TABLE public.case_escalations DISABLE '
+                    'TRIGGER case_escalations_immutable';
+            EXECUTE 'ALTER TABLE public.case_risk_assessments DISABLE '
+                    'TRIGGER case_risk_assessments_immutable';
             DELETE FROM public.idempotency_records
             WHERE clinic_id = target.clinic_id
               AND (
@@ -128,22 +134,34 @@ BEGIN
         EXCEPTION WHEN OTHERS THEN
             EXECUTE 'ALTER TABLE public.case_facts ENABLE TRIGGER case_facts_immutable';
             EXECUTE 'ALTER TABLE public.case_reports ENABLE TRIGGER case_reports_immutable';
-            EXECUTE 'ALTER TABLE public.telegram_case_workflows ENABLE TRIGGER telegram_case_workflows_immutable';
-            EXECUTE 'ALTER TABLE public.case_escalation_messages ENABLE TRIGGER case_escalation_messages_immutable';
-            EXECUTE 'ALTER TABLE public.case_analysis_claims ENABLE TRIGGER case_analysis_claims_immutable';
-            EXECUTE 'ALTER TABLE public.case_analysis_runs ENABLE TRIGGER case_analysis_runs_immutable';
-            EXECUTE 'ALTER TABLE public.case_escalations ENABLE TRIGGER case_escalations_immutable';
-            EXECUTE 'ALTER TABLE public.case_risk_assessments ENABLE TRIGGER case_risk_assessments_immutable';
+            EXECUTE 'ALTER TABLE public.telegram_case_workflows ENABLE '
+                    'TRIGGER telegram_case_workflows_immutable';
+            EXECUTE 'ALTER TABLE public.case_escalation_messages ENABLE '
+                    'TRIGGER case_escalation_messages_immutable';
+            EXECUTE 'ALTER TABLE public.case_analysis_claims ENABLE '
+                    'TRIGGER case_analysis_claims_immutable';
+            EXECUTE 'ALTER TABLE public.case_analysis_runs ENABLE '
+                    'TRIGGER case_analysis_runs_immutable';
+            EXECUTE 'ALTER TABLE public.case_escalations ENABLE '
+                    'TRIGGER case_escalations_immutable';
+            EXECUTE 'ALTER TABLE public.case_risk_assessments ENABLE '
+                    'TRIGGER case_risk_assessments_immutable';
             RAISE;
         END;
         EXECUTE 'ALTER TABLE public.case_facts ENABLE TRIGGER case_facts_immutable';
         EXECUTE 'ALTER TABLE public.case_reports ENABLE TRIGGER case_reports_immutable';
-        EXECUTE 'ALTER TABLE public.telegram_case_workflows ENABLE TRIGGER telegram_case_workflows_immutable';
-        EXECUTE 'ALTER TABLE public.case_escalation_messages ENABLE TRIGGER case_escalation_messages_immutable';
-        EXECUTE 'ALTER TABLE public.case_analysis_claims ENABLE TRIGGER case_analysis_claims_immutable';
-        EXECUTE 'ALTER TABLE public.case_analysis_runs ENABLE TRIGGER case_analysis_runs_immutable';
-        EXECUTE 'ALTER TABLE public.case_escalations ENABLE TRIGGER case_escalations_immutable';
-        EXECUTE 'ALTER TABLE public.case_risk_assessments ENABLE TRIGGER case_risk_assessments_immutable';
+        EXECUTE 'ALTER TABLE public.telegram_case_workflows ENABLE '
+                'TRIGGER telegram_case_workflows_immutable';
+        EXECUTE 'ALTER TABLE public.case_escalation_messages ENABLE '
+                'TRIGGER case_escalation_messages_immutable';
+        EXECUTE 'ALTER TABLE public.case_analysis_claims ENABLE '
+                'TRIGGER case_analysis_claims_immutable';
+        EXECUTE 'ALTER TABLE public.case_analysis_runs ENABLE '
+                'TRIGGER case_analysis_runs_immutable';
+        EXECUTE 'ALTER TABLE public.case_escalations ENABLE '
+                'TRIGGER case_escalations_immutable';
+        EXECUTE 'ALTER TABLE public.case_risk_assessments ENABLE '
+                'TRIGGER case_risk_assessments_immutable';
         purged_cases := purged_cases + 1;
     END LOOP;
     RETURN purged_cases;
@@ -203,7 +221,10 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS public.purge_expired_case_content()")
-    op.execute("DROP POLICY IF EXISTS tenant_isolation_case_retention_events ON case_retention_events")
+    op.execute(
+        "DROP POLICY IF EXISTS tenant_isolation_case_retention_events "
+        "ON case_retention_events"
+    )
     op.drop_index("ix_case_retention_events_purge_after", table_name="case_retention_events")
     op.drop_index("ix_case_retention_events_tenant_time", table_name="case_retention_events")
     op.drop_table("case_retention_events")

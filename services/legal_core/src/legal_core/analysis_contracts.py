@@ -51,12 +51,8 @@ class AnalysisContextResponse(ContractModel):
     case_id: UUID = Field(alias="caseId")
     as_of_date: date = Field(alias="asOfDate")
     facts: dict[str, Any]
-    fact_snapshot_sha256: str = Field(
-        alias="factSnapshotSha256", pattern=r"^[0-9a-f]{64}$"
-    )
-    evidence_trace_sha256: str = Field(
-        alias="evidenceTraceSha256", pattern=r"^[0-9a-f]{64}$"
-    )
+    fact_snapshot_sha256: str = Field(alias="factSnapshotSha256", pattern=r"^[0-9a-f]{64}$")
+    evidence_trace_sha256: str = Field(alias="evidenceTraceSha256", pattern=r"^[0-9a-f]{64}$")
     evidence: list[LegalFragmentResponse] = Field(min_length=1, max_length=30)
     clinic_document_context_trace_sha256: str = Field(
         alias="clinicDocumentContextTraceSha256", pattern=r"^[0-9a-f]{64}$"
@@ -70,9 +66,7 @@ class AnalysisContextResponse(ContractModel):
         max_length=20,
     )
     risk_policy_version: str = Field(alias="riskPolicyVersion", min_length=1, max_length=80)
-    high_demand_threshold_kopecks: int = Field(
-        alias="highDemandThresholdKopecks", ge=1
-    )
+    high_demand_threshold_kopecks: int = Field(alias="highDemandThresholdKopecks", ge=1)
 
 
 class AnalysisClaimInput(ContractModel):
@@ -167,7 +161,7 @@ class AnalysisSubmissionResponse(ContractModel):
     report: ReportResponse
 
     @model_validator(mode="after")
-    def escalation_pointer_matches_requirement(self) -> "AnalysisSubmissionResponse":
+    def escalation_pointer_matches_requirement(self) -> AnalysisSubmissionResponse:
         if self.escalation_required and self.escalation_id is None:
             raise ValueError("an escalation-required analysis must include escalationId")
         if not self.escalation_required and self.escalation_id is not None:

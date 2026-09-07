@@ -711,8 +711,8 @@ def test_retention_purges_confirmed_case_content_but_keeps_bounded_metadata() ->
         with engine.begin() as connection:
             connection.execute(
                 text(
-                    "UPDATE cases SET retention_due_at = timezone('utc', now()) - INTERVAL '1 second' "
-                    "WHERE id = :case_id"
+                    "UPDATE cases SET retention_due_at = timezone('utc', now()) "
+                    "- INTERVAL '1 second' WHERE id = :case_id"
                 ),
                 {"case_id": case_id},
             )

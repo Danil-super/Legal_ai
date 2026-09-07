@@ -202,7 +202,11 @@ def document_library_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("📥 Добавить документ", callback_data="cliniclib:upload")],
-            [InlineKeyboardButton("ℹ️ Как документы влияют на отчёт", callback_data="cliniclib:how")],
+            [
+                InlineKeyboardButton(
+                    "ℹ️ Как документы влияют на отчёт", callback_data="cliniclib:how"
+                )
+            ],
             [InlineKeyboardButton("← Главное меню", callback_data="menu")],
         ]
     )
@@ -226,12 +230,8 @@ def document_effective_date_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton(
-                    "Сегодня", callback_data="cliniclib:date:today"
-                ),
-                InlineKeyboardButton(
-                    "Ввести дату", callback_data="cliniclib:date:manual"
-                ),
+                InlineKeyboardButton("Сегодня", callback_data="cliniclib:date:today"),
+                InlineKeyboardButton("Ввести дату", callback_data="cliniclib:date:manual"),
             ],
             [InlineKeyboardButton("Отменить", callback_data="cliniclib:date:cancel")],
         ]
@@ -351,7 +351,7 @@ def render_library(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMarkup |
 
     if len(raw_items) > _MAX_DOCUMENTS:
         lines.append(f"…и ещё {len(raw_items) - _MAX_DOCUMENTS} документов.")
-    buttons.extend(document_library_keyboard().inline_keyboard)
+    buttons.extend([list(row) for row in document_library_keyboard().inline_keyboard])
     keyboard = InlineKeyboardMarkup(buttons)
     return _bounded("\n".join(lines)), keyboard
 
@@ -458,7 +458,8 @@ async def clinic_document_library_callback(
             update,
             "📥 ВЫБЕРИТЕ ТИП ДОКУМЕНТА\n\n"
             "Выберите один подходящий шаблон — загружать все виды документов не требуется. "
-            "После каждого шага можно вернуться в базу и продолжить позже. Если нужного вида здесь нет, пока не используйте "
+            "После каждого шага можно вернуться в базу и продолжить позже. "
+            "Если нужного вида здесь нет, пока не используйте "
             "техническую команду: сначала согласуем его тип, чтобы он корректно участвовал в "
             "отчёте. Загрузка необязательна.",
         )
@@ -478,7 +479,9 @@ async def clinic_document_library_callback(
     if action == "date:today":
         pending = _date_pending(context)
         if pending is None:
-            await gateway_bot._reply(update, "⚠️ Выбор документа истёк. Откройте базу и начните заново.")
+            await gateway_bot._reply(
+                update, "⚠️ Выбор документа истёк. Откройте базу и начните заново."
+            )
             raise ApplicationHandlerStop
         _clear_date_pending(context)
         await arm_clinic_document_upload(
@@ -494,7 +497,9 @@ async def clinic_document_library_callback(
         raise ApplicationHandlerStop
     if action == "date:manual":
         if _date_pending(context) is None:
-            await gateway_bot._reply(update, "⚠️ Выбор документа истёк. Откройте базу и начните заново.")
+            await gateway_bot._reply(
+                update, "⚠️ Выбор документа истёк. Откройте базу и начните заново."
+            )
             raise ApplicationHandlerStop
         await gateway_bot._reply(
             update,
@@ -521,7 +526,9 @@ async def clinic_document_library_callback(
     )
     message = update.effective_message
     if message is not None:
-        await message.reply_text("Дата начала действия:", reply_markup=document_effective_date_keyboard())
+        await message.reply_text(
+            "Дата начала действия:", reply_markup=document_effective_date_keyboard()
+        )
     raise ApplicationHandlerStop
 
 
@@ -569,12 +576,13 @@ async def receive_document_effective_date(
         return
     try:
         valid_from = date.fromisoformat(message.text.strip())
-    except ValueError:
+    except ValueError as exc:
         await gateway_bot._reply(
             update,
-            "Введите дату строго в формате ГГГГ-ММ-ДД, например 2026-09-04, или отмените выбор кнопкой.",
+            "Введите дату строго в формате ГГГГ-ММ-ДД, например 2026-09-04, "
+            "или отмените выбор кнопкой.",
         )
-        raise ApplicationHandlerStop
+        raise ApplicationHandlerStop from exc
     _clear_date_pending(context)
     await arm_clinic_document_upload(
         update,

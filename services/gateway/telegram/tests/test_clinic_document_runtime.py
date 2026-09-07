@@ -3,14 +3,13 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+import telegram_gateway.clinic_document_runtime as clinic_document_runtime
 from telegram.ext import (
     ApplicationHandlerStop,
     CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
 )
-
-import telegram_gateway.clinic_document_runtime as clinic_document_runtime
 from telegram_gateway.clinic_document_runtime import (
     build_application_with_clinic_documents,
     parse_upload_command,
@@ -141,7 +140,11 @@ def test_confirmed_retirement_appends_retired_decision(
         }
     ]
     assert core.closed is True
-    assert "снята с использования" in query.edits[0][0]
+    retirement_status = (
+        "\N{CYRILLIC SMALL LETTER ES}нята "
+        "\N{CYRILLIC SMALL LETTER ES} использования"
+    )
+    assert retirement_status in query.edits[0][0]
 
 
 def test_application_registers_upload_and_review_before_generic_handlers(
@@ -149,15 +152,11 @@ def test_application_registers_upload_and_review_before_generic_handlers(
 ) -> None:
     monkeypatch.delenv("AGENT_ORCHESTRATOR_URL", raising=False)
     monkeypatch.delenv("AGENT_INTERNAL_KEY", raising=False)
-    application = build_application_with_clinic_documents(
-        "123456:unit_test_token_value_1234567890"
-    )
+    application = build_application_with_clinic_documents("123456:unit_test_token_value_1234567890")
 
     early_handlers = application.handlers.get(-2, [])
     commands = {
-        handler.commands
-        for handler in early_handlers
-        if isinstance(handler, CommandHandler)
+        handler.commands for handler in early_handlers if isinstance(handler, CommandHandler)
     }
     assert frozenset({"upload_clinic_doc"}) in commands
     assert frozenset({"cancel_upload"}) in commands
