@@ -99,6 +99,32 @@ def load_token(environment: Mapping[str, str] | None = None) -> str:
     return token
 
 
+def load_telegram_proxy_url(environment: Mapping[str, str] | None = None) -> str | None:
+    source = os.environ if environment is None else environment
+    value = source.get("TELEGRAM_PROXY_URL", "").strip()
+    if not value:
+        return None
+
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as error:
+        raise RuntimeError("TELEGRAM_PROXY_URL is malformed") from error
+
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or port is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RuntimeError("TELEGRAM_PROXY_URL is malformed")
+    return value.rstrip("/")
+
+
 def load_legal_core_url(environment: Mapping[str, str] | None = None) -> str:
     source = os.environ if environment is None else environment
     value = source.get("LEGAL_CORE_URL", "http://legal-core:8000").strip().rstrip("/")
@@ -1508,17 +1534,20 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("telegram update failed: %s", type(context.error).__name__)
 
 
-def build_application(token: str) -> TelegramApplication:
+def build_application(token: str, *, proxy_url: str | None = None) -> TelegramApplication:
     # Application.builder + async handlers follows the official v22.8 pattern.
     # Source: https://docs.python-telegram-bot.org/en/v22.8/examples.echobot.html
-    application = (
+    builder = (
         Application.builder()
         .token(token)
         .concurrent_updates(False)
         .post_init(on_startup)
         .post_shutdown(on_shutdown)
-        .build()
     )
+    configured_proxy_url = load_telegram_proxy_url() if proxy_url is None else proxy_url
+    if configured_proxy_url is not None:
+        builder = builder.proxy(configured_proxy_url).get_updates_proxy(configured_proxy_url)
+    application = builder.build()
     application.add_handler(
         ConversationHandler(
             entry_points=[

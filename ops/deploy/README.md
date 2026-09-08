@@ -9,6 +9,9 @@ This directory configures the base (non-AI) deployment on `84.201.153.147`.
 - GitHub holds only the `production` environment secret `DEPLOY_SSH_PRIVATE_KEY`.
 - `/etc/dental-legal-ai/app.env` is root-owned and contains all runtime secrets. It is never
   copied to GitHub, CI artifacts or logs.
+- The Telegram VLESS configuration is stored only in the root-owned
+  `/etc/dental-legal-ai/telegram-vpn/config.json` (mode `0600`). It is never committed or placed
+  in `app.env`; the gateway reaches Telegram exclusively through this internal proxy.
 - The `deploy` SSH account has no shell access: its key is forced to the deployment gateway.
 - The server's ED25519 host key is pinned in `known_hosts.production`; a host key change blocks
   the workflow until manually reviewed.

@@ -13,6 +13,7 @@ from telegram_gateway.bot import (
     admin_panel,
     build_application,
     help_command,
+    load_telegram_proxy_url,
     load_token,
     menu_callback,
     on_startup,
@@ -108,6 +109,40 @@ def test_reply_passes_an_optional_keyboard_to_telegram() -> None:
 def test_load_token_rejects_missing_or_malformed_values(environment: dict[str, str]) -> None:
     with pytest.raises(RuntimeError, match="TELEGRAM_BOT_TOKEN"):
         load_token(environment)
+
+
+def test_load_telegram_proxy_url_accepts_an_internal_http_proxy() -> None:
+    assert load_telegram_proxy_url({"TELEGRAM_PROXY_URL": " http://telegram-vpn-proxy:8080/ "}) == (
+        "http://telegram-vpn-proxy:8080"
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "socks5://telegram-vpn-proxy:8080",
+        "http://user:password@telegram-vpn-proxy:8080",
+        "http://telegram-vpn-proxy:8080/path",
+        "http://telegram-vpn-proxy:8080?bypass=true",
+        "http://telegram-vpn-proxy:8080#fragment",
+    ],
+)
+def test_load_telegram_proxy_url_rejects_unsafe_or_unsupported_values(value: str) -> None:
+    with pytest.raises(RuntimeError, match="TELEGRAM_PROXY_URL"):
+        load_telegram_proxy_url({"TELEGRAM_PROXY_URL": value})
+
+
+def test_build_application_routes_bot_api_and_polling_through_configured_proxy() -> None:
+    proxy_url = "http://telegram-vpn-proxy:8080"
+
+    application = build_application(
+        "123456:unit_test_token_value_1234567890",
+        proxy_url=proxy_url,
+    )
+
+    get_updates_request, bot_api_request = application.bot._request
+    assert get_updates_request._client_kwargs["proxy"] == proxy_url
+    assert bot_api_request._client_kwargs["proxy"] == proxy_url
 
 
 def test_start_sends_branded_image_caption_and_main_menu() -> None:
