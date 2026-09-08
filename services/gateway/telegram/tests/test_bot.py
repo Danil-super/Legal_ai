@@ -60,11 +60,19 @@ class FakeMessage:
 
 
 class FakeCallbackQuery:
-    def __init__(self, data: object, *, edit_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        data: object,
+        *,
+        edit_error: Exception | None = None,
+        message: object | None = None,
+    ) -> None:
         self.data = data
         self.edit_error = edit_error
+        self.message = message
         self.answers: list[tuple[str | None, bool]] = []
         self.edits: list[tuple[str, InlineKeyboardMarkup]] = []
+        self.text_edits: list[tuple[str, InlineKeyboardMarkup]] = []
 
     async def answer(self, text: str | None = None, show_alert: bool = False) -> None:
         self.answers.append((text, show_alert))
@@ -77,6 +85,15 @@ class FakeCallbackQuery:
         if self.edit_error is not None:
             raise self.edit_error
         self.edits.append((caption, reply_markup))
+
+    async def edit_message_text(
+        self,
+        text: str,
+        reply_markup: InlineKeyboardMarkup,
+    ) -> None:
+        if self.edit_error is not None:
+            raise self.edit_error
+        self.text_edits.append((text, reply_markup))
 
 
 class FakeUpdate:
@@ -252,6 +269,14 @@ def test_repeated_menu_callback_ignores_unchanged_caption_error() -> None:
     asyncio.run(menu_callback(FakeUpdate(callback_query=query), None))
 
     assert query.answers == [(None, False)]
+
+
+def test_menu_callback_edits_text_message_instead_of_a_missing_caption() -> None:
+    query = FakeCallbackQuery("menu", message=SimpleNamespace(caption=None))
+
+    asyncio.run(menu_callback(FakeUpdate(callback_query=query), None))
+
+    assert query.text_edits[0][0] == START_MESSAGE
 
 
 def test_menu_callback_does_not_hide_other_telegram_errors() -> None:

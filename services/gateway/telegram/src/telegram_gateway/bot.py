@@ -1501,10 +1501,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE | Non
         caption = HELP_MESSAGE if callback_data == "help" else SCREENS[callback_data]
         keyboard = back_keyboard()
     try:
-        await query.edit_message_caption(caption=caption, reply_markup=keyboard)
+        message = query.message
+        if message is not None and getattr(message, "caption", None) is None:
+            await query.edit_message_text(text=caption, reply_markup=keyboard)
+        else:
+            await query.edit_message_caption(caption=caption, reply_markup=keyboard)
     except BadRequest as exc:
         # A double tap can arrive after the first callback has already rendered
-        # this exact caption. Telegram rejects that no-op; the user is already
+        # this exact screen. Telegram rejects that no-op; the user is already
         # on the requested screen, so it must not turn into a failed update.
         if "message is not modified" not in str(exc).lower():
             raise
