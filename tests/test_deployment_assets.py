@@ -65,3 +65,12 @@ def test_deploy_workflows_allow_the_explicit_ssh_agent_key() -> None:
     assert "ssh -o BatchMode=yes -o IdentitiesOnly=no deploy@" in ci_workflow
     assert "ssh-add - <<<\"$DEPLOY_SSH_PRIVATE_KEY\"" in rollback_workflow
     assert "ssh -o BatchMode=yes -o IdentitiesOnly=no deploy@" in rollback_workflow
+
+
+def test_telegram_gateway_image_includes_its_legal_core_pseudonymization_dependency() -> None:
+    dockerfile = (ROOT / "services" / "gateway" / "telegram" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+
+    assert "/app/services/legal_core/src" in dockerfile
+    assert "COPY services/legal_core/src/legal_core" in dockerfile
