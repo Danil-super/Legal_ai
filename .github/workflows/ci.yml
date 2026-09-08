@@ -246,4 +246,4 @@ jobs:
           ssh-add - <<<"$DEPLOY_SSH_PRIVATE_KEY"
           install -d -m 0700 "$HOME/.ssh"
           install -m 0600 ops/deploy/known_hosts.production "$HOME/.ssh/known_hosts"
-          ssh -o BatchMode=yes -o IdentitiesOnly=yes deploy@84.201.153.147 "deploy $DEPLOY_SHA"
+          ssh -o BatchMode=yes -o IdentitiesOnly=no deploy@84.201.153.147 "deploy $DEPLOY_SHA"

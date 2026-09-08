@@ -53,3 +53,15 @@ def test_production_gate_is_evaluated_after_environment_binding() -> None:
     )[0]
     assert "      if: vars.DEPLOY_ENABLED == 'true'" in ci_workflow
     assert "      if: vars.DEPLOY_ENABLED == 'true'" in rollback_workflow
+
+
+def test_deploy_workflows_allow_the_explicit_ssh_agent_key() -> None:
+    ci_workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    rollback_workflow = (ROOT / ".github" / "workflows" / "rollback.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ssh-add - <<<\"$DEPLOY_SSH_PRIVATE_KEY\"" in ci_workflow
+    assert "ssh -o BatchMode=yes -o IdentitiesOnly=no deploy@" in ci_workflow
+    assert "ssh-add - <<<\"$DEPLOY_SSH_PRIVATE_KEY\"" in rollback_workflow
+    assert "ssh -o BatchMode=yes -o IdentitiesOnly=no deploy@" in rollback_workflow
