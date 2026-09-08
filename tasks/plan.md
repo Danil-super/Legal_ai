@@ -140,3 +140,20 @@ truth. Build order is: tenant-scoped draft persistence and contract → authoris
 tests → Telegram save/resume/list/switch controls → restart and deployment verification. It was
 deployed on 2026-08-31, keeps case creation at final confirmation and does not change evidence,
 risk or recommendation gates.
+
+## Controlled GitHub deployment foundation
+
+The public repository `Danil-super/Legal_ai` is the only application source for the VPS. Every
+pull request and update to `main` must pass the existing quality and integration suites, a Python
+dependency audit and CodeQL scanning before a `main` deployment is allowed. GitHub Actions never
+receives the Telegram token, database passwords or MinIO credentials; those remain in a
+root-readable runtime file on the VPS.
+
+The production job uses a dedicated, key-only `deploy` account with a forced command. Its only
+permitted operation is to request a validated commit already reachable from `origin/main`; a
+root-owned deployment script performs the checkout, Compose launch and readiness check. The
+initial deployment gate is disabled until a human configures the real Telegram owner/token on the
+host. Hermes/LLM and maintenance profiles remain disabled.
+
+Rollback is an explicit, audited workflow action rather than an automatic database downgrade.
+Schema changes therefore require backward-compatible deployment discipline and a restore plan.

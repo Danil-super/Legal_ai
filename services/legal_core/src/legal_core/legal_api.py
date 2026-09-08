@@ -28,6 +28,7 @@ def create_legal_router(
     Session = Annotated[AsyncSession, Depends(get_session)]
     SearchQuery = Annotated[str, Query(min_length=2, max_length=500)]
     AsOfDate = Annotated[date, Query(alias="as_of_date")]
+    OptionalAsOfDate = Annotated[date | None, Query(alias="as_of_date")]
     SearchLimit = Annotated[int, Query(ge=1, le=20)]
 
     def require_lawyer_library_access(role: str) -> None:
@@ -65,7 +66,7 @@ def create_legal_router(
     async def list_library_documents(
         telegram_user_id: TelegramUserId,
         session: Session,
-        as_of_date: date | None = Query(default=None, alias="as_of_date"),
+        as_of_date: OptionalAsOfDate = None,
     ) -> LegalLibraryResponse:
         """List current approved source metadata; source drafts and raw files stay private."""
 

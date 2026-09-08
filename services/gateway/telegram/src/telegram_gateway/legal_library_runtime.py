@@ -24,6 +24,7 @@ from telegram.ext import (
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.quick_intake_runtime import build_application_with_quick_intake
+from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
 LEGAL_LIBRARY_CALLBACK = "legalbase:open"
@@ -158,7 +159,7 @@ def render_legal_library(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMa
             "оставаться заблокированными, пока "
             "платформенный legal editor не проверит "
             "и не одобрит официальные документы.",
-            gateway_bot.back_keyboard(),
+            back_keyboard(),
         )
 
     lines = [
@@ -202,7 +203,7 @@ def render_legal_library(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMa
 
     if len(raw_items) > _MAX_DOCUMENTS:
         lines.append(f"…и ещё {len(raw_items) - _MAX_DOCUMENTS} документов.")
-    buttons.extend(gateway_bot.back_keyboard().inline_keyboard)
+    buttons.extend([list(row) for row in back_keyboard().inline_keyboard])
     return _bounded_message("\n".join(lines)), InlineKeyboardMarkup(buttons)
 
 
@@ -223,18 +224,18 @@ async def show_legal_library(
     except LegalCoreApiError as exc:
         logger.warning("legal library load failed: %s", exc.code)
         if exc.code == "LEGAL_LIBRARY_NOT_ALLOWED":
-            message = (
+            error_message = (
                 "🔒 Нормативная база доступна "
                 "юристу и владельцу клиники."
             )
         elif exc.code == "SUBSCRIPTION_INACTIVE":
-            message = "🔒 Доступ клиники не активирован."
+            error_message = "🔒 Доступ клиники не активирован."
         else:
-            message = (
+            error_message = (
                 "⚠️ Не удалось загрузить "
                 "нормативную базу. Попробуйте позже."
             )
-        await gateway_bot._reply(update, message)
+        await gateway_bot._reply(update, error_message)
         return
     except ValueError:
         await gateway_bot._reply(
@@ -245,9 +246,9 @@ async def show_legal_library(
     finally:
         await client.aclose()
 
-    message = update.effective_message
-    if message is not None:
-        await message.reply_text(text, reply_markup=keyboard)
+    effective_message = update.effective_message
+    if effective_message is not None:
+        await effective_message.reply_text(text, reply_markup=keyboard)
 
 
 async def legal_library_callback(

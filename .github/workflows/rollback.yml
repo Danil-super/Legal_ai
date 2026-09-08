@@ -1,0 +1,36 @@
+name: Rollback production
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Full 40-character commit SHA that is reachable from main
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  rollback-production:
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+    steps:
+      - name: Checkout pinned deployment host key
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Request explicit rollback
+        env:
+          DEPLOY_REVISION: ${{ inputs.revision }}
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          eval "$(ssh-agent -s)"
+          trap 'ssh-agent -k' EXIT
+          ssh-add - <<<"$DEPLOY_SSH_PRIVATE_KEY"
+          install -d -m 0700 "$HOME/.ssh"
+          install -m 0600 ops/deploy/known_hosts.production "$HOME/.ssh/known_hosts"
+          ssh -o BatchMode=yes -o IdentitiesOnly=yes deploy@84.201.153.147 "rollback $DEPLOY_REVISION"

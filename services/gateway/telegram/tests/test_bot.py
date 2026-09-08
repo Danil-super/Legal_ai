@@ -9,6 +9,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler
 from telegram_gateway.bot import (
     ADMIN_GRANT_ACCESS_KEY,
     ALLOWED_UPDATES,
+    _reply,
     admin_panel,
     build_application,
     help_command,
@@ -78,15 +79,26 @@ class FakeUpdate:
         self,
         message: FakeMessage | None = None,
         callback_query: FakeCallbackQuery | None = None,
+        effective_user: object | None = None,
     ) -> None:
         self.effective_message = message
         self.callback_query = callback_query
+        self.effective_user = effective_user
 
 
 def test_load_token_returns_stripped_configured_value() -> None:
     token = load_token({"TELEGRAM_BOT_TOKEN": "  123456:unit_test_token_value_1234567890  "})
 
     assert token == "123456:unit_test_token_value_1234567890"
+
+
+def test_reply_passes_an_optional_keyboard_to_telegram() -> None:
+    message = FakeMessage()
+    keyboard = admin_panel_keyboard()
+
+    asyncio.run(_reply(FakeUpdate(message=message), "Выберите действие", reply_markup=keyboard))
+
+    assert message.text_replies == [("Выберите действие", keyboard)]
 
 
 @pytest.mark.parametrize(
@@ -173,7 +185,13 @@ def test_owner_menu_combines_administrator_and_lawyer_actions() -> None:
     keyboard = main_menu_keyboard("CLINIC_OWNER")
     callbacks = {button.callback_data for row in keyboard.inline_keyboard for button in row}
 
-    assert {"case:start", "clinicdocs:open", "case:escalations", "legalbase:open", "team:open"} <= callbacks
+    assert {
+        "case:start",
+        "clinicdocs:open",
+        "case:escalations",
+        "legalbase:open",
+        "team:open",
+    } <= callbacks
 
 
 def test_known_callback_answers_and_edits_the_welcome_caption() -> None:

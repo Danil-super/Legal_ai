@@ -1,4 +1,3 @@
-# ruff: noqa: I001,RUF001
 from telegram.ext import CallbackQueryHandler, CommandHandler
 from telegram_gateway.legal_library_runtime import (
     build_application_with_legal_library,
@@ -7,10 +6,7 @@ from telegram_gateway.legal_library_runtime import (
 
 
 def _payload() -> dict[str, object]:
-    title = (
-        "Правила предоставления "
-        "платных медицинских услуг"
-    )
+    title = "Правила предоставления платных медицинских услуг"
     return {
         "asOfDate": "2026-09-04",
         "items": [

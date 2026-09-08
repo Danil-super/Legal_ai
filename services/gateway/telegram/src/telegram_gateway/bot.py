@@ -115,10 +115,15 @@ def load_legal_core_url(environment: Mapping[str, str] | None = None) -> str:
     return value
 
 
-async def _reply(update: Update, text: str) -> None:
+async def _reply(
+    update: Update,
+    text: str,
+    *,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
     message = update.effective_message
     if message is not None:
-        await message.reply_text(text)
+        await message.reply_text(text, reply_markup=reply_markup)
 
 
 def _clear_pending_admin_grant(context: ContextTypes.DEFAULT_TYPE | None) -> None:

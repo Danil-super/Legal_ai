@@ -21,13 +21,14 @@ from legal_core.api_contracts import (
     ClinicMemberCreateRequest,
     ClinicMemberListResponse,
     ClinicMemberResponse,
+    ClinicRole,
+    CreateCaseRequest,
+    CreateReportRequest,
     EscalationDiscussionMessageRequest,
     EscalationDiscussionMessageResponse,
     EscalationDiscussionResponse,
     EscalationQueueItemResponse,
     EscalationQueueResponse,
-    CreateCaseRequest,
-    CreateReportRequest,
     FinalizeRequest,
     IntakeResponse,
     PlatformSubscriptionGrantRequest,
@@ -60,8 +61,8 @@ from legal_core.models import (
     TelegramIntakeDraft,
     User,
 )
-from legal_core.reports import build_intake_report, render_report_pdf
 from legal_core.pseudonymization import pseudonymize_text
+from legal_core.reports import build_intake_report, render_report_pdf
 from legal_core.subscription_provisioning import provision_entitlement_in_session
 
 TelegramUserId = Annotated[int, Header(alias="X-Telegram-User-Id", gt=0)]
@@ -107,7 +108,7 @@ class ActorContext:
     user_id: UUID
     membership_id: UUID
     clinic_id: UUID
-    role: str
+    role: ClinicRole
 
 
 def _canonical_hash(value: object) -> str:
@@ -212,7 +213,7 @@ async def resolve_actor(session: AsyncSession, telegram_user_id: int) -> ActorCo
         user_id=user_id,
         membership_id=membership_id,
         clinic_id=clinic_id,
-        role=role,
+        role=cast(ClinicRole, role),
     )
 
 
@@ -262,9 +263,7 @@ async def _enforce_case_limits(
 
     await session.execute(
         select(
-            func.pg_advisory_xact_lock(
-                func.hashtextextended(f"case-quota:{actor.clinic_id}", 0)
-            )
+            func.pg_advisory_xact_lock(func.hashtextextended(f"case-quota:{actor.clinic_id}", 0))
         )
     )
     if enforce_active_limit:
@@ -295,8 +294,7 @@ async def _enforce_case_limits(
             .select_from(Case)
             .where(
                 Case.clinic_id == actor.clinic_id,
-                Case.closed_at
-                >= func.date_trunc("month", func.timezone("UTC", func.now())),
+                Case.closed_at >= func.date_trunc("month", func.timezone("UTC", func.now())),
             )
         )
         if int(monthly_count or 0) >= CONFIRMED_CASE_MONTHLY_LIMIT_PER_CLINIC:
@@ -304,8 +302,7 @@ async def _enforce_case_limits(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 code="CLINIC_MONTHLY_CASE_LIMIT_REACHED",
                 message=(
-                    "The clinic confirmed case limit for the current UTC calendar month "
-                    "was reached"
+                    "The clinic confirmed case limit for the current UTC calendar month was reached"
                 ),
                 details={
                     "limit": CONFIRMED_CASE_MONTHLY_LIMIT_PER_CLINIC,
@@ -320,7 +317,9 @@ async def _discussion_escalation(
 ) -> CaseEscalation:
     escalation = await session.scalar(
         select(CaseEscalation)
-        .join(Case, (Case.clinic_id == CaseEscalation.clinic_id) & (Case.id == CaseEscalation.case_id))
+        .join(
+            Case, (Case.clinic_id == CaseEscalation.clinic_id) & (Case.id == CaseEscalation.case_id)
+        )
         .where(
             CaseEscalation.id == escalation_id,
             CaseEscalation.clinic_id == actor.clinic_id,
@@ -335,7 +334,9 @@ async def _discussion_escalation(
             )
         )
         if created_by != actor.membership_id:
-            raise ApiError(status_code=404, code="ESCALATION_NOT_FOUND", message="Escalation not found")
+            raise ApiError(
+                status_code=404, code="ESCALATION_NOT_FOUND", message="Escalation not found"
+            )
     return escalation
 
 
@@ -655,7 +656,10 @@ def create_case_router(
             )
         )
         await session.commit()
-        return ClinicMemberResponse(telegramUserId=member_user.telegram_user_id, role=membership.role)
+        return ClinicMemberResponse(
+            telegramUserId=member_user.telegram_user_id,
+            role=cast(ClinicRole, membership.role),
+        )
 
     @router.get(
         "/case-escalations",
@@ -672,8 +676,7 @@ def create_case_router(
             select(CaseEscalation, Case)
             .join(
                 Case,
-                (Case.clinic_id == CaseEscalation.clinic_id)
-                & (Case.id == CaseEscalation.case_id),
+                (Case.clinic_id == CaseEscalation.clinic_id) & (Case.id == CaseEscalation.case_id),
             )
             .where(CaseEscalation.clinic_id == actor.clinic_id)
             .order_by(CaseEscalation.created_at.desc(), CaseEscalation.id.desc())
@@ -719,7 +722,8 @@ def create_case_router(
                 )
             ).all()
         )
-        roles = dict(
+        role_rows = cast(
+            list[tuple[UUID, str]],
             (
                 await session.execute(
                     select(ClinicUser.id, ClinicUser.role).where(
@@ -727,8 +731,11 @@ def create_case_router(
                         ClinicUser.id.in_([message.author_membership_id for message in messages]),
                     )
                 )
-            ).all()
+            ).tuples().all(),
         )
+        roles: dict[UUID, ClinicRole] = {
+            membership_id: cast(ClinicRole, role) for membership_id, role in role_rows
+        }
         return EscalationDiscussionResponse(
             items=[
                 EscalationDiscussionMessageResponse(
@@ -893,9 +900,7 @@ def create_case_router(
         )
         return TelegramIntakeDraftListResponse(items=[_draft_summary(draft) for draft in drafts])
 
-    @router.get(
-        "/telegram-intake-drafts/{draft_id}", response_model=TelegramIntakeDraftResponse
-    )
+    @router.get("/telegram-intake-drafts/{draft_id}", response_model=TelegramIntakeDraftResponse)
     async def get_telegram_intake_draft(
         draft_id: UUID,
         telegram_user_id: TelegramUserId,
@@ -905,9 +910,7 @@ def create_case_router(
         draft = await _actor_draft(session, actor, draft_id)
         return _draft_response(draft)
 
-    @router.put(
-        "/telegram-intake-drafts/{draft_id}", response_model=TelegramIntakeDraftResponse
-    )
+    @router.put("/telegram-intake-drafts/{draft_id}", response_model=TelegramIntakeDraftResponse)
     async def update_telegram_intake_draft(
         draft_id: UUID,
         payload: TelegramIntakeDraftUpdateRequest,
@@ -1061,9 +1064,7 @@ def create_case_router(
         # requests for the same target before a first user/membership is inserted.
         await session.execute(select(func.pg_advisory_xact_lock(payload.telegram_user_id)))
         target_user = await session.scalar(
-            select(User)
-            .where(User.telegram_user_id == payload.telegram_user_id)
-            .with_for_update()
+            select(User).where(User.telegram_user_id == payload.telegram_user_id).with_for_update()
         )
         if target_user is None:
             target_user = User(telegram_user_id=payload.telegram_user_id)
@@ -1533,9 +1534,7 @@ def create_case_router(
             response.status_code = status.HTTP_200_OK
             return await _workflow_response(session, existing)
 
-        facts = {
-            item.fact_key: _input_value(item.value_type, item.value) for item in payload.facts
-        }
+        facts = {item.fact_key: _input_value(item.value_type, item.value) for item in payload.facts}
         missing = missing_facts_for(facts)
         if missing:
             raise ApiError(

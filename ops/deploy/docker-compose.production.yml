@@ -1,0 +1,15 @@
+services:
+  postgres:
+    mem_limit: 384m
+
+  redis:
+    mem_limit: 128m
+
+  minio:
+    mem_limit: 256m
+
+  legal-core:
+    mem_limit: 512m
+
+  telegram-gateway:
+    mem_limit: 192m
