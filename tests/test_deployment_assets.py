@@ -74,3 +74,13 @@ def test_telegram_gateway_image_includes_its_legal_core_pseudonymization_depende
 
     assert "/app/services/legal_core/src" in dockerfile
     assert "COPY services/legal_core/src/legal_core" in dockerfile
+
+
+def test_agent_orchestrator_is_not_exposed_to_the_edge_network() -> None:
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    service = compose.split("  agent-orchestrator:\n", maxsplit=1)[1].split(
+        "\n  legal-watcher:", maxsplit=1
+    )[0]
+
+    assert "networks: [backend]" in service
+    assert "edge" not in service
