@@ -135,7 +135,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    networks: [backend, edge]
+    networks: [backend]
     restart: unless-stopped
 
   legal-watcher:
