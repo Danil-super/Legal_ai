@@ -4,7 +4,13 @@ import os
 import pytest
 from legal_core.bootstrap_admin import bootstrap_admin, configured_admin
 from legal_core.database import database_url
-from legal_core.models import Clinic, ClinicUser, User
+from legal_core.models import (
+    Clinic,
+    ClinicUser,
+    SubscriptionEntitlement,
+    SubscriptionEntitlementEvent,
+    User,
+)
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -27,7 +33,7 @@ def test_configured_admin_is_optional_and_validated() -> None:
     os.getenv("POSTGRES_INTEGRATION") != "1",
     reason="set POSTGRES_INTEGRATION=1 to run PostgreSQL bootstrap tests",
 )
-def test_bootstrap_admin_is_idempotent_and_creates_one_active_membership() -> None:
+def test_bootstrap_admin_is_idempotent_and_creates_one_active_membership_and_entitlement() -> None:
     async def scenario() -> None:
         engine = create_async_engine(database_url())
         factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -38,6 +44,15 @@ def test_bootstrap_admin_is_idempotent_and_creates_one_active_membership() -> No
 
             assert first == second
             async with factory() as session:
+                clinic_id = await session.scalar(
+                    select(ClinicUser.clinic_id)
+                    .join(User, User.id == ClinicUser.user_id)
+                    .where(User.telegram_user_id == telegram_id)
+                )
+                assert clinic_id is not None
+                await session.execute(
+                    select(func.set_config("app.current_clinic_id", str(clinic_id), True))
+                )
                 user_count = await session.scalar(
                     select(func.count(User.id)).where(User.telegram_user_id == telegram_id)
                 )
@@ -50,6 +65,26 @@ def test_bootstrap_admin_is_idempotent_and_creates_one_active_membership() -> No
                         ClinicUser.role == "CLINIC_OWNER",
                     )
                 )
+                entitlement_count = await session.scalar(
+                    select(func.count(SubscriptionEntitlement.id))
+                    .join(User, User.id == SubscriptionEntitlement.user_id)
+                    .where(
+                        User.telegram_user_id == telegram_id,
+                        SubscriptionEntitlement.status == "ACTIVE",
+                        SubscriptionEntitlement.plan_code == "MVP_MANUAL",
+                        SubscriptionEntitlement.ends_at.is_(None),
+                    )
+                )
+                entitlement_event_count = await session.scalar(
+                    select(func.count(SubscriptionEntitlementEvent.id))
+                    .join(
+                        SubscriptionEntitlement,
+                        SubscriptionEntitlement.id
+                        == SubscriptionEntitlementEvent.entitlement_id,
+                    )
+                    .join(User, User.id == SubscriptionEntitlement.user_id)
+                    .where(User.telegram_user_id == telegram_id)
+                )
                 clinic_name = await session.scalar(
                     select(Clinic.name)
                     .join(ClinicUser, ClinicUser.clinic_id == Clinic.id)
@@ -59,28 +94,10 @@ def test_bootstrap_admin_is_idempotent_and_creates_one_active_membership() -> No
 
             assert user_count == 1
             assert membership_count == 1
+            assert entitlement_count == 1
+            assert entitlement_event_count == 1
             assert clinic_name == "Bootstrap test clinic"
         finally:
-            async with factory() as session, session.begin():
-                user = await session.scalar(
-                    select(User).where(User.telegram_user_id == telegram_id)
-                )
-                if user is not None:
-                    memberships = list(
-                        (
-                            await session.scalars(
-                                select(ClinicUser).where(ClinicUser.user_id == user.id)
-                            )
-                        ).all()
-                    )
-                    clinic_ids = [membership.clinic_id for membership in memberships]
-                    for membership in memberships:
-                        await session.delete(membership)
-                    await session.delete(user)
-                    for clinic_id in clinic_ids:
-                        clinic = await session.get(Clinic, clinic_id)
-                        if clinic is not None:
-                            await session.delete(clinic)
             await engine.dispose()
 
     asyncio.run(scenario())
