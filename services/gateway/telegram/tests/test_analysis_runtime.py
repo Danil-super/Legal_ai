@@ -4,6 +4,7 @@ from uuid import UUID
 import pytest
 from telegram.ext import CallbackQueryHandler
 from telegram_gateway.analysis_runtime import (
+    analysis_error_message,
     analysis_keyboard,
     build_application_with_analysis,
     escalation_discussion_keyboard,
@@ -31,6 +32,10 @@ def test_analysis_settings_reject_partial_or_short_secret_configuration() -> Non
                 "AGENT_INTERNAL_KEY": "short",
             }
         )
+
+
+def test_completed_analysis_has_a_clear_russian_user_message() -> None:
+    assert "уже сформирован" in analysis_error_message("CASE_ANALYSIS_ALREADY_COMPLETED")
 
 
 def test_analysis_keyboard_callback_fits_telegram_limit() -> None:

@@ -126,6 +126,20 @@ def _bounded_text(value: object, *, limit: int) -> str | None:
     return value[:limit] if value else None
 
 
+def analysis_error_message(code: str) -> str:
+    messages = {
+        "INSUFFICIENT_FACTS": "В кейсе не хватает обязательных фактов.",
+        "LEGAL_EVIDENCE_UNAVAILABLE": "Для этого кейса пока не хватает одобренной правовой базы.",
+        "RISK_POLICY_NOT_READY": "Политика риска пока не активирована.",
+        "ANALYSIS_CONTEXT_STALE": "Кейс изменился во время анализа. Запустите проверку ещё раз.",
+        "ANALYSIS_PROVIDER_UNAVAILABLE": "ИИ-провайдер временно недоступен.",
+        "CASE_ANALYSIS_ALREADY_COMPLETED": (
+            "Анализ по этому кейсу уже сформирован. Используйте последнюю карточку результата."
+        ),
+    }
+    return messages.get(code, "Не удалось безопасно завершить анализ.")
+
+
 def escalation_id_from_analysis(payload: dict[str, Any]) -> UUID | None:
     """Read a server-issued escalation pointer without deriving one from case data."""
 
@@ -677,18 +691,7 @@ async def analyze_case_callback(
     except (ValueError, AgentOrchestratorApiError) as exc:
         logger.warning("case analysis failed: %s", type(exc).__name__)
         if isinstance(exc, AgentOrchestratorApiError):
-            messages = {
-                "INSUFFICIENT_FACTS": "В кейсе не хватает обязательных фактов.",
-                "LEGAL_EVIDENCE_UNAVAILABLE": (
-                    "Для этого кейса пока не хватает одобренной правовой базы."
-                ),
-                "RISK_POLICY_NOT_READY": "Политика риска пока не активирована.",
-                "ANALYSIS_CONTEXT_STALE": (
-                    "Кейс изменился во время анализа. Запустите проверку ещё раз."
-                ),
-                "ANALYSIS_PROVIDER_UNAVAILABLE": "ИИ-провайдер временно недоступен.",
-            }
-            detail = messages.get(exc.code, "Не удалось безопасно завершить анализ.")
+            detail = analysis_error_message(exc.code)
         else:
             detail = "Ответ анализа не прошёл внутреннюю проверку."
         await gateway_bot._reply(update, f"⚠️ {detail}")

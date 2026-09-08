@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -6,12 +7,14 @@ import pytest
 from legal_core.analysis_api import (
     _analysis_date,
     _domain_claims,
+    _require_analysis_eligible_case,
     _semantic_reviews,
     _verified_action_items,
 )
 from legal_core.analysis_contracts import AnalysisSubmissionRequest, AnalysisSubmissionResponse
 from legal_core.api_contracts import ReportResponse
-from legal_core.contracts import FactKey
+from legal_core.case_api import ApiError
+from legal_core.contracts import CaseStatus, FactKey
 from legal_core.verifier import ClaimKind, SemanticVerdict, VerificationResult
 
 
@@ -62,6 +65,19 @@ def test_analysis_date_ignores_unknown_or_invalid_dates() -> None:
     }
 
     assert _analysis_date(facts) == date(2026, 1, 10)
+
+
+def test_completed_case_is_rejected_before_agent_reasoning_can_start() -> None:
+    case = SimpleNamespace(
+        closed_at=datetime(2026, 9, 8, tzinfo=UTC),
+        status=CaseStatus.REPORT_READY.value,
+    )
+
+    with pytest.raises(ApiError) as raised:
+        _require_analysis_eligible_case(case)  # type: ignore[arg-type]
+
+    assert raised.value.status_code == 409
+    assert raised.value.code == "CASE_ANALYSIS_ALREADY_COMPLETED"
 
 
 def test_submission_contract_maps_to_domain_and_verified_actions() -> None:

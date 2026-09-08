@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import ServiceDependencies, ServiceSettings, create_app
+from agent_orchestrator.legal_core_client import LegalCoreError
 from agent_orchestrator.reasoning import ReasoningResult
 from legal_core.analysis_contracts import AnalysisContextResponse, AnalysisSubmissionResponse
 from legal_core.api_contracts import LegalFragmentResponse, ReportResponse
@@ -182,3 +183,31 @@ def test_internal_analysis_runs_two_stage_reasoning_and_returns_legal_core_resul
     assert legal_core.context_calls == 1
     assert legal_core.submit_calls == 1
     assert reasoning.calls == 1
+
+
+def test_completed_case_is_rejected_before_hermes_reasoning() -> None:
+    client, legal_core, reasoning = _client()
+
+    async def reject_completed_case(*, case_id: UUID, telegram_user_id: int):
+        assert case_id == CASE_ID
+        assert telegram_user_id == 123
+        raise LegalCoreError(
+            "CASE_ANALYSIS_ALREADY_COMPLETED",
+            "analysis already completed",
+            status_code=409,
+        )
+
+    legal_core.get_analysis_context = reject_completed_case
+    response = client.post(
+        f"/v1/cases/{CASE_ID}/analyze",
+        headers={
+            "X-Agent-Internal-Key": INTERNAL_KEY,
+            "X-Telegram-User-Id": "123",
+            "Idempotency-Key": str(IDEMPOTENCY_KEY),
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "CASE_ANALYSIS_ALREADY_COMPLETED"
+    assert reasoning.calls == 0
+    assert legal_core.submit_calls == 0
