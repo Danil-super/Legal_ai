@@ -7,6 +7,8 @@ from legal_core.api_contracts import (
     FactInput,
     LegalLibraryDocumentResponse,
     LegalLibraryResponse,
+    PlatformLegalReviewQueueItem,
+    PlatformLegalReviewQueueResponse,
     PlatformSubscriptionGrantRequest,
     TelegramIntakeDraftUpdateRequest,
 )
@@ -154,6 +156,34 @@ def test_legal_library_contract_exposes_auditable_metadata_without_legal_text() 
     serialized = response.model_dump(by_alias=True)
 
     assert serialized["items"][0]["fragmentCount"] == 3
+    assert "fragmentText" not in serialized["items"][0]
+
+
+def test_platform_review_queue_contract_exposes_metadata_without_document_text() -> None:
+    response = PlatformLegalReviewQueueResponse(
+        items=[
+            PlatformLegalReviewQueueItem(
+                documentId="00000000-0000-0000-0000-000000000001",
+                versionId="00000000-0000-0000-0000-000000000002",
+                documentTitle="Синтетический нормативный документ",
+                issuer="Тестовый орган",
+                officialNumber="123",
+                approvalState="REVIEW_REQUIRED",
+                effectiveFrom="2026-09-01",
+                effectiveTo=None,
+                sourceUrl="https://example.test/official.pdf",
+                rawSha256="a" * 64,
+                normalizedSha256="b" * 64,
+                fragmentsSha256="c" * 64,
+                fragmentCount=3,
+            )
+        ]
+    )
+
+    serialized = response.model_dump(by_alias=True)
+
+    assert serialized["items"][0]["approvalState"] == "REVIEW_REQUIRED"
+    assert "normalizedText" not in serialized["items"][0]
     assert "fragmentText" not in serialized["items"][0]
 
 

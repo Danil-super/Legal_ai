@@ -2,6 +2,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler
 from telegram_gateway.legal_library_runtime import (
     build_application_with_legal_library,
     render_legal_library,
+    render_platform_review_queue,
 )
 
 
@@ -44,6 +45,29 @@ def test_empty_legal_library_explains_that_legal_conclusions_stay_blocked() -> N
     assert "нет одобренных источников" in text
     assert "заблокированными" in text
     assert keyboard.inline_keyboard[0][0].callback_data == "menu"
+
+
+def test_platform_review_queue_renders_statuses_without_legal_text() -> None:
+    text, keyboard = render_platform_review_queue(
+        {
+            "items": [
+                {
+                    "documentTitle": "Правила платных медицинских услуг",
+                    "officialNumber": "659",
+                    "approvalState": "REVIEW_REQUIRED",
+                    "effectiveFrom": "2026-09-01",
+                    "effectiveTo": "2031-09-01",
+                    "rawSha256": "a" * 64,
+                    "fragmentCount": 11,
+                    "normalizedText": "Raw text must stay hidden",
+                }
+            ]
+        }
+    )
+
+    assert "ОЖИДАЕТ ПРОВЕРКИ" in text
+    assert "Raw text must stay hidden" not in text
+    assert keyboard.inline_keyboard[-1][0].callback_data == "menu"
 
 
 def test_composed_application_registers_lawyer_library_before_menu_handler(monkeypatch) -> None:

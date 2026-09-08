@@ -151,6 +151,8 @@ approved-only retrieval, applicable-date resolution and claim-to-evidence verifi
 ## Task 2.3: Human legal review of the initial corpus
 
 **Acceptance criteria:**
+- [ ] The configured platform owner can see a read-only metadata queue of `REVIEW_REQUIRED`,
+  `APPROVED` and `BLOCKED` legal versions in Telegram; it cannot approve a version.
 - [ ] A qualified, platform-side `LEGAL_EDITOR` has reviewed the immutable official artifacts using
   `docs/legal-review/initial-corpus-review.md`.
 - [ ] The PP №659 fragment selection covers the intended recommendation scenarios before approval.
