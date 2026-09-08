@@ -41,7 +41,9 @@ def main() -> None:
             break
         except PackageNotFoundError:
             continue
-    if package_version is not None and package_version != EXPECTED_HERMES_VERSION:
+    if package_version is None:
+        raise SystemExit("Hermes package metadata is unavailable; refusing to start")
+    if package_version != EXPECTED_HERMES_VERSION:
         raise SystemExit(
             f"Hermes version mismatch: expected {EXPECTED_HERMES_VERSION}, got {package_version}"
         )

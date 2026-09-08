@@ -46,6 +46,16 @@ def test_pseudonymizer_redacts_full_name_when_patient_context_is_present() -> No
     assert contains_obvious_direct_identifier(source) is True
 
 
+def test_pseudonymizer_redacts_unlabelled_russian_full_name_fail_closed() -> None:
+    source = "Иванов Иван Иванович сообщил о боли после лечения."
+
+    result = pseudonymize_text(source)
+
+    assert result.text == "[PERSON_NAME] сообщил о боли после лечения."
+    assert result.replacement_counts["unlabelled_full_name"] == 1
+    assert contains_obvious_direct_identifier(result.text) is False
+
+
 def test_pseudonymizer_ignores_too_short_known_values() -> None:
     result = pseudonymize_text("Пациент ИИ сообщил о сколе.", known_identifiers={"ИИ": "[NAME]"})
 

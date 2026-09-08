@@ -33,6 +33,10 @@ _IDENTIFIED_FULL_NAME: Final = re.compile(
     rf"{_RUSSIAN_NAME_WORD}(?:\s+{_RUSSIAN_NAME_WORD}){{1,2}}"
     rf"(?![А-ЯЁа-яё])"
 )
+_UNLABELLED_FULL_NAME: Final = re.compile(
+    rf"(?<![А-ЯЁа-яё]){_RUSSIAN_NAME_WORD}(?:\s+{_RUSSIAN_NAME_WORD}){{2}}"
+    rf"(?![А-ЯЁа-яё])"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +95,11 @@ def pseudonymize_text(
         result,
         "[PERSON_NAME]",
     )
+    result, counts["unlabelled_full_name"] = _replace(
+        _UNLABELLED_FULL_NAME,
+        result,
+        "[PERSON_NAME]",
+    )
 
     return PseudonymizedText(text=result, replacement_counts=counts)
 
@@ -107,5 +116,6 @@ def contains_obvious_direct_identifier(text: str) -> bool:
             _SNILS,
             _INITIALS_NAME,
             _IDENTIFIED_FULL_NAME,
+            _UNLABELLED_FULL_NAME,
         )
     )
