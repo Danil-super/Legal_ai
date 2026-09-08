@@ -224,7 +224,6 @@ jobs:
     needs: [quality, postgres-integration, codeql]
     if: >-
       github.event_name == 'push' && github.ref == 'refs/heads/main'
-      && vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -236,6 +235,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Deploy verified main revision
+        if: vars.DEPLOY_ENABLED == 'true'
         env:
           DEPLOY_SHA: ${{ github.sha }}
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}

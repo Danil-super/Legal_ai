@@ -34,3 +34,22 @@ def test_production_known_hosts_pins_the_vps_ed25519_key() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "ssh-ed25519" in result.stdout
+
+
+def test_production_gate_is_evaluated_after_environment_binding() -> None:
+    ci_workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    rollback_workflow = (ROOT / ".github" / "workflows" / "rollback.yml").read_text(
+        encoding="utf-8"
+    )
+
+    ci_deploy_job = ci_workflow.split("  deploy-production:", maxsplit=1)[1]
+    rollback_job = rollback_workflow.split("  rollback-production:", maxsplit=1)[1]
+
+    assert "vars.DEPLOY_ENABLED == 'true'" not in ci_deploy_job.split(
+        "    environment:", maxsplit=1
+    )[0]
+    assert "vars.DEPLOY_ENABLED == 'true'" not in rollback_job.split(
+        "    environment:", maxsplit=1
+    )[0]
+    assert "      if: vars.DEPLOY_ENABLED == 'true'" in ci_workflow
+    assert "      if: vars.DEPLOY_ENABLED == 'true'" in rollback_workflow
