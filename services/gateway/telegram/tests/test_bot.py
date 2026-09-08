@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 from telegram import InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler, CommandHandler
 from telegram_gateway.bot import (
     ADMIN_GRANT_ACCESS_KEY,
@@ -59,8 +60,9 @@ class FakeMessage:
 
 
 class FakeCallbackQuery:
-    def __init__(self, data: object) -> None:
+    def __init__(self, data: object, *, edit_error: Exception | None = None) -> None:
         self.data = data
+        self.edit_error = edit_error
         self.answers: list[tuple[str | None, bool]] = []
         self.edits: list[tuple[str, InlineKeyboardMarkup]] = []
 
@@ -72,6 +74,8 @@ class FakeCallbackQuery:
         caption: str,
         reply_markup: InlineKeyboardMarkup,
     ) -> None:
+        if self.edit_error is not None:
+            raise self.edit_error
         self.edits.append((caption, reply_markup))
 
 
@@ -237,6 +241,27 @@ def test_known_callback_answers_and_edits_the_welcome_caption() -> None:
     assert query.answers == [(None, False)]
     assert query.edits[0][0] == SCREENS["privacy"]
     assert query.edits[0][1].inline_keyboard[0][0].callback_data == "menu"
+
+
+def test_repeated_menu_callback_ignores_unchanged_caption_error() -> None:
+    query = FakeCallbackQuery(
+        "menu",
+        edit_error=BadRequest("Message is not modified"),
+    )
+
+    asyncio.run(menu_callback(FakeUpdate(callback_query=query), None))
+
+    assert query.answers == [(None, False)]
+
+
+def test_menu_callback_does_not_hide_other_telegram_errors() -> None:
+    query = FakeCallbackQuery(
+        "menu",
+        edit_error=BadRequest("Message to edit not found"),
+    )
+
+    with pytest.raises(BadRequest, match="not found"):
+        asyncio.run(menu_callback(FakeUpdate(callback_query=query), None))
 
 
 def test_identity_button_displays_the_current_users_telegram_id() -> None:
