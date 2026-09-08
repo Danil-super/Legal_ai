@@ -4,15 +4,18 @@ import argparse
 import asyncio
 import os
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.database import create_engine, create_session_factory
-from legal_core.models import Clinic, ClinicUser, User
+from legal_core.models import Clinic, ClinicUser, SubscriptionEntitlement, User
+from legal_core.subscription_provisioning import provision_entitlement_in_session
 
 DEFAULT_CLINIC_NAME = "Моя стоматология"
+BOOTSTRAP_PLAN_CODE = "MVP_MANUAL"
 
 
 def configured_admin(environment: Mapping[str, str]) -> tuple[int, str] | None:
@@ -79,31 +82,50 @@ async def bootstrap_admin(
         if len(memberships) > 1:
             raise RuntimeError("configured Telegram user has multiple active admin memberships")
         if memberships:
-            return memberships[0].id
-
-        existing_admin = await session.scalar(
-            select(ClinicUser)
-            .where(
-                ClinicUser.user_id == user.id,
-                ClinicUser.status == "ACTIVE",
-                ClinicUser.role == "CLINIC_ADMIN",
+            membership = memberships[0]
+        else:
+            existing_admin = await session.scalar(
+                select(ClinicUser)
+                .where(
+                    ClinicUser.user_id == user.id,
+                    ClinicUser.status == "ACTIVE",
+                    ClinicUser.role == "CLINIC_ADMIN",
+                )
+                .with_for_update()
             )
-            .with_for_update()
-        )
-        if existing_admin is not None:
-            existing_admin.role = "CLINIC_OWNER"
-            return existing_admin.id
+            if existing_admin is not None:
+                existing_admin.role = "CLINIC_OWNER"
+                membership = existing_admin
+            else:
+                clinic = Clinic(name=normalized_name)
+                session.add(clinic)
+                await session.flush()
+                membership = ClinicUser(
+                    clinic_id=clinic.id,
+                    user_id=user.id,
+                    role="CLINIC_OWNER",
+                )
+                session.add(membership)
+                await session.flush()
 
-        clinic = Clinic(name=normalized_name)
-        session.add(clinic)
-        await session.flush()
-        membership = ClinicUser(
-            clinic_id=clinic.id,
-            user_id=user.id,
-            role="CLINIC_OWNER",
+        await session.execute(
+            select(func.set_config("app.current_clinic_id", str(membership.clinic_id), True))
         )
-        session.add(membership)
-        await session.flush()
+        entitlement_exists = await session.scalar(
+            select(SubscriptionEntitlement.id).where(
+                SubscriptionEntitlement.clinic_id == membership.clinic_id,
+                SubscriptionEntitlement.user_id == membership.user_id,
+            )
+        )
+        if entitlement_exists is None:
+            await provision_entitlement_in_session(
+                session,
+                membership_id=membership.id,
+                plan_code=BOOTSTRAP_PLAN_CODE,
+                status="ACTIVE",
+                starts_at=datetime.now(UTC),
+                ends_at=None,
+            )
         return membership.id
 
 
