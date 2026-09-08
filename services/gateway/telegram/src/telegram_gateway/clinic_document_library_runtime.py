@@ -111,6 +111,20 @@ _DOCUMENT_TEMPLATES: tuple[ClinicDocumentTemplate, ...] = (
     ),
 )
 _TEMPLATES_BY_KEY = {item.key: item for item in _DOCUMENT_TEMPLATES}
+_REVIEW_STATE_LABELS = {
+    "APPROVED": "Одобрена",
+    "BLOCKED": "Заблокирована",
+    "RETIRED": "Снята с использования",
+    "PENDING": "Ожидает проверки",
+}
+_REVIEW_REASON_LABELS = {
+    "CLINIC_REVIEW_PASSED": "Проверка клиники пройдена",
+    "CLINIC_DOCUMENT_REVOKED": "Отозван клиникой",
+    "CLINIC_DOCUMENT_RETIRED": "Снят с использования",
+}
+_DOCUMENT_TYPE_LABELS = {
+    item.document_type: item.title for item in _DOCUMENT_TEMPLATES
+}
 
 
 class ClinicDocumentLibraryClient:
@@ -185,6 +199,22 @@ def _state_icon(state: str) -> str:
         "RETIRED": "🗄",
         "PENDING": "🕓",
     }.get(state, "❔")
+
+
+def _review_state_label(state: str) -> str:
+    return _REVIEW_STATE_LABELS.get(state, "Неизвестный статус")
+
+
+def _review_reason_label(reason: object) -> str:
+    if not isinstance(reason, str):
+        return ""
+    return _REVIEW_REASON_LABELS.get(reason, "Причина не указана")
+
+
+def _document_type_label(value: object) -> str:
+    if not isinstance(value, str):
+        return "Неизвестный тип"
+    return _DOCUMENT_TYPE_LABELS.get(value, "Другой документ")
 
 
 def _short_sha(value: object) -> str:
@@ -284,11 +314,11 @@ def render_library(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMarkup |
             continue
         title = str(raw_item.get("title") or "Без названия")[:120]
         key = str(raw_item.get("documentKey") or "—")[:100]
-        doc_type = str(raw_item.get("documentType") or "—")[:80]
+        doc_type = _document_type_label(raw_item.get("documentType"))
         versions = raw_item.get("versions")
         versions_list = versions if isinstance(versions, list) else []
         lines.append(f"• {title}")
-        lines.append(f"  {key} · {doc_type}")
+        lines.append(f"  Код: {key} · Тип: {doc_type}")
         try:
             document_id = UUID(str(raw_item["id"]))
         except (KeyError, TypeError, ValueError):
@@ -310,7 +340,10 @@ def render_library(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMarkup |
         state = str(latest.get("reviewState") or "PENDING")
         version_no = latest.get("versionNo")
         filename = str(latest.get("sourceFilename") or "—")[:120]
-        lines.append(f"  {_state_icon(state)} v{version_no} · {state} · {filename}")
+        lines.append(
+            f"  {_state_icon(state)} Версия {version_no} · {_review_state_label(state)}"
+            f" · {filename}"
+        )
         lines.append(f"  SHA: {_short_sha(latest.get('rawSha256'))}")
         lines.append("")
         try:
@@ -370,12 +403,12 @@ def render_document_history(payload: dict[str, Any], document_id: UUID) -> str:
 
     title = str(selected.get("title") or "Без названия")[:160]
     key = str(selected.get("documentKey") or "—")[:100]
-    doc_type = str(selected.get("documentType") or "—")[:80]
+    doc_type = _document_type_label(selected.get("documentType"))
     versions = selected.get("versions")
     versions_list = versions if isinstance(versions, list) else []
     lines = [
         f"🗂 История: {title}",
-        f"{key} · {doc_type}",
+        f"Код: {key} · Тип: {doc_type}",
         "",
     ]
     if not versions_list:
@@ -389,13 +422,13 @@ def render_document_history(payload: dict[str, Any], document_id: UUID) -> str:
         filename = str(raw_version.get("sourceFilename") or "—")[:120]
         valid_from = str(raw_version.get("validFrom") or "—")
         valid_to = str(raw_version.get("validTo") or "∞")
-        lines.append(f"{_state_icon(state)} v{version_no} · {state}")
+        lines.append(f"{_state_icon(state)} Версия {version_no} · {_review_state_label(state)}")
         lines.append(f"  {filename}")
         lines.append(f"  действует: {valid_from} → {valid_to}")
         lines.append(f"  SHA: {_short_sha(raw_version.get('rawSha256'))}")
         reason = raw_version.get("reviewReasonCode")
         if reason:
-            lines.append(f"  review: {str(reason)[:100]}")
+            lines.append(f"  Причина: {_review_reason_label(reason)}")
         lines.append("")
     if len(versions_list) > _MAX_VERSIONS:
         lines.append(f"…и ещё {len(versions_list) - _MAX_VERSIONS} версий.")

@@ -104,8 +104,9 @@ def test_library_renders_metadata_without_document_content() -> None:
 
     assert "Гарантийное положение" in text
     assert "warranty-main" in text
-    assert "v3" in text
-    assert "APPROVED" in text
+    assert "Версия 3" in text
+    assert "Одобрена" in text
+    assert "APPROVED" not in text
     assert "aaaaaaaaaaaa…" in text
     assert "SECRET DOCUMENT CONTENT" not in text
     assert keyboard is not None
@@ -122,7 +123,8 @@ def test_library_shows_review_controls_only_for_the_latest_pending_version() -> 
     latest["reviewState"] = "PENDING"
     text, keyboard = render_library(payload)
 
-    assert "PENDING" in text
+    assert "Ожидает проверки" in text
+    assert "PENDING" not in text
     assert keyboard is not None
     callback_values = [button.callback_data for row in keyboard.inline_keyboard for button in row]
     assert f"clinicdoc:approve:{VERSION_ID}" in callback_values
@@ -134,10 +136,11 @@ def test_document_history_shows_reviewed_versions_without_contents() -> None:
     text = render_document_history(_payload(), DOCUMENT_ID)
 
     assert "История: Гарантийное положение" in text
-    assert "v3 · APPROVED" in text
-    assert "v2 · BLOCKED" in text
+    assert "Версия 3 · Одобрена" in text
+    assert "Версия 2 · Заблокирована" in text
     assert "2025-01-01 → 2026-01-01" in text
-    assert "CLINIC_DOCUMENT_REVOKED" in text
+    assert "Отозван клиникой" in text
+    assert "CLINIC_DOCUMENT_REVOKED" not in text
     assert "SECRET DOCUMENT CONTENT" not in text
 
 
