@@ -14,6 +14,7 @@ from uuid import UUID
 
 import httpx2
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -1499,7 +1500,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE | Non
     else:
         caption = HELP_MESSAGE if callback_data == "help" else SCREENS[callback_data]
         keyboard = back_keyboard()
-    await query.edit_message_caption(caption=caption, reply_markup=keyboard)
+    try:
+        await query.edit_message_caption(caption=caption, reply_markup=keyboard)
+    except BadRequest as exc:
+        # A double tap can arrive after the first callback has already rendered
+        # this exact caption. Telegram rejects that no-op; the user is already
+        # on the requested screen, so it must not turn into a failed update.
+        if "message is not modified" not in str(exc).lower():
+            raise
 
 
 async def on_startup(application: TelegramApplication) -> None:
