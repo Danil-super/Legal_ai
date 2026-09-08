@@ -118,9 +118,19 @@ def _analysis_date(facts: dict[FactKey, object]) -> date:
     return datetime.now(UTC).date()
 
 
+def _require_analysis_eligible_case(case: Case) -> None:
+    _require_finalized_case(case)
+    if case.status != CaseStatus.ANALYSIS_BLOCKED.value:
+        raise ApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="CASE_ANALYSIS_ALREADY_COMPLETED",
+            message="A completed case must not be analysed again without a new intake",
+        )
+
+
 async def _load_analysis_state(session: AsyncSession, actor: Any, case_id: UUID) -> AnalysisState:
     case = await _tenant_case(session, actor, case_id)
-    _require_finalized_case(case)
+    _require_analysis_eligible_case(case)
     facts = _domain_facts(await _current_fact_rows(session, case.id))
     missing = missing_facts_for(facts)
     if missing:
