@@ -64,6 +64,7 @@ ADMIN_GRANT_PILOT_KEY = "admin_grant_pilot"
 TEAM_MEMBER_ROLE_KEY = "team_member_role"
 LEGAL_CORE_TIMEOUT_SECONDS = 15.0
 CASE_INTAKE_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN"})
+CALLBACK_ERROR_MESSAGE = "⚠️ Не удалось выполнить действие. Откройте /menu и попробуйте ещё раз."
 
 
 class WizardState(IntEnum):
@@ -1542,8 +1543,21 @@ async def on_shutdown(application: TelegramApplication) -> None:
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    del update
-    logger.error("telegram update failed: %s", type(context.error).__name__)
+    query = getattr(update, "callback_query", None)
+    logger.error(
+        "telegram update failed: error=%s has_callback=%s",
+        type(context.error).__name__,
+        query is not None,
+    )
+    if query is None:
+        return
+    try:
+        await query.answer(
+            CALLBACK_ERROR_MESSAGE,
+            show_alert=True,
+        )
+    except Exception:  # The callback can already be expired or answered by Telegram.
+        logger.warning("failed to notify user about a callback error")
 
 
 def build_application(token: str, *, proxy_url: str | None = None) -> TelegramApplication:

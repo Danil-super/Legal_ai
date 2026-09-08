@@ -10,6 +10,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler
 from telegram_gateway.bot import (
     ADMIN_GRANT_ACCESS_KEY,
     ALLOWED_UPDATES,
+    CALLBACK_ERROR_MESSAGE,
     _reply,
     admin_panel,
     build_application,
@@ -17,6 +18,7 @@ from telegram_gateway.bot import (
     load_telegram_proxy_url,
     load_token,
     menu_callback,
+    on_error,
     on_startup,
     start,
     text_input,
@@ -287,6 +289,18 @@ def test_menu_callback_does_not_hide_other_telegram_errors() -> None:
 
     with pytest.raises(BadRequest, match="not found"):
         asyncio.run(menu_callback(FakeUpdate(callback_query=query), None))
+
+
+def test_callback_failure_is_reported_to_the_user() -> None:
+    query = FakeCallbackQuery("menu")
+    update = SimpleNamespace(callback_query=query)
+    context = SimpleNamespace(error=RuntimeError("unexpected failure"))
+
+    asyncio.run(on_error(update, context))
+
+    assert query.answers == [
+        (CALLBACK_ERROR_MESSAGE, True)
+    ]
 
 
 def test_identity_button_displays_the_current_users_telegram_id() -> None:
