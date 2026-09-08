@@ -102,6 +102,28 @@ class LegalLibraryClient:
             )
         return payload
 
+    async def get_review_queue(self, telegram_user_id: int) -> dict[str, Any]:
+        try:
+            response = await self._http.get(
+                "/v1/legal/review-queue",
+                headers={"X-Telegram-User-Id": str(telegram_user_id)},
+            )
+        except httpx2.HTTPError as exc:
+            raise LegalCoreApiError(
+                503, "LEGAL_CORE_UNAVAILABLE", "Legal Core unavailable"
+            ) from exc
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response") from exc
+        if response.status_code >= 400:
+            raise LegalCoreApiError(
+                response.status_code, "LEGAL_CORE_ERROR", "Review queue rejected"
+            )
+        if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+            raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response")
+        return payload
+
 
 def _bounded(value: object, *, limit: int) -> str:
     if not isinstance(value, str):
@@ -207,6 +229,59 @@ def render_legal_library(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMa
     return _bounded_message("\n".join(lines)), InlineKeyboardMarkup(buttons)
 
 
+def render_platform_review_queue(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMarkup]:
+    raw_items = payload.get("items")
+    if not isinstance(raw_items, list):
+        raise ValueError("review queue items")
+    labels = {
+        "REVIEW_REQUIRED": "🟡 ОЖИДАЕТ ПРОВЕРКИ",
+        "APPROVED": "✅ ОДОБРЕН",
+        "BLOCKED": "⛔ ЗАБЛОКИРОВАН",
+    }
+    lines = [
+        "📋 ОЧЕРЕДЬ ПРОВЕРКИ НОРМ",
+        "",
+        "Только метаданные; одобрение выполняет юридический редактор.",
+        "",
+    ]
+    for item in raw_items[:_MAX_DOCUMENTS]:
+        if not isinstance(item, dict):
+            continue
+        state = item.get("approvalState")
+        state_label = labels.get(state if isinstance(state, str) else "", "⚪ НЕИЗВЕСТНЫЙ СТАТУС")
+        applicability = _applicability(item.get("effectiveFrom"), item.get("effectiveTo"))
+        count = item.get("fragmentCount") if isinstance(item.get("fragmentCount"), int) else "—"
+        lines.extend(
+            [
+                state_label,
+                f"• {_bounded(item.get('documentTitle'), limit=180)}",
+                f"  № {_bounded(item.get('officialNumber'), limit=80)} · {applicability}",
+                f"  Фрагментов: {count} · SHA-256: {_short_sha(item.get('rawSha256'))}",
+                "",
+            ]
+        )
+    if not raw_items:
+        lines.append("В очереди пока нет документов.")
+    return _bounded_message("\n".join(lines)), back_keyboard()
+
+
+async def show_platform_review_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    actor_id = gateway_bot._actor_id(update)
+    if actor_id is None:
+        return
+    client = LegalLibraryClient()
+    try:
+        text, keyboard = render_platform_review_queue(await client.get_review_queue(actor_id))
+    except LegalCoreApiError as exc:
+        logger.warning("legal review queue load failed: %s", exc.code)
+        await gateway_bot._reply(update, "🔒 Очередь проверки доступна только владельцу платформы.")
+        return
+    finally:
+        await client.aclose()
+    if update.effective_message is not None:
+        await update.effective_message.reply_text(text, reply_markup=keyboard)
+
+
 async def show_legal_library(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -266,6 +341,7 @@ def build_application_with_legal_library(token: str) -> gateway_bot.TelegramAppl
 
     application = build_application_with_quick_intake(token)
     application.add_handler(CommandHandler("legal_base", show_legal_library), group=-4)
+    application.add_handler(CommandHandler("review_queue", show_platform_review_queue), group=-4)
     application.add_handler(
         CallbackQueryHandler(legal_library_callback, pattern=r"^legalbase:open$"),
         group=-4,

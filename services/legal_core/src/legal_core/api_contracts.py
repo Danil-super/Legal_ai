@@ -298,6 +298,30 @@ class LegalLibraryResponse(ContractModel):
     items: list[LegalLibraryDocumentResponse] = Field(default_factory=list, max_length=50)
 
 
+class PlatformLegalReviewQueueItem(ContractModel):
+    """Метаданные кандидата; юридический текст доступен только в защищённом review-процессе."""
+
+    document_id: UUID = Field(alias="documentId")
+    version_id: UUID = Field(alias="versionId")
+    document_title: str = Field(alias="documentTitle", min_length=1, max_length=2_000)
+    issuer: str = Field(min_length=1, max_length=240)
+    official_number: str | None = Field(default=None, alias="officialNumber", max_length=80)
+    approval_state: Literal["REVIEW_REQUIRED", "APPROVED", "BLOCKED"] = Field(
+        alias="approvalState"
+    )
+    effective_from: date = Field(alias="effectiveFrom")
+    effective_to: date | None = Field(default=None, alias="effectiveTo")
+    source_url: str = Field(alias="sourceUrl", min_length=8, max_length=2_000)
+    raw_sha256: str = Field(alias="rawSha256", pattern=r"^[0-9a-f]{64}$")
+    normalized_sha256: str = Field(alias="normalizedSha256", pattern=r"^[0-9a-f]{64}$")
+    fragments_sha256: str = Field(alias="fragmentsSha256", pattern=r"^[0-9a-f]{64}$")
+    fragment_count: int = Field(alias="fragmentCount", ge=0, le=10_000)
+
+
+class PlatformLegalReviewQueueResponse(ContractModel):
+    items: list[PlatformLegalReviewQueueItem] = Field(default_factory=list, max_length=100)
+
+
 class FactInput(ContractModel):
     fact_key: FactKey = Field(alias="factKey")
     value_type: Literal[
