@@ -13,3 +13,33 @@ services:
 
   telegram-gateway:
     mem_limit: 192m
+    environment:
+      TELEGRAM_PROXY_URL: http://telegram-vpn-proxy:8080
+    depends_on:
+      telegram-vpn-proxy:
+        condition: service_healthy
+    networks: !override [backend]
+
+  telegram-vpn-proxy:
+    # Digest resolved from the official ghcr.io/sagernet/sing-box image on 2026-09-08.
+    image: ghcr.io/sagernet/sing-box@sha256:4bed9332a0013fef72c31200a84e8fc0ed91a5ab2fe373a69f0acbbbbfbef3c5
+    command: ["run", "-c", "/etc/sing-box/config.json"]
+    volumes:
+      - /etc/dental-legal-ai/telegram-vpn:/etc/sing-box:ro
+    healthcheck:
+      test: ["CMD", "sing-box", "check", "-c", "/etc/sing-box/config.json"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=1m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks: [backend, edge]
+    restart: unless-stopped
+    mem_limit: 96m
