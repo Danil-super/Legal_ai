@@ -20,6 +20,17 @@ services:
         condition: service_healthy
     networks: !override [backend]
 
+  # The watcher can reach only the official publication portal through `edge`.
+  # Its paired importer has a read-only inbox and only the private backend network.
+  # Both paths create REVIEW_REQUIRED candidates; neither can approve legal text.
+  legal-watcher:
+    profiles: !reset []
+    mem_limit: 128m
+
+  legal-watch-importer:
+    profiles: !reset []
+    mem_limit: 128m
+
   telegram-vpn-proxy:
     # Digest resolved from the official ghcr.io/sagernet/sing-box image on 2026-09-08.
     image: ghcr.io/sagernet/sing-box@sha256:4bed9332a0013fef72c31200a84e8fc0ed91a5ab2fe373a69f0acbbbbfbef3c5

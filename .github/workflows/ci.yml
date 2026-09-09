@@ -77,6 +77,28 @@ jobs:
           -f ops/deploy/docker-compose.production.yml
           config --quiet
 
+      - name: Verify production legal watcher isolation
+        id: production_legal_watcher
+        continue-on-error: true
+        env:
+          POSTGRES_PASSWORD: ci-only-postgres-password
+          POSTGRES_APP_PASSWORD: ci-only-runtime-database-password-1234567890
+          MINIO_ROOT_PASSWORD: ci-only-minio-password
+          TELEGRAM_BOT_TOKEN: 123456:ci_config_validation_token_1234567890
+        run: |
+          set -euo pipefail
+          docker compose \
+            -f docker-compose.yml \
+            -f ops/deploy/docker-compose.production.yml \
+            config --format json | jq -e '
+              .services as $services |
+              (($services["legal-watcher"] | has("profiles") | not) and
+               ($services["legal-watcher"].networks | keys == ["edge"]) and
+               ($services["legal-watch-importer"] | has("profiles") | not) and
+               ($services["legal-watch-importer"].networks | keys == ["backend"]) and
+               ($services["legal-watch-importer"].read_only == true) and
+               ($services | has("agent-orchestrator") | not))'
+
       - name: Validate pinned Hermes overlay
         id: hermes_compose
         continue-on-error: true
@@ -108,6 +130,7 @@ jobs:
           DEPENDENCY_AUDIT_OUTCOME: ${{ steps.dependency_audit.outcome }}
           COMPOSE_OUTCOME: ${{ steps.compose.outcome }}
           PRODUCTION_COMPOSE_OUTCOME: ${{ steps.production_compose.outcome }}
+          PRODUCTION_LEGAL_WATCHER_OUTCOME: ${{ steps.production_legal_watcher.outcome }}
           HERMES_COMPOSE_OUTCOME: ${{ steps.hermes_compose.outcome }}
         run: |
           set -euo pipefail
@@ -117,6 +140,7 @@ jobs:
           test "$DEPENDENCY_AUDIT_OUTCOME" = success
           test "$COMPOSE_OUTCOME" = success
           test "$PRODUCTION_COMPOSE_OUTCOME" = success
+          test "$PRODUCTION_LEGAL_WATCHER_OUTCOME" = success
           test "$HERMES_COMPOSE_OUTCOME" = success
 
   postgres-integration:
