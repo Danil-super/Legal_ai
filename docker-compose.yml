@@ -153,10 +153,10 @@ services:
         while :; do
           watch_to=$$(date -u +%F);
           watch_from=$$(date -u -d '1 day ago' +%F);
-          python -m legal_core.legal_watcher
-          --rules /app/services/legal_core/corpus/legal_watch_rules.v1.json
-          --inbox /var/lib/dental-legal-ai/legal-update-inbox
-          --publication-from $$watch_from
+          python -m legal_core.legal_watcher \
+          --rules /app/services/legal_core/corpus/legal_watch_rules.v1.json \
+          --inbox /var/lib/dental-legal-ai/legal-update-inbox \
+          --publication-from $$watch_from \
           --publication-to $$watch_to;
           sleep "$$LEGAL_WATCH_INTERVAL_SECONDS";
         done
@@ -192,8 +192,8 @@ services:
       - >-
         set -eu;
         while :; do
-          python -m legal_core.legal_watch_importer
-          --inbox /var/lib/dental-legal-ai/legal-update-inbox
+          python -m legal_core.legal_watch_importer \
+          --inbox /var/lib/dental-legal-ai/legal-update-inbox \
           --max-candidates 500;
           sleep "$$LEGAL_WATCH_IMPORT_INTERVAL_SECONDS";
         done
