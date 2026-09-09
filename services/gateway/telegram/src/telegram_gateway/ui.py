@@ -124,14 +124,17 @@ MAIN_MENU_CALLBACKS = {
     "account:id",
     "case:escalations",
     "clinicdocs:open",
+    "editor:open",
     "legalbase:open",
     "team:open",
     "help",
 }
 
 
-def main_menu_keyboard(role: str | None = None) -> InlineKeyboardMarkup:
-    """Keep the administrator workspace short and give lawyers only review actions."""
+def main_menu_keyboard(
+    role: str | None = None, *, is_legal_editor: bool = False
+) -> InlineKeyboardMarkup:
+    """Compose independent clinic and platform-editor privileges without conflating them."""
 
     shared_rows = [
         [
@@ -145,18 +148,25 @@ def main_menu_keyboard(role: str | None = None) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("ℹ️ О проекте", callback_data="about")],
     ]
     if role == "CLINIC_LAWYER":
+        lawyer_rows: list[list[InlineKeyboardButton]] = [
+            [
+                InlineKeyboardButton(
+                    "⚖️ Эскалации HIGH/CRITICAL", callback_data="case:escalations"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📜 Нормативная база", callback_data="legalbase:open"
+                )
+            ],
+        ]
+        if is_legal_editor:
+            lawyer_rows.append(
+                [InlineKeyboardButton("⚖️ Проверка норм", callback_data="editor:open")]
+            )
         return InlineKeyboardMarkup(
             [
-                [
-                    InlineKeyboardButton(
-                        "⚖️ Критические кейсы", callback_data="case:escalations"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "📜 Нормативная база", callback_data="legalbase:open"
-                    )
-                ],
+                *lawyer_rows,
                 *shared_rows,
             ]
         )
@@ -181,7 +191,11 @@ def main_menu_keyboard(role: str | None = None) -> InlineKeyboardMarkup:
             ]
         )
         case_rows.append(
-            [InlineKeyboardButton("⚖️ Критические кейсы", callback_data="case:escalations")]
+            [
+                InlineKeyboardButton(
+                    "⚖️ Эскалации HIGH/CRITICAL", callback_data="case:escalations"
+                )
+            ]
         )
     if role == "CLINIC_OWNER":
         case_rows.append(
@@ -192,6 +206,10 @@ def main_menu_keyboard(role: str | None = None) -> InlineKeyboardMarkup:
             ]
         )
         case_rows.append([InlineKeyboardButton("👥 Команда клиники", callback_data="team:open")])
+    if is_legal_editor:
+        case_rows.append(
+            [InlineKeyboardButton("⚖️ Проверка норм", callback_data="editor:open")]
+        )
 
     return InlineKeyboardMarkup(
         [

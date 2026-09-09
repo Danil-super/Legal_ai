@@ -753,6 +753,18 @@ class LegalApprovalEvent(Base):
             unique=True,
             postgresql_where=text("decision = 'APPROVED'"),
         ),
+        Index(
+            "uq_legal_approval_events_editor_idempotency",
+            "actor_user_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "(idempotency_key IS NULL AND request_sha256 IS NULL) OR "
+            "(idempotency_key IS NOT NULL AND char_length(request_sha256) = 64)",
+            name="ck_legal_approval_events_idempotency_pair",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -773,6 +785,8 @@ class LegalApprovalEvent(Base):
         JSONB, server_default=text("'{}'::jsonb")
     )
     checks_json: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    idempotency_key: Mapped[UUID | None] = mapped_column(UUID_PK)
+    request_sha256: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 

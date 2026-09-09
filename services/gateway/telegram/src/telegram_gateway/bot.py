@@ -153,6 +153,25 @@ def load_legal_core_url(environment: Mapping[str, str] | None = None) -> str:
     return value
 
 
+def load_legal_editor_gateway_key(
+    environment: Mapping[str, str] | None = None,
+) -> str | None:
+    """Load the optional, dedicated gateway-to-Core editor credential.
+
+    The ordinary bot remains usable when the workspace has not yet been configured. A malformed
+    optional value hides the high-privilege control instead of preventing polling from starting.
+    """
+
+    source = os.environ if environment is None else environment
+    value = source.get("LEGAL_EDITOR_GATEWAY_KEY", "").strip()
+    if not value:
+        return None
+    if len(value) < 32:
+        logger.error("LEGAL_EDITOR_GATEWAY_KEY is too short; legal editor workspace disabled")
+        return None
+    return value
+
+
 def _polling_is_stalled(
     *,
     pending_update_count: int,
@@ -638,12 +657,23 @@ async def _main_menu_for_actor(
     actor_id = _actor_id(update)
     if context is None or actor_id is None:
         return main_menu_keyboard()
+    client = _legal_core(context)
     try:
-        actor = await _legal_core(context).get_actor(actor_id)
+        actor = await client.get_actor(actor_id)
     except (LegalCoreApiError, AttributeError):
-        return main_menu_keyboard()
-    role = actor.get("role")
-    return main_menu_keyboard(role if isinstance(role, str) else None)
+        actor = {}
+    role = actor.get("role") if isinstance(actor, dict) else None
+    try:
+        editor_status = await client.get_legal_editor_status(actor_id)
+    except (LegalCoreApiError, AttributeError):
+        editor_status = {}
+    is_legal_editor = (
+        isinstance(editor_status, dict) and editor_status.get("isLegalEditor") is True
+    )
+    return main_menu_keyboard(
+        role if isinstance(role, str) else None,
+        is_legal_editor=is_legal_editor,
+    )
 
 
 def _actor_id(update: Update) -> int | None:
@@ -1669,8 +1699,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE | Non
         return
     elif callback_data == "case:escalations":
         caption = (
-            "⚖️ КРИТИЧЕСКИЕ КЕЙСЫ\n\n"
-            "Очередь юридической проверки подключается вместе с модулем анализа."
+            "⚖️ ЭСКАЛАЦИИ HIGH/CRITICAL\n\n"
+            "Заявки с уровнями HIGH и CRITICAL направляются юристу; "
+            "внешний юридически значимый ответ автоматически не отправляется."
         )
         keyboard = back_keyboard()
     elif callback_data == "account:id":
@@ -1711,7 +1742,8 @@ async def on_startup(application: TelegramApplication) -> None:
                 timeout=LEGAL_CORE_TIMEOUT_SECONDS,
                 follow_redirects=False,
                 trust_env=False,
-            )
+            ),
+            legal_editor_gateway_key=load_legal_editor_gateway_key(),
         )
     READY_FILE.touch(mode=0o600)
     POLLING_HEARTBEAT_FILE.touch(mode=0o600)

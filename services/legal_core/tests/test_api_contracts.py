@@ -7,12 +7,40 @@ from legal_core.api_contracts import (
     FactInput,
     LegalLibraryDocumentResponse,
     LegalLibraryResponse,
+    LegalEditorApprovalRequest,
+    LegalEditorCandidatePage,
+    LegalEditorFragmentPage,
     PlatformLegalReviewQueueItem,
     PlatformLegalReviewQueueResponse,
     PlatformSubscriptionGrantRequest,
     TelegramIntakeDraftUpdateRequest,
 )
 from pydantic import ValidationError
+
+
+def test_legal_editor_contracts_keep_pages_and_attestations_bounded() -> None:
+    page = LegalEditorCandidatePage(page=1, pageSize=10, totalItems=0, items=[])
+    fragments = LegalEditorFragmentPage(page=1, pageSize=5, totalItems=0, items=[])
+    request = LegalEditorApprovalRequest(
+        expectedSha256="a" * 64,
+        expectedNormalizedSha256="b" * 64,
+        expectedFragmentsSha256="c" * 64,
+        expectedEffectiveFrom="2026-09-01",
+        expectedEffectiveTo="2031-09-01",
+        sourceIsOfficial=True,
+        artifactIsComplete=True,
+        effectiveDatesVerified=True,
+        fragmentsVerified=True,
+    )
+
+    assert page.page_size == 10
+    assert fragments.page_size == 5
+    assert request.source_is_official is True
+
+    invalid = request.model_dump(by_alias=True)
+    invalid["sourceIsOfficial"] = False
+    with pytest.raises(ValidationError):
+        LegalEditorApprovalRequest(**invalid)
 
 
 def test_fact_input_rejects_a_value_type_that_does_not_match_its_fact_key() -> None:

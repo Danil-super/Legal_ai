@@ -14,7 +14,12 @@ from legal_core.corpus_loader import (
     normalized_text_sha256,
 )
 from legal_core.database import database_url
-from legal_core.legal_approval import ApprovalAttestation, approve_legal_version
+from legal_core.legal_approval import (
+    ApprovalAttestation,
+    LegalApprovalRejected,
+    approve_legal_version,
+    approve_legal_version_in_session,
+)
 from legal_core.models import (
     LegalApprovalEvent,
     LegalFragment,
@@ -117,6 +122,66 @@ def test_normalized_excerpt_cannot_be_approved_and_attempt_is_audited() -> None:
                     )
                 )
                 assert attempts == 1
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(
+    os.getenv("POSTGRES_INTEGRATION") != "1",
+    reason="set POSTGRES_INTEGRATION=1 to run PostgreSQL approval tests",
+)
+def test_editor_workspace_rejects_legacy_candidate_without_a_false_blocked_event() -> None:
+    async def scenario() -> None:
+        engine = create_async_engine(database_url())
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        version_id = await ingest_manifest(factory, MANIFEST)
+        reviewer_telegram_id = 8_220_260_779
+        try:
+            async with factory() as session, session.begin():
+                session.add(
+                    User(
+                        telegram_user_id=reviewer_telegram_id,
+                        display_name="Editor workspace rejection reviewer",
+                        system_role="LEGAL_EDITOR",
+                    )
+                )
+
+            async with factory() as session:
+                version = await session.get(LegalVersion, version_id)
+                assert version is not None
+                attestation = ApprovalAttestation(
+                    reviewer_telegram_user_id=reviewer_telegram_id,
+                    version_id=version_id,
+                    expected_sha256=version.raw_sha256,
+                    expected_normalized_sha256=version.normalized_sha256,
+                    expected_fragments_sha256=version.fragments_sha256,
+                    expected_effective_from=version.effective_from,
+                    expected_effective_to=version.effective_to,
+                    source_is_official=True,
+                    artifact_is_complete=True,
+                    effective_dates_verified=True,
+                    fragments_verified=True,
+                )
+
+            async with factory() as session:
+                with pytest.raises(LegalApprovalRejected, match="ARTIFACT_NOT_OFFICIAL_RAW"):
+                    await approve_legal_version_in_session(
+                        session,
+                        attestation,
+                        require_review_required=True,
+                        record_rejected_attempt=False,
+                    )
+                await session.rollback()
+
+            async with factory() as session:
+                attempts = await session.scalar(
+                    select(func.count(LegalApprovalEvent.id)).where(
+                        LegalApprovalEvent.legal_version_id == version_id
+                    )
+                )
+                assert attempts == 0
         finally:
             await engine.dispose()
 
