@@ -14,6 +14,7 @@ from telegram_gateway.quick_intake_runtime import (
     _quick_keyboard,
     _serialize_candidate,
     build_application_with_quick_intake,
+    exit_quick_intake_to_menu,
     quick_candidate_callback,
     receive_quick_description,
     render_quick_candidate,
@@ -199,8 +200,21 @@ def test_quick_start_callback_answers_and_enters_explicit_mode() -> None:
         assert context.user_data[_QUICK_PENDING_KEY] is True
         assert update.effective_message.replies
         assert "ОДНИМ сообщением" in update.effective_message.replies[-1][0]
+        markup = update.effective_message.replies[-1][1]
+        assert markup.inline_keyboard[-1][0].callback_data == "menu"
 
     asyncio.run(scenario())
+
+
+def test_returning_to_menu_clears_pending_quick_intake() -> None:
+    context = _context()
+    context.user_data[_QUICK_PENDING_KEY] = True
+    context.user_data[_QUICK_CANDIDATE_KEY] = {"draft_data": {}}
+
+    asyncio.run(exit_quick_intake_to_menu(_update(callback="menu"), context))
+
+    assert _QUICK_PENDING_KEY not in context.user_data
+    assert _QUICK_CANDIDATE_KEY not in context.user_data
 
 
 def test_accept_creates_and_saves_real_durable_draft_prefix() -> None:
@@ -245,4 +259,5 @@ def test_application_registers_quick_handlers_before_existing_wizard() -> None:
         if type(handler).__name__ == "CallbackQueryHandler"
     }
     assert r"^quick:start$" in callback_patterns
+    assert r"^menu$" in callback_patterns
     assert 0 in application.handlers

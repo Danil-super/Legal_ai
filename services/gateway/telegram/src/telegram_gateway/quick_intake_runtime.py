@@ -318,7 +318,8 @@ async def start_quick_intake(
         "угроза обращения в суд/Роспотребнадзор/Росздравнадзор.\n\n"
         "Не пишите ФИО, адрес, номер карты или другие персональные данные. Телефон/e-mail/ID "
         "будут локально удалены. На этом шаге бот даст только безопасный организационный "
-        "чек-лист; юридический вывод формируется после подтверждения фактов и проверки источников."
+        "чек-лист; юридический вывод формируется после подтверждения фактов и проверки источников.",
+        reply_markup=back_keyboard(),
     )
 
 
@@ -340,6 +341,14 @@ async def cancel_quick_intake(
 ) -> None:
     _clear_quick(context)
     await gateway_bot._reply(update, "Быстрое описание кейса отменено.")
+
+
+async def exit_quick_intake_to_menu(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    del update
+    _clear_quick(context)
 
 
 async def receive_quick_description(
@@ -473,6 +482,10 @@ def build_application_with_quick_intake(token: str) -> gateway_bot.TelegramAppli
     application = build_application_with_clinic_document_library(token)
     application.add_handler(CommandHandler("describe_case", start_quick_intake), group=-3)
     application.add_handler(CommandHandler("cancel_quick", cancel_quick_intake), group=-3)
+    application.add_handler(CommandHandler(["start", "menu"], exit_quick_intake_to_menu), group=-3)
+    application.add_handler(
+        CallbackQueryHandler(exit_quick_intake_to_menu, pattern=r"^menu$"), group=-3
+    )
     application.add_handler(
         CallbackQueryHandler(
             quick_candidate_callback,
