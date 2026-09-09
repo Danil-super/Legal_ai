@@ -110,3 +110,7 @@ def test_legal_watch_services_pass_required_arguments_to_their_modules() -> None
         f"{continuation}          --inbox /var/lib/dental-legal-ai/legal-update-inbox "
         f"{continuation}          --max-candidates 500;"
     ) in importer
+    assert "if python -m legal_core.legal_watcher " in watcher
+    assert "legal watcher run failed; retrying after delay" in watcher
+    assert "if python -m legal_core.legal_watch_importer " in importer
+    assert "legal watch import run failed; retrying after delay" in importer
