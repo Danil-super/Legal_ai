@@ -45,11 +45,12 @@ from telegram_gateway.case_wizard import (
 class FakeMessage:
     def __init__(self) -> None:
         self.text_replies: list[str] = []
+        self.text_reply_markups: list[object | None] = []
         self.documents: list[dict[str, object]] = []
 
     async def reply_text(self, text: str, **kwargs: object) -> None:
-        del kwargs
         self.text_replies.append(text)
+        self.text_reply_markups.append(kwargs.get("reply_markup"))
 
     async def reply_document(self, **kwargs: object) -> None:
         self.documents.append(kwargs)
@@ -687,6 +688,7 @@ def test_case_start_checks_access_without_creating_case_and_opens_incident_quest
     assert "case_id" not in context.user_data["case_wizard"]
     assert UUID(context.user_data["case_wizard"]["workflow_id"])
     assert "без ФИО" in message.text_replies[0]
+    assert message.text_reply_markups[0].inline_keyboard[-1][0].callback_data == "menu"
 
 
 def test_lawyer_unknown_is_preserved_and_does_not_become_a_negative_answer() -> None:

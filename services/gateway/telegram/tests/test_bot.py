@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 import pytest
 from telegram import InlineKeyboardMarkup
@@ -19,12 +20,14 @@ from telegram_gateway.bot import (
     _reply,
     admin_panel,
     build_application,
+    delete_intake_draft_callback,
     help_command,
     load_telegram_proxy_url,
     load_token,
     menu_callback,
     on_error,
     on_startup,
+    show_intake_drafts,
     start,
     text_input,
 )
@@ -232,6 +235,85 @@ def test_case_wizard_menus_always_offer_a_return_to_main_menu() -> None:
     assert keyboard.inline_keyboard[-1][0].callback_data == "menu"
 
 
+def test_draft_list_offers_confirmed_archive_for_the_callers_own_draft() -> None:
+    draft_id = "00000000-0000-0000-0000-000000000123"
+
+    class DraftClient:
+        def __init__(self) -> None:
+            self.archived: list[tuple[UUID, int, int]] = []
+
+        async def list_intake_drafts(self, telegram_user_id: int) -> dict[str, object]:
+            assert telegram_user_id == 7_000_000_001
+            return {
+                "items": [
+                    {
+                        "id": draft_id,
+                        "wizardState": "INCIDENT",
+                        "revision": 7,
+                        "incidentType": "QUALITY_COMPLAINT",
+                        "updatedAt": "2026-09-09T12:00:00Z",
+                    }
+                ]
+            }
+
+        async def get_intake_draft(
+            self, received_draft_id: UUID, telegram_user_id: int
+        ) -> dict[str, object]:
+            assert received_draft_id == UUID(draft_id)
+            assert telegram_user_id == 7_000_000_001
+            return {"revision": 7}
+
+        async def archive_intake_draft(
+            self,
+            received_draft_id: UUID,
+            telegram_user_id: int,
+            *,
+            expected_revision: int,
+        ) -> dict[str, object]:
+            assert received_draft_id == UUID(draft_id)
+            self.archived.append((received_draft_id, telegram_user_id, expected_revision))
+            return {"revision": 8}
+
+    client = DraftClient()
+    context = SimpleNamespace(bot_data={"legal_core_client": client}, user_data={})
+    list_message = FakeMessage()
+    list_update = FakeUpdate(
+        message=list_message,
+        callback_query=FakeCallbackQuery("case:drafts"),
+        effective_user=SimpleNamespace(id=7_000_000_001),
+    )
+
+    asyncio.run(show_intake_drafts(list_update, context))
+
+    keyboard = list_message.text_replies[-1][1]
+    assert keyboard is not None
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert f"case:draft:delete:{draft_id}" in callbacks
+
+    confirm_query = FakeCallbackQuery(f"case:draft:delete:{draft_id}")
+    confirm_update = FakeUpdate(
+        callback_query=confirm_query,
+        effective_user=SimpleNamespace(id=7_000_000_001),
+    )
+    asyncio.run(delete_intake_draft_callback(confirm_update, context))
+
+    assert "УДАЛИТЬ ЧЕРНОВИК" in confirm_query.text_edits[-1][0]
+    assert confirm_query.text_edits[-1][1].inline_keyboard[0][0].callback_data == (
+        f"case:draft:delete:confirm:{draft_id}"
+    )
+
+    archive_query = FakeCallbackQuery(f"case:draft:delete:confirm:{draft_id}")
+    archive_update = FakeUpdate(
+        callback_query=archive_query,
+        effective_user=SimpleNamespace(id=7_000_000_001),
+    )
+    asyncio.run(delete_intake_draft_callback(archive_update, context))
+
+    assert client.archived == [(UUID(draft_id), 7_000_000_001, 7)]
+    assert "удалён из активного списка" in archive_query.text_edits[-1][0]
+    assert archive_query.text_edits[-1][1].inline_keyboard[-1][0].callback_data == "menu"
+
+
 def test_lawyer_menu_exposes_only_review_workspace_actions() -> None:
     keyboard = main_menu_keyboard("CLINIC_LAWYER")
     callbacks = {button.callback_data for row in keyboard.inline_keyboard for button in row}
@@ -407,6 +489,11 @@ def test_application_registers_callback_handler_and_required_update_types() -> N
     handlers: list[Any] = [handler for group in application.handlers.values() for handler in group]
 
     assert any(isinstance(handler, CallbackQueryHandler) for handler in handlers)
+    assert any(
+        isinstance(handler, CallbackQueryHandler)
+        and "case:draft:delete" in str(getattr(handler.pattern, "pattern", ""))
+        for handler in handlers
+    )
     assert any(
         isinstance(handler, CommandHandler) and "grant_access" in handler.commands
         for handler in handlers

@@ -70,6 +70,11 @@ POLLING_WATCHDOG_INTERVAL_SECONDS = 30
 POLLING_STALL_SECONDS = 120
 CASE_INTAKE_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN"})
 CALLBACK_ERROR_MESSAGE = "⚠️ Не удалось выполнить действие. Откройте /menu и попробуйте ещё раз."
+_DRAFT_DELETE_CALLBACK_RE = re.compile(
+    r"^case:draft:delete(?::confirm)?:"
+    r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
+)
+_DRAFT_DELETE_CONFIRM_PREFIX = "case:draft:delete:confirm:"
 
 
 class WizardState(IntEnum):
@@ -711,6 +716,7 @@ async def case_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "📝 Новая карточка открыта. Кейс будет создан после вашей проверки.\n\n"
         "Указывайте только обезличенные сведения — без ФИО, телефона, адреса, "
         "номера карты и файлов пациента.\n\nЧто произошло?",
+        reply_markup=back_keyboard(),
     )
     message = update.effective_message
     if message is not None:
@@ -733,6 +739,93 @@ def _draft_updated_label(value: object) -> str:
     if not isinstance(value, str) or len(value) < 16:
         return "время неизвестно"
     return value[8:10] + "." + value[5:7] + " " + value[11:16]
+
+
+def _draft_delete_callback_data(draft_id: UUID, *, confirm: bool = False) -> str:
+    prefix = _DRAFT_DELETE_CONFIRM_PREFIX if confirm else "case:draft:delete:"
+    callback_data = f"{prefix}{draft_id}"
+    if len(callback_data.encode()) > 64:
+        raise ValueError("Telegram draft deletion callback is too long")
+    return callback_data
+
+
+def _draft_delete_confirmation_keyboard(draft_id: UUID) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "🗑 Да, удалить",
+                    callback_data=_draft_delete_callback_data(draft_id, confirm=True),
+                )
+            ],
+            [InlineKeyboardButton("← К черновикам", callback_data="case:drafts")],
+            *back_keyboard().inline_keyboard,
+        ]
+    )
+
+
+async def delete_intake_draft_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    callback_data = await _answer_callback(update)
+    if callback_data is None:
+        return
+    match = _DRAFT_DELETE_CALLBACK_RE.fullmatch(callback_data)
+    actor_id = _actor_id(update)
+    query = update.callback_query
+    if match is None or actor_id is None or query is None:
+        return
+    try:
+        draft_id = UUID(match.group(1))
+    except ValueError:
+        return
+
+    if not callback_data.startswith(_DRAFT_DELETE_CONFIRM_PREFIX):
+        await query.edit_message_text(
+            "🗑 УДАЛИТЬ ЧЕРНОВИК?\n\n"
+            "Он сразу исчезнет из активного списка. Закрытая запись сохранится только на "
+            "срок, предусмотренный политикой хранения, после чего будет очищена."
+            "\n\nЭто действие нельзя отменить.",
+            reply_markup=_draft_delete_confirmation_keyboard(draft_id),
+        )
+        return
+
+    try:
+        current = await _legal_core(context).get_intake_draft(draft_id, actor_id)
+        revision = current.get("revision")
+        if not isinstance(revision, int) or revision < 1:
+            raise ValueError("draft response is invalid")
+        archived = await _legal_core(context).archive_intake_draft(
+            draft_id,
+            actor_id,
+            expected_revision=revision,
+        )
+        archived_revision = archived.get("revision")
+        if not isinstance(archived_revision, int) or archived_revision <= revision:
+            raise ValueError("archive response is invalid")
+    except LegalCoreApiError as exc:
+        logger.warning("intake draft archive failed: %s", exc.code)
+        if exc.status_code in {404, 409}:
+            message = "⚠️ Черновик уже изменён или удалён. Обновите список черновиков."
+        else:
+            message = "⚠️ Не удалось удалить черновик. Попробуйте ещё раз позже."
+        await query.edit_message_text(message, reply_markup=back_keyboard())
+        return
+    except ValueError:
+        logger.warning("intake draft archive returned invalid data")
+        await query.edit_message_text(
+            "⚠️ Не удалось безопасно удалить черновик. Обновите список и попробуйте снова.",
+            reply_markup=back_keyboard(),
+        )
+        return
+
+    wizard_data = _user_data(context).get(WIZARD_DATA_KEY)
+    if isinstance(wizard_data, dict) and wizard_data.get(DRAFT_ID_KEY) == str(draft_id):
+        _clear_wizard(context)
+    await query.edit_message_text(
+        "🗑 Черновик удалён из активного списка.", reply_markup=back_keyboard()
+    )
 
 
 async def show_intake_drafts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -764,7 +857,10 @@ async def show_intake_drafts(update: Update, context: ContextTypes.DEFAULT_TYPE)
             continue
         try:
             draft_id = UUID(str(item["id"]))
-        except (KeyError, ValueError):
+            revision = int(item["revision"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if revision < 1:
             continue
         incident_type = item.get("incidentType")
         label = _DRAFT_INCIDENT_LABELS.get(
@@ -778,6 +874,14 @@ async def show_intake_drafts(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 InlineKeyboardButton(
                     f"{button_label}\n{_draft_updated_label(item.get('updatedAt'))}",
                     callback_data=f"case:draft:{draft_id}",
+                )
+            ]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "🗑 Удалить черновик",
+                    callback_data=_draft_delete_callback_data(draft_id),
                 )
             ]
         )
@@ -1817,6 +1921,15 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
             pattern=(
                 r"^case:confirm:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
                 r"[0-9a-f]{4}-[0-9a-f]{12}$"
+            ),
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            delete_intake_draft_callback,
+            pattern=(
+                r"^case:draft:delete(?::confirm)?:[0-9a-f]{8}-[0-9a-f]{4}-"
+                r"[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
             ),
         )
     )
