@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -11,6 +12,9 @@ from telegram_gateway.bot import (
     ADMIN_GRANT_ACCESS_KEY,
     ALLOWED_UPDATES,
     CALLBACK_ERROR_MESSAGE,
+    POLLING_STALL_SECONDS,
+    _answer_callback,
+    _polling_is_stalled,
     _reply,
     admin_panel,
     build_application,
@@ -67,16 +71,20 @@ class FakeCallbackQuery:
         data: object,
         *,
         edit_error: Exception | None = None,
+        answer_error: Exception | None = None,
         message: object | None = None,
     ) -> None:
         self.data = data
         self.edit_error = edit_error
+        self.answer_error = answer_error
         self.message = message
         self.answers: list[tuple[str | None, bool]] = []
         self.edits: list[tuple[str, InlineKeyboardMarkup]] = []
         self.text_edits: list[tuple[str, InlineKeyboardMarkup]] = []
 
     async def answer(self, text: str | None = None, show_alert: bool = False) -> None:
+        if self.answer_error is not None:
+            raise self.answer_error
         self.answers.append((text, show_alert))
 
     async def edit_message_caption(
@@ -273,6 +281,38 @@ def test_repeated_menu_callback_ignores_unchanged_caption_error() -> None:
     assert query.answers == [(None, False)]
 
 
+def test_expired_callback_is_ignored_without_failing_the_update() -> None:
+    query = FakeCallbackQuery(
+        "menu",
+        answer_error=BadRequest("Query is too old and response timeout expired"),
+    )
+
+    result = asyncio.run(_answer_callback(FakeUpdate(callback_query=query)))
+
+    assert result is None
+    assert query.answers == []
+
+
+def test_polling_stall_requires_a_backlog_and_an_expired_update_heartbeat() -> None:
+    now = datetime(2026, 9, 9, 12, tzinfo=UTC)
+
+    assert _polling_is_stalled(
+        pending_update_count=1,
+        heartbeat_at=now - timedelta(seconds=POLLING_STALL_SECONDS + 1),
+        now=now,
+    )
+    assert not _polling_is_stalled(
+        pending_update_count=0,
+        heartbeat_at=now - timedelta(days=1),
+        now=now,
+    )
+    assert not _polling_is_stalled(
+        pending_update_count=1,
+        heartbeat_at=now - timedelta(seconds=POLLING_STALL_SECONDS - 1),
+        now=now,
+    )
+
+
 def test_menu_callback_edits_text_message_instead_of_a_missing_caption() -> None:
     query = FakeCallbackQuery("menu", message=SimpleNamespace(caption=None))
 
@@ -375,11 +415,36 @@ def test_polling_startup_does_not_repeat_rate_limited_profile_mutations(
     tmp_path: Path,
 ) -> None:
     ready_file = tmp_path / "ready"
+    heartbeat_file = tmp_path / "heartbeat"
     monkeypatch.setattr("telegram_gateway.bot.READY_FILE", ready_file)
+    monkeypatch.setattr("telegram_gateway.bot.POLLING_HEARTBEAT_FILE", heartbeat_file)
+
+    class StartupJobQueue:
+        task_name: str | None = None
+        interval: int | None = None
+        first: int | None = None
+
+        def run_repeating(
+            self,
+            callback: object,
+            *,
+            interval: int,
+            first: int,
+            name: str,
+        ) -> None:
+            del callback
+            self.task_name = name
+            self.interval = interval
+            self.first = first
 
     class StartupApplication:
         """No Bot API mutation methods are intentionally available here."""
 
-    asyncio.run(on_startup(StartupApplication()))  # type: ignore[arg-type]
+        job_queue = StartupJobQueue()
+
+    application = StartupApplication()
+    asyncio.run(on_startup(application))  # type: ignore[arg-type]
 
     assert ready_file.is_file()
+    assert heartbeat_file.is_file()
+    assert application.job_queue.task_name == "telegram-polling-watchdog"
