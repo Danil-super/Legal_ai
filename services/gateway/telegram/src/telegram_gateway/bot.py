@@ -5,6 +5,7 @@ import logging
 import os
 import re
 from collections.abc import Callable, Coroutine, Mapping
+from datetime import UTC, datetime
 from enum import IntEnum
 from io import BytesIO
 from pathlib import Path
@@ -14,7 +15,7 @@ from uuid import UUID
 
 import httpx2
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
-from telegram.error import BadRequest
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -22,6 +23,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -54,6 +56,7 @@ logger = logging.getLogger(__name__)
 TelegramApplication: TypeAlias = Application[Any, Any, Any, Any, Any, Any]
 TOKEN_PATTERN = re.compile(r"^\d+:[A-Za-z0-9_-]+$")
 READY_FILE = Path("/tmp/telegram-gateway-ready")
+POLLING_HEARTBEAT_FILE = Path("/tmp/telegram-gateway-last-update")
 ALLOWED_UPDATES = ["message", "callback_query"]
 LEGAL_CORE_CLIENT_KEY = "legal_core_client"
 WIZARD_DATA_KEY = "case_wizard"
@@ -63,6 +66,8 @@ ADMIN_GRANT_ACCESS_KEY = "admin_grant_access"
 ADMIN_GRANT_PILOT_KEY = "admin_grant_pilot"
 TEAM_MEMBER_ROLE_KEY = "team_member_role"
 LEGAL_CORE_TIMEOUT_SECONDS = 15.0
+POLLING_WATCHDOG_INTERVAL_SECONDS = 30
+POLLING_STALL_SECONDS = 120
 CASE_INTAKE_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN"})
 CALLBACK_ERROR_MESSAGE = "⚠️ Не удалось выполнить действие. Откройте /menu и попробуйте ещё раз."
 
@@ -141,6 +146,69 @@ def load_legal_core_url(environment: Mapping[str, str] | None = None) -> str:
     ):
         raise RuntimeError("LEGAL_CORE_URL is malformed")
     return value
+
+
+def _polling_is_stalled(
+    *,
+    pending_update_count: int,
+    heartbeat_at: datetime,
+    now: datetime,
+) -> bool:
+    """Detect a stalled poller without restarting an idle bot."""
+
+    return (
+        pending_update_count > 0
+        and (now - heartbeat_at).total_seconds() > POLLING_STALL_SECONDS
+    )
+
+
+def _last_update_heartbeat() -> datetime | None:
+    try:
+        modified_at = POLLING_HEARTBEAT_FILE.stat().st_mtime
+    except OSError:
+        return None
+    return datetime.fromtimestamp(modified_at, UTC)
+
+
+async def _record_update_heartbeat(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Record delivery before feature handlers, including harmless stale callbacks."""
+
+    del update, context
+    try:
+        POLLING_HEARTBEAT_FILE.touch(mode=0o600)
+    except OSError:
+        # Processing an update is still safer than failing it because a local
+        # liveness marker could not be written.
+        logger.warning("could not update Telegram polling heartbeat")
+
+
+async def _polling_watchdog(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Restart only when Telegram has a backlog the poller has not observed."""
+
+    application = context.application
+    try:
+        webhook = await application.bot.get_webhook_info()
+    except TelegramError:
+        logger.warning("could not inspect Telegram polling backlog")
+        return
+    pending_update_count = webhook.pending_update_count
+    heartbeat_at = _last_update_heartbeat()
+    if heartbeat_at is None:
+        logger.error("Telegram polling heartbeat is unavailable; restarting gateway")
+        application.stop_running()
+        return
+    if _polling_is_stalled(
+        pending_update_count=pending_update_count,
+        heartbeat_at=heartbeat_at,
+        now=datetime.now(UTC),
+    ):
+        logger.error(
+            "Telegram polling stalled with %s pending update(s); restarting gateway",
+            pending_update_count,
+        )
+        application.stop_running()
 
 
 async def _reply(
@@ -1538,6 +1606,16 @@ async def on_startup(application: TelegramApplication) -> None:
             )
         )
     READY_FILE.touch(mode=0o600)
+    POLLING_HEARTBEAT_FILE.touch(mode=0o600)
+    if application.job_queue is None:
+        logger.warning("Telegram polling watchdog is unavailable because job queue is disabled")
+    else:
+        application.job_queue.run_repeating(
+            _polling_watchdog,
+            interval=POLLING_WATCHDOG_INTERVAL_SECONDS,
+            first=POLLING_WATCHDOG_INTERVAL_SECONDS,
+            name="telegram-polling-watchdog",
+        )
     logger.info("telegram gateway initialized")
 
 
@@ -1581,6 +1659,7 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
     if configured_proxy_url is not None:
         builder = builder.proxy(configured_proxy_url).get_updates_proxy(configured_proxy_url)
     application = builder.build()
+    application.add_handler(TypeHandler(Update, _record_update_heartbeat), group=-100)
     application.add_handler(
         ConversationHandler(
             entry_points=[
