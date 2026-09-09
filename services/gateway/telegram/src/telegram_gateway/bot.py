@@ -579,7 +579,14 @@ async def _answer_callback(update: Update) -> str | None:
     query = update.callback_query
     if query is None or not isinstance(query.data, str):
         return None
-    await query.answer()
+    try:
+        await query.answer()
+    except BadRequest:
+        # Callback queries expire quickly in Telegram. An update may still be
+        # delivered after a short network interruption, but it must not turn
+        # into a failed handler or block newer updates from being processed.
+        logger.info("ignored an expired Telegram callback")
+        return None
     return query.data
 
 

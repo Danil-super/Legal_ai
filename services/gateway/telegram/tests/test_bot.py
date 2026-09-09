@@ -11,6 +11,7 @@ from telegram_gateway.bot import (
     ADMIN_GRANT_ACCESS_KEY,
     ALLOWED_UPDATES,
     CALLBACK_ERROR_MESSAGE,
+    _answer_callback,
     _reply,
     admin_panel,
     build_application,
@@ -67,16 +68,20 @@ class FakeCallbackQuery:
         data: object,
         *,
         edit_error: Exception | None = None,
+        answer_error: Exception | None = None,
         message: object | None = None,
     ) -> None:
         self.data = data
         self.edit_error = edit_error
+        self.answer_error = answer_error
         self.message = message
         self.answers: list[tuple[str | None, bool]] = []
         self.edits: list[tuple[str, InlineKeyboardMarkup]] = []
         self.text_edits: list[tuple[str, InlineKeyboardMarkup]] = []
 
     async def answer(self, text: str | None = None, show_alert: bool = False) -> None:
+        if self.answer_error is not None:
+            raise self.answer_error
         self.answers.append((text, show_alert))
 
     async def edit_message_caption(
@@ -271,6 +276,18 @@ def test_repeated_menu_callback_ignores_unchanged_caption_error() -> None:
     asyncio.run(menu_callback(FakeUpdate(callback_query=query), None))
 
     assert query.answers == [(None, False)]
+
+
+def test_expired_callback_is_ignored_without_failing_the_update() -> None:
+    query = FakeCallbackQuery(
+        "menu",
+        answer_error=BadRequest("Query is too old and response timeout expired"),
+    )
+
+    result = asyncio.run(_answer_callback(FakeUpdate(callback_query=query)))
+
+    assert result is None
+    assert query.answers == []
 
 
 def test_menu_callback_edits_text_message_instead_of_a_missing_caption() -> None:
