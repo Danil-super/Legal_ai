@@ -29,6 +29,7 @@ from telegram_gateway.clinic_document_runtime import (
     arm_clinic_document_upload,
     build_application_with_clinic_documents,
 )
+from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
 _MAX_DOCUMENTS = 20
@@ -253,6 +254,7 @@ def document_template_keyboard() -> InlineKeyboardMarkup:
         for item in _DOCUMENT_TEMPLATES
     ]
     rows.append([InlineKeyboardButton("✅ Пока достаточно", callback_data="cliniclib:open")])
+    rows.extend(list(row) for row in back_keyboard().inline_keyboard)
     return InlineKeyboardMarkup(rows)
 
 
@@ -264,6 +266,7 @@ def document_effective_date_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Ввести дату", callback_data="cliniclib:date:manual"),
             ],
             [InlineKeyboardButton("Отменить", callback_data="cliniclib:date:cancel")],
+            *back_keyboard().inline_keyboard,
         ]
     )
 
@@ -501,13 +504,19 @@ async def clinic_document_library_callback(
             await message.reply_text("Доступные типы:", reply_markup=document_template_keyboard())
         raise ApplicationHandlerStop
     if action == "how":
-        await gateway_bot._reply(update, document_usage_help())
+        await gateway_bot._reply(
+            update, document_usage_help(), reply_markup=back_keyboard()
+        )
         raise ApplicationHandlerStop
 
     if action == "date:cancel":
         if context.user_data is not None:
             context.user_data.pop(_DATE_PENDING_KEY, None)
-        await gateway_bot._reply(update, "Выбор даты отменён. Документ не поставлен в очередь.")
+        await gateway_bot._reply(
+            update,
+            "Выбор даты отменён. Документ не поставлен в очередь.",
+            reply_markup=back_keyboard(),
+        )
         raise ApplicationHandlerStop
     if action == "date:today":
         pending = _date_pending(context)
@@ -658,7 +667,7 @@ async def show_document_history_callback(
     finally:
         await client.aclose()
     try:
-        await query.edit_message_text(text=history)
+        await query.edit_message_text(text=history, reply_markup=document_library_keyboard())
     except Exception:  # pragma: no cover - Telegram edit fallback remains operator-visible.
         logger.exception("clinic document history message edit failed")
         await gateway_bot._reply(update, history)

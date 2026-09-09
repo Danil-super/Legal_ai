@@ -30,6 +30,7 @@ from telegram.ext import (
 from telegram_gateway import analysis_runtime
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError
+from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,8 @@ def review_keyboard(version_id: UUID) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton("✅ Одобрить", callback_data=approve),
                 InlineKeyboardButton("⛔ Заблокировать", callback_data=block),
-            ]
+            ],
+            *back_keyboard().inline_keyboard,
         ]
     )
 
@@ -98,7 +100,7 @@ def retire_keyboard(version_id: UUID) -> InlineKeyboardMarkup:
     if len(callback_data.encode()) > 64:
         raise ValueError("clinic document callback data is too long")
     button = InlineKeyboardButton("🗄 Снять с использования", callback_data=callback_data)
-    return InlineKeyboardMarkup([[button]])
+    return InlineKeyboardMarkup([[button], *back_keyboard().inline_keyboard])
 
 
 def retire_confirmation_keyboard(version_id: UUID) -> InlineKeyboardMarkup:
@@ -110,6 +112,7 @@ def retire_confirmation_keyboard(version_id: UUID) -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("Да, снять", callback_data=confirm)],
             [InlineKeyboardButton("Отмена", callback_data=cancel)],
+            *back_keyboard().inline_keyboard,
         ]
     )
 
@@ -580,7 +583,7 @@ async def review_clinic_document_callback(
     if action == "retire-cancel":
         text = "Отзыв отменён. Версия продолжает использоваться в новых анализах."
         try:
-            await query.edit_message_text(text=text)
+            await query.edit_message_text(text=text, reply_markup=back_keyboard())
         except Exception:  # pragma: no cover - fallback is safe and operator-visible.
             logger.exception("clinic document retirement cancellation edit failed")
             await gateway_bot._reply(update, text)
@@ -628,7 +631,7 @@ async def review_clinic_document_callback(
             "История и исходный файл сохранены для аудита; для замены загрузите новую версию."
         )
     try:
-        await query.edit_message_text(text=text)
+        await query.edit_message_text(text=text, reply_markup=back_keyboard())
     except Exception:  # pragma: no cover - fallback is safe and operator-visible.
         logger.exception("clinic document review message edit failed")
         await gateway_bot._reply(update, text)

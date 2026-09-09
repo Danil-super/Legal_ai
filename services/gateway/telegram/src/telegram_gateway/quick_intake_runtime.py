@@ -34,6 +34,7 @@ from telegram_gateway.quick_intake import (
     QuickIntakeResult,
     extract_quick_intake,
 )
+from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
 _QUICK_PENDING_KEY = "quick_intake_pending"
@@ -115,6 +116,7 @@ def _quick_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("📝 Заполнить вручную", callback_data="quick:manual"),
             ],
             [InlineKeyboardButton("❌ Отменить", callback_data="quick:cancel")],
+            *back_keyboard().inline_keyboard,
         ]
     )
 
@@ -124,13 +126,19 @@ def _continue_keyboard(draft_id: UUID) -> InlineKeyboardMarkup:
     if len(callback.encode()) > 64:
         raise ValueError("quick intake draft callback is too long")
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("▶️ Продолжить уточнение", callback_data=callback)]]
+        [
+            [InlineKeyboardButton("▶️ Продолжить уточнение", callback_data=callback)],
+            *back_keyboard().inline_keyboard,
+        ]
     )
 
 
 def _manual_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("📝 Создать кейс вручную", callback_data="case:start")]]
+        [
+            [InlineKeyboardButton("📝 Создать кейс вручную", callback_data="case:start")],
+            *back_keyboard().inline_keyboard,
+        ]
     )
 
 

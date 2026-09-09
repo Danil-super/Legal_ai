@@ -77,6 +77,16 @@ def test_retirement_keyboards_are_explicit_and_bounded() -> None:
     )
 
 
+def test_document_review_menus_always_offer_a_return_to_main_menu() -> None:
+    for keyboard in (
+        review_keyboard(VERSION_ID),
+        retire_keyboard(VERSION_ID),
+        retire_confirmation_keyboard(VERSION_ID),
+    ):
+        assert keyboard.inline_keyboard[-1][0].text == "← Главное меню"
+        assert keyboard.inline_keyboard[-1][0].callback_data == "menu"
+
+
 class _FakeCallbackQuery:
     def __init__(self, data: str) -> None:
         self.data = data

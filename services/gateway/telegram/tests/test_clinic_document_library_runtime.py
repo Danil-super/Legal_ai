@@ -4,6 +4,7 @@ from uuid import UUID
 from telegram.ext import CallbackQueryHandler, MessageHandler
 from telegram_gateway.clinic_document_library_runtime import (
     build_application_with_clinic_document_library,
+    document_effective_date_keyboard,
     document_template_keyboard,
     document_usage_help,
     render_document_history,
@@ -77,6 +78,12 @@ def test_document_usage_help_and_category_buttons_are_nontechnical() -> None:
         for button in row
         if button.callback_data is not None
     )
+
+
+def test_document_library_submenus_always_offer_a_return_to_main_menu() -> None:
+    for keyboard in (document_template_keyboard(), document_effective_date_keyboard()):
+        assert keyboard.inline_keyboard[-1][0].text == "← Главное меню"
+        assert keyboard.inline_keyboard[-1][0].callback_data == "menu"
 
 
 def test_library_application_handles_menu_and_effective_date_callbacks(

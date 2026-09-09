@@ -14,6 +14,7 @@ from telegram_gateway.bot import (
     CALLBACK_ERROR_MESSAGE,
     POLLING_STALL_SECONDS,
     _answer_callback,
+    _keyboard,
     _polling_is_stalled,
     _reply,
     admin_panel,
@@ -222,6 +223,13 @@ def test_main_menu_exposes_frequent_actions_as_clear_allowlisted_buttons() -> No
         isinstance(button.callback_data, str) and len(button.callback_data.encode()) <= 64
         for button in buttons
     )
+
+
+def test_case_wizard_menus_always_offer_a_return_to_main_menu() -> None:
+    keyboard = _keyboard([[("Выбрать вариант", "case:example")]])
+
+    assert keyboard.inline_keyboard[-1][0].text == "← Главное меню"
+    assert keyboard.inline_keyboard[-1][0].callback_data == "menu"
 
 
 def test_lawyer_menu_exposes_only_review_workspace_actions() -> None:

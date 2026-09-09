@@ -474,9 +474,11 @@ async def record_admin_grant_pilot(update: Update, context: ContextTypes.DEFAULT
 
 
 def _keyboard(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton(label, callback_data=data) for label, data in row] for row in rows]
-    )
+    buttons = [
+        [InlineKeyboardButton(label, callback_data=data) for label, data in row] for row in rows
+    ]
+    buttons.extend(list(row) for row in back_keyboard().inline_keyboard)
+    return InlineKeyboardMarkup(buttons)
 
 
 INCIDENT_KEYBOARD = _keyboard(
@@ -751,7 +753,9 @@ async def show_intake_drafts(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     if not items:
         await _reply(
-            update, "📂 Активных черновиков нет. Нажмите «Создать кейс», чтобы открыть новый."
+            update,
+            "📂 Активных черновиков нет. Нажмите «Создать кейс», чтобы открыть новый.",
+            reply_markup=back_keyboard(),
         )
         return
     rows: list[list[InlineKeyboardButton]] = []
