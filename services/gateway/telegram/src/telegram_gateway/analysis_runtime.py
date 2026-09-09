@@ -24,6 +24,7 @@ from telegram.ext import (
 
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError, LegalCoreClient
+from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
 ANALYSIS_CALLBACK_PREFIX = "case:analyze:"
@@ -86,7 +87,10 @@ def analysis_keyboard(case_id: UUID) -> InlineKeyboardMarkup:
     if len(callback.encode()) > 64:
         raise ValueError("Telegram analysis callback is too long")
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("⚖️ Запустить юридический анализ", callback_data=callback)]]
+        [
+            [InlineKeyboardButton("⚖️ Запустить юридический анализ", callback_data=callback)],
+            *back_keyboard().inline_keyboard,
+        ]
     )
 
 
@@ -98,6 +102,7 @@ def escalation_discussion_keyboard(escalation_id: UUID) -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("💬 Обсудить с юристом", callback_data=callback)],
             [InlineKeyboardButton("⚖️ Критические кейсы", callback_data=ESCALATION_QUEUE_CALLBACK)],
+            *back_keyboard().inline_keyboard,
         ]
     )
 
@@ -115,6 +120,7 @@ def _active_discussion_keyboard(escalation_id: UUID) -> InlineKeyboardMarkup:
                 ),
                 InlineKeyboardButton("Закрыть", callback_data=ESCALATION_DISCUSSION_CLOSE_CALLBACK),
             ],
+            *back_keyboard().inline_keyboard,
         ]
     )
 
@@ -508,8 +514,7 @@ async def _show_escalation_queue(
         ]
         for escalation_id, label in items[:20]
     ]
-    if rows:
-        rows.append([InlineKeyboardButton("← Главное меню", callback_data="menu")])
+    rows.extend(list(row) for row in back_keyboard().inline_keyboard)
     message = update.effective_message
     if message is not None:
         await message.reply_text(
@@ -574,6 +579,7 @@ async def close_escalation_discussion(
     await gateway_bot._reply(
         update,
         "Диалог закрыт в этом чате. Сообщения сохранены во внутреннем журнале кейса.",
+        reply_markup=back_keyboard(),
     )
     raise ApplicationHandlerStop
 

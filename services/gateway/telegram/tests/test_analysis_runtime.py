@@ -4,6 +4,7 @@ from uuid import UUID
 import pytest
 from telegram.ext import CallbackQueryHandler
 from telegram_gateway.analysis_runtime import (
+    _active_discussion_keyboard,
     analysis_error_message,
     analysis_keyboard,
     build_application_with_analysis,
@@ -60,6 +61,17 @@ def test_escalation_pointer_and_discussion_button_are_opaque_and_bounded() -> No
     assert escalation_id_from_analysis({"escalationRequired": False, "escalationId": None}) is None
     with pytest.raises(ValueError, match="no valid escalation id"):
         escalation_id_from_analysis({"escalationRequired": True, "escalationId": None})
+
+
+def test_analysis_and_discussion_menus_always_offer_a_return_to_main_menu() -> None:
+    escalation_id = UUID("00000000-0000-0000-0000-000000000020")
+    for keyboard in (
+        analysis_keyboard(CASE_ID),
+        escalation_discussion_keyboard(escalation_id),
+        _active_discussion_keyboard(escalation_id),
+    ):
+        assert keyboard.inline_keyboard[-1][0].text == "← Главное меню"
+        assert keyboard.inline_keyboard[-1][0].callback_data == "menu"
 
 
 def test_escalation_queue_summary_excludes_case_description_and_patient_data() -> None:

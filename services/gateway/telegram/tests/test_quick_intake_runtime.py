@@ -10,6 +10,8 @@ from telegram_gateway.quick_intake_runtime import (
     _QUICK_CANDIDATE_KEY,
     _QUICK_PENDING_KEY,
     _continue_keyboard,
+    _manual_keyboard,
+    _quick_keyboard,
     _serialize_candidate,
     build_application_with_quick_intake,
     quick_candidate_callback,
@@ -141,6 +143,12 @@ def test_continue_keyboard_targets_existing_durable_draft_entrypoint() -> None:
     keyboard = _continue_keyboard(DRAFT_ID)
 
     assert keyboard.inline_keyboard[0][0].callback_data == f"case:draft:{DRAFT_ID}"
+
+
+def test_quick_intake_menus_always_offer_a_return_to_main_menu() -> None:
+    for keyboard in (_quick_keyboard(), _continue_keyboard(DRAFT_ID), _manual_keyboard()):
+        assert keyboard.inline_keyboard[-1][0].text == "← Главное меню"
+        assert keyboard.inline_keyboard[-1][0].callback_data == "menu"
 
 
 def test_quick_description_does_not_intercept_text_when_mode_is_off() -> None:
