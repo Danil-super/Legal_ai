@@ -84,3 +84,29 @@ def test_agent_orchestrator_is_not_exposed_to_the_edge_network() -> None:
 
     assert "networks: [backend]" in service
     assert "edge" not in service
+
+
+def test_legal_watch_services_pass_required_arguments_to_their_modules() -> None:
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    watcher = compose.split("  legal-watcher:\n", maxsplit=1)[1].split(
+        "\n  legal-watch-importer:", maxsplit=1
+    )[0]
+    importer = compose.split("  legal-watch-importer:\n", maxsplit=1)[1].split(
+        "\n  telegram-gateway:", maxsplit=1
+    )[0]
+
+    continuation = chr(92) + "\n"
+    assert (
+        "python -m legal_core.legal_watcher "
+        f"{continuation}          --rules "
+        f"/app/services/legal_core/corpus/legal_watch_rules.v1.json {continuation}"
+        f"          --inbox /var/lib/dental-legal-ai/legal-update-inbox {continuation}"
+        f"          --publication-from $$watch_from {continuation}"
+        "          --publication-to $$watch_to;"
+    ) in watcher
+    assert (
+        "python -m legal_core.legal_watch_importer "
+        f"{continuation}          --inbox /var/lib/dental-legal-ai/legal-update-inbox "
+        f"{continuation}          --max-candidates 500;"
+    ) in importer
