@@ -224,6 +224,10 @@ jobs:
 
   codeql:
     name: CodeQL
+    # Private personal repositories cannot upload code-scanning results unless GitHub Code
+    # Security is enabled. Dependency vulnerability scanning remains mandatory in `quality`.
+    # Enable this guarded job only after the repository has that service: CODEQL_ENABLED=true.
+    if: vars.CODEQL_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -247,7 +251,11 @@ jobs:
     name: Deploy production
     needs: [quality, postgres-integration, codeql]
     if: >-
-      github.event_name == 'push' && github.ref == 'refs/heads/main'
+      always() &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.quality.result == 'success' &&
+      needs.postgres-integration.result == 'success' &&
+      (needs.codeql.result == 'success' || needs.codeql.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
