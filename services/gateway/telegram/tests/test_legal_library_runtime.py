@@ -1,6 +1,8 @@
 from telegram.ext import CallbackQueryHandler, CommandHandler
 from telegram_gateway.legal_library_runtime import (
+    _new_editor_state,
     build_application_with_legal_library,
+    render_editor_version_detail,
     render_legal_library,
     render_platform_review_queue,
 )
@@ -52,9 +54,12 @@ def test_platform_review_queue_renders_statuses_without_legal_text() -> None:
         {
             "items": [
                 {
+                    "versionId": "00000000-0000-0000-0000-000000000002",
                     "documentTitle": "Правила платных медицинских услуг",
                     "officialNumber": "659",
                     "approvalState": "REVIEW_REQUIRED",
+                    "artifactKind": "OFFICIAL_RAW",
+                    "approvalEligible": True,
                     "effectiveFrom": "2026-09-01",
                     "effectiveTo": "2031-09-01",
                     "rawSha256": "a" * 64,
@@ -68,6 +73,50 @@ def test_platform_review_queue_renders_statuses_without_legal_text() -> None:
     assert "ОЖИДАЕТ ПРОВЕРКИ" in text
     assert "Raw text must stay hidden" not in text
     assert keyboard.inline_keyboard[-1][0].callback_data == "menu"
+
+
+def test_editor_detail_requires_all_four_explicit_attestations_before_confirm() -> None:
+    detail = {
+        "versionId": "00000000-0000-0000-0000-000000000002",
+        "documentTitle": "Правила платных медицинских услуг",
+        "issuer": "Правительство Российской Федерации",
+        "officialNumber": "659",
+        "sourceUrl": "https://example.test/official.pdf",
+        "approvalState": "REVIEW_REQUIRED",
+        "rawMimeType": "application/pdf",
+        "rawSizeBytes": 100,
+        "artifactPageCount": 1,
+        "artifactRetrievedAt": "2026-09-09T12:00:00Z",
+        "effectiveFrom": "2026-09-01",
+        "effectiveTo": "2031-09-01",
+        "rawSha256": "a" * 64,
+        "normalizedSha256": "b" * 64,
+        "fragmentsSha256": "c" * 64,
+        "fragmentCount": 1,
+        "approvalEligible": True,
+    }
+    state = _new_editor_state(detail)
+
+    _, pending_keyboard = render_editor_version_detail(detail, state)
+    pending_callbacks = {
+        button.callback_data
+        for row in pending_keyboard.inline_keyboard
+        for button in row
+        if button.callback_data is not None
+    }
+    assert "editor:confirm:00000000-0000-0000-0000-000000000002" not in pending_callbacks
+
+    state["attestations"] = dict.fromkeys(
+        ("source", "artifact", "dates", "fragments"), True
+    )
+    _, approved_keyboard = render_editor_version_detail(detail, state)
+    approved_callbacks = {
+        button.callback_data
+        for row in approved_keyboard.inline_keyboard
+        for button in row
+        if button.callback_data is not None
+    }
+    assert "editor:confirm:00000000-0000-0000-0000-000000000002" in approved_callbacks
 
 
 def test_composed_application_registers_lawyer_library_before_menu_handler(monkeypatch) -> None:

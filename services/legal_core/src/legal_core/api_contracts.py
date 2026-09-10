@@ -322,6 +322,92 @@ class PlatformLegalReviewQueueResponse(ContractModel):
     items: list[PlatformLegalReviewQueueItem] = Field(default_factory=list, max_length=100)
 
 
+class LegalEditorStatusResponse(ContractModel):
+    """Successful status means the caller passed both editor trust checks."""
+
+    is_legal_editor: Literal[True] = Field(alias="isLegalEditor")
+
+
+class LegalEditorCandidateSummary(ContractModel):
+    document_id: UUID = Field(alias="documentId")
+    version_id: UUID = Field(alias="versionId")
+    document_title: str = Field(alias="documentTitle", min_length=1, max_length=2_000)
+    official_number: str | None = Field(default=None, alias="officialNumber", max_length=80)
+    approval_state: Literal["REVIEW_REQUIRED", "APPROVED", "BLOCKED"] = Field(
+        alias="approvalState"
+    )
+    artifact_kind: Literal["NORMALIZED_EXCERPT", "OFFICIAL_RAW"] = Field(alias="artifactKind")
+    approval_eligible: bool = Field(alias="approvalEligible")
+
+
+class LegalEditorCandidatePage(ContractModel):
+    page: int = Field(ge=1, le=100)
+    page_size: Literal[10] = Field(alias="pageSize")
+    total_items: int = Field(alias="totalItems", ge=0)
+    items: list[LegalEditorCandidateSummary] = Field(default_factory=list, max_length=10)
+
+
+class LegalEditorVersionDetail(ContractModel):
+    document_id: UUID = Field(alias="documentId")
+    version_id: UUID = Field(alias="versionId")
+    document_title: str = Field(alias="documentTitle", min_length=1, max_length=2_000)
+    issuer: str = Field(min_length=1, max_length=240)
+    official_number: str | None = Field(default=None, alias="officialNumber", max_length=80)
+    source_url: str = Field(alias="sourceUrl", min_length=8, max_length=2_000)
+    approval_state: Literal["REVIEW_REQUIRED", "APPROVED", "BLOCKED"] = Field(
+        alias="approvalState"
+    )
+    artifact_kind: Literal["NORMALIZED_EXCERPT", "OFFICIAL_RAW"] = Field(alias="artifactKind")
+    raw_mime_type: str = Field(alias="rawMimeType", min_length=1, max_length=100)
+    raw_size_bytes: int = Field(alias="rawSizeBytes", ge=0)
+    artifact_page_count: int | None = Field(default=None, alias="artifactPageCount", ge=1)
+    artifact_retrieved_at: datetime | None = Field(default=None, alias="artifactRetrievedAt")
+    effective_from: date = Field(alias="effectiveFrom")
+    effective_to: date | None = Field(default=None, alias="effectiveTo")
+    raw_sha256: str = Field(alias="rawSha256", pattern=r"^[0-9a-f]{64}$")
+    normalized_sha256: str = Field(alias="normalizedSha256", pattern=r"^[0-9a-f]{64}$")
+    fragments_sha256: str = Field(alias="fragmentsSha256", pattern=r"^[0-9a-f]{64}$")
+    fragment_count: int = Field(alias="fragmentCount", ge=0, le=10_000)
+    approval_eligible: bool = Field(alias="approvalEligible")
+
+
+class LegalEditorFragment(ContractModel):
+    ordinal: int = Field(ge=1)
+    structural_path: str = Field(alias="structuralPath", min_length=1, max_length=500)
+    fragment_text: str = Field(alias="fragmentText", min_length=1, max_length=1_200)
+    text_sha256: str = Field(alias="textSha256", pattern=r"^[0-9a-f]{64}$")
+    truncated: bool
+
+
+class LegalEditorFragmentPage(ContractModel):
+    page: int = Field(ge=1, le=100)
+    page_size: Literal[5] = Field(alias="pageSize")
+    total_items: int = Field(alias="totalItems", ge=0)
+    items: list[LegalEditorFragment] = Field(default_factory=list, max_length=5)
+
+
+class LegalEditorApprovalRequest(ContractModel):
+    expected_sha256: str = Field(alias="expectedSha256", pattern=r"^[0-9a-f]{64}$")
+    expected_normalized_sha256: str = Field(
+        alias="expectedNormalizedSha256", pattern=r"^[0-9a-f]{64}$"
+    )
+    expected_fragments_sha256: str = Field(
+        alias="expectedFragmentsSha256", pattern=r"^[0-9a-f]{64}$"
+    )
+    expected_effective_from: date = Field(alias="expectedEffectiveFrom")
+    expected_effective_to: date | None = Field(default=None, alias="expectedEffectiveTo")
+    source_is_official: Literal[True] = Field(alias="sourceIsOfficial")
+    artifact_is_complete: Literal[True] = Field(alias="artifactIsComplete")
+    effective_dates_verified: Literal[True] = Field(alias="effectiveDatesVerified")
+    fragments_verified: Literal[True] = Field(alias="fragmentsVerified")
+
+
+class LegalEditorApprovalResponse(ContractModel):
+    version_id: UUID = Field(alias="versionId")
+    approval_state: Literal["APPROVED"] = Field(alias="approvalState")
+    approved_at: datetime = Field(alias="approvedAt")
+
+
 class FactInput(ContractModel):
     fact_key: FactKey = Field(alias="factKey")
     value_type: Literal[

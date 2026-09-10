@@ -66,6 +66,14 @@ class ApprovalAttestation(BaseModel):
         return self
 
 
+class LegalApprovalRejected(ValueError):
+    """A candidate is not approvable; the API maps this to a fail-closed response."""
+
+    def __init__(self, reason_code: str) -> None:
+        super().__init__(f"approval blocked: {reason_code}")
+        self.reason_code = reason_code
+
+
 def _checks(attestation: ApprovalAttestation) -> dict[str, Any]:
     return {
         "sourceIsOfficial": attestation.source_is_official,
@@ -182,6 +190,17 @@ async def _block_reason(
     return None
 
 
+async def legal_approval_preflight_reason(
+    session: AsyncSession,
+    version: LegalVersion,
+    source: LegalSource,
+    attestation: ApprovalAttestation,
+) -> str | None:
+    """Return the immutable approval guard result without writing a decision event."""
+
+    return await _block_reason(session, version, source, attestation)
+
+
 async def _regression_checks(
     session: AsyncSession,
     version: LegalVersion,
@@ -225,9 +244,7 @@ async def _regression_checks(
             else None
         ),
     }
-    canonical = json.dumps(
-        checks, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+    canonical = json.dumps(checks, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     regression_result_sha256 = await session.scalar(
         text("SELECT legal_regression_result_sha256(CAST(:payload AS jsonb))"),
         {"payload": canonical},
@@ -237,71 +254,138 @@ async def _regression_checks(
     return checks, regression_result_sha256
 
 
-async def approve_legal_version(
-    session_factory: async_sessionmaker[AsyncSession],
-    attestation: ApprovalAttestation,
-) -> UUID:
-    blocked_reason: str | None = None
-    async with session_factory() as session, session.begin():
-        reviewer = await session.scalar(
-            select(User).where(
-                User.telegram_user_id == attestation.reviewer_telegram_user_id,
-                User.status == "ACTIVE",
-                User.system_role == "LEGAL_EDITOR",
-            )
+async def _active_legal_editor(session: AsyncSession, telegram_user_id: int) -> User:
+    reviewer = await session.scalar(
+        select(User).where(
+            User.telegram_user_id == telegram_user_id,
+            User.status == "ACTIVE",
+            User.system_role == "LEGAL_EDITOR",
         )
-        if reviewer is None:
-            raise PermissionError("active LEGAL_EDITOR role is required")
-        version = await session.scalar(
-            select(LegalVersion)
-            .where(LegalVersion.id == attestation.version_id)
-            .with_for_update()
-        )
-        if version is None:
-            raise LookupError("legal version not found")
-        source = await session.get(LegalSource, version.source_id)
-        if source is None:  # pragma: no cover - protected by foreign key
-            raise LookupError("legal source not found")
+    )
+    if reviewer is None:
+        raise PermissionError("active LEGAL_EDITOR role is required")
+    return reviewer
 
-        blocked_reason = await _block_reason(session, version, source, attestation)
-        regression_checks, regression_result_sha256 = await _regression_checks(
-            session, version, blocked_reason
-        )
-        decision = "BLOCKED" if blocked_reason is not None else "APPROVED"
-        reason_code = blocked_reason or "HUMAN_LEGAL_REVIEW_PASSED"
-        if version.approval_state != "APPROVED" or decision == "BLOCKED":
+
+async def approve_legal_version_in_session(
+    session: AsyncSession,
+    attestation: ApprovalAttestation,
+    *,
+    reviewer: User | None = None,
+    require_review_required: bool = False,
+    record_rejected_attempt: bool = True,
+    idempotency_key: UUID | None = None,
+    request_sha256: str | None = None,
+) -> LegalVersion:
+    """Approve inside a caller-owned transaction while holding the version lock.
+
+    The operational CLI deliberately retains its append-only rejected-attempt events. The public
+    editor path passes ``record_rejected_attempt=False`` so an obsolete or malformed candidate
+    cannot look like a human ``BLOCKED`` decision.
+    """
+
+    if (idempotency_key is None) != (request_sha256 is None):
+        raise ValueError("idempotency key and request digest must be provided together")
+    if request_sha256 is not None and len(request_sha256) != 64:
+        raise ValueError("request digest must be a SHA-256 hexadecimal value")
+    resolved_reviewer = reviewer or await _active_legal_editor(
+        session, attestation.reviewer_telegram_user_id
+    )
+    if resolved_reviewer.telegram_user_id != attestation.reviewer_telegram_user_id:
+        raise PermissionError("reviewer identity does not match attestation")
+
+    version = await session.scalar(
+        select(LegalVersion).where(LegalVersion.id == attestation.version_id).with_for_update()
+    )
+    if version is None:
+        raise LookupError("legal version not found")
+    source = await session.get(LegalSource, version.source_id)
+    if source is None:  # pragma: no cover - protected by foreign key
+        raise LookupError("legal source not found")
+
+    blocked_reason = (
+        "VERSION_NOT_REVIEW_REQUIRED"
+        if require_review_required and version.approval_state != "REVIEW_REQUIRED"
+        else await _block_reason(session, version, source, attestation)
+    )
+    regression_checks, regression_result_sha256 = await _regression_checks(
+        session, version, blocked_reason
+    )
+    if blocked_reason is not None:
+        if record_rejected_attempt:
             session.add(
                 LegalApprovalEvent(
                     legal_version_id=version.id,
-                    actor_user_id=reviewer.id,
-                    decision=decision,
+                    actor_user_id=resolved_reviewer.id,
+                    decision="BLOCKED",
                     expected_sha256=attestation.expected_sha256,
-                    reason_code=reason_code,
+                    reason_code=blocked_reason,
                     checks_json=_checks(attestation),
                     policy_version=APPROVAL_POLICY_VERSION,
                     regression_result_sha256=regression_result_sha256,
                     regression_checks_json=regression_checks,
                 )
             )
-            # The database approval-transition trigger requires this immutable event to
-            # exist before the version row can enter APPROVED state.
             await session.flush()
-        if blocked_reason is None and version.approval_state != "APPROVED":
-            approved_at = datetime.now(UTC)
-            version.regression_passed = True
-            version.approval_state = "APPROVED"
-            version.approved_by = reviewer.id
-            version.approved_at = approved_at
-            # Source approval is valid only after its reviewed version has completed
-            # the independently guarded REVIEW_REQUIRED -> APPROVED transition.
-            await session.flush()
-            if source.status == "DRAFT":
-                source.status = "APPROVED"
-                source.approved_by = reviewer.id
-                source.approved_at = approved_at
+        raise LegalApprovalRejected(blocked_reason)
 
-    if blocked_reason is not None:
-        raise ValueError(f"approval blocked: {blocked_reason}")
+    if version.approval_state == "APPROVED":
+        return version
+    if version.approval_state != "REVIEW_REQUIRED":  # defensive DB-lifecycle guard
+        raise LegalApprovalRejected("VERSION_NOT_REVIEW_REQUIRED")
+
+    session.add(
+        LegalApprovalEvent(
+            legal_version_id=version.id,
+            actor_user_id=resolved_reviewer.id,
+            decision="APPROVED",
+            expected_sha256=attestation.expected_sha256,
+            reason_code="HUMAN_LEGAL_REVIEW_PASSED",
+            checks_json=_checks(attestation),
+            policy_version=APPROVAL_POLICY_VERSION,
+            regression_result_sha256=regression_result_sha256,
+            regression_checks_json=regression_checks,
+            idempotency_key=idempotency_key,
+            request_sha256=request_sha256,
+        )
+    )
+    # The database approval-transition trigger requires this immutable event to exist before the
+    # version row can enter APPROVED state.
+    await session.flush()
+    approved_at = datetime.now(UTC)
+    version.regression_passed = True
+    version.approval_state = "APPROVED"
+    version.approved_by = resolved_reviewer.id
+    version.approved_at = approved_at
+    # Source approval is valid only after its reviewed version has completed the independently
+    # guarded REVIEW_REQUIRED -> APPROVED transition.
+    await session.flush()
+    if source.status == "DRAFT":
+        source.status = "APPROVED"
+        source.approved_by = resolved_reviewer.id
+        source.approved_at = approved_at
+    return version
+
+
+async def approve_legal_version(
+    session_factory: async_sessionmaker[AsyncSession],
+    attestation: ApprovalAttestation,
+) -> UUID:
+    """CLI compatibility wrapper that keeps rejected-attempt audit events durable."""
+
+    async with session_factory() as session:
+        try:
+            await approve_legal_version_in_session(session, attestation)
+        except LegalApprovalRejected:
+            # The historical command deliberately records a rejected human attempt.  Commit that
+            # append-only event before returning its failure to the operator; the Telegram API
+            # uses the in-session function with ``record_rejected_attempt=False`` instead.
+            await session.commit()
+            raise
+        except Exception:
+            await session.rollback()
+            raise
+        await session.commit()
     return attestation.version_id
 
 

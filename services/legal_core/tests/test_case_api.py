@@ -78,7 +78,15 @@ def seed_admin(
 def application_client() -> TestClient:
     engine = create_async_engine(database_url())
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    return TestClient(create_app(session_factory=factory, managed_engine=engine))
+    # Retention scheduling is tested directly.  Keeping the periodic background task out of
+    # request-contract tests prevents it from competing for the same test database connections.
+    return TestClient(
+        create_app(
+            session_factory=factory,
+            managed_engine=engine,
+            enable_draft_retention=False,
+        )
+    )
 
 
 def actor_headers(telegram_user_id: int, idempotency_key: UUID | None = None) -> dict[str, str]:

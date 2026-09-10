@@ -151,14 +151,17 @@ approved-only retrieval, applicable-date resolution and claim-to-evidence verifi
 ## Task 2.3: Human legal review of the initial corpus
 
 **Acceptance criteria:**
-- [ ] The configured platform owner can see a read-only metadata queue of `REVIEW_REQUIRED`,
-  `APPROVED` and `BLOCKED` legal versions in Telegram; it cannot approve a version.
+- [ ] An active platform-side `LEGAL_EDITOR` can inspect the bounded candidate list, immutable
+  official artifact, effective dates, checksums and selected fragments in Telegram; clinic roles,
+  subscription and platform-owner ID do not substitute this server-side role check.
+- [ ] Only a qualified `LEGAL_EDITOR` can make all four explicit attestations and submit a
+  checksum-bound, idempotent approval through Legal Core; stale or legacy candidates fail closed.
 - [ ] A qualified, platform-side `LEGAL_EDITOR` has reviewed the immutable official artifacts using
-  `docs/legal-review/initial-corpus-review.md`.
+  `docs/legal-review/initial-corpus-review.md`; no version is approved by this task automatically.
 - [ ] The PP №659 fragment selection covers the intended recommendation scenarios before approval.
 - [ ] Every approved version has a checksum-bound, append-only approval attestation.
 
-**Dependencies:** Task 2.1; explicit human legal review
+**Dependencies:** Task 2.1; `SPEC-legal-review-workspace.md`; explicit human legal review
 
 ## Task 3.0: Approve the evidence/risk/agent release packet
 

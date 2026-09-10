@@ -325,6 +325,20 @@ def test_lawyer_menu_exposes_only_review_workspace_actions() -> None:
     assert "case:drafts" not in callbacks
 
 
+def test_platform_editor_control_composes_with_the_clinic_lawyer_menu() -> None:
+    keyboard = main_menu_keyboard("CLINIC_LAWYER", is_legal_editor=True)
+    callbacks = {button.callback_data for row in keyboard.inline_keyboard for button in row}
+
+    assert {"case:escalations", "legalbase:open", "editor:open"} <= callbacks
+
+
+def test_platform_editor_control_is_not_present_without_editor_capability() -> None:
+    keyboard = main_menu_keyboard("CLINIC_OWNER")
+    callbacks = {button.callback_data for row in keyboard.inline_keyboard for button in row}
+
+    assert "editor:open" not in callbacks
+
+
 def test_administrator_menu_exposes_optional_clinic_document_library() -> None:
     keyboard = main_menu_keyboard("CLINIC_ADMIN")
     callbacks = [

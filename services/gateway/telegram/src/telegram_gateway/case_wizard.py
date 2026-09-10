@@ -296,8 +296,11 @@ def telegram_summary_from_report(report: dict[str, Any]) -> str:
 class LegalCoreClient:
     """Small typed facade around one application-scoped ``AsyncClient``."""
 
-    def __init__(self, http: httpx2.AsyncClient) -> None:
+    def __init__(
+        self, http: httpx2.AsyncClient, *, legal_editor_gateway_key: str | None = None
+    ) -> None:
         self._http = http
+        self._legal_editor_gateway_key = legal_editor_gateway_key
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -308,6 +311,19 @@ class LegalCoreClient:
         if idempotency_key is not None:
             headers["Idempotency-Key"] = str(idempotency_key)
         return headers
+
+    def _editor_headers(self, telegram_user_id: int) -> dict[str, str]:
+        key = self._legal_editor_gateway_key
+        if key is None:
+            raise LegalCoreApiError(
+                503,
+                "LEGAL_EDITOR_WORKSPACE_UNAVAILABLE",
+                "Legal editor workspace is unavailable",
+            )
+        return {
+            "X-Telegram-User-Id": str(telegram_user_id),
+            "X-Legal-Editor-Gateway-Key": key,
+        }
 
     async def _json_request(
         self,
@@ -354,6 +370,30 @@ class LegalCoreClient:
             "/v1/actor",
             telegram_user_id=telegram_user_id,
         )
+
+    async def get_legal_editor_status(self, telegram_user_id: int) -> dict[str, Any]:
+        try:
+            response = await self._http.get(
+                "/v1/legal/editor/status",
+                headers=self._editor_headers(telegram_user_id),
+            )
+        except httpx2.HTTPError as exc:
+            raise LegalCoreApiError(
+                503, "LEGAL_CORE_UNAVAILABLE", "Legal Core unavailable"
+            ) from exc
+        if response.status_code >= 400:
+            raise LegalCoreApiError(
+                response.status_code,
+                "LEGAL_EDITOR_NOT_ALLOWED",
+                "Legal editor access is not allowed",
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response") from exc
+        if not isinstance(payload, dict) or payload.get("isLegalEditor") is not True:
+            raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response")
+        return payload
 
     async def list_clinic_members(self, telegram_user_id: int) -> dict[str, Any]:
         return await self._json_request(

@@ -133,6 +133,15 @@ Hermes/provider boundary and a legal-updater promotion pipeline. It does not ena
 recommendation, risk conclusion, external draft, source approval, LLM connection or payment
 feature. Implementation begins only after its legal/product/security approval record is complete.
 
+## Active slice: platform legal-editor review workspace
+
+`SPEC-legal-review-workspace.md` replaces the owner-only metadata view with a bounded human
+review workflow for an active platform `LEGAL_EDITOR`: candidate list → immutable official
+artifact/fragment inspection → explicit checksum-bound attestations → existing audited approval.
+It does not change sources, approve any version automatically, activate risk/Hermes or expose
+tenant data. The incremental order is contract/authz and stale-identity guard → Telegram review
+workspace → qualified human review of the five candidates → approved-library regression check.
+
 ## Completed slice: durable administrator draft cards
 
 `SPEC-durable-telegram-drafts.md` replaces the gateway-only in-memory draft as the source of
