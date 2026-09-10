@@ -45,12 +45,12 @@ def test_policy_approval_requires_all_human_review_flags() -> None:
         _approval(escalation_rules_reviewed=False)
 
 
-def test_policy_approval_blocks_p0_regression_before_database_access() -> None:
+def test_policy_approval_allows_a_reviewed_nonbaseline_threshold_before_database_access() -> None:
     class UnusedSessionFactory:
         def __call__(self):
             raise AssertionError("P0 regression check must run before database access")
 
-    with pytest.raises(ValueError, match="risk-medium-compensation-below-threshold"):
+    with pytest.raises(AssertionError, match="P0 regression check must run before database access"):
         asyncio.run(
             approve_risk_policy(
                 UnusedSessionFactory(),

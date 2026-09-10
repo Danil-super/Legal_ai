@@ -31,12 +31,19 @@ def test_synthetic_risk_scenarios_lock_deterministic_engine_outcomes() -> None:
         assert actual.external_draft_allowed is scenario.expected_external_draft_allowed
 
 
-def test_p0_synthetic_risk_regressions_reject_incompatible_policy() -> None:
+def test_p0_synthetic_risk_regressions_cover_baseline_policy() -> None:
     assert_p0_synthetic_risk_regressions(
         RiskPolicy(version="dental-risk.v1", high_demand_threshold_kopecks=10_000_000)
     )
 
-    with pytest.raises(ValueError, match="risk-medium-compensation-below-threshold"):
-        assert_p0_synthetic_risk_regressions(
-            RiskPolicy(version="dental-risk.v1", high_demand_threshold_kopecks=9_999_900)
+
+@pytest.mark.parametrize("threshold_kopecks", [5_000_000, 25_000, 1])
+def test_p0_synthetic_risk_regressions_scale_monetary_boundaries_with_policy(
+    threshold_kopecks: int,
+) -> None:
+    assert_p0_synthetic_risk_regressions(
+        RiskPolicy(
+            version="dental-risk.v1",
+            high_demand_threshold_kopecks=threshold_kopecks,
         )
+    )
