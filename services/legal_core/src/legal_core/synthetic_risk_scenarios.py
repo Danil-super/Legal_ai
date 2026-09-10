@@ -46,6 +46,11 @@ _ALLOWED_DEMANDS = {
     "REFUND_DEMAND",
     "REWORK_DEMAND",
 }
+_POLICY_BOUNDARY_SCENARIOS = {
+    "risk-medium-compensation-below-threshold": "below",
+    "risk-high-threshold-demand": "at",
+    "risk-high-combined-triggers": "at",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +201,38 @@ def load_synthetic_risk_scenario_pack() -> SyntheticRiskScenarioPack:
     return SyntheticRiskScenarioPack(policy=policy, scenarios=tuple(scenarios))
 
 
+def _facts_with_policy_boundary(
+    scenario: SyntheticRiskScenario,
+    policy: RiskPolicy,
+) -> dict[FactKey, object]:
+    """Bind only explicitly-marked P0 monetary cases to the candidate policy.
+
+    The checked-in fixture is still evaluated unchanged by ordinary CI at its documented
+    baseline.  Policy approval, however, must prove the same invariant at the proposed
+    threshold rather than accidentally treating the fixture's historical amount as law.
+    """
+
+    boundary = _POLICY_BOUNDARY_SCENARIOS.get(scenario.scenario_id)
+    if boundary is None:
+        return scenario.facts
+
+    facts = dict(scenario.facts)
+    if boundary == "below" and policy.high_demand_threshold_kopecks == 1:
+        # There is no positive kopeck amount below one.  An omitted amount is the
+        # representable no-high-demand boundary case and remains a compensation demand.
+        facts.pop(FactKey.DEMAND_AMOUNT, None)
+        return facts
+
+    demand_amount = facts.get(FactKey.DEMAND_AMOUNT)
+    if not isinstance(demand_amount, dict):
+        raise ValueError("synthetic policy-boundary scenario lacks a demand amount")
+    amount = policy.high_demand_threshold_kopecks
+    if boundary == "below":
+        amount -= 1
+    facts[FactKey.DEMAND_AMOUNT] = {"amountKopecks": amount, "currency": "RUB"}
+    return facts
+
+
 def assert_p0_synthetic_risk_regressions(policy: RiskPolicy) -> None:
     """Fail policy promotion if the approved P0 synthetic outcomes would drift.
 
@@ -209,7 +246,7 @@ def assert_p0_synthetic_risk_regressions(policy: RiskPolicy) -> None:
         if scenario.priority != "P0":
             continue
         actual = evaluate_risk(
-            scenario.facts,
+            _facts_with_policy_boundary(scenario, policy),
             policy=policy,
             evidence_verified=scenario.evidence_verified,
         )
