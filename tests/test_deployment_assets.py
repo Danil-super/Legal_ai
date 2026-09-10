@@ -8,7 +8,7 @@ DEPLOY = ROOT / "ops" / "deploy"
 
 
 def test_deployment_scripts_are_valid_bash() -> None:
-    for name in ("deploy-gateway.sh", "deploy-commit.sh"):
+    for name in ("bootstrap-server.sh", "deploy-gateway.sh", "deploy-commit.sh"):
         script = DEPLOY / name
         result = run(["bash", "-n", str(script)], capture_output=True, text=True, check=False)
         assert result.returncode == 0, result.stderr
@@ -32,6 +32,31 @@ def test_production_known_hosts_pins_the_vps_ed25519_key() -> None:
         check=False,
     )
 
+    assert result.returncode == 0, result.stderr
+    assert "ssh-ed25519" in result.stdout
+
+
+def test_private_repository_fetch_uses_a_dedicated_read_only_deploy_key() -> None:
+    deploy_script = (DEPLOY / "deploy-commit.sh").read_text(encoding="utf-8")
+    bootstrap_script = (DEPLOY / "bootstrap-server.sh").read_text(encoding="utf-8")
+    github_known_hosts = DEPLOY / "github_known_hosts"
+
+    assert 'readonly repository_url="git@github.com:Danil-super/Legal_ai.git"' in deploy_script
+    assert (
+        'readonly github_deploy_key="/etc/dental-legal-ai/github-deploy-readonly"'
+        in deploy_script
+    )
+    assert "StrictHostKeyChecking=yes" in deploy_script
+    assert 'GIT_SSH_COMMAND="$git_ssh_command" git -C "$repository_dir" fetch' in deploy_script
+    assert 'install -m 0600 "$github_deploy_key_path" "$github_deploy_key"' in bootstrap_script
+    assert 'GIT_SSH_COMMAND="$git_ssh_command" git clone "$repository_url"' in bootstrap_script
+
+    result = run(
+        ["ssh-keygen", "-F", "github.com", "-f", str(github_known_hosts)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert result.returncode == 0, result.stderr
     assert "ssh-ed25519" in result.stdout
 

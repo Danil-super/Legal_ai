@@ -7,6 +7,8 @@ This directory configures the base (non-AI) deployment on `84.201.153.147`.
 - GitHub `main` is the only application source. The VPS validates the requested revision is in
   `origin/main` before deployment.
 - GitHub holds only the `production` environment secret `DEPLOY_SSH_PRIVATE_KEY`.
+- The VPS holds a separate root-owned, read-only GitHub deploy key. It can fetch this repository
+  but cannot push or access other repositories.
 - `/etc/dental-legal-ai/app.env` is root-owned and contains all runtime secrets. It is never
   copied to GitHub, CI artifacts or logs.
 - The Telegram VLESS configuration is stored only in the root-owned
@@ -18,13 +20,17 @@ This directory configures the base (non-AI) deployment on `84.201.153.147`.
 
 ## Bootstrap
 
-From a reviewed checkout, generate a new Ed25519 key dedicated to this server, upload its private
-half as the GitHub `production` environment secret `DEPLOY_SSH_PRIVATE_KEY`, and run the bootstrap
-script as root with its public half. Do not reuse administrator or other-server keys.
+From a reviewed checkout, generate two separate Ed25519 keys: one dedicated to GitHub Actions
+deployment and one read-only key for the VPS to fetch this private repository. Add the latter's
+public half in **Repository settings → Deploy keys** without write access. Upload the former's
+private half as the GitHub `production` environment secret `DEPLOY_SSH_PRIVATE_KEY`, then run the
+bootstrap script as root with its public half and the local path to the VPS fetch-key private half.
+Do not reuse administrator or other-server keys.
 
 The script installs Docker using Docker's official APT repository, installs the restricted deploy
-path, clones the public GitHub repository to `/srv/dental-legal-ai/repository`, and creates the
-root-owned environment template. It does not start the bot and does not alter firewall rules.
+path, pins GitHub's SSH host keys, clones the private GitHub repository to
+`/srv/dental-legal-ai/repository`, and creates the root-owned environment template. It does not
+start the bot and does not alter firewall rules.
 
 Before enabling deployment, replace every placeholder in `/etc/dental-legal-ai/app.env` with
 distinct generated passwords and the genuine Telegram token/owner identifiers. Keep

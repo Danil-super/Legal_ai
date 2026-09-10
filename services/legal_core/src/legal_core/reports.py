@@ -467,7 +467,7 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
         _canonical_json(report.model_dump(mode="json", by_alias=True))
     ).hexdigest()[:32].encode()
     return re.sub(
-        rb"(/ID\s*\[<)[0-9a-f]{32}(><)[0-9a-f]{32}(>\])",
+        rb"(/ID\s*\[<)[0-9A-Fa-f]{32}(><)[0-9A-Fa-f]{32}(>\])",
         lambda match: (
             match.group(1)
             + document_id
