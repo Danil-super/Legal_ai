@@ -3,9 +3,13 @@
 # It is root-owned and intentionally updated only through an explicit server-administration step.
 set -euo pipefail
 
+readonly repository_url="git@github.com:Danil-super/Legal_ai.git"
 readonly repository_dir="/srv/dental-legal-ai/repository"
 readonly env_file="/etc/dental-legal-ai/app.env"
 readonly state_dir="/var/lib/dental-legal-ai"
+readonly github_deploy_key="/etc/dental-legal-ai/github-deploy-readonly"
+readonly github_known_hosts="/etc/dental-legal-ai/github_known_hosts"
+readonly git_ssh_command="ssh -i ${github_deploy_key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${github_known_hosts}"
 readonly project_name="dental-legal-ai"
 readonly readiness_url="http://127.0.0.1:8000/health/ready"
 readonly lock_file="/run/lock/dental-legal-ai-deploy.lock"
@@ -25,6 +29,8 @@ readonly revision="$2"
 
 test -f "$env_file"
 test -d "$repository_dir/.git"
+test -r "$github_deploy_key"
+test -r "$github_known_hosts"
 install -d -m 0750 "$state_dir"
 install -d -m 0755 "$(dirname "$lock_file")"
 
@@ -34,12 +40,12 @@ if ! flock -n 9; then
   exit 75
 fi
 
-if [[ "$(git -C "$repository_dir" config --get remote.origin.url)" != "https://github.com/Danil-super/Legal_ai.git" ]]; then
+if [[ "$(git -C "$repository_dir" config --get remote.origin.url)" != "$repository_url" ]]; then
   echo "Unexpected deployment repository origin." >&2
   exit 65
 fi
 
-git -C "$repository_dir" fetch --prune origin "+refs/heads/main:refs/remotes/origin/main"
+GIT_SSH_COMMAND="$git_ssh_command" git -C "$repository_dir" fetch --prune origin "+refs/heads/main:refs/remotes/origin/main"
 if ! git -C "$repository_dir" merge-base --is-ancestor "$revision" origin/main; then
   echo "Requested revision is not reachable from origin/main." >&2
   exit 65

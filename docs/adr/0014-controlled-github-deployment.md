@@ -14,8 +14,9 @@ bound to loopback only.
 
 ## Decision
 
-- GitHub Actions runs quality, integration, dependency-audit and CodeQL gates on pull requests
-  and `main`.
+- GitHub Actions runs quality, integration and dependency-audit gates on pull requests and `main`.
+  CodeQL is an additional gate when GitHub Code Security is enabled for the repository; a private
+  personal repository cannot upload CodeQL results without that GitHub service.
 - Only a successful push to `main` can run the production deployment job. It uses GitHub's
   `production` environment and an SSH private key stored as an environment secret.
 - The server hosts a dedicated `deploy` account whose key is restricted to a forced command.
@@ -27,6 +28,9 @@ bound to loopback only.
   implicit database downgrade.
 - `/etc/dental-legal-ai/app.env` is owned by root and contains runtime configuration. GitHub
   receives only the deploy SSH key, never application secrets.
+- The VPS fetches the private repository through a separate root-owned, read-only GitHub deploy
+  key. Its public half is attached to this repository only; its private half remains in
+  `/etc/dental-legal-ai/github-deploy-readonly`. GitHub's SSH host keys are pinned independently.
 - `DEPLOY_ENABLED` is a protected GitHub environment variable and defaults to `false` until the
   platform owner configures the genuine Telegram token and identifiers on the host.
 

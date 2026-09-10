@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# Run once as root from a reviewed checkout: bootstrap-server.sh '<deploy SSH public key>'.
+# Run once as root from a reviewed checkout:
+# bootstrap-server.sh '<GitHub Actions deploy public key>' '<read-only GitHub deploy private key path>'.
 # It installs Docker from Docker's official APT repository and leaves the application disabled.
 set -euo pipefail
 
-readonly repository_url="https://github.com/Danil-super/Legal_ai.git"
+readonly repository_url="git@github.com:Danil-super/Legal_ai.git"
 readonly repository_dir="/srv/dental-legal-ai/repository"
 readonly deploy_user="deploy"
 readonly deploy_key="${1:-}"
+readonly github_deploy_key_path="${2:-}"
 readonly support_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly github_deploy_key="/etc/dental-legal-ai/github-deploy-readonly"
+readonly github_known_hosts="/etc/dental-legal-ai/github_known_hosts"
+readonly git_ssh_command="ssh -i ${github_deploy_key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${github_known_hosts}"
 
-if [[ "${EUID}" -ne 0 || "$#" -ne 1 || ! "$deploy_key" =~ ^ssh-ed25519[[:space:]] ]]; then
-  echo "Run as root with exactly one Ed25519 public deployment key." >&2
+if [[ "${EUID}" -ne 0 || "$#" -ne 2 || ! "$deploy_key" =~ ^ssh-ed25519[[:space:]] || ! -f "$github_deploy_key_path" ]]; then
+  echo "Run as root with a GitHub Actions Ed25519 public key and a read-only GitHub deploy private key path." >&2
   exit 64
 fi
 
@@ -45,12 +50,16 @@ printf 'restrict,command="/usr/local/sbin/dental-legal-ai-deploy-gateway" %s\n' 
 chown "$deploy_user:$deploy_user" /home/$deploy_user/.ssh/authorized_keys
 chmod 0600 /home/$deploy_user/.ssh/authorized_keys
 
+install -d -m 0750 /etc/dental-legal-ai
+install -m 0600 "$github_deploy_key_path" "$github_deploy_key"
+install -m 0644 "$support_dir/github_known_hosts" "$github_known_hosts"
+
 if [[ ! -d "$repository_dir/.git" ]]; then
   install -d -m 0755 "$(dirname "$repository_dir")"
-  git clone "$repository_url" "$repository_dir"
+  GIT_SSH_COMMAND="$git_ssh_command" git clone "$repository_url" "$repository_dir"
 fi
 git -C "$repository_dir" remote set-url origin "$repository_url"
-git -C "$repository_dir" fetch --prune origin "+refs/heads/main:refs/remotes/origin/main"
+GIT_SSH_COMMAND="$git_ssh_command" git -C "$repository_dir" fetch --prune origin "+refs/heads/main:refs/remotes/origin/main"
 git -C "$repository_dir" checkout --detach --force origin/main
 
 install -m 0755 "$support_dir/deploy-gateway.sh" /usr/local/sbin/dental-legal-ai-deploy-gateway
