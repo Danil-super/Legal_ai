@@ -150,7 +150,11 @@ def test_editor_workspace_rejects_legacy_candidate_without_a_false_blocked_event
 
             async with factory() as session:
                 version = await session.get(LegalVersion, version_id)
+                reviewer = await session.scalar(
+                    select(User).where(User.telegram_user_id == reviewer_telegram_id)
+                )
                 assert version is not None
+                assert reviewer is not None
                 attestation = ApprovalAttestation(
                     reviewer_telegram_user_id=reviewer_telegram_id,
                     version_id=version_id,
@@ -178,7 +182,8 @@ def test_editor_workspace_rejects_legacy_candidate_without_a_false_blocked_event
             async with factory() as session:
                 attempts = await session.scalar(
                     select(func.count(LegalApprovalEvent.id)).where(
-                        LegalApprovalEvent.legal_version_id == version_id
+                        LegalApprovalEvent.legal_version_id == version_id,
+                        LegalApprovalEvent.actor_user_id == reviewer.id,
                     )
                 )
                 assert attempts == 0
