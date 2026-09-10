@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -103,6 +104,15 @@ def load_watch_manifest(path: Path) -> WatchManifest:
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError("watch manifest is not valid UTF-8 JSON") from exc
     return WatchManifest.model_validate(payload)
+
+
+def publication_source_from_environment(
+    environment: Mapping[str, str] | None = None,
+) -> PravoPublicationClient:
+    """Bind the network-facing watcher to its explicitly allowlisted internal proxy."""
+
+    source = os.environ if environment is None else environment
+    return PravoPublicationClient(proxy_url=source.get("LEGAL_WATCH_PROXY_URL", ""))
 
 
 def _title_matches(rule: WatchRule, title: str) -> bool:
@@ -258,7 +268,7 @@ async def _run_cli() -> None:
 
     manifest = load_watch_manifest(args.rules)
     receipts = await stage_official_publications(
-        PravoPublicationClient(),
+        publication_source_from_environment(),
         manifest=manifest,
         publication_from=args.publication_from,
         publication_to=args.publication_to,

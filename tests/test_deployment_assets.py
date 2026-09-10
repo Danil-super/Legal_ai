@@ -139,3 +139,19 @@ def test_legal_watch_services_pass_required_arguments_to_their_modules() -> None
     assert "legal watcher run failed; retrying after delay" in watcher
     assert "if python -m legal_core.legal_watch_importer " in importer
     assert "legal watch import run failed; retrying after delay" in importer
+
+
+def test_production_legal_watcher_uses_only_the_internal_vpn_proxy() -> None:
+    base_compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    production_compose = (
+        ROOT / "ops" / "deploy" / "docker-compose.production.yml"
+    ).read_text(encoding="utf-8")
+    base_watcher = base_compose.split("  legal-watcher:\n", maxsplit=1)[1].split(
+        "\n  legal-watch-importer:", maxsplit=1
+    )[0]
+    watcher = production_compose.split("  legal-watcher:\n", maxsplit=1)[1].split(
+        "\n  legal-watch-importer:", maxsplit=1
+    )[0]
+
+    assert "LEGAL_WATCH_PROXY_URL: http://telegram-vpn-proxy:8080" in watcher
+    assert "networks: [edge]" in base_watcher

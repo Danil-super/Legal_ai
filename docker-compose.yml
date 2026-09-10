@@ -146,6 +146,7 @@ services:
       dockerfile: services/legal_core/watcher.Dockerfile
     environment:
       LEGAL_WATCH_INTERVAL_SECONDS: ${LEGAL_WATCH_INTERVAL_SECONDS:-21600}
+      LEGAL_WATCH_PROXY_URL: ${LEGAL_WATCH_PROXY_URL:-}
     command:
       - sh
       - -c

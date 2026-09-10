@@ -26,6 +26,8 @@ services:
   legal-watcher:
     profiles: !reset []
     mem_limit: 128m
+    environment:
+      LEGAL_WATCH_PROXY_URL: http://telegram-vpn-proxy:8080
 
   legal-watch-importer:
     profiles: !reset []

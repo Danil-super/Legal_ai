@@ -8,6 +8,7 @@ from legal_core.legal_watcher import (
     PORTAL_PAGE_SIZE,
     WatchManifest,
     load_watch_manifest,
+    publication_source_from_environment,
     stage_official_publications,
 )
 from legal_core.pravo_source import PravoDocumentHit, PravoPdfArtifact
@@ -84,6 +85,28 @@ class FakeSource:
             content=self.content,
             sha256=hashlib.sha256(self.content).hexdigest(),
         )
+
+
+def test_watcher_binds_only_its_configured_proxy_to_the_publication_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, str | None] = {}
+
+    class SentinelSource:
+        pass
+
+    def build_source(*, proxy_url: str | None = None) -> SentinelSource:
+        captured["proxy_url"] = proxy_url
+        return SentinelSource()
+
+    monkeypatch.setattr("legal_core.legal_watcher.PravoPublicationClient", build_source)
+
+    source = publication_source_from_environment(
+        {"LEGAL_WATCH_PROXY_URL": "http://telegram-vpn-proxy:8080"}
+    )
+
+    assert isinstance(source, SentinelSource)
+    assert captured == {"proxy_url": "http://telegram-vpn-proxy:8080"}
 
 
 def test_watcher_deduplicates_rules_and_stages_immutable_review_candidate(tmp_path: Path) -> None:

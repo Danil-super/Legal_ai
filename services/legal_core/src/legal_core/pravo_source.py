@@ -20,6 +20,8 @@ import httpx
 PRAVO_HOST = "publication.pravo.gov.ru"
 PRAVO_BASE_URL = f"https://{PRAVO_HOST}"
 MAX_PDF_BYTES = 50 * 1024 * 1024
+_INTERNAL_WATCH_PROXY_HOST = "telegram-vpn-proxy"
+_INTERNAL_WATCH_PROXY_PORT = 8080
 _EO_NUMBER = re.compile(r"^[0-9]{16,24}$")
 QueryParamValue = str | int | float | bool | None
 
@@ -52,11 +54,38 @@ class PravoPublicationClient:
         *,
         client: httpx.AsyncClient | None = None,
         timeout_seconds: float = 30.0,
+        proxy_url: str | None = None,
     ) -> None:
         if not 1 <= timeout_seconds <= 120:
             raise ValueError("source timeout must be between 1 and 120 seconds")
         self._client = client
         self._timeout_seconds = timeout_seconds
+        self._proxy_url = self._validated_internal_proxy(proxy_url)
+
+    @staticmethod
+    def _validated_internal_proxy(value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        parsed = urlparse(value)
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("legal watch proxy URL has an invalid port") from exc
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname != _INTERNAL_WATCH_PROXY_HOST
+            or port != _INTERNAL_WATCH_PROXY_PORT
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "legal watch proxy must be the internal http://telegram-vpn-proxy:8080 endpoint"
+            )
+        return f"http://{_INTERNAL_WATCH_PROXY_HOST}:{_INTERNAL_WATCH_PROXY_PORT}"
 
     @staticmethod
     def _validate_eo_number(value: object) -> str:
@@ -108,6 +137,7 @@ class PravoPublicationClient:
             timeout=self._timeout_seconds,
             follow_redirects=False,
             trust_env=False,
+            proxy=self._proxy_url,
             headers={
                 "User-Agent": "DentalLegalAI/0.1 legal-source-watcher",
                 "Accept": "application/json,application/pdf;q=0.9,*/*;q=0.1",
