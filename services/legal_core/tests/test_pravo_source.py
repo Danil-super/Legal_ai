@@ -49,6 +49,56 @@ def test_discover_validates_and_maps_publication_items() -> None:
     asyncio.run(scenario())
 
 
+def test_source_routes_official_requests_only_through_the_configured_internal_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class SpyClient:
+        async def get(self, url: str, *, params: dict[str, object]) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"items": []},
+                request=httpx.Request("GET", url, params=params),
+            )
+
+        async def aclose(self) -> None:
+            return None
+
+    def build_client(**kwargs: object) -> SpyClient:
+        captured.update(kwargs)
+        return SpyClient()
+
+    monkeypatch.setattr(httpx, "AsyncClient", build_client)
+    async def scenario() -> None:
+        source = PravoPublicationClient(proxy_url="http://telegram-vpn-proxy:8080")
+        await source.discover(
+            publication_from=date(2026, 8, 31),
+            publication_to=date(2026, 8, 31),
+        )
+
+    asyncio.run(scenario())
+
+    assert captured["proxy"] == "http://telegram-vpn-proxy:8080"
+    assert captured["trust_env"] is False
+
+
+@pytest.mark.parametrize(
+    "proxy_url",
+    [
+        "https://telegram-vpn-proxy:8080",
+        "http://telegram-vpn-proxy:8081",
+        "http://untrusted-proxy:8080",
+        "http://telegram-vpn-proxy:8080/path",
+        "http://username:password@telegram-vpn-proxy:8080",
+    ],
+)
+def test_source_rejects_proxy_endpoints_outside_the_internal_allowlist(proxy_url: str) -> None:
+    with pytest.raises(ValueError, match="proxy"):
+        PravoPublicationClient(proxy_url=proxy_url)
+
+
 def test_source_rejects_redirects_instead_of_following_them() -> None:
     async def scenario() -> None:
         async def handler(request: httpx.Request) -> httpx.Response:

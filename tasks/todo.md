@@ -211,6 +211,11 @@ approved-only retrieval, applicable-date resolution and claim-to-evidence verifi
 
 ## Task 4.1: Deterministic legal updater and comparison review queue
 
+**Progress note (2026-09-10):**
+- [x] Production watcher sends requests to `publication.pravo.gov.ru` only through the existing
+  internal VPN proxy; an unset, malformed or non-allowlisted proxy fails closed and cannot divert
+  official-law traffic to an arbitrary endpoint.
+
 **Acceptance criteria:**
 - [ ] Versioned source allowlist, immutable fetch, SHA-256 idempotency, parse and structural diff
   produce `REVIEW_REQUIRED` candidates only.
