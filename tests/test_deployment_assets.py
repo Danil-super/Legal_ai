@@ -147,6 +147,7 @@ def test_hermes_legal_profile_uses_the_explicit_custom_provider_contract() -> No
     assert (
         "model:\n"
         "  provider: custom\n"
+        "  default: ${HERMES_MODEL}\n"
         "  base_url: ${OPENAI_BASE_URL}\n"
         "  api_key: ${OPENAI_API_KEY}"
     ) in profile
