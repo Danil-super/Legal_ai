@@ -139,6 +139,20 @@ def test_tool_free_hermes_profiles_bypass_the_upstream_s6_entrypoint() -> None:
         assert "cap_drop:\n      - ALL" in service
 
 
+def test_hermes_legal_profile_uses_the_explicit_custom_provider_contract() -> None:
+    profile = (ROOT / "ops" / "hermes" / "legal-profile.config.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert (
+        "model:\n"
+        "  provider: custom\n"
+        "  model: ${HERMES_MODEL}\n"
+        "  base_url: ${OPENAI_BASE_URL}\n"
+        "  api_key: ${OPENAI_API_KEY}"
+    ) in profile
+
+
 def test_legal_watch_services_pass_required_arguments_to_their_modules() -> None:
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 

@@ -1,10 +1,17 @@
 # Tool-free Hermes API-server baseline for Dental Legal AI.
-# Provider/model values are intentionally not committed here; configure them in the
-# deployed profile after reviewing the provider's data-processing terms.
+# The provider route is explicit to prevent Hermes from treating an OpenAI-compatible
+# credential as an OpenRouter credential. Concrete values are resolved from the
+# deployment environment; neither endpoint credential nor model choice is committed.
 #
 # IMPORTANT: this file is accepted only together with ops/hermes/assert_tool_free.py.
 # The preflight resolves Hermes' actual builtin/plugin registries and aborts startup
 # if any model tool schema survives this configuration.
+
+model:
+  provider: custom
+  model: ${HERMES_MODEL}
+  base_url: ${OPENAI_BASE_URL}
+  api_key: ${OPENAI_API_KEY}
 
 platform_toolsets:
   api_server: []
