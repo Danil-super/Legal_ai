@@ -147,10 +147,10 @@ def test_hermes_legal_profile_uses_the_explicit_custom_provider_contract() -> No
     assert (
         "model:\n"
         "  provider: custom\n"
-        "  model: ${HERMES_MODEL}\n"
         "  base_url: ${OPENAI_BASE_URL}\n"
         "  api_key: ${OPENAI_API_KEY}"
     ) in profile
+    assert "  model: ${HERMES_MODEL}" not in profile
 
 
 def test_legal_watch_services_pass_required_arguments_to_their_modules() -> None:
