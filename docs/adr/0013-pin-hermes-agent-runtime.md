@@ -61,6 +61,11 @@ its virtual-environment activation, so the guarded command MUST invoke the pinne
 `/opt/hermes/.venv/bin/python` and `/opt/hermes/.venv/bin/hermes` launchers. This does not add a
 tool, plugin, or new execution capability.
 
+For an approved OpenAI-compatible provider, the legal profile MUST declare `model.provider: custom`
+and reference the endpoint, model and credential through environment references. This prevents
+provider auto-detection from routing the credential through a different provider; no provider URL,
+model identifier or API key is stored in the repository.
+
 Researcher and reviewer MUST use separate profile state and separate API credentials. They may use
 the same underlying LLM provider if required, but the reviewer endpoint/profile identity must remain
 independent from the researcher identity. Profile state, memory and user-profile features are
