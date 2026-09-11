@@ -45,10 +45,15 @@ def corpus_fragments_sha256(fragments: list[CorpusFragment]) -> str:
 class CorpusManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    manifest_version: Literal["dental-legal-corpus.v1", "dental-legal-corpus.v2"]
+    manifest_version: Literal[
+        "dental-legal-corpus.v1",
+        "dental-legal-corpus.v2",
+        "dental-legal-corpus.v3",
+    ]
     source_key: str
     source_revision: int = Field(default=1, ge=1)
     source_name: str
+    source_trust_level: Literal["PRIMARY", "VERIFIED_COPY"] = "PRIMARY"
     source_base_url: str | None = None
     source_url: str
     source_external_id: str
@@ -64,7 +69,11 @@ class CorpusManifest(BaseModel):
     effective_from: date
     effective_to: date | None
     approval_state: Literal["REVIEW_REQUIRED"]
-    artifact_kind: Literal["NORMALIZED_EXCERPT", "OFFICIAL_RAW"] = "NORMALIZED_EXCERPT"
+    artifact_kind: Literal[
+        "NORMALIZED_EXCERPT",
+        "OFFICIAL_RAW",
+        "THIRD_PARTY_VERIFIED_COPY",
+    ] = "NORMALIZED_EXCERPT"
     artifact_mime_type: str
     artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     artifact_text: str | None = Field(default=None, min_length=100)
@@ -96,10 +105,38 @@ class CorpusManifest(BaseModel):
             if self.normalization_scope != "SELECTED_EXCERPT":
                 raise ValueError("v1 manifests must declare SELECTED_EXCERPT scope")
         else:
-            if self.artifact_kind != "OFFICIAL_RAW":
-                raise ValueError("v2 manifests must identify an OFFICIAL_RAW artifact")
+            expected_artifact_kind = (
+                "OFFICIAL_RAW"
+                if self.manifest_version == "dental-legal-corpus.v2"
+                else "THIRD_PARTY_VERIFIED_COPY"
+            )
+            expected_trust_level = (
+                "PRIMARY"
+                if self.manifest_version == "dental-legal-corpus.v2"
+                else "VERIFIED_COPY"
+            )
+            if self.artifact_kind != expected_artifact_kind:
+                raise ValueError(
+                    f"{self.manifest_version} manifests must identify a "
+                    f"{expected_artifact_kind} artifact"
+                )
+            if self.source_trust_level != expected_trust_level:
+                raise ValueError(
+                    f"{self.manifest_version} manifests must declare "
+                    f"{expected_trust_level} source trust"
+                )
+            if self.manifest_version == "dental-legal-corpus.v3" and (
+                self.source_key != "consultant-plus"
+                or parsed.hostname != "www.consultant.ru"
+                or parsed_base.hostname != "www.consultant.ru"
+                or self.allowed_hosts != ["www.consultant.ru"]
+            ):
+                raise ValueError(
+                    "v3 verified-copy manifests are restricted to the configured "
+                    "ConsultantPlus host"
+                )
             if self.artifact_path is None or self.normalized_text is None:
-                raise ValueError("v2 manifests require artifact_path and normalized_text")
+                raise ValueError("v2/v3 manifests require artifact_path and normalized_text")
             if self.artifact_text is not None:
                 raise ValueError("v2 manifests cannot embed artifact_text")
             if (
@@ -111,10 +148,10 @@ class CorpusManifest(BaseModel):
                 or self.normalization_scope != "FULL_DOCUMENT"
             ):
                 raise ValueError(
-                    "v2 manifests require complete retrieval and normalization metadata"
+                    "v2/v3 manifests require complete retrieval and normalization metadata"
                 )
             if self.artifact_mime_type == "application/pdf" and self.artifact_page_count is None:
-                raise ValueError("v2 PDF manifests require artifact_page_count")
+                raise ValueError("v2/v3 PDF manifests require artifact_page_count")
             if normalized_text_sha256(self.normalized_text) != self.normalized_sha256:
                 raise ValueError("normalized text SHA-256 does not match the manifest")
             if corpus_fragments_sha256(self.fragments) != self.fragments_sha256:
@@ -169,11 +206,11 @@ def load_artifact(manifest: CorpusManifest, manifest_path: Path) -> bytes:
         raise ValueError("artifact SHA-256 does not match the manifest")
     if manifest.artifact_size_bytes is not None and len(raw_bytes) != manifest.artifact_size_bytes:
         raise ValueError("artifact byte count does not match the manifest")
-    if manifest.artifact_kind == "OFFICIAL_RAW":
+    if manifest.artifact_kind in {"OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"}:
         if manifest.artifact_mime_type == "application/pdf" and not raw_bytes.startswith(b"%PDF-"):
-            raise ValueError("official PDF artifact has an invalid signature")
+            raise ValueError("legal PDF artifact has an invalid signature")
         if not raw_bytes:
-            raise ValueError("official raw artifact is empty")
+            raise ValueError("legal raw artifact is empty")
     return raw_bytes
 
 
@@ -192,10 +229,12 @@ def load_manifest(path: Path) -> CorpusManifest:
             raise ValueError("selection base manifest does not exist")
         base = load_manifest(base_path)
         if (
-            base.manifest_version != "dental-legal-corpus.v2"
-            or base.artifact_kind != "OFFICIAL_RAW"
+            base.manifest_version not in {"dental-legal-corpus.v2", "dental-legal-corpus.v3"}
+            or base.artifact_kind not in {"OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"}
         ):
-            raise ValueError("selection base manifest must be an OFFICIAL_RAW v2 manifest")
+            raise ValueError(
+                "selection base manifest must be a complete approved-artifact candidate"
+            )
         selected_payload = base.model_dump()
         selected_payload.update(
             {
@@ -231,7 +270,7 @@ async def _source(session: AsyncSession, manifest: CorpusManifest) -> LegalSourc
             manifest.source_name,
             source_base_url,
             manifest.allowed_hosts,
-            "PRIMARY",
+            manifest.source_trust_level,
         )
         if identity != expected:
             raise ValueError("existing legal source metadata conflicts with the manifest")
@@ -242,7 +281,7 @@ async def _source(session: AsyncSession, manifest: CorpusManifest) -> LegalSourc
         display_name=manifest.source_name,
         base_url=source_base_url,
         allowed_hosts=manifest.allowed_hosts,
-        trust_level="PRIMARY",
+        trust_level=manifest.source_trust_level,
         # Loader never approves a source. Legal-editor review is a separate audited action.
         status="DRAFT",
     )

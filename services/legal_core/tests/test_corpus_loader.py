@@ -110,6 +110,71 @@ def test_v2_manifest_reads_exact_official_raw_bytes(tmp_path: Path) -> None:
     assert manifest.source_base_url == "https://example.gov.ru/"
 
 
+def test_v3_manifest_accepts_a_checksum_locked_consultant_copy_only_from_its_declared_host(
+    tmp_path: Path,
+) -> None:
+    raw = b"%PDF-1.7\nverified third-party copy\n%%EOF\n"
+    normalized = "Полный нормализованный текст нормативного документа для проверки."
+    fragment = CorpusFragment(
+        ordinal=1,
+        article="13",
+        part=None,
+        point=None,
+        heading="Проверочный фрагмент",
+        structural_path="Статья 13",
+        text="Полный нормализованный текст нормативного документа для проверки.",
+    )
+    artifact = tmp_path / "consultant-copy.pdf"
+    artifact.write_bytes(raw)
+    manifest_path = tmp_path / "consultant-manifest.json"
+    payload = {
+        "manifest_version": "dental-legal-corpus.v3",
+        "source_key": "consultant-plus",
+        "source_name": "КонсультантПлюс",
+        "source_trust_level": "VERIFIED_COPY",
+        "source_base_url": "https://www.consultant.ru/",
+        "source_url": "https://www.consultant.ru/document/cons_doc_LAW_121895/",
+        "source_external_id": "cons_doc_LAW_121895",
+        "allowed_hosts": ["www.consultant.ru"],
+        "document_key": "ru-federal-law-323-fz",
+        "document_type": "FEDERAL_LAW",
+        "title": "Тестовый федеральный закон",
+        "issuer": "Российская Федерация",
+        "official_number": "323-ФЗ",
+        "adoption_date": "2011-11-21",
+        "publication_date": "2011-11-21",
+        "version_date": "2026-08-04",
+        "effective_from": "2026-08-04",
+        "effective_to": None,
+        "approval_state": "REVIEW_REQUIRED",
+        "artifact_kind": "THIRD_PARTY_VERIFIED_COPY",
+        "artifact_mime_type": "application/pdf",
+        "artifact_sha256": hashlib.sha256(raw).hexdigest(),
+        "artifact_path": artifact.name,
+        "artifact_retrieved_at": "2026-09-11T12:00:00Z",
+        "artifact_size_bytes": len(raw),
+        "artifact_page_count": 1,
+        "normalized_text": normalized,
+        "normalized_sha256": normalized_text_sha256(normalized),
+        "fragments_sha256": corpus_fragments_sha256([fragment]),
+        "normalization_scope": "FULL_DOCUMENT",
+        "parser_version": "pdftotext-nfkc.v1",
+        "fragments": [fragment.model_dump(mode="json")],
+    }
+    manifest_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    manifest = load_manifest(manifest_path)
+
+    assert manifest.artifact_kind == "THIRD_PARTY_VERIFIED_COPY"
+    assert manifest.source_trust_level == "VERIFIED_COPY"
+    assert load_artifact(manifest, manifest_path) == raw
+
+    payload["source_url"] = "https://example.gov.ru/document/1"
+    manifest_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(ValueError, match="source URL must be HTTPS"):
+        load_manifest(manifest_path)
+
+
 def test_v2_manifest_rejects_artifact_path_outside_manifest_directory(tmp_path: Path) -> None:
     outside = tmp_path.parent / "outside.pdf"
     outside.write_bytes(b"%PDF-1.7\nnot trusted by path\n%%EOF")
