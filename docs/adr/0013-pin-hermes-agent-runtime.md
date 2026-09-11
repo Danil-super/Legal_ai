@@ -63,9 +63,11 @@ tool, plugin, or new execution capability.
 
 For an approved OpenAI-compatible provider, the legal profile MUST declare `model.provider: custom`
 and reference the endpoint and credential through environment references. The model is supplied by
-the per-profile `HERMES_MODEL` environment variable through the supported `model.default` field.
-This prevents provider auto-detection from routing the credential through a different provider; no
-provider URL, model identifier or API key is stored in the repository.
+the per-profile `HERMES_MODEL` environment variable. Before preflight, the pinned renderer writes
+only that validated model identifier to the profile's private volume at `model.default`; it leaves
+the endpoint and credential as environment references. This prevents provider auto-detection from
+routing the credential through a different provider; no provider URL, model identifier or API key
+is stored in the repository, and the rendered profile contains no credential.
 
 Researcher and reviewer MUST use separate profile state and separate API credentials. They may use
 the same underlying LLM provider if required, but the reviewer endpoint/profile identity must remain
