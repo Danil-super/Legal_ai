@@ -9,6 +9,7 @@
 
 model:
   provider: custom
+  default: ${HERMES_MODEL}
   base_url: ${OPENAI_BASE_URL}
   api_key: ${OPENAI_API_KEY}
 
