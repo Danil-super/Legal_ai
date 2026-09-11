@@ -233,6 +233,7 @@ def create_legal_router(
             select(
                 LegalVersion.id.label("version_id"),
                 LegalVersion.approval_state.label("approval_state"),
+                LegalVersion.effective_to.label("effective_to"),
                 func.row_number()
                 .over(
                     partition_by=LegalVersion.document_id,
@@ -240,17 +241,15 @@ def create_legal_router(
                 )
                 .label("document_rank"),
             )
-            .where(
-                or_(
-                    LegalVersion.effective_to.is_(None),
-                    LegalVersion.effective_to > date.today(),
-                )
-            )
             .subquery()
         )
         queue_filter = (
             current_queue_versions.c.document_rank == 1,
             current_queue_versions.c.approval_state == "REVIEW_REQUIRED",
+            or_(
+                current_queue_versions.c.effective_to.is_(None),
+                current_queue_versions.c.effective_to > date.today(),
+            ),
         )
         total_items = int(
             await session.scalar(

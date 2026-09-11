@@ -328,6 +328,24 @@ def test_editor_queue_shows_only_the_latest_unexpired_revision_of_each_document(
             effective_to="2001-02-01",
         )
     )
+    superseded_document_key = f"editor-api-document-{uuid4().hex}"
+    prior_revision = _ingest(
+        _write_manifest(
+            tmp_path,
+            document_key=superseded_document_key,
+            fragment_text="Прежняя ревизия, не подлежащая возврату в очередь.",
+            effective_to="2999-02-01",
+        )
+    )
+    expired_latest_revision = _ingest(
+        _write_manifest(
+            tmp_path,
+            document_key=superseded_document_key,
+            fragment_text="Последняя, но уже истекшая ревизия.",
+            effective_from="2000-02-01",
+            effective_to="2001-02-01",
+        )
+    )
 
     with _client() as client:
         queue = client.get(
@@ -342,3 +360,5 @@ def test_editor_queue_shows_only_the_latest_unexpired_revision_of_each_document(
     assert str(latest_revision) in shown_version_ids
     assert str(first_revision) not in shown_version_ids
     assert str(expired_document) not in shown_version_ids
+    assert str(prior_revision) not in shown_version_ids
+    assert str(expired_latest_revision) not in shown_version_ids
