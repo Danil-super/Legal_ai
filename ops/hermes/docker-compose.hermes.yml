@@ -11,6 +11,7 @@ services:
         exec hermes gateway run --no-supervise
     environment:
       HERMES_HOME: /opt/data
+      PYTHONPATH: /opt/hermes
       HERMES_MODEL: ${HERMES_RESEARCHER_LLM_MODEL:?Set HERMES_RESEARCHER_LLM_MODEL}
       OPENAI_BASE_URL: ${HERMES_LLM_BASE_URL:?Set HERMES_LLM_BASE_URL}
       OPENAI_API_KEY: ${HERMES_LLM_API_KEY:?Set HERMES_LLM_API_KEY}
@@ -49,6 +50,7 @@ services:
         exec hermes gateway run --no-supervise
     environment:
       HERMES_HOME: /opt/data
+      PYTHONPATH: /opt/hermes
       HERMES_MODEL: ${HERMES_REVIEWER_LLM_MODEL:?Set HERMES_REVIEWER_LLM_MODEL}
       OPENAI_BASE_URL: ${HERMES_LLM_BASE_URL:?Set HERMES_LLM_BASE_URL}
       OPENAI_API_KEY: ${HERMES_LLM_API_KEY:?Set HERMES_LLM_API_KEY}

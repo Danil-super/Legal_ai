@@ -54,6 +54,11 @@ the latter does not preserve shell control operators. The profile MUST retain bo
 and `no-new-privileges:true`; restoring Linux capabilities to make the upstream dispatcher run is
 prohibited.
 
+The preflight file is mounted outside the image source tree. The overlay therefore sets
+`PYTHONPATH=/opt/hermes` solely so that this pinned image's internal registry modules remain
+importable when Python executes the mounted file. It does not add a tool, plugin, or new execution
+capability.
+
 Researcher and reviewer MUST use separate profile state and separate API credentials. They may use
 the same underlying LLM provider if required, but the reviewer endpoint/profile identity must remain
 independent from the researcher identity. Profile state, memory and user-profile features are

@@ -134,6 +134,7 @@ def test_tool_free_hermes_profiles_bypass_the_upstream_s6_entrypoint() -> None:
             "        exec hermes gateway run --no-supervise"
         ) in service
         assert "\n    command:" not in service
+        assert "PYTHONPATH: /opt/hermes" in service
         assert "no-new-privileges:true" in service
         assert "cap_drop:\n      - ALL" in service
 
