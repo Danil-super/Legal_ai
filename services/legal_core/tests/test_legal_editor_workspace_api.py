@@ -60,10 +60,18 @@ def _seed_user(telegram_user_id: int, *, system_role: str | None = None) -> UUID
     return user_id
 
 
-def _write_manifest(tmp_path: Path) -> Path:
+def _write_manifest(
+    tmp_path: Path,
+    *,
+    source_key: str | None = None,
+    document_key: str | None = None,
+    fragment_text: str = "Проверочный фрагмент официального документа.",
+    effective_from: str = "2026-02-01",
+    effective_to: str = "2027-02-01",
+) -> Path:
     raw = b"%PDF-1.7\nlegal-editor-workspace-api-test\n%%EOF\n"
-    (tmp_path / "official.pdf").write_bytes(raw)
-    fragment_text = "Проверочный фрагмент официального документа."
+    artifact_name = f"official-{uuid4().hex}.pdf"
+    (tmp_path / artifact_name).write_bytes(raw)
     normalized_text = f"Заголовок. {fragment_text} Конец документа."
     fragment = CorpusFragment(
         ordinal=1,
@@ -74,17 +82,17 @@ def _write_manifest(tmp_path: Path) -> Path:
         structural_path="point:1",
         text=fragment_text,
     )
-    manifest = tmp_path / "manifest.json"
+    manifest = tmp_path / f"manifest-{uuid4().hex}.json"
     manifest.write_text(
         json.dumps(
             {
                 "manifest_version": "dental-legal-corpus.v2",
-                "source_key": f"editor-api-source-{uuid4().hex}",
+                "source_key": source_key or f"editor-api-source-{uuid4().hex}",
                 "source_name": "Editor API official test source",
                 "source_url": "https://example.gov.ru/legal-editor-api-test",
                 "source_external_id": "editor-api-test",
                 "allowed_hosts": ["example.gov.ru"],
-                "document_key": f"editor-api-document-{uuid4().hex}",
+                "document_key": document_key or f"editor-api-document-{uuid4().hex}",
                 "document_type": "DECREE",
                 "title": "Editor API official legal document",
                 "issuer": "Editor API test authority",
@@ -92,13 +100,13 @@ def _write_manifest(tmp_path: Path) -> Path:
                 "adoption_date": "2026-01-01",
                 "publication_date": "2026-01-02",
                 "version_date": "2026-01-01",
-                "effective_from": "2026-02-01",
-                "effective_to": "2027-02-01",
+                "effective_from": effective_from,
+                "effective_to": effective_to,
                 "approval_state": "REVIEW_REQUIRED",
                 "artifact_kind": "OFFICIAL_RAW",
                 "artifact_mime_type": "application/pdf",
                 "artifact_sha256": hashlib.sha256(raw).hexdigest(),
-                "artifact_path": "official.pdf",
+                "artifact_path": artifact_name,
                 "artifact_retrieved_at": "2026-08-22T00:00:00Z",
                 "artifact_size_bytes": len(raw),
                 "artifact_page_count": 1,
@@ -274,3 +282,83 @@ def test_editor_workspace_enforces_gateway_authz_and_replays_approval(
     assert replayed.status_code == 200
     assert approved.json() == replayed.json()
     assert conflicting_replay.status_code == 422
+
+
+def test_editor_queue_shows_only_the_latest_unexpired_revision_of_each_document(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("LEGAL_EDITOR_GATEWAY_KEY", _GATEWAY_KEY)
+    editor_telegram_id = 8_510_000_000 + uuid4().int % 100_000_000
+    _seed_user(editor_telegram_id, system_role="LEGAL_EDITOR")
+
+    with _client() as client:
+        baseline = client.get(
+            "/v1/legal/review-queue?page=1",
+            headers=_headers(editor_telegram_id, key=_GATEWAY_KEY),
+        )
+
+    assert baseline.status_code == 200
+    baseline_total = baseline.json()["totalItems"]
+
+    source_key = f"editor-api-source-{uuid4().hex}"
+    document_key = f"editor-api-document-{uuid4().hex}"
+    first_revision = _ingest(
+        _write_manifest(
+            tmp_path,
+            source_key=source_key,
+            document_key=document_key,
+            fragment_text="Первый отобранный фрагмент.",
+            effective_to="2999-02-01",
+        )
+    )
+    latest_revision = _ingest(
+        _write_manifest(
+            tmp_path,
+            source_key=source_key,
+            document_key=document_key,
+            fragment_text="Расширенный отобранный фрагмент.",
+            effective_to="2999-02-01",
+        )
+    )
+    expired_document = _ingest(
+        _write_manifest(
+            tmp_path,
+            fragment_text="Фрагмент утратившего силу документа.",
+            effective_from="2000-02-01",
+            effective_to="2001-02-01",
+        )
+    )
+    superseded_document_key = f"editor-api-document-{uuid4().hex}"
+    prior_revision = _ingest(
+        _write_manifest(
+            tmp_path,
+            document_key=superseded_document_key,
+            fragment_text="Прежняя ревизия, не подлежащая возврату в очередь.",
+            effective_to="2999-02-01",
+        )
+    )
+    expired_latest_revision = _ingest(
+        _write_manifest(
+            tmp_path,
+            document_key=superseded_document_key,
+            fragment_text="Последняя, но уже истекшая ревизия.",
+            effective_from="2000-02-01",
+            effective_to="2001-02-01",
+        )
+    )
+
+    with _client() as client:
+        queue = client.get(
+            "/v1/legal/review-queue?page=1",
+            headers=_headers(editor_telegram_id, key=_GATEWAY_KEY),
+        )
+
+    assert queue.status_code == 200
+    payload = queue.json()
+    shown_version_ids = {item["versionId"] for item in payload["items"]}
+    assert payload["totalItems"] == baseline_total + 1
+    assert str(latest_revision) in shown_version_ids
+    assert str(first_revision) not in shown_version_ids
+    assert str(expired_document) not in shown_version_ids
+    assert str(prior_revision) not in shown_version_ids
+    assert str(expired_latest_revision) not in shown_version_ids

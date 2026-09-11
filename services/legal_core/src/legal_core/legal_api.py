@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.api_contracts import (
@@ -226,11 +226,46 @@ def create_legal_router(
         await require_platform_legal_editor(
             session, telegram_user_id=telegram_user_id, gateway_key=gateway_key
         )
-        total_items = int(await session.scalar(select(func.count()).select_from(LegalVersion)) or 0)
+        # Legal versions are immutable audit records.  A changed fragment selection creates a
+        # newer version of the same document; the review workspace must not present those
+        # technical revisions as separate documents to an editor.
+        current_queue_versions = (
+            select(
+                LegalVersion.id.label("version_id"),
+                LegalVersion.approval_state.label("approval_state"),
+                LegalVersion.effective_to.label("effective_to"),
+                func.row_number()
+                .over(
+                    partition_by=LegalVersion.document_id,
+                    order_by=LegalVersion.version_no.desc(),
+                )
+                .label("document_rank"),
+            )
+            .subquery()
+        )
+        queue_filter = (
+            current_queue_versions.c.document_rank == 1,
+            current_queue_versions.c.approval_state == "REVIEW_REQUIRED",
+            or_(
+                current_queue_versions.c.effective_to.is_(None),
+                current_queue_versions.c.effective_to > date.today(),
+            ),
+        )
+        total_items = int(
+            await session.scalar(
+                select(func.count()).select_from(current_queue_versions).where(*queue_filter)
+            )
+            or 0
+        )
         rows = (
             await session.execute(
                 select(LegalVersion, LegalDocument.title, LegalDocument.official_number)
                 .join(LegalDocument, LegalDocument.id == LegalVersion.document_id)
+                .join(
+                    current_queue_versions,
+                    current_queue_versions.c.version_id == LegalVersion.id,
+                )
+                .where(*queue_filter)
                 .order_by(LegalVersion.received_at.desc(), LegalVersion.id.desc())
                 .offset((page - 1) * EDITOR_PAGE_SIZE)
                 .limit(EDITOR_PAGE_SIZE)
