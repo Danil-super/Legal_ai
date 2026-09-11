@@ -56,8 +56,10 @@ prohibited.
 
 The preflight file is mounted outside the image source tree. The overlay therefore sets
 `PYTHONPATH=/opt/hermes` solely so that this pinned image's internal registry modules remain
-importable when Python executes the mounted file. It does not add a tool, plugin, or new execution
-capability.
+importable when Python executes the mounted file. Bypassing the upstream dispatcher also bypasses
+its virtual-environment activation, so the guarded command MUST invoke the pinned image's explicit
+`/opt/hermes/.venv/bin/python` and `/opt/hermes/.venv/bin/hermes` launchers. This does not add a
+tool, plugin, or new execution capability.
 
 Researcher and reviewer MUST use separate profile state and separate API credentials. They may use
 the same underlying LLM provider if required, but the reviewer endpoint/profile identity must remain

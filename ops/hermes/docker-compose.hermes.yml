@@ -7,8 +7,8 @@ services:
       - /bin/sh
       - -lc
       - >-
-        python /opt/legal/assert_tool_free.py &&
-        exec hermes gateway run --no-supervise
+        /opt/hermes/.venv/bin/python /opt/legal/assert_tool_free.py &&
+        exec /opt/hermes/.venv/bin/hermes gateway run --no-supervise
     environment:
       HERMES_HOME: /opt/data
       PYTHONPATH: /opt/hermes
@@ -46,8 +46,8 @@ services:
       - /bin/sh
       - -lc
       - >-
-        python /opt/legal/assert_tool_free.py &&
-        exec hermes gateway run --no-supervise
+        /opt/hermes/.venv/bin/python /opt/legal/assert_tool_free.py &&
+        exec /opt/hermes/.venv/bin/hermes gateway run --no-supervise
     environment:
       HERMES_HOME: /opt/data
       PYTHONPATH: /opt/hermes

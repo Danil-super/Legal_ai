@@ -130,8 +130,8 @@ def test_tool_free_hermes_profiles_bypass_the_upstream_s6_entrypoint() -> None:
             "      - /bin/sh\n"
             "      - -lc\n"
             "      - >-\n"
-            "        python /opt/legal/assert_tool_free.py &&\n"
-            "        exec hermes gateway run --no-supervise"
+            "        /opt/hermes/.venv/bin/python /opt/legal/assert_tool_free.py &&\n"
+            "        exec /opt/hermes/.venv/bin/hermes gateway run --no-supervise"
         ) in service
         assert "\n    command:" not in service
         assert "PYTHONPATH: /opt/hermes" in service
