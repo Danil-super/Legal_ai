@@ -366,3 +366,119 @@ def test_legal_editor_can_approve_checksum_bound_official_raw_artifact(tmp_path:
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.skipif(
+    os.getenv("POSTGRES_INTEGRATION") != "1",
+    reason="set POSTGRES_INTEGRATION=1 to run PostgreSQL approval tests",
+)
+def test_legal_editor_can_approve_a_consultant_copy_only_after_attesting_comparison(
+    tmp_path: Path,
+) -> None:
+    raw = b"%PDF-1.7\nconsultant copy integration artifact\n%%EOF\n"
+    artifact_path = tmp_path / "consultant-copy.pdf"
+    artifact_path.write_bytes(raw)
+    fragment_text = "Проверенный фрагмент из полной копии нормативного документа."
+    normalized = f"Заголовок документа. {fragment_text} Конец документа."
+    fragment = CorpusFragment(
+        ordinal=1,
+        article="13",
+        part=None,
+        point=None,
+        heading="Проверка",
+        structural_path="Статья 13",
+        text=fragment_text,
+    )
+    manifest_path = tmp_path / "consultant-copy-manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": "dental-legal-corpus.v3",
+                "source_key": "consultant-plus",
+                "source_name": "КонсультантПлюс",
+                "source_trust_level": "VERIFIED_COPY",
+                "source_base_url": "https://www.consultant.ru/",
+                "source_url": "https://www.consultant.ru/document/cons_doc_LAW_121895/",
+                "source_external_id": "cons_doc_LAW_121895",
+                "allowed_hosts": ["www.consultant.ru"],
+                "document_key": "consultant-copy-approval-integration",
+                "document_type": "FEDERAL_LAW",
+                "title": "Проверочный федеральный закон",
+                "issuer": "Российская Федерация",
+                "official_number": "323-ФЗ",
+                "adoption_date": "2011-11-21",
+                "publication_date": "2011-11-21",
+                "version_date": "2026-08-04",
+                "effective_from": "2026-08-04",
+                "effective_to": None,
+                "approval_state": "REVIEW_REQUIRED",
+                "artifact_kind": "THIRD_PARTY_VERIFIED_COPY",
+                "artifact_mime_type": "application/pdf",
+                "artifact_sha256": hashlib.sha256(raw).hexdigest(),
+                "artifact_path": artifact_path.name,
+                "artifact_retrieved_at": "2026-09-11T12:00:00Z",
+                "artifact_size_bytes": len(raw),
+                "artifact_page_count": 1,
+                "normalized_text": normalized,
+                "normalized_sha256": normalized_text_sha256(normalized),
+                "fragments_sha256": corpus_fragments_sha256([fragment]),
+                "normalization_scope": "FULL_DOCUMENT",
+                "parser_version": "pdftotext-nfkc.v1",
+                "fragments": [fragment.model_dump(mode="json")],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    async def scenario() -> None:
+        engine = create_async_engine(database_url())
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        reviewer_telegram_id = 8_220_260_780
+        try:
+            version_id = await ingest_manifest(factory, manifest_path)
+            async with factory() as session, session.begin():
+                session.add(
+                    User(
+                        telegram_user_id=reviewer_telegram_id,
+                        display_name="Consultant copy approval reviewer",
+                        system_role="LEGAL_EDITOR",
+                    )
+                )
+
+            async with factory() as session:
+                version = await session.get(LegalVersion, version_id)
+                assert version is not None
+                assert version.artifact_kind == "THIRD_PARTY_VERIFIED_COPY"
+                source = await session.get(LegalSource, version.source_id)
+                assert source is not None
+                assert source.trust_level == "VERIFIED_COPY"
+
+            attestation = ApprovalAttestation(
+                reviewer_telegram_user_id=reviewer_telegram_id,
+                version_id=version_id,
+                expected_sha256=hashlib.sha256(raw).hexdigest(),
+                expected_normalized_sha256=normalized_text_sha256(normalized),
+                expected_fragments_sha256=corpus_fragments_sha256([fragment]),
+                expected_effective_from=date(2026, 8, 4),
+                expected_effective_to=None,
+                source_is_official=False,
+                official_text_compared=True,
+                artifact_is_complete=True,
+                effective_dates_verified=True,
+                fragments_verified=True,
+            )
+            with pytest.raises(ValueError, match="TRUSTED_COPY_MISREPRESENTED_AS_OFFICIAL"):
+                await approve_legal_version(
+                    factory, attestation.model_copy(update={"source_is_official": True})
+                )
+            approved_id = await approve_legal_version(factory, attestation)
+            assert approved_id == version_id
+            async with factory() as session:
+                version = await session.get(LegalVersion, version_id)
+                assert version is not None
+                assert version.approval_state == "APPROVED"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())

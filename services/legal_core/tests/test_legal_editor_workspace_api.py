@@ -153,6 +153,7 @@ def _version_payload(version_id: UUID) -> dict[str, object]:
                         None if version.effective_to is None else version.effective_to.isoformat()
                     ),
                     "sourceIsOfficial": True,
+                    "officialTextCompared": True,
                     "artifactIsComplete": True,
                     "effectiveDatesVerified": True,
                     "fragmentsVerified": True,

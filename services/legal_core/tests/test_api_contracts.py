@@ -28,6 +28,7 @@ def test_legal_editor_contracts_keep_pages_and_attestations_bounded() -> None:
         expectedEffectiveFrom="2026-09-01",
         expectedEffectiveTo="2031-09-01",
         sourceIsOfficial=True,
+        officialTextCompared=True,
         artifactIsComplete=True,
         effectiveDatesVerified=True,
         fragmentsVerified=True,
@@ -38,9 +39,13 @@ def test_legal_editor_contracts_keep_pages_and_attestations_bounded() -> None:
     assert request.source_is_official is True
 
     invalid = request.model_dump(by_alias=True)
-    invalid["sourceIsOfficial"] = False
+    invalid["officialTextCompared"] = False
     with pytest.raises(ValidationError):
         LegalEditorApprovalRequest(**invalid)
+
+    copy_request = request.model_dump(by_alias=True)
+    copy_request["sourceIsOfficial"] = False
+    assert LegalEditorApprovalRequest(**copy_request).source_is_official is False
 
 
 def test_fact_input_rejects_a_value_type_that_does_not_match_its_fact_key() -> None:

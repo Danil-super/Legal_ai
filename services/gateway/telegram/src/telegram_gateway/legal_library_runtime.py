@@ -425,7 +425,7 @@ def render_platform_review_queue(payload: dict[str, Any]) -> tuple[str, InlineKe
     lines = [
         "⚖️ ПРОВЕРКА НОРМ",
         "",
-        "Откройте кандидат, проверьте официальный документ и подтвердите все четыре аттестации.",
+        "Откройте кандидат, проверьте документ и подтвердите все четыре аттестации.",
         "",
     ]
     buttons: list[list[InlineKeyboardButton]] = []
@@ -440,11 +440,16 @@ def render_platform_review_queue(payload: dict[str, Any]) -> tuple[str, InlineKe
         state_label = labels.get(state if isinstance(state, str) else "", "⚪ НЕИЗВЕСТНЫЙ СТАТУС")
         eligible = item.get("approvalEligible") is True
         artifact_kind = _bounded(item.get("artifactKind"), limit=30)
+        artifact_label = (
+            "копия КонсультантПлюс"
+            if artifact_kind == "THIRD_PARTY_VERIFIED_COPY"
+            else artifact_kind
+        )
         lines.extend(
             [
                 state_label,
                 f"• {_bounded(item.get('documentTitle'), limit=180)}",
-                f"  № {_bounded(item.get('officialNumber'), limit=80)} · {artifact_kind}",
+                f"  № {_bounded(item.get('officialNumber'), limit=80)} · {artifact_label}",
                 "  "
                 + ("можно проверить и подтвердить" if eligible else "старая/недоступная версия"),
                 "",
@@ -501,6 +506,7 @@ def _new_editor_state(detail: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("editor version identity")
     return {
         "versionId": str(version_id),
+        "artifactKind": detail.get("artifactKind"),
         "expected": expected,
         "attestations": {
             "source": False,
@@ -523,6 +529,7 @@ def render_editor_version_detail(
 ) -> tuple[str, InlineKeyboardMarkup]:
     version_id = _editor_version_id(detail.get("versionId"))
     source_url = _official_url(detail.get("sourceUrl"))
+    third_party_copy = detail.get("artifactKind") == "THIRD_PARTY_VERIFIED_COPY"
     approval_eligible = detail.get("approvalEligible") is True
     approval_state = _bounded(detail.get("approvalState"), limit=30)
     lines = [
@@ -532,6 +539,11 @@ def render_editor_version_detail(
         f"Издатель: {_bounded(detail.get('issuer'), limit=240)}",
         f"Номер: {_bounded(detail.get('officialNumber'), limit=80)}",
         f"Статус: {approval_state}",
+        (
+            "Источник: КонсультантПлюс — проверенная копия, не первичная публикация."
+            if third_party_copy
+            else "Источник: официальная публикация."
+        ),
         "Артефакт: "
         f"{_bounded(detail.get('rawMimeType'), limit=80)} · "
         f"{_bounded(detail.get('rawSizeBytes'), limit=30)} байт",
@@ -551,7 +563,16 @@ def render_editor_version_detail(
     ]
     buttons: list[list[InlineKeyboardButton]] = []
     if source_url is not None:
-        buttons.append([InlineKeyboardButton("🌐 Официальный источник", url=source_url)])
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    "🌐 Источник: КонсультантПлюс"
+                    if third_party_copy
+                    else "🌐 Официальный источник",
+                    url=source_url,
+                )
+            ]
+        )
     buttons.extend(
         [
             [
@@ -566,7 +587,15 @@ def render_editor_version_detail(
             ],
             [
                 InlineKeyboardButton(
-                    _attestation_label(state, "source", "Источник официальный"),
+                    _attestation_label(
+                        state,
+                        "source",
+                        (
+                            "Сверил копию с официальным текстом и редакцией"
+                            if third_party_copy
+                            else "Источник — официальная публикация"
+                        ),
+                    ),
                     callback_data=f"editor:attest:{version_id}:source",
                 )
             ],
@@ -734,7 +763,7 @@ async def _send_editor_artifact(update: Update, *, version_id: UUID) -> None:
         filename = f"legal-{version_id}{'.pdf' if mime_type == 'application/pdf' else '.txt'}"
         await update.effective_message.reply_document(
             document=InputFile(BytesIO(content), filename=filename),
-            caption="Сохранённая неизменяемая версия официального документа.",
+            caption="Сохранённая неизменяемая версия документа для юридической проверки.",
         )
     except LegalCoreApiError as exc:
         logger.warning("legal editor artifact failed: %s", exc.code)
@@ -766,7 +795,8 @@ async def _confirm_editor_approval(
         idempotency_key = UUID(str(pending.get("idempotencyKey")))
         request = {
             **expected,
-            "sourceIsOfficial": True,
+            "sourceIsOfficial": pending.get("artifactKind") == "OFFICIAL_RAW",
+            "officialTextCompared": True,
             "artifactIsComplete": True,
             "effectiveDatesVerified": True,
             "fragmentsVerified": True,
