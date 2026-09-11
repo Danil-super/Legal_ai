@@ -46,6 +46,12 @@ registries, asks the same platform resolver for `api_server` toolsets, builds th
 schemas and exits non-zero unless **both** lists are empty. An operator cannot waive this check by
 prompt instruction or by relying on a SOUL/system prompt.
 
+The pinned image's default `s6` dispatcher is not used for legal profiles: it requires supplementary
+group and ownership changes that conflict with `cap_drop: ALL`. The deployment overlay therefore
+starts the guarded command directly with `/bin/sh -lc` as Hermes' fixed unprivileged UID/GID
+`10000:10000`. It MUST retain both `cap_drop: ALL` and `no-new-privileges:true`; restoring Linux
+capabilities to make the upstream dispatcher run is prohibited.
+
 Researcher and reviewer MUST use separate profile state and separate API credentials. They may use
 the same underlying LLM provider if required, but the reviewer endpoint/profile identity must remain
 independent from the researcher identity. Profile state, memory and user-profile features are
@@ -62,5 +68,7 @@ provider API keys.
 - a Hermes outage or model/provider failure cannot mutate the legal corpus or risk policy;
 - the default upstream Hermes API-server profile is prohibited for this project;
 - a Hermes runtime whose resolved model tool schema is non-empty fails deployment preflight;
+- the direct non-privileged entrypoint avoids widening container capabilities solely for upstream
+  init behaviour;
 - separate researcher/reviewer profiles prevent shared writable memory/session state;
 - provider selection remains replaceable and is not coupled to the Legal Core contracts.

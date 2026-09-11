@@ -111,6 +111,27 @@ def test_agent_orchestrator_is_not_exposed_to_the_edge_network() -> None:
     assert "edge" not in service
 
 
+def test_tool_free_hermes_profiles_bypass_the_upstream_s6_entrypoint() -> None:
+    compose = (ROOT / "ops" / "hermes" / "docker-compose.hermes.yml").read_text(
+        encoding="utf-8"
+    )
+
+    for service_name, next_service in (
+        ("hermes-researcher", "hermes-reviewer"),
+        ("hermes-reviewer", "agent-orchestrator"),
+    ):
+        service = compose.split(f"  {service_name}:\n", maxsplit=1)[1].split(
+            f"\n  {next_service}:", maxsplit=1
+        )[0]
+
+        assert 'user: "10000:10000"' in service
+        assert 'entrypoint: ["/bin/sh", "-lc"]' in service
+        assert "python /opt/legal/assert_tool_free.py &&" in service
+        assert "exec hermes gateway run --no-supervise" in service
+        assert "no-new-privileges:true" in service
+        assert "cap_drop:\n      - ALL" in service
+
+
 def test_legal_watch_services_pass_required_arguments_to_their_modules() -> None:
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
