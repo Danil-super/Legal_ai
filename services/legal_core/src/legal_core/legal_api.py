@@ -128,7 +128,7 @@ def create_legal_router(
 
         if (
             version.approval_state != "REVIEW_REQUIRED"
-            or version.artifact_kind != "OFFICIAL_RAW"
+            or version.artifact_kind not in {"OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"}
             or version.raw_mime_type not in EDITOR_ARTIFACT_MIME_TYPES
             or not 0 < version.raw_size_bytes <= EDITOR_ARTIFACT_MAX_BYTES
         ):
@@ -144,7 +144,8 @@ def create_legal_router(
             expected_fragments_sha256=version.fragments_sha256,
             expected_effective_from=version.effective_from,
             expected_effective_to=version.effective_to,
-            source_is_official=True,
+            source_is_official=version.artifact_kind == "OFFICIAL_RAW",
+            official_text_compared=True,
             artifact_is_complete=True,
             effective_dates_verified=True,
             fragments_verified=True,

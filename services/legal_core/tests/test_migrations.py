@@ -6,6 +6,7 @@ from alembic import command
 from alembic.config import Config
 from legal_core.database import database_url
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import ProgrammingError
 
 pytestmark = pytest.mark.skipif(
     os.getenv("POSTGRES_INTEGRATION") != "1",
@@ -163,10 +164,28 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 "purge_expired_case_content",
             }
 
-        command.downgrade(config, "f19b4c6e7d20")
-        remaining = set(inspect(engine).get_table_names())
-        assert "subscription_entitlements" not in remaining
-        assert "subscription_entitlement_events" not in remaining
+        with engine.connect() as connection:
+            v2_evidence_exists = bool(
+                connection.scalar(
+                    text(
+                        "SELECT EXISTS ("
+                        "SELECT 1 FROM legal_versions "
+                        "WHERE artifact_kind = 'THIRD_PARTY_VERIFIED_COPY' "
+                        "UNION ALL "
+                        "SELECT 1 FROM legal_approval_events "
+                        "WHERE policy_version = 'dental-legal-approval.v2'"
+                        ")"
+                    )
+                )
+            )
+        if v2_evidence_exists:
+            with pytest.raises(ProgrammingError, match="cannot downgrade"):
+                command.downgrade(config, "f19b4c6e7d20")
+        else:
+            command.downgrade(config, "f19b4c6e7d20")
+            remaining = set(inspect(engine).get_table_names())
+            assert "subscription_entitlements" not in remaining
+            assert "subscription_entitlement_events" not in remaining
     finally:
         engine.dispose()
         command.upgrade(config, "head")

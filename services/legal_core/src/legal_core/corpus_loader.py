@@ -100,6 +100,8 @@ class CorpusManifest(BaseModel):
         if self.manifest_version == "dental-legal-corpus.v1":
             if self.artifact_kind != "NORMALIZED_EXCERPT" or self.artifact_text is None:
                 raise ValueError("v1 manifests must contain a normalized excerpt")
+            if self.source_trust_level != "PRIMARY":
+                raise ValueError("v1 manifests must declare PRIMARY source trust")
             if self.artifact_path is not None or self.normalized_text is not None:
                 raise ValueError("v1 manifests cannot reference external artifacts")
             if self.normalization_scope != "SELECTED_EXCERPT":
@@ -199,6 +201,14 @@ def load_artifact(manifest: CorpusManifest, manifest_path: Path) -> bytes:
             raise ValueError("artifact must be inside the manifest directory")
         if not artifact_path.is_file():
             raise ValueError("artifact file does not exist")
+        artifact_size = artifact_path.stat().st_size
+        if artifact_size > 50_000_000:
+            raise ValueError("artifact file exceeds the 50 MB safety limit")
+        if (
+            manifest.artifact_size_bytes is not None
+            and artifact_size != manifest.artifact_size_bytes
+        ):
+            raise ValueError("artifact byte count does not match the manifest")
         raw_bytes = artifact_path.read_bytes()
 
     actual_sha = hashlib.sha256(raw_bytes).hexdigest()

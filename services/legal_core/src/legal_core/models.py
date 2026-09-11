@@ -666,12 +666,14 @@ class LegalVersion(Base):
         UniqueConstraint("document_id", "version_no"),
         CheckConstraint("effective_to IS NULL OR effective_to > effective_from"),
         CheckConstraint(
-            "artifact_kind IN ('NORMALIZED_EXCERPT', 'OFFICIAL_RAW')",
+            "artifact_kind IN "
+            "('NORMALIZED_EXCERPT', 'OFFICIAL_RAW', 'THIRD_PARTY_VERIFIED_COPY')",
             name="ck_legal_versions_artifact_kind",
         ),
         CheckConstraint(
-            "approval_state <> 'APPROVED' OR artifact_kind = 'OFFICIAL_RAW'",
-            name="ck_legal_versions_approved_official_raw",
+            "approval_state <> 'APPROVED' OR "
+            "artifact_kind IN ('OFFICIAL_RAW', 'THIRD_PARTY_VERIFIED_COPY')",
+            name="ck_legal_versions_approved_reviewable_artifact",
         ),
         CheckConstraint(
             "encode(digest(raw_bytes, 'sha256'), 'hex') = raw_sha256",
@@ -691,10 +693,10 @@ class LegalVersion(Base):
             name="ck_legal_versions_normalization_scope",
         ),
         CheckConstraint(
-            "artifact_kind <> 'OFFICIAL_RAW' OR "
+            "artifact_kind NOT IN ('OFFICIAL_RAW', 'THIRD_PARTY_VERIFIED_COPY') OR "
             "(artifact_retrieved_at IS NOT NULL AND normalization_scope = 'FULL_DOCUMENT' "
             "AND (raw_mime_type <> 'application/pdf' OR artifact_page_count IS NOT NULL))",
-            name="ck_legal_versions_official_metadata",
+            name="ck_legal_versions_reviewable_metadata",
         ),
         Index("ix_legal_versions_resolution", "document_id", "approval_state", "effective_from"),
         Index(

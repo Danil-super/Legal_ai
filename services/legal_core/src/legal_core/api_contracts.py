@@ -336,7 +336,9 @@ class LegalEditorCandidateSummary(ContractModel):
     approval_state: Literal["REVIEW_REQUIRED", "APPROVED", "BLOCKED"] = Field(
         alias="approvalState"
     )
-    artifact_kind: Literal["NORMALIZED_EXCERPT", "OFFICIAL_RAW"] = Field(alias="artifactKind")
+    artifact_kind: Literal[
+        "NORMALIZED_EXCERPT", "OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"
+    ] = Field(alias="artifactKind")
     approval_eligible: bool = Field(alias="approvalEligible")
 
 
@@ -357,7 +359,9 @@ class LegalEditorVersionDetail(ContractModel):
     approval_state: Literal["REVIEW_REQUIRED", "APPROVED", "BLOCKED"] = Field(
         alias="approvalState"
     )
-    artifact_kind: Literal["NORMALIZED_EXCERPT", "OFFICIAL_RAW"] = Field(alias="artifactKind")
+    artifact_kind: Literal[
+        "NORMALIZED_EXCERPT", "OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"
+    ] = Field(alias="artifactKind")
     raw_mime_type: str = Field(alias="rawMimeType", min_length=1, max_length=100)
     raw_size_bytes: int = Field(alias="rawSizeBytes", ge=0)
     artifact_page_count: int | None = Field(default=None, alias="artifactPageCount", ge=1)
@@ -396,7 +400,8 @@ class LegalEditorApprovalRequest(ContractModel):
     )
     expected_effective_from: date = Field(alias="expectedEffectiveFrom")
     expected_effective_to: date | None = Field(default=None, alias="expectedEffectiveTo")
-    source_is_official: Literal[True] = Field(alias="sourceIsOfficial")
+    source_is_official: bool = Field(alias="sourceIsOfficial")
+    official_text_compared: Literal[True] = Field(alias="officialTextCompared")
     artifact_is_complete: Literal[True] = Field(alias="artifactIsComplete")
     effective_dates_verified: Literal[True] = Field(alias="effectiveDatesVerified")
     fragments_verified: Literal[True] = Field(alias="fragmentsVerified")

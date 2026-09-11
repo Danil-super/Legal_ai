@@ -1,4 +1,4 @@
-"""Human-only, checksum-bound approval for immutable official legal artifacts."""
+"""Human-only, checksum-bound approval for immutable legal evidence artifacts."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from legal_core.models import (
     User,
 )
 
-APPROVAL_POLICY_VERSION = "dental-legal-approval.v1"
+APPROVAL_POLICY_VERSION = "dental-legal-approval.v2"
 PAID_MEDICAL_SERVICES_BOUNDARIES: dict[str, tuple[date, date]] = {
     "736": (date(2023, 9, 1), date(2026, 9, 1)),
     "659": (date(2026, 9, 1), date(2031, 9, 1)),
@@ -48,6 +48,7 @@ class ApprovalAttestation(BaseModel):
     expected_effective_from: date
     expected_effective_to: date | None
     source_is_official: bool
+    official_text_compared: bool = False
     artifact_is_complete: bool
     effective_dates_verified: bool
     fragments_verified: bool
@@ -56,12 +57,11 @@ class ApprovalAttestation(BaseModel):
     def require_human_attestations(self) -> ApprovalAttestation:
         if not all(
             (
-                self.source_is_official,
                 self.artifact_is_complete,
                 self.effective_dates_verified,
                 self.fragments_verified,
             )
-        ):
+        ) or (not self.source_is_official and not self.official_text_compared):
             raise ValueError("all legal-review attestations must be explicit")
         return self
 
@@ -77,6 +77,11 @@ class LegalApprovalRejected(ValueError):
 def _checks(attestation: ApprovalAttestation) -> dict[str, Any]:
     return {
         "sourceIsOfficial": attestation.source_is_official,
+        # An official primary artifact is itself the comparison source. A third-party copy needs
+        # an additional explicit comparison to that primary text before it can be approved.
+        "officialTextCompared": (
+            attestation.source_is_official or attestation.official_text_compared
+        ),
         "artifactIsComplete": attestation.artifact_is_complete,
         "effectiveDatesVerified": attestation.effective_dates_verified,
         "fragmentsVerified": attestation.fragments_verified,
@@ -97,8 +102,20 @@ async def _block_reason(
     source: LegalSource,
     attestation: ApprovalAttestation,
 ) -> str | None:
-    if version.artifact_kind != "OFFICIAL_RAW":
+    if version.artifact_kind not in {"OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"}:
         return "ARTIFACT_NOT_OFFICIAL_RAW"
+    if version.artifact_kind == "OFFICIAL_RAW" and not attestation.source_is_official:
+        return "OFFICIAL_SOURCE_NOT_ATTESTED"
+    if (
+        version.artifact_kind == "THIRD_PARTY_VERIFIED_COPY"
+        and attestation.source_is_official
+    ):
+        return "TRUSTED_COPY_MISREPRESENTED_AS_OFFICIAL"
+    if (
+        version.artifact_kind == "THIRD_PARTY_VERIFIED_COPY"
+        and not attestation.official_text_compared
+    ):
+        return "OFFICIAL_TEXT_COMPARISON_NOT_ATTESTED"
     if version.raw_sha256 != attestation.expected_sha256:
         return "EXPECTED_SHA_MISMATCH"
     if hashlib.sha256(version.raw_bytes).hexdigest() != version.raw_sha256:
@@ -134,6 +151,11 @@ async def _block_reason(
         return "SOURCE_HOST_NOT_ALLOWLISTED"
     if source.status not in {"DRAFT", "APPROVED"}:
         return "SOURCE_STATUS_NOT_APPROVABLE"
+    expected_trust_level = (
+        "PRIMARY" if version.artifact_kind == "OFFICIAL_RAW" else "VERIFIED_COPY"
+    )
+    if source.trust_level != expected_trust_level:
+        return "SOURCE_TRUST_LEVEL_MISMATCH"
 
     fragments = list(
         (
@@ -403,7 +425,7 @@ async def _run(attestation: ApprovalAttestation) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Approve a verified official legal artifact")
+    parser = argparse.ArgumentParser(description="Approve a verified legal evidence artifact")
     parser.add_argument("--reviewer-telegram-user-id", type=int, required=True)
     parser.add_argument("--version-id", type=UUID, required=True)
     parser.add_argument("--expected-sha256", required=True)
@@ -411,7 +433,8 @@ def main() -> None:
     parser.add_argument("--expected-fragments-sha256", required=True)
     parser.add_argument("--expected-effective-from", type=_date, required=True)
     parser.add_argument("--expected-effective-to", type=_date)
-    parser.add_argument("--attest-source-official", action="store_true", required=True)
+    parser.add_argument("--attest-source-official", action="store_true")
+    parser.add_argument("--attest-official-text-compared", action="store_true")
     parser.add_argument("--attest-artifact-complete", action="store_true", required=True)
     parser.add_argument("--attest-effective-dates", action="store_true", required=True)
     parser.add_argument("--attest-fragments", action="store_true", required=True)
@@ -427,6 +450,7 @@ def main() -> None:
                 expected_effective_from=args.expected_effective_from,
                 expected_effective_to=args.expected_effective_to,
                 source_is_official=args.attest_source_official,
+                official_text_compared=args.attest_official_text_compared,
                 artifact_is_complete=args.attest_artifact_complete,
                 effective_dates_verified=args.attest_effective_dates,
                 fragments_verified=args.attest_fragments,

@@ -119,6 +119,37 @@ def test_editor_detail_requires_all_four_explicit_attestations_before_confirm() 
     assert "editor:confirm:00000000-0000-0000-0000-000000000002" in approved_callbacks
 
 
+def test_editor_detail_labels_a_consultant_copy_without_calling_it_an_official_source() -> None:
+    detail = {
+        "versionId": "00000000-0000-0000-0000-000000000002",
+        "documentTitle": "Федеральный закон",
+        "issuer": "Российская Федерация",
+        "officialNumber": "323-ФЗ",
+        "sourceUrl": "https://www.consultant.ru/document/cons_doc_LAW_121895/",
+        "approvalState": "REVIEW_REQUIRED",
+        "artifactKind": "THIRD_PARTY_VERIFIED_COPY",
+        "rawMimeType": "application/pdf",
+        "rawSizeBytes": 100,
+        "artifactPageCount": 1,
+        "artifactRetrievedAt": "2026-09-11T12:00:00Z",
+        "effectiveFrom": "2026-08-04",
+        "effectiveTo": None,
+        "rawSha256": "a" * 64,
+        "normalizedSha256": "b" * 64,
+        "fragmentsSha256": "c" * 64,
+        "fragmentCount": 1,
+        "approvalEligible": True,
+    }
+
+    text, keyboard = render_editor_version_detail(detail, _new_editor_state(detail))
+
+    assert "КонсультантПлюс" in text
+    assert "не первичная публикация" in text
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+    assert "🌐 Источник: КонсультантПлюс" in labels
+    assert any("редакцией" in label for label in labels)
+
+
 def test_composed_application_registers_lawyer_library_before_menu_handler(monkeypatch) -> None:
     monkeypatch.delenv("AGENT_ORCHESTRATOR_URL", raising=False)
     monkeypatch.delenv("AGENT_INTERNAL_KEY", raising=False)
