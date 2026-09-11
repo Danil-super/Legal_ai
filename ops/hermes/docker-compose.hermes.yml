@@ -3,7 +3,12 @@ services:
     profiles: [analysis]
     image: dental-legal-hermes:5fc308a70719a83cccdbba4c0e39c23f5a8239d5
     user: "10000:10000"
-    entrypoint: ["/bin/sh", "-lc"]
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - >-
+        python /opt/legal/assert_tool_free.py &&
+        exec hermes gateway run --no-supervise
     environment:
       HERMES_HOME: /opt/data
       HERMES_MODEL: ${HERMES_RESEARCHER_LLM_MODEL:?Set HERMES_RESEARCHER_LLM_MODEL}
@@ -13,9 +18,6 @@ services:
       API_SERVER_HOST: 0.0.0.0
       API_SERVER_PORT: "8642"
       API_SERVER_KEY: ${HERMES_RESEARCHER_API_KEY:?Set HERMES_RESEARCHER_API_KEY}
-    command: >-
-      python /opt/legal/assert_tool_free.py &&
-      exec hermes gateway run --no-supervise
     healthcheck:
       test:
         - CMD-SHELL
@@ -39,7 +41,12 @@ services:
     profiles: [analysis]
     image: dental-legal-hermes:5fc308a70719a83cccdbba4c0e39c23f5a8239d5
     user: "10000:10000"
-    entrypoint: ["/bin/sh", "-lc"]
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - >-
+        python /opt/legal/assert_tool_free.py &&
+        exec hermes gateway run --no-supervise
     environment:
       HERMES_HOME: /opt/data
       HERMES_MODEL: ${HERMES_REVIEWER_LLM_MODEL:?Set HERMES_REVIEWER_LLM_MODEL}
@@ -49,9 +56,6 @@ services:
       API_SERVER_HOST: 0.0.0.0
       API_SERVER_PORT: "8642"
       API_SERVER_KEY: ${HERMES_REVIEWER_API_KEY:?Set HERMES_REVIEWER_API_KEY}
-    command: >-
-      python /opt/legal/assert_tool_free.py &&
-      exec hermes gateway run --no-supervise
     healthcheck:
       test:
         - CMD-SHELL

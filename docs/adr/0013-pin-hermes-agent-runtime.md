@@ -49,8 +49,10 @@ prompt instruction or by relying on a SOUL/system prompt.
 The pinned image's default `s6` dispatcher is not used for legal profiles: it requires supplementary
 group and ownership changes that conflict with `cap_drop: ALL`. The deployment overlay therefore
 starts the guarded command directly with `/bin/sh -lc` as Hermes' fixed unprivileged UID/GID
-`10000:10000`. It MUST retain both `cap_drop: ALL` and `no-new-privileges:true`; restoring Linux
-capabilities to make the upstream dispatcher run is prohibited.
+`10000:10000`. The guarded program is the final `entrypoint` argument, not the Compose `command`:
+the latter does not preserve shell control operators. The profile MUST retain both `cap_drop: ALL`
+and `no-new-privileges:true`; restoring Linux capabilities to make the upstream dispatcher run is
+prohibited.
 
 Researcher and reviewer MUST use separate profile state and separate API credentials. They may use
 the same underlying LLM provider if required, but the reviewer endpoint/profile identity must remain

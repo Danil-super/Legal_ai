@@ -125,9 +125,15 @@ def test_tool_free_hermes_profiles_bypass_the_upstream_s6_entrypoint() -> None:
         )[0]
 
         assert 'user: "10000:10000"' in service
-        assert 'entrypoint: ["/bin/sh", "-lc"]' in service
-        assert "python /opt/legal/assert_tool_free.py &&" in service
-        assert "exec hermes gateway run --no-supervise" in service
+        assert (
+            "entrypoint:\n"
+            "      - /bin/sh\n"
+            "      - -lc\n"
+            "      - >-\n"
+            "        python /opt/legal/assert_tool_free.py &&\n"
+            "        exec hermes gateway run --no-supervise"
+        ) in service
+        assert "\n    command:" not in service
         assert "no-new-privileges:true" in service
         assert "cap_drop:\n      - ALL" in service
 
