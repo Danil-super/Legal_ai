@@ -119,6 +119,42 @@ def test_editor_detail_requires_all_four_explicit_attestations_before_confirm() 
     assert "editor:confirm:00000000-0000-0000-0000-000000000002" in approved_callbacks
 
 
+def test_editor_detail_opens_the_preserved_pdf_instead_of_fragment_screen() -> None:
+    detail = {
+        "versionId": "00000000-0000-0000-0000-000000000002",
+        "documentTitle": "Правила платных медицинских услуг",
+        "issuer": "Правительство Российской Федерации",
+        "officialNumber": "659",
+        "sourceUrl": "https://example.test/official.pdf",
+        "approvalState": "REVIEW_REQUIRED",
+        "rawMimeType": "application/pdf",
+        "rawSizeBytes": 100,
+        "artifactPageCount": 1,
+        "artifactRetrievedAt": "2026-09-09T12:00:00Z",
+        "effectiveFrom": "2026-09-01",
+        "effectiveTo": "2031-09-01",
+        "rawSha256": "a" * 64,
+        "normalizedSha256": "b" * 64,
+        "fragmentsSha256": "c" * 64,
+        "fragmentCount": 1,
+        "approvalEligible": True,
+    }
+
+    _, keyboard = render_editor_version_detail(detail, _new_editor_state(detail))
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+    callbacks = {
+        button.callback_data
+        for row in keyboard.inline_keyboard
+        for button in row
+        if button.callback_data is not None
+    }
+
+    assert "📄 Открыть PDF" in labels
+    assert "📑 Проверить фрагменты" not in labels
+    assert "editor:artifact:00000000-0000-0000-0000-000000000002" in callbacks
+    assert not any(callback.startswith("editor:fragments:") for callback in callbacks)
+
+
 def test_editor_detail_labels_a_consultant_copy_without_calling_it_an_official_source() -> None:
     detail = {
         "versionId": "00000000-0000-0000-0000-000000000002",
