@@ -577,12 +577,7 @@ def render_editor_version_detail(
         [
             [
                 InlineKeyboardButton(
-                    "📥 Скачать сохранённый документ", callback_data=f"editor:artifact:{version_id}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "📑 Проверить фрагменты", callback_data=f"editor:fragments:{version_id}:1"
+                    "📄 Открыть PDF", callback_data=f"editor:artifact:{version_id}"
                 )
             ],
             [
