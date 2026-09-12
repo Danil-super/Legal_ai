@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Literal
+from typing import Any, Literal
 
 from telegram.ext import Application
 
@@ -18,7 +18,11 @@ class EditorFileDeliveryQueue:
     """One file in memory at a time; bounded pending editors, no conversation-state writes."""
 
     def __init__(
-        self, application: Application, *, max_pending: int = 4, timeout_seconds: float = 60
+        self,
+        application: Application[Any, Any, Any, Any, Any, Any],
+        *,
+        max_pending: int = 4,
+        timeout_seconds: float = 60,
     ) -> None:
         if max_pending < 1 or timeout_seconds <= 0:
             raise ValueError("editor delivery bounds must be positive")

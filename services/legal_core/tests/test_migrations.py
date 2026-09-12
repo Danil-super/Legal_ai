@@ -39,6 +39,8 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
             "case_risk_assessments",
             "case_escalations",
             "case_escalation_messages",
+            "case_escalation_workflow_events",
+            "analysis_jobs",
             "case_analysis_runs",
             "case_analysis_claims",
             "case_retention_events",
@@ -74,7 +76,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                     "('cases','case_facts','case_reports','audit_events','idempotency_records',"
                     "'telegram_case_workflows','telegram_intake_drafts','subscription_entitlements',"
                     "'subscription_entitlement_events','case_risk_assessments','case_escalations',"
-                    "'case_escalation_messages',"
+                    "'case_escalation_messages','case_escalation_workflow_events','analysis_jobs',"
                     "'case_analysis_runs','case_analysis_claims','case_retention_events')"
                 )
             ).scalars()
@@ -88,7 +90,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                     "'subscription_entitlement_events','risk_policy_versions','risk_policy_events',"
                     "'case_risk_assessments','case_escalations','case_analysis_runs',"
                     "'case_analysis_claims','case_escalation_messages','legal_update_review_items',"
-                    "'legal_update_runs')"
+                    "'legal_update_runs','case_escalation_workflow_events')"
                 )
             ).scalars()
             legal_guard_triggers = set(
@@ -126,6 +128,8 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 "case_risk_assessments",
                 "case_escalations",
                 "case_escalation_messages",
+                "case_escalation_workflow_events",
+                "analysis_jobs",
                 "case_analysis_runs",
                 "case_analysis_claims",
                 "case_retention_events",
@@ -145,6 +149,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 "case_risk_assessments",
                 "case_escalations",
                 "case_escalation_messages",
+                "case_escalation_workflow_events",
                 "case_analysis_runs",
                 "case_analysis_claims",
                 "legal_update_review_items",

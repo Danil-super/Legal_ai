@@ -73,6 +73,11 @@ def upgrade() -> None:
             JOIN public.cases c ON c.id=j.case_id AND c.clinic_id=j.clinic_id
             WHERE j.state IN ('SUCCEEDED','FAILED') AND j.notified_at IS NULL
                 AND cu.status='ACTIVE' AND u.status='ACTIVE' AND c.retention_due_at>now()
+                AND c.content_purged_at IS NULL
+                AND cu.role IN ('CLINIC_OWNER','CLINIC_ADMIN','CLINIC_LAWYER')
+                AND (SELECT count(*) FROM public.clinic_users active_membership
+                    WHERE active_membership.user_id=u.id AND active_membership.status='ACTIVE'
+                    AND active_membership.role IN ('CLINIC_OWNER','CLINIC_ADMIN','CLINIC_LAWYER'))=1
                 AND EXISTS (SELECT 1 FROM public.subscription_entitlements se
                     WHERE se.clinic_id=j.clinic_id AND se.user_id=u.id AND se.status='ACTIVE'
                     AND se.starts_at<=now() AND (se.ends_at IS NULL OR se.ends_at>now()))
@@ -86,7 +91,7 @@ def downgrade() -> None:
     # Jobs contain only operational references; refuse downgrade while a worker owns work.
     op.execute("""DO $$ BEGIN
         IF EXISTS (SELECT 1 FROM analysis_jobs WHERE state IN ('QUEUED','RUNNING')) THEN
-            RAISE EXCEPTION 'drain analysis jobs before downgrade';
+            RAISE EXCEPTION 'cannot downgrade: drain analysis jobs first';
         END IF;
     END $$""")
     op.execute("DROP FUNCTION public.analysis_job_notifications()")

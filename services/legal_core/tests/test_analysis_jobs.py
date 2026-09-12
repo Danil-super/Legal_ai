@@ -78,6 +78,66 @@ def test_notification_discovery_requires_internal_key(monkeypatch):
         )
 
 
+@pytest.mark.parametrize("inaccessible_reason", ["unsupported_role", "ambiguous_membership"])
+def test_inaccessible_notifications_do_not_starve_accessible_jobs(inaccessible_reason):
+    actor_id = 9300140100 if inaccessible_reason == "unsupported_role" else 9300140101
+    inaccessible_case = seed_confirmed_case(actor_id)
+    accessible_actor = actor_id + 100
+    accessible_case = seed_confirmed_case(accessible_actor)
+    owner = create_engine(owner_database_url())
+    try:
+        with owner.begin() as conn:
+            for index in range(20):
+                conn.execute(
+                    text(
+                        "INSERT INTO analysis_jobs (clinic_id,case_id,actor_membership_id,"
+                        "message_id,state,error_code,updated_at) SELECT clinic_id,id,"
+                        "created_by_membership_id,:message,'FAILED','SYNTHETIC_FAILURE',"
+                        "now()-interval '1 day' FROM cases WHERE id=:case"
+                    ),
+                    {"message": index + 100, "case": inaccessible_case},
+                )
+            accessible_job = conn.scalar(
+                text(
+                    "INSERT INTO analysis_jobs (clinic_id,case_id,actor_membership_id,"
+                    "message_id,state,error_code) SELECT clinic_id,id,created_by_membership_id,"
+                    "999,'FAILED','SYNTHETIC_FAILURE' FROM cases WHERE id=:case RETURNING id"
+                ),
+                {"case": accessible_case},
+            )
+            if inaccessible_reason == "unsupported_role":
+                conn.execute(
+                    text(
+                        "UPDATE clinic_users SET role='CLINIC_MANAGER' WHERE id="
+                        "(SELECT created_by_membership_id FROM cases WHERE id=:case)"
+                    ),
+                    {"case": inaccessible_case},
+                )
+            else:
+                extra_clinic = uuid4()
+                conn.execute(
+                    text("INSERT INTO clinics(id,name) VALUES (:id,'Synthetic')"),
+                    {"id": extra_clinic},
+                )
+                conn.execute(
+                    text(
+                        "INSERT INTO clinic_users(id,clinic_id,user_id,role) "
+                        "SELECT :id,:clinic,id,'CLINIC_ADMIN' FROM users "
+                        "WHERE telegram_user_id=:actor"
+                    ),
+                    {"id": uuid4(), "clinic": extra_clinic, "actor": actor_id},
+                )
+        with application_client() as client:
+            items = client.get(
+                "/v1/internal/analysis-job-notifications",
+                headers={"X-Agent-Internal-Key": "synthetic-internal-key-" + "x" * 32},
+            ).json()["items"]
+            assert all(item["telegramUserId"] != actor_id for item in items)
+            assert any(item["jobId"] == str(accessible_job) for item in items)
+    finally:
+        owner.dispose()
+
+
 def test_job_claim_excludes_second_worker_and_fences_expired_lease():
     from legal_core.analysis_jobs import claim_job, require_job_lease
     from legal_core.case_api import ApiError, resolve_actor
