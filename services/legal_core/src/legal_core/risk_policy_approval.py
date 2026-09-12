@@ -32,9 +32,13 @@ class RiskPolicyApproval(BaseModel):
     incident_triggers_reviewed: bool
     monetary_threshold_reviewed: bool
     escalation_rules_reviewed: bool
+    early_triage_enabled: bool = False
+    supersede_approved: bool = False
 
     @model_validator(mode="after")
     def require_explicit_review(self) -> RiskPolicyApproval:
+        if self.early_triage_enabled and self.version < 2:
+            raise ValueError("early triage requires a new policy version >= 2")
         if not all(
             (
                 self.incident_triggers_reviewed,
@@ -47,6 +51,12 @@ class RiskPolicyApproval(BaseModel):
 
 
 def policy_payload(approval: RiskPolicyApproval) -> dict[str, object]:
+    if approval.early_triage_enabled:
+        return {
+            "schemaVersion": "risk-policy.v2",
+            "highDemandThresholdKopecks": approval.high_demand_threshold_kopecks,
+            "earlyTriageEnabled": True,
+        }
     return {
         "schemaVersion": SCHEMA_VERSION,
         "highDemandThresholdKopecks": approval.high_demand_threshold_kopecks,
@@ -119,14 +129,27 @@ async def approve_risk_policy(
             raise ValueError("only a DRAFT risk policy can be approved")
 
         another_approved = await session.scalar(
-            select(RiskPolicyVersion.id).where(
+            select(RiskPolicyVersion).where(
                 RiskPolicyVersion.policy_key == POLICY_KEY,
                 RiskPolicyVersion.status == "APPROVED",
                 RiskPolicyVersion.id != policy.id,
             )
         )
         if another_approved is not None:
-            raise ValueError("another approved dental risk policy must be retired first")
+            if not approval.supersede_approved or another_approved.version >= policy.version:
+                raise ValueError("another approved dental risk policy must be retired first")
+            session.add(
+                RiskPolicyEvent(
+                    risk_policy_id=another_approved.id,
+                    actor_user_id=reviewer.id,
+                    decision="RETIRED",
+                    expected_content_sha256=another_approved.content_sha256,
+                    reason_code="EXPLICIT_NEW_POLICY_VERSION_ACTIVATION",
+                )
+            )
+            await session.flush()
+            another_approved.status = "RETIRED"
+            await session.flush()
 
         session.add(
             RiskPolicyEvent(
@@ -170,6 +193,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--incident-triggers-reviewed", action="store_true")
     parser.add_argument("--monetary-threshold-reviewed", action="store_true")
     parser.add_argument("--escalation-rules-reviewed", action="store_true")
+    parser.add_argument("--early-triage-enabled", action="store_true")
+    parser.add_argument("--supersede-approved", action="store_true")
     return parser
 
 
@@ -182,6 +207,8 @@ async def _run_cli() -> None:
         incident_triggers_reviewed=args.incident_triggers_reviewed,
         monetary_threshold_reviewed=args.monetary_threshold_reviewed,
         escalation_rules_reviewed=args.escalation_rules_reviewed,
+        early_triage_enabled=args.early_triage_enabled,
+        supersede_approved=args.supersede_approved,
     )
     engine = create_engine()
     factory = create_session_factory(engine)
