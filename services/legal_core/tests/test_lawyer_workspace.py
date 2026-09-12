@@ -249,6 +249,127 @@ def test_escalation_queue_cursor_keeps_all_older_cards_reachable() -> None:
         assert seen == [str(escalation), *reversed(created_ids)]
 
 
+def _expire_escalated_case(escalation: UUID) -> UUID:
+    engine = create_engine(owner_database_url().set(drivername="postgresql+psycopg"))
+    try:
+        with engine.begin() as connection:
+            case_id = connection.scalar(
+                text(
+                    "UPDATE cases SET retention_due_at=now()-interval '1 minute' "
+                    "WHERE id=(SELECT case_id FROM case_escalations WHERE id=:id) RETURNING id"
+                ),
+                dict(id=escalation),
+            )
+            return case_id
+    finally:
+        engine.dispose()
+
+
+def test_expired_escalation_is_inaccessible_before_physical_purge() -> None:
+    owner, escalation, _ = seed_escalation()
+    path = f"/v1/case-escalations/{escalation}"
+    with application_client() as client:
+        assert client.post(path + "/claim", headers=actor_headers(owner)).status_code == 200
+        _expire_escalated_case(escalation)
+        for suffix in ("", "/discussion"):
+            assert client.get(path + suffix, headers=actor_headers(owner)).status_code == 410
+        for suffix, payload in (
+            ("/claim", {}),
+            ("/resolve", {"body": "Заключение"}),
+            ("/discussion", {"body": "Сообщение"}),
+        ):
+            assert (
+                client.post(path + suffix, headers=actor_headers(owner), json=payload).status_code
+                == 410
+            )
+        for status in ("OPEN", "RESOLVED", "ALL"):
+            assert (
+                client.get(
+                    "/v1/case-escalations", headers=actor_headers(owner), params={"status": status}
+                ).json()["items"]
+                == []
+            )
+
+
+@pytest.mark.parametrize("resolved", [False, True])
+def test_retention_purges_workflow_events_and_preserves_other_tenant(resolved: bool) -> None:
+    from legal_core.case_retention import purge_expired_case_content
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    owner, escalation, clinic = seed_escalation()
+    other_owner, other_escalation, _ = seed_escalation()
+    path = f"/v1/case-escalations/{escalation}"
+    with application_client() as client:
+        assert client.post(path + "/claim", headers=actor_headers(owner)).status_code == 200
+        assert (
+            client.post(
+                f"/v1/case-escalations/{other_escalation}/claim", headers=actor_headers(other_owner)
+            ).status_code
+            == 200
+        )
+        if resolved:
+            assert (
+                client.post(
+                    path + "/resolve",
+                    headers=actor_headers(owner),
+                    json={"body": "Синтетическое заключение"},
+                ).status_code
+                == 200
+            )
+        case_id = _expire_escalated_case(escalation)
+
+    async def purge():
+        engine = create_async_engine(database_url())
+        try:
+            return await purge_expired_case_content(
+                async_sessionmaker(engine, expire_on_commit=False)
+            )
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(purge()) >= 1
+    runtime = create_engine(database_url().set(drivername="postgresql+psycopg"))
+    try:
+        with runtime.begin() as connection:
+            connection.execute(
+                text("SELECT set_config('app.current_clinic_id', :id, true)"), dict(id=str(clinic))
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT count(*) FROM case_escalation_workflow_events "
+                        "WHERE escalation_id=:id"
+                    ),
+                    dict(id=escalation),
+                )
+                == 0
+            )
+            assert connection.scalar(
+                text("SELECT content_purged_at IS NOT NULL FROM cases WHERE id=:id"),
+                dict(id=case_id),
+            )
+        with application_client() as client:
+            assert (
+                client.get(
+                    f"/v1/case-escalations/{other_escalation}", headers=actor_headers(other_owner)
+                ).json()["status"]
+                == "IN_PROGRESS"
+            )
+            assert client.get(path, headers=actor_headers(owner)).status_code == 404
+        with runtime.begin() as connection:
+            assert (
+                connection.scalar(
+                    text(
+                    "SELECT tgenabled FROM pg_trigger "
+                    "WHERE tgname='escalation_workflow_immutable'"
+                    )
+                )
+                == "O"
+            )
+    finally:
+        runtime.dispose()
+
+
 def test_approved_v2_routes_confirmed_case_without_legal_evidence(monkeypatch) -> None:
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from legal_core.database import database_url

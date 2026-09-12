@@ -340,7 +340,13 @@ async def _discussion_escalation(
             raise ApiError(
                 status_code=404, code="ESCALATION_NOT_FOUND", message="Escalation not found"
             )
-    await _tenant_case(session, actor, escalation.case_id)
+    case = await _tenant_case(session, actor, escalation.case_id)
+    if case.retention_due_at is not None and case.retention_due_at <= datetime.now(UTC):
+        raise ApiError(
+            status_code=410,
+            code="CASE_CONTENT_EXPIRED",
+            message="Case content is no longer available under the retention policy",
+        )
     return escalation
 
 
@@ -766,6 +772,7 @@ def create_case_router(
             .outerjoin(ranked, (ranked.c.escalation_id == CaseEscalation.id) & (ranked.c.rank == 1))
             .where(CaseEscalation.clinic_id == actor.clinic_id)
             .where(Case.content_purged_at.is_(None))
+            .where((Case.retention_due_at.is_(None)) | (Case.retention_due_at > datetime.now(UTC)))
             .order_by(CaseEscalation.created_at.desc(), CaseEscalation.id.desc())
             .limit(limit + 1)
         )
