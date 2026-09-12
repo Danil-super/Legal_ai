@@ -309,6 +309,7 @@ async def start_quick_intake(
         return
 
     _clear_quick(context)
+    gateway_bot._clear_pending_admin_grant(context)
     _user_data(context)[_QUICK_PENDING_KEY] = True
     await gateway_bot._reply(
         update,

@@ -252,6 +252,40 @@ def _clear_pending_admin_grant(context: ContextTypes.DEFAULT_TYPE | None) -> Non
         context.user_data.pop(ADMIN_GRANT_PILOT_KEY, None)
         context.user_data.pop(TEAM_MEMBER_ROLE_KEY, None)
         context.user_data.pop("escalation_discussion_id", None)
+        context.user_data.pop("escalation_resolution_pending", None)
+
+
+async def _route_input_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Navigation leaves the free-text discussion before any earlier-group consumer runs.
+
+    The wizard remains owned by ConversationHandler; its durable draft is never deleted.
+    An old discussion button cannot replace an active wizard (checked by that handler).
+    """
+    query = update.callback_query
+    callback = query.data if query is not None else None
+    message = update.effective_message
+    command = message.text if query is None and message is not None else None
+    navigating = isinstance(callback, str) or (
+        isinstance(command, str) and command.startswith("/")
+    )
+    if not navigating:
+        return
+    data = _user_data(context)
+    if not isinstance(callback, str) or not callback.startswith(
+        ("case:escalation:", "case:discussion:", "esc:")
+    ):
+        data.pop("escalation_discussion_id", None)
+        data.pop("escalation_resolution_pending", None)
+    # Modes waiting for arbitrary text must not survive navigation to a different flow.
+    # Callback handlers establish their new pending state after this boundary runs.
+    for key in (ADMIN_GRANT_ACCESS_KEY, ADMIN_GRANT_PILOT_KEY, TEAM_MEMBER_ROLE_KEY):
+        data.pop(key, None)
+    if not isinstance(callback, str) or not callback.startswith("quick:"):
+        data.pop("quick_intake_pending", None)
+        data.pop("quick_intake_candidate", None)
+    if not isinstance(callback, str) or not callback.startswith("clinicdoc:"):
+        data.pop("clinic_document_upload", None)
+        data.pop("clinic_document_effective_date_pending", None)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> None:
@@ -697,6 +731,7 @@ async def _answer_callback(update: Update) -> str | None:
 
 async def case_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await _answer_callback(update)
+    _clear_pending_admin_grant(context)
     _clear_wizard(context)
     actor_id = _actor_id(update)
     if actor_id is None:
@@ -997,6 +1032,7 @@ async def _prompt_resumed_draft(update: Update, state: WizardState, data: dict[s
 
 async def resume_intake_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     callback = await _answer_callback(update)
+    _clear_pending_admin_grant(context)
     actor_id = _actor_id(update)
     if callback is None or actor_id is None:
         return ConversationHandler.END
@@ -1800,6 +1836,7 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
         builder = builder.proxy(configured_proxy_url).get_updates_proxy(configured_proxy_url)
     application = builder.build()
     application.add_handler(TypeHandler(Update, _record_update_heartbeat), group=-100)
+    application.add_handler(TypeHandler(Update, _route_input_mode), group=-90)
     application.add_handler(
         ConversationHandler(
             entry_points=[

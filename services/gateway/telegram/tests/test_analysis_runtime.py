@@ -363,3 +363,9 @@ def test_application_stays_legacy_compatible_without_analysis_settings(
         and "case:analyze" in str(handler.pattern.pattern)
     ]
     assert analysis_handlers == []
+    assert any(
+        isinstance(handler, CallbackQueryHandler)
+        and getattr(handler, "pattern", None) is not None
+        and "case:escalation:" in str(handler.pattern.pattern)
+        for handler in handlers
+    ), "human case work must remain available without an AI provider"

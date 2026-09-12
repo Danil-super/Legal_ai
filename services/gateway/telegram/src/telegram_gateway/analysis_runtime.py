@@ -24,6 +24,7 @@ from telegram.ext import (
 
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError, LegalCoreClient
+from telegram_gateway.escalation_workspace import show_workspace, workspace_action
 from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
@@ -190,36 +191,6 @@ def telegram_escalation_queue_summary(payload: dict[str, Any]) -> str:
         "В списке — только номер кейса и уровень риска. Выберите кейс, чтобы открыть "
         "внутренний обезличенный диалог."
     )
-
-
-def _discussion_summary(payload: dict[str, Any]) -> str:
-    raw_items = payload.get("items")
-    if not isinstance(raw_items, list):
-        raise ValueError("escalation discussion has invalid items")
-    labels = {
-        "CLINIC_OWNER": "Владелец",
-        "CLINIC_ADMIN": "Администратор",
-        "CLINIC_LAWYER": "Юрист",
-    }
-    lines = [
-        "💬 ВНУТРЕННИЙ ДИАЛОГ ПО КРИТИЧЕСКОМУ КЕЙСУ",
-        "Пишите только обезличенные вопросы и ответы: без ФИО, контактов, "
-        "номеров карт и меддокументов.",
-    ]
-    for item in raw_items[-20:]:
-        if not isinstance(item, dict):
-            continue
-        role = labels.get(_bounded_text(item.get("authorRole"), limit=40) or "")
-        body = _bounded_text(item.get("body"), limit=1_500)
-        created_at = _bounded_text(item.get("createdAt"), limit=32)
-        if role is None or body is None:
-            continue
-        timestamp = created_at[:16].replace("T", " ") if created_at else "время неизвестно"
-        lines.extend(["", f"{role} · {timestamp}", body])
-    if len(raw_items) > 20:
-        lines.extend(["", "Показаны последние 20 сообщений."])
-    rendered = "\n".join(lines)
-    return rendered[:3_900] + "\n…" if len(rendered) > 4_000 else rendered
 
 
 def _missing_clinic_document_lines(payload: dict[str, Any]) -> list[str]:
@@ -490,13 +461,17 @@ def telegram_analysis_messages(payload: dict[str, Any]) -> tuple[str, ...]:
 async def _show_escalation_queue(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
+    *, status: str = "OPEN", before: UUID | None = None,
 ) -> None:
+    gateway_bot._clear_pending_admin_grant(context)
     actor_id = gateway_bot._actor_id(update)
     if actor_id is None:
         await gateway_bot._reply(update, "Не удалось определить пользователя.")
         return
     try:
-        payload = await gateway_bot._legal_core(context).list_case_escalations(actor_id)
+        payload = await gateway_bot._legal_core(context).list_case_escalations(
+            actor_id, status=status, before=before, limit=20,
+        )
         items = _queue_items(payload)
     except (LegalCoreApiError, ValueError) as exc:
         logger.warning("case escalation queue failed: %s", type(exc).__name__)
@@ -514,11 +489,20 @@ async def _show_escalation_queue(
         ]
         for escalation_id, label in items[:20]
     ]
+    if payload.get("nextBefore"):
+        cursor = UUID(str(payload["nextBefore"]))
+        rows.append([InlineKeyboardButton("Далее →", callback_data=f"esc:q:{status}:{cursor}")])
+    other_status = "RESOLVED" if status == "OPEN" else "OPEN"
+    rows.append([InlineKeyboardButton(
+        "🗄 Завершённые" if status == "OPEN" else "⚖️ Открытые",
+        callback_data=f"esc:q:{other_status}:first",
+    )])
     rows.extend(list(row) for row in back_keyboard().inline_keyboard)
     message = update.effective_message
     if message is not None:
         await message.reply_text(
-            telegram_escalation_queue_summary(payload),
+            ("🗄 ЗАВЕРШЁННЫЕ КЕЙСЫ\n\nВыберите кейс для просмотра истории."
+             if status == "RESOLVED" else telegram_escalation_queue_summary(payload)),
             reply_markup=InlineKeyboardMarkup(rows) if rows else None,
         )
 
@@ -549,12 +533,18 @@ async def open_escalation_discussion(
     if query is None or actor_id is None or not isinstance(query.data, str):
         raise ApplicationHandlerStop
     await query.answer()
+    if gateway_bot.WIZARD_DATA_KEY in gateway_bot._user_data(context):
+        await gateway_bot._reply(
+            update,
+            "Сначала вернитесь в главное меню: текущий черновик сохранён. "
+            "Затем откройте обсуждение нужного кейса.",
+            reply_markup=back_keyboard(),
+        )
+        raise ApplicationHandlerStop
+    gateway_bot._clear_pending_admin_grant(context)
     try:
         escalation_id = UUID(query.data.removeprefix(ESCALATION_CALLBACK_PREFIX))
-        payload = await gateway_bot._legal_core(context).get_escalation_discussion(
-            escalation_id, actor_id
-        )
-        rendered = _discussion_summary(payload)
+        await show_workspace(update, context, escalation_id)
     except (LegalCoreApiError, ValueError) as exc:
         logger.warning("case escalation discussion open failed: %s", type(exc).__name__)
         await gateway_bot._reply(
@@ -562,10 +552,6 @@ async def open_escalation_discussion(
         )
         raise ApplicationHandlerStop from exc
 
-    gateway_bot._user_data(context)[ESCALATION_DISCUSSION_KEY] = str(escalation_id)
-    message = update.effective_message
-    if message is not None:
-        await message.reply_text(rendered, reply_markup=_active_discussion_keyboard(escalation_id))
     raise ApplicationHandlerStop
 
 
@@ -576,6 +562,7 @@ async def close_escalation_discussion(
     if await gateway_bot._answer_callback(update) != ESCALATION_DISCUSSION_CLOSE_CALLBACK:
         raise ApplicationHandlerStop
     gateway_bot._user_data(context).pop(ESCALATION_DISCUSSION_KEY, None)
+    gateway_bot._user_data(context).pop("escalation_resolution_pending", None)
     await gateway_bot._reply(
         update,
         "Диалог закрыт в этом чате. Сообщения сохранены во внутреннем журнале кейса.",
@@ -592,6 +579,14 @@ async def post_escalation_discussion_message(
     raw_id = user_data.get(ESCALATION_DISCUSSION_KEY)
     if not isinstance(raw_id, str):
         return
+    if any(key in user_data for key in (
+        gateway_bot.WIZARD_DATA_KEY, "quick_intake_pending", "quick_intake_candidate",
+        gateway_bot.ADMIN_GRANT_ACCESS_KEY, gateway_bot.ADMIN_GRANT_PILOT_KEY,
+        gateway_bot.TEAM_MEMBER_ROLE_KEY,
+    )):
+        user_data.pop(ESCALATION_DISCUSSION_KEY, None)
+        user_data.pop("escalation_resolution_pending", None)
+        return
     actor_id = gateway_bot._actor_id(update)
     message = update.effective_message
     raw_text = message.text if message is not None else None
@@ -599,17 +594,24 @@ async def post_escalation_discussion_message(
         raise ApplicationHandlerStop
     try:
         escalation_id = UUID(raw_id)
-        await gateway_bot._legal_core(context).post_escalation_discussion_message(
-            escalation_id,
-            actor_id,
-            body=raw_text,
-        )
+        resolving = user_data.get("escalation_resolution_pending") == raw_id
+        if resolving:
+            await gateway_bot._legal_core(context).resolve_escalation(
+                escalation_id, actor_id, body=raw_text,
+            )
+            user_data.pop(ESCALATION_DISCUSSION_KEY, None)
+            user_data.pop("escalation_resolution_pending", None)
+        else:
+            await gateway_bot._legal_core(context).post_escalation_discussion_message(
+                escalation_id, actor_id, body=raw_text,
+            )
     except LegalCoreApiError as exc:
         logger.warning("case escalation discussion post failed: %s", exc.code)
         if exc.code == "DIRECT_IDENTIFIER_NOT_ALLOWED":
             detail = "Не сохраняю сообщение: удалите ФИО, контакты и номера документов пациента."
-        elif exc.code == "ESCALATION_NOT_FOUND":
+        elif exc.code in {"ESCALATION_NOT_FOUND", "ESCALATION_RESOLVED"}:
             user_data.pop(ESCALATION_DISCUSSION_KEY, None)
+            user_data.pop("escalation_resolution_pending", None)
             detail = "Этот кейс больше недоступен для обсуждения."
         else:
             detail = "Не удалось сохранить сообщение. Попробуйте ещё раз позже."
@@ -618,7 +620,9 @@ async def post_escalation_discussion_message(
 
     await gateway_bot._reply(
         update,
-        "✅ Сообщение добавлено. Можно написать следующий обезличенный вопрос или ответ.",
+        ("✅ Обращение завершено. Итог сохранён в истории." if resolving else
+         "✅ Сообщение добавлено. Можно написать следующий обезличенный вопрос или ответ."),
+        reply_markup=back_keyboard() if resolving else _active_discussion_keyboard(escalation_id),
     )
     raise ApplicationHandlerStop
 
@@ -738,24 +742,22 @@ def _install_report_analysis_button() -> None:
 def build_application_with_analysis(token: str) -> gateway_bot.TelegramApplication:
     settings = load_analysis_settings()
     application = gateway_bot.build_application(token)
-    if settings is None:
-        return application
+    if settings is not None:
+        _install_report_analysis_button()
 
-    _install_report_analysis_button()
+        async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await analyze_case_callback(update, context, settings=settings)
 
-    async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await analyze_case_callback(update, context, settings=settings)
-
-    application.add_handler(
-        CallbackQueryHandler(
-            handler,
-            pattern=(
-                r"^case:analyze:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
-                r"[0-9a-f]{4}-[0-9a-f]{12}$"
+        application.add_handler(
+            CallbackQueryHandler(
+                handler,
+                pattern=(
+                    r"^case:analyze:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+                    r"[0-9a-f]{4}-[0-9a-f]{12}$"
+                ),
             ),
-        ),
-        group=-1,
-    )
+            group=-1,
+        )
     application.add_handler(
         CallbackQueryHandler(show_escalation_queue_callback, pattern=r"^case:escalations$"),
         group=-1,
@@ -778,6 +780,7 @@ def build_application_with_analysis(token: str) -> gateway_bot.TelegramApplicati
         group=-1,
     )
     application.add_handler(CommandHandler("escalations", show_escalation_queue_command), group=-1)
+    application.add_handler(CallbackQueryHandler(workspace_action, pattern=r"^esc:"), group=-1)
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, post_escalation_discussion_message),
         group=-1,
