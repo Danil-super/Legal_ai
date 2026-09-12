@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 from telegram import Update
 from telegram.ext import ExtBot
+from telegram_gateway.analysis_jobs_runtime import JOBS_CLIENT_KEY
 from telegram_gateway.quick_intake_runtime import build_application_with_quick_intake
 
 ACTOR = 777
@@ -21,9 +22,20 @@ class Core:
         self.conclusions = []
         self.status = "REQUIRED"
         self.assigned = False
+        self.jobs = []
 
     async def get_actor(self, actor):
         return {"role": "CLINIC_OWNER"}
+
+    async def enqueue(self, case, actor, message_id):
+        self.jobs.append((case, actor, message_id))
+        return {
+            "jobId": str(DRAFT),
+            "caseId": str(case),
+            "state": "QUEUED",
+            "result": None,
+            "errorCode": None,
+        }
 
     async def get_escalation(self, escalation, actor):
         return {
@@ -94,6 +106,7 @@ class Core:
         ([f"case:draft:{DRAFT}", "text:Установка винира"], "wizard"),
         (["quick:start", "text:Скололся винир, пациент требует вернуть деньги."], "quick"),
         (["menu", "text:Это не сообщение юристу"], "menu"),
+        ([f"case:analyze:{DRAFT}", "menu", "text:Проверка доступности меню"], "analysis"),
         (
             [
                 f"esc:claim:{ESCALATION}",
@@ -143,6 +156,7 @@ def test_switching_from_discussion_does_not_send_new_case_text_to_old_case(
             app = build_application_with_quick_intake("123456:unit_test_token_value_1234567890")
             core = Core()
             app.bot_data["legal_core_client"] = core
+            app.bot_data[JOBS_CLIENT_KEY] = core
             errors = []
 
             async def record_error(update, context):
@@ -170,7 +184,7 @@ def test_switching_from_discussion_does_not_send_new_case_text_to_old_case(
                             "message": message,
                             "data": content,
                         }
-                    await app.process_update(Update.de_json(payload, app.bot))
+                    await asyncio.wait_for(app.process_update(Update.de_json(payload, app.bot)), 1)
                 assert errors == []
                 if expected == "resolved":
                     assert core.posts == ["Уточните срок получения претензии."]
@@ -184,6 +198,10 @@ def test_switching_from_discussion_does_not_send_new_case_text_to_old_case(
                     assert core.saved[-1]["draft_data"]["service_type"] == "Установка винира"
                 elif expected == "quick":
                     assert "quick_intake_candidate" in app.user_data[ACTOR], sent
+                elif expected == "analysis":
+                    assert core.jobs == [(DRAFT, ACTOR, 10)]
+                    assert "escalation_discussion_id" not in app.user_data[ACTOR]
+                    assert "меню" in sent[-1]["text"].lower() or "/menu" in sent[-1]["text"]
                 else:
                     assert "escalation_discussion_id" not in app.user_data[ACTOR]
             finally:

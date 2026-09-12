@@ -9,9 +9,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
-from uuid import UUID, uuid4
+from uuid import UUID
 
-import httpx2
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     ApplicationHandlerStop,
@@ -33,7 +32,6 @@ ESCALATION_CALLBACK_PREFIX = "case:escalation:"
 ESCALATION_QUEUE_CALLBACK = "case:escalations"
 ESCALATION_DISCUSSION_CLOSE_CALLBACK = "case:discussion:close"
 ESCALATION_DISCUSSION_KEY = "escalation_discussion_id"
-ANALYSIS_TIMEOUT_SECONDS = 90.0
 _PATCHED = False
 _READINESS_LABELS = {
     "CONTRACT": "договор на платные стоматологические услуги",
@@ -45,13 +43,6 @@ _READINESS_LABELS = {
     "CLAIM_WORKFLOW": "внутренний регламент работы с претензиями",
     "PATIENT_RULES": "правила для пациентов",
 }
-
-
-class AgentOrchestratorApiError(RuntimeError):
-    def __init__(self, status_code: int, code: str) -> None:
-        super().__init__(code)
-        self.status_code = status_code
-        self.code = code
 
 
 @dataclass(frozen=True, slots=True)
@@ -627,57 +618,15 @@ async def post_escalation_discussion_message(
     raise ApplicationHandlerStop
 
 
-async def _call_analysis(
-    settings: AnalysisSettings,
-    *,
-    case_id: UUID,
-    telegram_user_id: int,
-) -> dict[str, Any]:
-    client = httpx2.AsyncClient(
-        base_url=settings.base_url,
-        timeout=ANALYSIS_TIMEOUT_SECONDS,
-        follow_redirects=False,
-        trust_env=False,
-    )
-    try:
-        try:
-            response = await client.post(
-                f"/v1/cases/{case_id}/analyze",
-                headers={
-                    "X-Agent-Internal-Key": settings.internal_key,
-                    "X-Telegram-User-Id": str(telegram_user_id),
-                    "Idempotency-Key": str(uuid4()),
-                },
-            )
-        except httpx2.HTTPError as exc:
-            raise AgentOrchestratorApiError(503, "ANALYSIS_SERVICE_UNAVAILABLE") from exc
-        if response.status_code >= 400:
-            code = "ANALYSIS_FAILED"
-            try:
-                body = response.json()
-                detail = body.get("detail") if isinstance(body, dict) else None
-                if isinstance(detail, dict) and isinstance(detail.get("code"), str):
-                    code = detail["code"]
-            except ValueError:
-                pass
-            raise AgentOrchestratorApiError(response.status_code, code)
-        try:
-            body = response.json()
-        except ValueError as exc:
-            raise AgentOrchestratorApiError(502, "INVALID_ANALYSIS_RESPONSE") from exc
-        if not isinstance(body, dict):
-            raise AgentOrchestratorApiError(502, "INVALID_ANALYSIS_RESPONSE")
-        return body
-    finally:
-        await client.aclose()
-
-
 async def analyze_case_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     *,
     settings: AnalysisSettings,
 ) -> None:
+    from telegram_gateway.analysis_jobs_runtime import enqueue_analysis
+
+    del settings  # Model execution belongs to the durable worker, not this update handler.
     query = update.callback_query
     actor = update.effective_user
     if query is None or actor is None or not isinstance(query.data, str):
@@ -685,26 +634,10 @@ async def analyze_case_callback(
     await query.answer()
     try:
         case_id = UUID(query.data.removeprefix(ANALYSIS_CALLBACK_PREFIX))
-        await gateway_bot._reply(
-            update,
-            "⚖️ Проверяю факты, применимую редакцию права и уровень риска…",
-        )
-        payload = await _call_analysis(settings, case_id=case_id, telegram_user_id=actor.id)
-        for message in telegram_analysis_messages(payload):
-            await gateway_bot._reply(update, message)
-        escalation_id = escalation_id_from_analysis(payload)
-        if escalation_id is not None and update.effective_message is not None:
-            await update.effective_message.reply_text(
-                "Для этого критического кейса доступен внутренний обезличенный диалог с юристом.",
-                reply_markup=escalation_discussion_keyboard(escalation_id),
-            )
-    except (ValueError, AgentOrchestratorApiError) as exc:
+        await enqueue_analysis(update, context, case_id)
+    except ValueError as exc:
         logger.warning("case analysis failed: %s", type(exc).__name__)
-        if isinstance(exc, AgentOrchestratorApiError):
-            detail = analysis_error_message(exc.code)
-        else:
-            detail = "Ответ анализа не прошёл внутреннюю проверку."
-        await gateway_bot._reply(update, f"⚠️ {detail}")
+        await gateway_bot._reply(update, "⚠️ Ответ анализа не прошёл внутреннюю проверку.")
     raise ApplicationHandlerStop
 
 
@@ -743,6 +676,9 @@ def build_application_with_analysis(token: str) -> gateway_bot.TelegramApplicati
     settings = load_analysis_settings()
     application = gateway_bot.build_application(token)
     if settings is not None:
+        from telegram_gateway.analysis_jobs_runtime import install_analysis_jobs
+
+        install_analysis_jobs(application, settings.internal_key)
         _install_report_analysis_button()
 
         async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

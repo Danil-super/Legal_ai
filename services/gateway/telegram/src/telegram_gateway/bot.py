@@ -1574,6 +1574,16 @@ async def _send_workflow_report(
         raise ValueError("workflow response is invalid")
     report_id = UUID(str(report_id_value))
     telegram_summary = telegram_summary_from_report(report_json)
+    early_escalation_id = case.get("earlyEscalationId")
+    if early_escalation_id is not None:
+        escalation_id = UUID(str(early_escalation_id))
+        await _reply(
+            update,
+            "⚖️ Карточка уже передана юристу. Правовой анализ выполняется отдельно.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "Открыть карточку юриста", callback_data=f"case:escalation:{escalation_id}")],
+                *back_keyboard().inline_keyboard]),
+        )
     pdf = await client.download_pdf(report_id, actor_id)
     safe_number = re.sub(r"[^A-Za-z0-9_-]", "-", public_number)[:64]
     message = update.effective_message

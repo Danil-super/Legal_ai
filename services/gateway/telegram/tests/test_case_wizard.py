@@ -216,6 +216,29 @@ def canonical_report() -> dict[str, Any]:
     }
 
 
+def test_early_lawyer_route_is_acknowledged_before_report_download_can_fail() -> None:
+    from telegram_gateway import bot as gateway_bot
+
+    message = FakeMessage()
+    pipeline = FakeReportPipeline()
+    workflow = pipeline.workflow_response()
+    escalation_id = "00000000-0000-0000-0000-000000000123"
+    workflow["case"]["earlyEscalationId"] = escalation_id
+
+    async def fail_pdf(*args):
+        assert "уже передана юристу" in message.text_replies[0]
+        assert message.text_reply_markups[0].inline_keyboard[0][0].callback_data == (
+            f"case:escalation:{escalation_id}"
+        )
+        raise LegalCoreApiError(503, "PDF_UNAVAILABLE", "Synthetic download failure")
+
+    pipeline.download_pdf = fail_pdf
+    with pytest.raises(LegalCoreApiError):
+        asyncio.run(gateway_bot._send_workflow_report(
+            SimpleNamespace(effective_message=message), pipeline, workflow, 777,
+        ))
+
+
 def test_telegram_summary_is_rendered_from_canonical_report_and_rejects_wrong_schema() -> None:
     summary = telegram_summary_from_report(canonical_report())
 
