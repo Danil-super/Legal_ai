@@ -1,6 +1,7 @@
 import asyncio
 from datetime import date
 from types import SimpleNamespace
+from typing import cast
 from uuid import UUID
 
 import pytest
@@ -9,7 +10,7 @@ from agent_orchestrator.contracts import (
     ClinicDocumentContextItem,
     EvidenceItem,
 )
-from agent_orchestrator.hermes_client import HermesProtocolError
+from agent_orchestrator.hermes_client import HermesClient, HermesProtocolError
 from agent_orchestrator.reasoning import LegalReasoningOrchestrator
 from legal_core.verifier import SemanticVerdict
 
@@ -166,6 +167,69 @@ def test_orchestrator_rejects_obvious_identifier_before_provider_call() -> None:
             await orchestrator.reason(_projection(summary="Телефон пациента +7 999 123-45-67"))
         assert researcher.calls == 0
         assert reviewer.calls == 0
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("identifier_field", ["case_id", "fragment_id"])
+def test_typed_service_uuid_is_not_mistaken_for_patient_identifier(identifier_field):
+    async def scenario():
+        identifier = UUID("f47d4f14-4956-4014-b010-d60921631939")
+        projection = _projection()
+        if identifier_field == "case_id":
+            projection = projection.model_copy(update={"case_id": identifier})
+        else:
+            projection = projection.model_copy(
+                update={
+                    "evidence": [
+                        projection.evidence[0].model_copy(update={"fragment_id": identifier})
+                    ]
+                }
+            )
+        fragment_id = projection.evidence[0].fragment_id
+        researcher = FakeHermes(name="researcher", response=_claim_response(fragment_id))
+        reviewer = FakeHermes(name="reviewer", response=_review_response(fragment_id))
+        orchestrator = LegalReasoningOrchestrator(
+            researcher=cast(HermesClient, researcher), reviewer=cast(HermesClient, reviewer)
+        )
+        result = await orchestrator.reason(projection)
+        assert result.claims[0].evidence_fragment_ids == (fragment_id,)
+        assert str(identifier) in researcher.users[0]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("field", ["facts", "evidence", "clinic_document_context"])
+def test_identifier_guard_still_checks_all_text_even_when_it_looks_like_uuid(field):
+    async def scenario():
+        suspicious = "f47d4f14-4956-4014-b010-d60921631939"
+        projection = _projection_with_clinic_context()
+        if field == "facts":
+            projection = projection.model_copy(update={"facts": {"PROBLEM_SUMMARY": suspicious}})
+        elif field == "evidence":
+            projection = projection.model_copy(
+                update={
+                    "evidence": [projection.evidence[0].model_copy(update={"text": suspicious})]
+                }
+            )
+        else:
+            projection = projection.model_copy(
+                update={
+                    "clinic_document_context": [
+                        projection.clinic_document_context[0].model_copy(
+                            update={"text": suspicious}
+                        )
+                    ]
+                }
+            )
+        researcher = FakeHermes(name="researcher", response={})
+        reviewer = FakeHermes(name="reviewer", response={})
+        orchestrator = LegalReasoningOrchestrator(
+            researcher=cast(HermesClient, researcher), reviewer=cast(HermesClient, reviewer)
+        )
+        with pytest.raises(ValueError, match="direct identifier"):
+            await orchestrator.reason(projection)
+        assert researcher.calls == reviewer.calls == 0
 
     asyncio.run(scenario())
 

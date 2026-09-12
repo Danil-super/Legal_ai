@@ -121,7 +121,15 @@ class LegalReasoningOrchestrator:
     async def reason(self, projection: CaseProjection) -> ReasoningResult:
         serialized_projection = projection.model_dump(mode="json", by_alias=True)
         research_input = json.dumps(serialized_projection, ensure_ascii=False, sort_keys=True)
-        if contains_obvious_direct_identifier(research_input):
+        # UUID fields are typed server-issued references, not patient identifiers. Scan every
+        # remaining field unchanged; never strip UUID-looking substrings from untrusted text.
+        identifier_scan = projection.model_dump(
+            mode="json", by_alias=True,
+            exclude={"case_id": True, "evidence": {"__all__": {"fragment_id"}}},
+        )
+        if contains_obvious_direct_identifier(
+            json.dumps(identifier_scan, ensure_ascii=False, sort_keys=True)
+        ):
             message = "bounded case projection still contains an obvious direct identifier"
             raise ValueError(message)
 
