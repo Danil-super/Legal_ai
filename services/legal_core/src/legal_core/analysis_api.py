@@ -386,6 +386,9 @@ def create_analysis_router(
         x_analysis_job_token: UUID | None = Header(default=None),
     ) -> AnalysisSubmissionResponse:
         actor = await resolve_actor(session, telegram_user_id)
+        # A successful idempotency record is not an exemption from case retention.
+        # Do not require analysis eligibility here: a valid completed case must still replay.
+        await _tenant_case(session, actor, case_id)
         if x_analysis_job_id is not None or x_analysis_job_token is not None:
             from legal_core.analysis_jobs import require_job_lease
             if (x_analysis_job_id is None or x_analysis_job_token is None

@@ -340,13 +340,7 @@ async def _discussion_escalation(
             raise ApiError(
                 status_code=404, code="ESCALATION_NOT_FOUND", message="Escalation not found"
             )
-    case = await _tenant_case(session, actor, escalation.case_id)
-    if case.retention_due_at is not None and case.retention_due_at <= datetime.now(UTC):
-        raise ApiError(
-            status_code=410,
-            code="CASE_CONTENT_EXPIRED",
-            message="Case content is no longer available under the retention policy",
-        )
+    await _tenant_case(session, actor, escalation.case_id)
     return escalation
 
 
@@ -516,13 +510,24 @@ async def _tenant_case(session: AsyncSession, actor: ActorContext, case_id: UUID
             code="CASE_NOT_FOUND",
             message="Case not found",
         )
+    _require_case_content_available(case)
+    return case
+
+
+def _require_case_content_available(case: Case) -> None:
+    """Retention gates every content path, including a stored successful response."""
     if case.content_purged_at is not None:
         raise ApiError(
             status_code=status.HTTP_410_GONE,
             code="CASE_CONTENT_PURGED",
             message="Case content is no longer available under the retention policy",
         )
-    return case
+    if case.retention_due_at is not None and case.retention_due_at <= datetime.now(UTC):
+        raise ApiError(
+            status_code=status.HTTP_410_GONE,
+            code="CASE_CONTENT_EXPIRED",
+            message="Case content is no longer available under the retention policy",
+        )
 
 
 async def _current_fact_rows(session: AsyncSession, case_id: UUID) -> list[CaseFact]:
@@ -584,6 +589,7 @@ async def _workflow_response(
     )
     if case is None or report is None:
         raise RuntimeError("durable workflow references are inconsistent")
+    _require_case_content_available(case)
     case_response = _case_response(case)
     case_response.early_escalation_id = await session.scalar(
         select(CaseEscalation.id).where(
@@ -2012,6 +2018,7 @@ def create_case_router(
                 code="REPORT_NOT_FOUND",
                 message="Report not found",
             )
+        await _tenant_case(session, actor, report.case_id)
         return StreamingResponse(
             iter([report.pdf_bytes]),
             media_type="application/pdf",
