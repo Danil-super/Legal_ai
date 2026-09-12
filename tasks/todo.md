@@ -311,4 +311,4 @@ approved-only retrieval, applicable-date resolution and claim-to-evidence verifi
 - [ ] Owner authorizes and activates the new early-triage policy, retaining the 50,000 RUB threshold.
 - [ ] Lawyers manually approve applicable legal versions; owner checks private-chat user flow.
 
-**Dependencies:** `SPEC-bot-reliability.md`; ADR0022/0023/0024/0026/0029/0030.
+**Dependencies:** `SPEC-bot-reliability.md`; ADR0021/0023/0024/0026/0029/0030.

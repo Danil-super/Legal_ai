@@ -1,7 +1,7 @@
 # ADR-0021: Complete human review and retrieval of approved legal copies
 
 - **Status:** Accepted
-- **Date:** 2026-09-13
+- **Date:** 2026-09-12
 
 ## Context
 

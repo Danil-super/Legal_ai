@@ -1,7 +1,7 @@
 # ADR-0026: Durable analysis jobs and idempotent private Telegram result delivery
 
 - **Status:** Accepted
-- **Date:** 2026-09-13
+- **Date:** 2026-09-12
 
 ## Context
 

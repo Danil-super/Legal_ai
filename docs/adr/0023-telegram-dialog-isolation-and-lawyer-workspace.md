@@ -1,7 +1,7 @@
 # ADR-0023: Isolate Telegram input modes and expose the lawyer case lifecycle
 
 - **Status:** Accepted
-- **Date:** 2026-09-13
+- **Date:** 2026-09-12
 
 ## Context
 
