@@ -340,6 +340,7 @@ class LegalEditorCandidateSummary(ContractModel):
         "NORMALIZED_EXCERPT", "OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"
     ] = Field(alias="artifactKind")
     approval_eligible: bool = Field(alias="approvalEligible")
+    approval_preflight_checked: bool = Field(default=True, alias="approvalPreflightChecked")
 
 
 class LegalEditorCandidatePage(ContractModel):

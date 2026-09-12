@@ -16,7 +16,9 @@ from legal_core.corpus_loader import (
 from legal_core.database import database_url, owner_database_url
 from legal_core.main import create_app
 from legal_core.models import LegalApprovalEvent, LegalVersion
+from sqlalchemy import event
 from sqlalchemy import create_engine, func, select, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 pytestmark = pytest.mark.skipif(
@@ -363,3 +365,62 @@ def test_editor_queue_shows_only_the_latest_unexpired_revision_of_each_document(
     assert str(expired_document) not in shown_version_ids
     assert str(prior_revision) not in shown_version_ids
     assert str(expired_latest_revision) not in shown_version_ids
+
+
+def test_editor_excerpts_export_is_complete_checksum_bound_and_editor_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("LEGAL_EDITOR_GATEWAY_KEY", _GATEWAY_KEY)
+    editor_id = 8_610_000_000 + uuid4().int % 100_000_000
+    ordinary_id = 8_710_000_000 + uuid4().int % 100_000_000
+    _seed_user(editor_id, system_role="LEGAL_EDITOR")
+    _seed_user(ordinary_id)
+    excerpt = "Начало выдержки. " + "Полный проверочный текст. " * 200 + "Конец выдержки."
+    version_id = _ingest(_write_manifest(tmp_path, fragment_text=excerpt))
+    path = f"/v1/legal/review-queue/{version_id}/excerpts"
+    with _client() as client:
+        assert client.get(path, headers=_headers(editor_id, key=None)).status_code == 403
+        assert client.get(path, headers=_headers(ordinary_id, key=_GATEWAY_KEY)).status_code == 403
+        result = client.get(path, headers=_headers(editor_id, key=_GATEWAY_KEY))
+        missing = client.get(
+            f"/v1/legal/review-queue/{uuid4()}/excerpts",
+            headers=_headers(editor_id, key=_GATEWAY_KEY),
+        )
+    assert missing.status_code == 404
+    assert result.status_code == 200
+    assert result.headers["content-type"].startswith("text/plain")
+    assert hashlib.sha256(result.content).hexdigest() == result.headers["x-legal-artifact-sha256"]
+    assert excerpt in result.text
+    assert "point:1" in result.text
+    assert str(version_id) in result.text
+    assert "Страницы PDF для выдержек не размечены" in result.text
+    assert "expected" not in result.text
+
+
+def test_review_queue_reads_metadata_without_pdf_or_fulltext(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("LEGAL_EDITOR_GATEWAY_KEY", _GATEWAY_KEY)
+    editor_id = 8_810_000_000 + uuid4().int % 100_000_000
+    _seed_user(editor_id, system_role="LEGAL_EDITOR")
+    version_id = _ingest(_write_manifest(tmp_path, effective_to="2999-01-01"))
+    statements = []
+
+    def record_sql(connection, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    with _client() as client:
+        event.listen(Engine, "before_cursor_execute", record_sql)
+        try:
+            result = client.get(
+                "/v1/legal/review-queue?page=1", headers=_headers(editor_id, key=_GATEWAY_KEY)
+            )
+        finally:
+            event.remove(Engine, "before_cursor_execute", record_sql)
+    assert result.status_code == 200
+    item = next(item for item in result.json()["items"] if item["versionId"] == str(version_id))
+    assert item["approvalPreflightChecked"] is False
+    assert item["approvalEligible"] is False
+    assert not any(
+        "raw_bytes" in statement or "normalized_text" in statement for statement in statements
+    )

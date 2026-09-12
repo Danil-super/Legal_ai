@@ -260,7 +260,14 @@ def create_legal_router(
         )
         rows = (
             await session.execute(
-                select(LegalVersion, LegalDocument.title, LegalDocument.official_number)
+                select(
+                    LegalVersion.id,
+                    LegalVersion.document_id,
+                    LegalVersion.approval_state,
+                    LegalVersion.artifact_kind,
+                    LegalDocument.title,
+                    LegalDocument.official_number,
+                )
                 .join(LegalDocument, LegalDocument.id == LegalVersion.document_id)
                 .join(
                     current_queue_versions,
@@ -273,16 +280,17 @@ def create_legal_router(
             )
         ).all()
         items: list[LegalEditorCandidateSummary] = []
-        for version, title, official_number in rows:
+        for version in rows:
             items.append(
                 LegalEditorCandidateSummary(
                     documentId=version.document_id,
                     versionId=version.id,
-                    documentTitle=title,
-                    officialNumber=official_number,
+                    documentTitle=version.title,
+                    officialNumber=version.official_number,
                     approvalState=version.approval_state,
                     artifactKind=version.artifact_kind,
-                    approvalEligible=await editor_approval_eligible(session, version),
+                    approvalEligible=False,
+                    approvalPreflightChecked=False,
                 )
             )
         return LegalEditorCandidatePage(
@@ -440,6 +448,98 @@ def create_legal_router(
                 )
                 for fragment in fragments
             ],
+        )
+
+    @router.get("/review-queue/{version_id}/excerpts")
+    async def editor_version_excerpts(
+        version_id: UUID,
+        telegram_user_id: TelegramUserId,
+        session: Session,
+        gateway_key: EditorGatewayKey = None,
+    ) -> StreamingResponse:
+        """Export every selected excerpt, not the truncated Telegram preview or raw PDF."""
+        await require_platform_legal_editor(
+            session, telegram_user_id=telegram_user_id, gateway_key=gateway_key
+        )
+        version = (
+            await session.execute(
+                select(
+                    LegalVersion.id,
+                    LegalDocument.title,
+                    LegalVersion.source_url,
+                    LegalVersion.effective_from,
+                    LegalVersion.effective_to,
+                    LegalVersion.raw_sha256,
+                    LegalVersion.fragments_sha256,
+                )
+                .join(LegalDocument, LegalDocument.id == LegalVersion.document_id)
+                .where(LegalVersion.id == version_id)
+            )
+        ).one_or_none()
+        if version is None:
+            raise ApiError(
+                status_code=404, code="LEGAL_VERSION_NOT_FOUND", message="Legal version not found"
+            )
+        content = bytearray(
+            (
+                f"ПОЛНЫЕ ВЫБРАННЫЕ ВЫДЕРЖКИ\n{version.title}\n"
+                f"Версия: {version.id}\nURL публикации: {version.source_url}\n"
+                f"Начало действия: {version.effective_from}; до (не включительно): "
+                f"{version.effective_to or 'не указано'}\n"
+                f"SHA256 PDF/артефакта: {version.raw_sha256}\n"
+                f"SHA256 подборки: {version.fragments_sha256}\n\n"
+                "Это вся подборка выдержек для поиска рекомендаций. Это не полный закон.\n"
+                "Сверьте каждую выдержку по исходному PDF: статью/пункт и полноту смысла.\n"
+                "Страницы PDF для выдержек не размечены; используйте поиск в PDF по тексту.\n"
+                "Наличие выдержки в файле не означает юридического утверждения.\n\n"
+            ).encode()
+        )
+        manifest_hash = hashlib.sha256()
+        first = True
+        fragments = await session.stream_scalars(
+            select(LegalFragment)
+            .where(LegalFragment.version_id == version_id)
+            .order_by(LegalFragment.ordinal, LegalFragment.id)
+            .execution_options(yield_per=100)
+        )
+        async for fragment in fragments:
+            if hashlib.sha256(fragment.fragment_text.encode()).hexdigest() != fragment.text_sha256:
+                raise ApiError(
+                    status_code=422, code="LEGAL_EXCERPTS_INTEGRITY_ERROR",
+                    message="Excerpt checksum mismatch",
+                )
+            manifest_hash.update(
+                f"{'' if first else chr(10)}{fragment.ordinal}:{fragment.text_sha256}".encode()
+            )
+            first = False
+            content.extend(
+                (
+                    f"=== Выдержка {fragment.ordinal}: {fragment.structural_path} ===\n"
+                    f"Статья: {fragment.article or '—'}; часть: {fragment.part or '—'}; "
+                    f"пункт: {fragment.point or '—'}\n"
+                    f"SHA256 текста: {fragment.text_sha256}\n\n{fragment.fragment_text}\n\n"
+                ).encode()
+            )
+            if len(content) > EDITOR_ARTIFACT_MAX_BYTES:
+                raise ApiError(
+                    status_code=422, code="LEGAL_EXCERPTS_TOO_LARGE",
+                    message="Excerpt export is too large",
+                )
+        if manifest_hash.hexdigest() != version.fragments_sha256:
+            raise ApiError(
+                status_code=422, code="LEGAL_EXCERPTS_INTEGRITY_ERROR",
+                message="Selection checksum mismatch",
+            )
+        exported = bytes(content)
+        return StreamingResponse(
+            iter([exported]),
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "Content-Length": str(len(exported)),
+                "Content-Disposition": f'attachment; filename="legal-excerpts-{version_id}.txt"',
+                "X-Content-Type-Options": "nosniff",
+                "X-Legal-Artifact-Sha256": hashlib.sha256(exported).hexdigest(),
+            },
         )
 
     @router.post(
