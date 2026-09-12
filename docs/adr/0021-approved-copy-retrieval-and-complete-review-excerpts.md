@@ -38,6 +38,15 @@ the integrity/eligibility check happens when opening the card, not that the vers
 Full immutable preflight remains mandatory on the card and under the approval transaction lock.
 Returning from attachments preserves attestations only for the same version/hash/date snapshot.
 
+File delivery runs as a tracked `Application.create_task` child, not inside the sequential
+Telegram conversation handler. At most four editors may have pending files, each editor gets
+one pending slot, and only one PDF/excerpts payload is transferred at a time to bound memory.
+Duplicate taps do not start duplicate downloads. A 60-second end-to-end deadline covers waiting,
+Core download and Telegram upload. The worker observes `Application.running` every 250 ms and
+cancels active I/O once shutdown starts, so `Application.stop` can await tracked tasks without
+waiting for stalled transfers. The task holds no conversation context and performs no user-state
+mutation. Failures give a retry/back message; progress does not lock other menus.
+
 ## Alternatives considered
 
 - Auto-approve publisher copies: rejected; contrary to the human review boundary.

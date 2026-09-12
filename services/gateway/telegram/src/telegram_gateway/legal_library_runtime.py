@@ -22,6 +22,7 @@ from telegram.ext import (
 
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError
+from telegram_gateway.editor_delivery import EditorFileDeliveryQueue
 from telegram_gateway.quick_intake_runtime import build_application_with_quick_intake
 from telegram_gateway.ui import back_keyboard
 
@@ -31,6 +32,7 @@ _MAX_DOCUMENTS = 20
 _MAX_MESSAGE = 3_900
 _EDITOR_PENDING_KEY = "legal_editor_pending"
 _EDITOR_ARTIFACT_MAX_BYTES = 50_000_000
+_EDITOR_DELIVERY_KEY = "legal_editor_file_deliveries"
 _EDITOR_CALLBACK_RE = re.compile(
     r"^editor:(?:open|page:(?:[1-9]|[1-9][0-9]|100)|"
     r"detail:[0-9a-f-]{36}:(?:[1-9]|[1-9][0-9]|100)|"
@@ -799,18 +801,58 @@ async def _send_editor_artifact(
                 if excerpts
                 else "Сохранённая неизменяемая версия документа для юридической проверки."
             ),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    "← К карточке", callback_data=f"editor:detail:{version_id}:1"
-                )],
-                [InlineKeyboardButton("← К списку", callback_data="editor:open")],
-            ]),
+            reply_markup=_editor_return_keyboard(version_id),
         )
     except LegalCoreApiError as exc:
         logger.warning("legal editor artifact failed: %s", exc.code)
-        await gateway_bot._reply(update, "⚠️ Документ не удалось загрузить. Попробуйте позже.")
+        await gateway_bot._reply(
+            update, "⚠️ Документ не удалось загрузить. Попробуйте позже.",
+            reply_markup=_editor_return_keyboard(version_id),
+        )
     finally:
         await client.aclose()
+
+
+def _editor_return_keyboard(version_id: UUID) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("← К карточке", callback_data=f"editor:detail:{version_id}:1")],
+        [InlineKeyboardButton("← К списку", callback_data="editor:open")],
+    ])
+
+
+async def _start_editor_delivery(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, version_id: UUID, excerpts: bool
+) -> None:
+    actor_id = gateway_bot._actor_id(update)
+    if actor_id is None or update.effective_message is None:
+        return
+    queue = context.application.bot_data.get(_EDITOR_DELIVERY_KEY)
+    if not isinstance(queue, EditorFileDeliveryQueue):
+        queue = EditorFileDeliveryQueue(context.application)
+        context.application.bot_data[_EDITOR_DELIVERY_KEY] = queue
+    keyboard = _editor_return_keyboard(version_id)
+
+    async def deliver() -> None:
+        await gateway_bot._reply(
+            update, "📥 Готовлю файл. Остальные меню доступны во время загрузки.",
+            reply_markup=keyboard,
+        )
+        await _send_editor_artifact(update, version_id=version_id, excerpts=excerpts)
+
+    async def report_error() -> None:
+        await gateway_bot._reply(
+            update, "⚠️ Файл не удалось доставить вовремя. Нажмите кнопку загрузки ещё раз.",
+            reply_markup=keyboard,
+        )
+
+    admission = queue.submit(actor_id, deliver, report_error)
+    if admission != "STARTED":
+        message = (
+            "📥 Ваш файл уже загружается. Дождитесь завершения; меню доступны."
+            if admission == "DUPLICATE"
+            else "⚠️ Загрузка временно занята. Попробуйте чуть позже; меню доступны."
+        )
+        await gateway_bot._reply(update, message, reply_markup=keyboard)
 
 
 async def _confirm_editor_approval(
@@ -885,10 +927,12 @@ async def legal_editor_callback(update: Update, context: ContextTypes.DEFAULT_TY
             _, _, raw_version_id, _ = callback_data.split(":")
             await _show_editor_detail(update, context, version_id=UUID(raw_version_id), reset=False)
         elif callback_data.startswith("editor:artifact:"):
-            await _send_editor_artifact(update, version_id=UUID(callback_data.rsplit(":", 1)[1]))
+            await _start_editor_delivery(
+                update, context, version_id=UUID(callback_data.rsplit(":", 1)[1]), excerpts=False
+            )
         elif callback_data.startswith("editor:excerpts:"):
-            await _send_editor_artifact(
-                update, version_id=UUID(callback_data.rsplit(":", 1)[1]), excerpts=True
+            await _start_editor_delivery(
+                update, context, version_id=UUID(callback_data.rsplit(":", 1)[1]), excerpts=True
             )
         elif callback_data.startswith("editor:fragments:"):
             _, _, raw_version_id, raw_page = callback_data.split(":")

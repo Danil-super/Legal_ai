@@ -309,3 +309,39 @@ def test_queue_does_not_mislabel_deferred_integrity_checks_as_unavailable() -> N
     }]})
     assert "проверка доступности — при открытии карточки" in rendered
     assert "старая/недоступная" not in rendered
+
+
+@pytest.mark.parametrize("resource", ["artifact", "excerpts"])
+def test_editor_file_callback_returns_before_download_completes(monkeypatch, resource) -> None:
+    version_id = "00000000-0000-0000-0000-000000000002"
+    monkeypatch.setattr(runtime.gateway_bot, "_actor_id", lambda _: 12345)
+    monkeypatch.setattr(runtime.gateway_bot, "_answer_callback", AsyncMock(
+        return_value=f"editor:{resource}:{version_id}"
+    ))
+    monkeypatch.setattr(runtime.gateway_bot, "_reply", AsyncMock())
+
+    async def scenario():
+        finished = asyncio.Event()
+        started = asyncio.Event()
+
+        async def send(*args, **kwargs):
+            started.set()
+            await finished.wait()
+
+        monkeypatch.setattr(runtime, "_send_editor_artifact", send)
+        application = SimpleNamespace(
+            running=True, bot_data={}, create_task=asyncio.create_task
+        )
+        context = SimpleNamespace(application=application, user_data={"unrelated": "keep"})
+        with pytest.raises(ApplicationHandlerStop):
+            await asyncio.wait_for(
+                runtime.legal_editor_callback(SimpleNamespace(effective_message=object()), context),
+                timeout=0.1,
+            )
+        await started.wait()
+        assert not finished.is_set()
+        assert context.user_data == {"unrelated": "keep"}
+        finished.set()
+        await application.bot_data[runtime._EDITOR_DELIVERY_KEY].drain()
+
+    asyncio.run(scenario())
