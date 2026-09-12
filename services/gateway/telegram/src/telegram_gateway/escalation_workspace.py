@@ -88,7 +88,7 @@ def discussion_messages(payload: dict[str, Any]) -> tuple[str, ...]:
     for item in items:
         if not isinstance(item, dict) or not isinstance(item.get("body"), str):
             raise ValueError("invalid discussion message")
-        author = labels.get(item.get("authorRole"), "Участник клиники")
+        author = labels.get(str(item.get("authorRole")), "Участник клиники")
         timestamp = str(item.get("createdAt", ""))[:19].replace("T", " ")
         blocks.append(f"{author} · {timestamp}\n{item['body']}")
     if not items:
@@ -112,7 +112,7 @@ def render_case_card(detail: dict[str, Any]) -> str:
     lines = [
         f"⚖️ КЕЙС {detail.get('publicNumber', '')}",
         f"Риск: {detail.get('riskLevel', '')}",
-        f"Статус: {states.get(detail.get('status'), 'Неизвестен')}",
+        f"Статус: {states.get(str(detail.get('status')), 'Неизвестен')}",
         f"Ответственный: {assigned}",
         "",
         "Причины передачи:",
@@ -177,7 +177,7 @@ def workspace_keyboard(
                 ]
             )
     rows.append([InlineKeyboardButton("← К списку кейсов", callback_data="case:escalations")])
-    rows.extend(back_keyboard().inline_keyboard)
+    rows.extend(list(row) for row in back_keyboard().inline_keyboard)
     return InlineKeyboardMarkup(rows)
 
 
@@ -235,6 +235,38 @@ async def workspace_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if query is None or actor is None or not isinstance(query.data, str):
         raise ApplicationHandlerStop
     await query.answer()
+    if query.data.startswith("esc:pdf:"):
+        from telegram_gateway.report_pdf_delivery import queue_report_pdf
+
+        try:
+            escalation_id = UUID(query.data.removeprefix("esc:pdf:"))
+        except ValueError:
+            await context.bot.send_message(
+                chat_id=actor, text="⚠️ Кнопка PDF недействительна. Откройте карточку заново.",
+                reply_markup=back_keyboard(),
+            )
+            raise ApplicationHandlerStop from None
+        client = gateway_bot._legal_core(context)
+
+        async def resolve_report() -> UUID:
+            detail = await client.get_escalation(escalation_id, actor)
+            report = detail.get("report")
+            if not isinstance(report, dict):
+                raise ValueError("report not available")
+            case = report.get("case")
+            if not isinstance(case, dict) or UUID(str(case.get("id"))) != UUID(
+                str(detail.get("caseId"))
+            ):
+                raise ValueError("report case mismatch")
+            return UUID(str(report.get("reportId")))
+
+        await queue_report_pdf(
+            context,
+            actor_id=actor,
+            resolve_report=resolve_report,
+            return_callback=f"case:escalation:{escalation_id}",
+        )
+        raise ApplicationHandlerStop
     if gateway_bot.WIZARD_DATA_KEY in gateway_bot._user_data(context):
         await gateway_bot._reply(
             update,
@@ -293,29 +325,8 @@ async def workspace_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                             ]
                         ),
                     )
-            elif action in {"card", "pdf"}:
+            elif action == "card":
                 detail = await client.get_escalation(escalation_id, actor)
-                if action == "pdf":
-                    report = detail.get("report")
-                    if not isinstance(report, dict):
-                        raise ValueError("report not available")
-                    pdf = await client.download_pdf(UUID(str(report.get("reportId"))), actor)
-                    if update.effective_message is not None:
-                        await update.effective_message.reply_document(
-                            document=InputFile(BytesIO(pdf), filename=f"case-{escalation_id}.pdf"),
-                            caption="Канонический отчёт Legal Core.",
-                            reply_markup=InlineKeyboardMarkup(
-                                [
-                                    [
-                                        InlineKeyboardButton(
-                                            "← К кейсу",
-                                            callback_data=f"case:escalation:{escalation_id}",
-                                        )
-                                    ]
-                                ]
-                            ),
-                        )
-                    raise ApplicationHandlerStop
                 text = render_case_card(detail) + "\n\nВСЕ ОБСТОЯТЕЛЬСТВА:\n"
                 text += json.dumps(detail.get("facts", {}), ensure_ascii=False, indent=2)
                 text += "\n\nКАНОНИЧЕСКИЙ ОТЧЁТ LEGAL CORE:\n"

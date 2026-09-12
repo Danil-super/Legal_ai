@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import httpx2
@@ -139,7 +139,7 @@ def _client(context: ContextTypes.DEFAULT_TYPE) -> AnalysisJobsClient:
     client = context.bot_data.get(JOBS_CLIENT_KEY)
     if client is None:
         raise LegalCoreApiError(503, "ANALYSIS_SERVICE_UNAVAILABLE", "Jobs not initialized")
-    return client
+    return cast(AnalysisJobsClient, client)
 
 
 def job_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
@@ -168,6 +168,10 @@ def job_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
         rows.insert(
             0, [InlineKeyboardButton("📋 Результат", callback_data=f"analysis:result:{job.job_id}")]
         )
+        rows.insert(
+            1,
+            [InlineKeyboardButton("📄 PDF результата", callback_data=f"analysis:pdf:{job.job_id}")],
+        )
         escalation_id = escalation_id_from_analysis(job.result)
         if escalation_id is not None:
             rows.insert(
@@ -178,7 +182,7 @@ def job_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
                     )
                 ],
             )
-    rows.extend(back_keyboard().inline_keyboard)
+    rows.extend(list(row) for row in back_keyboard().inline_keyboard)
     return text, InlineKeyboardMarkup(rows)
 
 
@@ -257,6 +261,42 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     try:
         _, action, raw_id = query.data.split(":")
         job_id = UUID(raw_id)
+        if action == "pdf":
+            from telegram_gateway.report_pdf_delivery import queue_report_pdf
+
+            async def resolve_report() -> UUID:
+                current = JobSnapshot.parse(await _client(context).status(job_id, actor))
+                if (
+                    current.job_id != job_id
+                    or current.state != "SUCCEEDED"
+                    or current.result is None
+                ):
+                    raise ValueError("analysis PDF unavailable")
+                report = current.result.get("report")
+                if (
+                    not isinstance(report, dict)
+                    or UUID(str(report.get("caseId"))) != current.case_id
+                ):
+                    raise ValueError("analysis report case mismatch")
+                report_id = UUID(str(report.get("id")))
+                canonical = report.get("reportJson")
+                if (
+                    not isinstance(canonical, dict)
+                    or UUID(str(canonical.get("reportId"))) != report_id
+                ):
+                    raise ValueError("canonical report identity mismatch")
+                case = canonical.get("case")
+                if not isinstance(case, dict) or UUID(str(case.get("id"))) != current.case_id:
+                    raise ValueError("canonical report case mismatch")
+                return report_id
+
+            await queue_report_pdf(
+                context,
+                actor_id=actor,
+                resolve_report=resolve_report,
+                return_callback=f"analysis:status:{job_id}",
+            )
+            raise ApplicationHandlerStop
         job = JobSnapshot.parse(await _client(context).status(job_id, actor))
         if job.job_id != job_id:
             raise ValueError("analysis response job mismatch")
@@ -394,6 +434,8 @@ def install_analysis_jobs(application: gateway_bot.TelegramApplication, internal
 
     application.post_init, application.post_shutdown = initialize, shutdown
     application.add_handler(
-        CallbackQueryHandler(status_callback, pattern=r"^analysis:(status|result):[0-9a-f-]{36}$"),
+        CallbackQueryHandler(
+            status_callback, pattern=r"^analysis:(status|result|pdf):[0-9a-f-]{36}$"
+        ),
         group=-1,
     )

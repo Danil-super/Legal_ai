@@ -263,6 +263,9 @@ async def _route_input_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     """
     query = update.callback_query
     callback = query.data if query is not None else None
+    if isinstance(callback, str) and callback.startswith(("analysis:pdf:", "esc:pdf:")):
+        # Read-only background file delivery must not cancel the active text-input mode.
+        return
     message = update.effective_message
     command = message.text if query is None and message is not None else None
     navigating = isinstance(callback, str) or (

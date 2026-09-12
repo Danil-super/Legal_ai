@@ -39,6 +39,14 @@ The auto-edited result is the existing bounded canonical Telegram summary. The b
 recommendations and citations. Confirmed early HIGH/CRITICAL routing is acknowledged before PDF
 download, so a document delivery failure cannot conceal that the lawyer card already exists.
 
+«PDF результата» queues a private transfer in the same bounded file-delivery queue used by legal
+editors and lawyer case PDFs. No additional file queue or parallel in-memory PDF budget is created.
+The worker re-fetches the actor-owned job after waiting in the queue, validates the report's ID and
+case against its canonical payload, then calls the independently authorized report PDF endpoint.
+The job result's `report.id` identifies the stored report; its nested `reportJson.reportId` must
+match. A lawyer workspace supplies its direct canonical `reportId` only after an authorized detail
+read. Read-only PDF buttons and task completion preserve any active text-input mode.
+
 ## Alternatives considered
 
 - An untracked `asyncio.create_task` for model analysis: loses intent on gateway restart.
@@ -55,5 +63,8 @@ separation, lifecycle teardown, restart recovery, ambiguous delivery, rate-limit
 malformed responses, and the late-QUEUED edit race. `test_dialog_isolation.py` processes actual
 PTB updates through analyze → main menu while the job remains queued. The backend worker tests
 prove job execution and tenant/lease behavior; these gateway tests only fake network boundaries.
+`test_report_pdf_delivery.py` runs actual PTB dispatch with a deliberately paused PDF transfer,
+verifies menu responsiveness and byte delivery, and denies missing/mismatched reports, revoked
+job access while waiting, and independently revoked PDF access without emitting a file.
 
 PTB integration reference: [JobQueue.run_repeating](https://docs.python-telegram-bot.org/en/stable/telegram.ext.jobqueue.html#telegram.ext.JobQueue.run_repeating).
