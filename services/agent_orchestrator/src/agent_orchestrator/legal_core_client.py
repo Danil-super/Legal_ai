@@ -69,10 +69,15 @@ class LegalCoreClient:
         telegram_user_id: int,
         idempotency_key: UUID | None = None,
         json_body: dict[str, Any] | None = None,
+        job_id: UUID | None = None,
+        job_token: UUID | None = None,
     ) -> dict[str, Any]:
         headers = {"X-Telegram-User-Id": str(telegram_user_id)}
         if idempotency_key is not None:
             headers["Idempotency-Key"] = str(idempotency_key)
+        if job_id is not None and job_token is not None:
+            headers["X-Analysis-Job-Id"] = str(job_id)
+            headers["X-Analysis-Job-Token"] = str(job_token)
 
         owns_client = self._client is None
         client = self._client or httpx.AsyncClient(
@@ -142,6 +147,8 @@ class LegalCoreClient:
         reasoning: ReasoningResult,
         telegram_user_id: int,
         idempotency_key: UUID,
+        job_id: UUID | None = None,
+        job_token: UUID | None = None,
     ) -> AnalysisSubmissionResponse:
         claims = [
             AnalysisClaimInput(
@@ -178,6 +185,8 @@ class LegalCoreClient:
             telegram_user_id=telegram_user_id,
             idempotency_key=idempotency_key,
             json_body=request.model_dump(mode="json", by_alias=True),
+            job_id=job_id,
+            job_token=job_token,
         )
         try:
             return AnalysisSubmissionResponse.model_validate(payload)

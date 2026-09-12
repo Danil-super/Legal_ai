@@ -80,6 +80,17 @@ def test_completed_case_is_rejected_before_agent_reasoning_can_start() -> None:
     assert raised.value.code == "CASE_ANALYSIS_ALREADY_COMPLETED"
 
 
+def test_expired_case_cannot_start_or_commit_analysis_before_retention_purge() -> None:
+    case = SimpleNamespace(
+        closed_at=datetime(2026, 1, 1, tzinfo=UTC),
+        retention_due_at=datetime(2026, 1, 2, tzinfo=UTC),
+        status=CaseStatus.ANALYSIS_BLOCKED.value,
+    )
+    with pytest.raises(ApiError) as raised:
+        _require_analysis_eligible_case(case)  # type: ignore[arg-type]
+    assert raised.value.status_code == 410
+
+
 def test_submission_contract_maps_to_domain_and_verified_actions() -> None:
     payload = _submission()
     claims = _domain_claims(payload)

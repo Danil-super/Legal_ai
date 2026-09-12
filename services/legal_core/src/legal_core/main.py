@@ -17,6 +17,8 @@ from starlette.middleware.base import RequestResponseEndpoint
 
 from legal_core import __version__
 from legal_core.analysis_api import create_analysis_router
+from legal_core.analysis_job_worker import WorkerSettings, run_analysis_worker
+from legal_core.analysis_jobs import create_analysis_jobs_router
 from legal_core.case_api import ApiError, create_case_router
 from legal_core.case_retention import purge_expired_case_content
 from legal_core.clinic_document_library import create_clinic_document_library_router
@@ -101,6 +103,7 @@ def create_app(
     managed_engine: AsyncEngine | None = None,
     enable_draft_retention: bool = True,
     clinic_document_store: RawClinicDocumentStore | None = None,
+    enable_analysis_worker: bool = True,
 ) -> FastAPI:
     engine = managed_engine or create_engine()
     sessions = session_factory or create_session_factory(engine)
@@ -111,9 +114,18 @@ def create_app(
         retention_task = (
             asyncio.create_task(_retention_purge_loop(sessions)) if enable_draft_retention else None
         )
+        worker_settings = WorkerSettings.load() if enable_analysis_worker else None
+        worker_task = (
+            asyncio.create_task(run_analysis_worker(sessions, worker_settings))
+            if worker_settings is not None else None
+        )
         try:
             yield
         finally:
+            if worker_task is not None:
+                worker_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await worker_task
             if retention_task is not None:
                 retention_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -196,6 +208,7 @@ def create_app(
     )
     app.include_router(create_clinic_document_library_router(sessions))
     app.include_router(create_analysis_router(sessions))
+    app.include_router(create_analysis_jobs_router(sessions))
 
     return app
 

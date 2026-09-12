@@ -4,6 +4,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
+from legal_core.analysis_jobs import AnalysisJob  # noqa: F401
 from legal_core.database import owner_database_url
 from legal_core.models import Base
 from sqlalchemy import Connection, pool
