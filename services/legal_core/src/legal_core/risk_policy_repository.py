@@ -16,6 +16,7 @@ from legal_core.risk_engine import RiskPolicy
 class ApprovedRiskPolicy:
     id: UUID
     domain: RiskPolicy
+    early_triage_enabled: bool = False
 
 
 class ApprovedRiskPolicyRepository:
@@ -33,16 +34,23 @@ class ApprovedRiskPolicyRepository:
             raise LookupError("approved risk policy is not available")
 
         payload = row.policy_json
-        if set(payload) != {"schemaVersion", "highDemandThresholdKopecks"}:
+        early = payload.get("schemaVersion") == "risk-policy.v2"
+        expected = {"schemaVersion", "highDemandThresholdKopecks"}
+        if early:
+            expected.add("earlyTriageEnabled")
+        if set(payload) != expected:
             raise ValueError("approved risk policy has an unsupported v1 shape")
-        if payload.get("schemaVersion") != "risk-policy.v1":
+        if payload.get("schemaVersion") not in {"risk-policy.v1", "risk-policy.v2"}:
             raise ValueError("approved risk policy has an unsupported schema version")
         threshold = payload["highDemandThresholdKopecks"]
         if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 1:
             raise ValueError("approved risk policy has an invalid monetary threshold")
+        if early and payload["earlyTriageEnabled"] is not True:
+            raise ValueError("v2 policy must explicitly enable early triage")
 
         return ApprovedRiskPolicy(
             id=row.id,
+            early_triage_enabled=early,
             domain=RiskPolicy(
                 version=f"{row.policy_key}.v{row.version}",
                 high_demand_threshold_kopecks=threshold,

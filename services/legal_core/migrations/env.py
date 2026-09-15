@@ -4,6 +4,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
+from legal_core.analysis_jobs import AnalysisJob  # noqa: F401
 from legal_core.database import owner_database_url
 from legal_core.models import Base
 from sqlalchemy import Connection, pool
@@ -15,7 +16,9 @@ if config.config_file_name is not None:
 
 config.set_main_option(
     "sqlalchemy.url",
-    owner_database_url().render_as_string(hide_password=False),
+    # Alembic stores options in ConfigParser. URL-escaped password characters
+    # contain percent signs, which must survive ConfigParser interpolation.
+    owner_database_url().render_as_string(hide_password=False).replace("%", "%%"),
 )
 target_metadata = Base.metadata
 

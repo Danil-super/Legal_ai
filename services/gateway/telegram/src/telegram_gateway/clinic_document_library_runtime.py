@@ -555,11 +555,17 @@ async def clinic_document_library_callback(
     if template is None:
         await gateway_bot._reply(update, "⚠️ Тип документа больше недоступен. Откройте базу заново.")
         raise ApplicationHandlerStop
+    if gateway_bot.WIZARD_DATA_KEY in (context.user_data or {}):
+        await gateway_bot._reply(
+            update, "Сначала завершите заполнение кейса или вернитесь в /menu. Черновик сохранён."
+        )
+        raise ApplicationHandlerStop
     pending = PendingClinicDocumentUpload(
         document_key=template.document_key,
         document_type=template.document_type,
         title=template.title,
     )
+    gateway_bot._clear_pending_inputs(context)
     _set_date_pending(context, pending)
     await gateway_bot._reply(
         update,

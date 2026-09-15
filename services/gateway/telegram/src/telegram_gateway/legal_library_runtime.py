@@ -22,6 +22,7 @@ from telegram.ext import (
 
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError
+from telegram_gateway.editor_delivery import EditorFileDeliveryQueue
 from telegram_gateway.quick_intake_runtime import build_application_with_quick_intake
 from telegram_gateway.ui import back_keyboard
 
@@ -31,10 +32,12 @@ _MAX_DOCUMENTS = 20
 _MAX_MESSAGE = 3_900
 _EDITOR_PENDING_KEY = "legal_editor_pending"
 _EDITOR_ARTIFACT_MAX_BYTES = 50_000_000
+_EDITOR_DELIVERY_KEY = "legal_editor_file_deliveries"
 _EDITOR_CALLBACK_RE = re.compile(
     r"^editor:(?:open|page:(?:[1-9]|[1-9][0-9]|100)|"
     r"detail:[0-9a-f-]{36}:(?:[1-9]|[1-9][0-9]|100)|"
     r"artifact:[0-9a-f-]{36}|"
+    r"excerpts:[0-9a-f-]{36}|"
     r"fragments:[0-9a-f-]{36}:(?:[1-9]|[1-9][0-9]|100)|"
     r"attest:[0-9a-f-]{36}:(?:source|artifact|dates|fragments)|"
     r"confirm:[0-9a-f-]{36})$"
@@ -227,10 +230,20 @@ class LegalLibraryClient:
     async def download_editor_artifact(
         self, telegram_user_id: int, version_id: UUID
     ) -> tuple[bytes, str]:
+        return await self._download_editor_file(telegram_user_id, version_id, resource="artifact")
+
+    async def download_editor_excerpts(
+        self, telegram_user_id: int, version_id: UUID
+    ) -> tuple[bytes, str]:
+        return await self._download_editor_file(telegram_user_id, version_id, resource="excerpts")
+
+    async def _download_editor_file(
+        self, telegram_user_id: int, version_id: UUID, *, resource: str
+    ) -> tuple[bytes, str]:
         try:
             async with self._http.stream(
                 "GET",
-                f"/v1/legal/review-queue/{version_id}/artifact",
+                f"/v1/legal/review-queue/{version_id}/{resource}",
                 headers=self._editor_headers(telegram_user_id),
             ) as response:
                 if 300 <= response.status_code < 400:
@@ -280,6 +293,8 @@ class LegalLibraryClient:
 
 
 def _bounded(value: object, *, limit: int) -> str:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)[:limit]
     if not isinstance(value, str):
         return "—"
     normalized = " ".join(value.split())
@@ -439,6 +454,11 @@ def render_platform_review_queue(payload: dict[str, Any]) -> tuple[str, InlineKe
         state = item.get("approvalState")
         state_label = labels.get(state if isinstance(state, str) else "", "⚪ НЕИЗВЕСТНЫЙ СТАТУС")
         eligible = item.get("approvalEligible") is True
+        eligibility_label = (
+            "проверка доступности — при открытии карточки"
+            if item.get("approvalPreflightChecked") is False
+            else "можно проверить и подтвердить" if eligible else "старая/недоступная версия"
+        )
         artifact_kind = _bounded(item.get("artifactKind"), limit=30)
         artifact_label = (
             "копия КонсультантПлюс"
@@ -451,7 +471,7 @@ def render_platform_review_queue(payload: dict[str, Any]) -> tuple[str, InlineKe
                 f"• {_bounded(item.get('documentTitle'), limit=180)}",
                 f"  № {_bounded(item.get('officialNumber'), limit=80)} · {artifact_label}",
                 "  "
-                + ("можно проверить и подтвердить" if eligible else "старая/недоступная версия"),
+                + eligibility_label,
                 "",
             ]
         )
@@ -554,6 +574,8 @@ def render_editor_version_detail(
         f"SHA text: {_short_sha(detail.get('normalizedSha256'))}",
         f"SHA fragments: {_short_sha(detail.get('fragmentsSha256'))}",
         f"Выбранных фрагментов: {_bounded(detail.get('fragmentCount'), limit=12)}",
+        "Сначала прочитайте PDF, затем сверьте полные выбранные выдержки с его текстом.",
+        "Выгрузка содержит статьи/пункты; страницы PDF для выдержек не размечены.",
         "",
         (
             "Подтверждение доступно после всех четырёх ручных проверок."
@@ -578,6 +600,11 @@ def render_editor_version_detail(
             [
                 InlineKeyboardButton(
                     "📄 Открыть PDF", callback_data=f"editor:artifact:{version_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📑 Полные выдержки для проверки", callback_data=f"editor:excerpts:{version_id}"
                 )
             ],
             [
@@ -710,9 +737,14 @@ async def _show_editor_detail(
     client = LegalLibraryClient()
     try:
         detail = await client.get_editor_version(actor_id, version_id)
-        pending = _new_editor_state(detail) if reset else _pending_editor_state(context)
-        if pending is None or pending.get("versionId") != str(version_id):
-            pending = _new_editor_state(detail)
+        fresh_state = _new_editor_state(detail)
+        pending = fresh_state if reset else _pending_editor_state(context)
+        if (
+            pending is None
+            or pending.get("versionId") != str(version_id)
+            or pending.get("expected") != fresh_state["expected"]
+        ):
+            pending = fresh_state
         if context.user_data is not None:
             context.user_data[_EDITOR_PENDING_KEY] = pending
         text, keyboard = render_editor_version_detail(detail, pending)
@@ -748,23 +780,79 @@ async def _show_editor_fragments(
     await _editor_reply(update, text, keyboard)
 
 
-async def _send_editor_artifact(update: Update, *, version_id: UUID) -> None:
+async def _send_editor_artifact(
+    update: Update, *, version_id: UUID, excerpts: bool = False
+) -> None:
     actor_id = gateway_bot._actor_id(update)
     if actor_id is None or update.effective_message is None:
         return
     client = LegalLibraryClient()
     try:
-        content, mime_type = await client.download_editor_artifact(actor_id, version_id)
-        filename = f"legal-{version_id}{'.pdf' if mime_type == 'application/pdf' else '.txt'}"
+        content, mime_type = await (
+            client.download_editor_excerpts(actor_id, version_id)
+            if excerpts else client.download_editor_artifact(actor_id, version_id)
+        )
+        prefix = "legal-excerpts" if excerpts else "legal"
+        filename = f"{prefix}-{version_id}{'.pdf' if mime_type == 'application/pdf' else '.txt'}"
         await update.effective_message.reply_document(
             document=InputFile(BytesIO(content), filename=filename),
-            caption="Сохранённая неизменяемая версия документа для юридической проверки.",
+            caption=(
+                "Полные выбранные выдержки. Сверьте с PDF до подтверждения проверки."
+                if excerpts
+                else "Сохранённая неизменяемая версия документа для юридической проверки."
+            ),
+            reply_markup=_editor_return_keyboard(version_id),
         )
     except LegalCoreApiError as exc:
         logger.warning("legal editor artifact failed: %s", exc.code)
-        await gateway_bot._reply(update, "⚠️ Документ не удалось загрузить. Попробуйте позже.")
+        await gateway_bot._reply(
+            update, "⚠️ Документ не удалось загрузить. Попробуйте позже.",
+            reply_markup=_editor_return_keyboard(version_id),
+        )
     finally:
         await client.aclose()
+
+
+def _editor_return_keyboard(version_id: UUID) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("← К карточке", callback_data=f"editor:detail:{version_id}:1")],
+        [InlineKeyboardButton("← К списку", callback_data="editor:open")],
+    ])
+
+
+async def _start_editor_delivery(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, version_id: UUID, excerpts: bool
+) -> None:
+    actor_id = gateway_bot._actor_id(update)
+    if actor_id is None or update.effective_message is None:
+        return
+    queue = context.application.bot_data.get(_EDITOR_DELIVERY_KEY)
+    if not isinstance(queue, EditorFileDeliveryQueue):
+        queue = EditorFileDeliveryQueue(context.application)
+        context.application.bot_data[_EDITOR_DELIVERY_KEY] = queue
+    keyboard = _editor_return_keyboard(version_id)
+
+    async def deliver() -> None:
+        await gateway_bot._reply(
+            update, "📥 Готовлю файл. Остальные меню доступны во время загрузки.",
+            reply_markup=keyboard,
+        )
+        await _send_editor_artifact(update, version_id=version_id, excerpts=excerpts)
+
+    async def report_error() -> None:
+        await gateway_bot._reply(
+            update, "⚠️ Файл не удалось доставить вовремя. Нажмите кнопку загрузки ещё раз.",
+            reply_markup=keyboard,
+        )
+
+    admission = queue.submit(actor_id, deliver, report_error)
+    if admission != "STARTED":
+        message = (
+            "📥 Ваш файл уже загружается. Дождитесь завершения; меню доступны."
+            if admission == "DUPLICATE"
+            else "⚠️ Загрузка временно занята. Попробуйте чуть позже; меню доступны."
+        )
+        await gateway_bot._reply(update, message, reply_markup=keyboard)
 
 
 async def _confirm_editor_approval(
@@ -837,9 +925,15 @@ async def legal_editor_callback(update: Update, context: ContextTypes.DEFAULT_TY
             )
         elif callback_data.startswith("editor:detail:"):
             _, _, raw_version_id, _ = callback_data.split(":")
-            await _show_editor_detail(update, context, version_id=UUID(raw_version_id), reset=True)
+            await _show_editor_detail(update, context, version_id=UUID(raw_version_id), reset=False)
         elif callback_data.startswith("editor:artifact:"):
-            await _send_editor_artifact(update, version_id=UUID(callback_data.rsplit(":", 1)[1]))
+            await _start_editor_delivery(
+                update, context, version_id=UUID(callback_data.rsplit(":", 1)[1]), excerpts=False
+            )
+        elif callback_data.startswith("editor:excerpts:"):
+            await _start_editor_delivery(
+                update, context, version_id=UUID(callback_data.rsplit(":", 1)[1]), excerpts=True
+            )
         elif callback_data.startswith("editor:fragments:"):
             _, _, raw_version_id, raw_page = callback_data.split(":")
             await _show_editor_fragments(

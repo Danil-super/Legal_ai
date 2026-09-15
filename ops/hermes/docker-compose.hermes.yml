@@ -1,7 +1,14 @@
 services:
+  legal-core:
+    environment:
+      # The durable analysis worker uses the same internal orchestrator as the gateway.
+      AGENT_ORCHESTRATOR_URL: http://agent-orchestrator:8010
+      AGENT_INTERNAL_KEY: ${AGENT_INTERNAL_KEY:?Set AGENT_INTERNAL_KEY}
+
   hermes-researcher:
     profiles: [analysis]
     image: dental-legal-hermes:5fc308a70719a83cccdbba4c0e39c23f5a8239d5
+    pull_policy: never
     user: "10000:10000"
     entrypoint:
       - /bin/sh
@@ -44,6 +51,7 @@ services:
   hermes-reviewer:
     profiles: [analysis]
     image: dental-legal-hermes:5fc308a70719a83cccdbba4c0e39c23f5a8239d5
+    pull_policy: never
     user: "10000:10000"
     entrypoint:
       - /bin/sh
@@ -85,6 +93,7 @@ services:
 
   agent-orchestrator:
     environment:
+      AGENT_INTERNAL_KEY: ${AGENT_INTERNAL_KEY:?Set AGENT_INTERNAL_KEY}
       HERMES_RESEARCHER_URL: http://hermes-researcher:8642
       HERMES_RESEARCHER_API_KEY: ${HERMES_RESEARCHER_API_KEY:?Set HERMES_RESEARCHER_API_KEY}
       HERMES_RESEARCHER_MODEL: hermes-agent
@@ -97,6 +106,14 @@ services:
       hermes-researcher:
         condition: service_healthy
       hermes-reviewer:
+        condition: service_healthy
+
+  telegram-gateway:
+    environment:
+      AGENT_ORCHESTRATOR_URL: http://agent-orchestrator:8010
+      AGENT_INTERNAL_KEY: ${AGENT_INTERNAL_KEY:?Set AGENT_INTERNAL_KEY}
+    depends_on:
+      agent-orchestrator:
         condition: service_healthy
 
 volumes:

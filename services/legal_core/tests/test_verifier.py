@@ -1,4 +1,5 @@
 from datetime import date
+from dataclasses import replace
 from uuid import UUID
 
 import pytest
@@ -240,3 +241,42 @@ def test_verifier_rejects_semantic_review_for_unknown_claim() -> None:
             as_of_date=date(2026, 9, 1),
             semantic_reviews=[_supported_review("other-claim")],
         )
+
+
+@pytest.mark.parametrize(
+    ("fact_key", "value"),
+    [
+        (FactKey.SERVICE_DATE, {"precision": "UNKNOWN", "date": None}),
+        (FactKey.DEMAND_AMOUNT, {"amountKopecks": None, "currency": "RUB"}),
+        (FactKey.CLINIC_DOCUMENTS, {"CONTRACT": "UNKNOWN"}),
+        (FactKey.PATIENT_DEMAND, ["UNKNOWN"]),
+    ],
+)
+def test_verifier_blocks_structured_unknown_fact(fact_key: FactKey, value: object) -> None:
+    decision = verify_claims(
+        [ProposedClaim(
+            claim_id="claim-1", kind=ClaimKind.LEGAL, text="Синтетический вывод.",
+            evidence_fragment_ids=(FRAGMENT_ID,), required_fact_keys=(fact_key,),
+        )],
+        evidence=[_evidence()], facts={fact_key: value}, as_of_date=date(2026, 9, 1),
+        semantic_reviews=[_supported_review()],
+    )
+    assert not decision.analysis_allowed
+    assert decision.claims[0].result is VerificationResult.INSUFFICIENT_FACTS
+
+
+def test_one_applicable_fragment_cannot_hide_an_inapplicable_citation() -> None:
+    future = replace(
+        _evidence(), fragment_id=UUID("00000000-0000-0000-0000-000000000099"),
+        effective_from=date(2027, 1, 1),
+    )
+    decision = verify_claims(
+        [ProposedClaim(
+            claim_id="claim-1", kind=ClaimKind.LEGAL, text="Смешанные редакции.",
+            evidence_fragment_ids=(FRAGMENT_ID, future.fragment_id),
+        )],
+        evidence=[_evidence(), future], facts={}, as_of_date=date(2026, 9, 1),
+        semantic_reviews=[_supported_review()],
+    )
+    assert not decision.analysis_allowed
+    assert decision.claims[0].result is VerificationResult.NOT_APPLICABLE

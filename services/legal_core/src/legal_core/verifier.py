@@ -103,7 +103,21 @@ class VerificationDecision:
 
 def _is_unknown(facts: Mapping[FactKey, object], fact_key: FactKey) -> bool:
     value = facts.get(fact_key)
-    return value is None or value == "UNKNOWN"
+    return _contains_unknown(value)
+
+
+def _contains_unknown(value: object) -> bool:
+    if value is None or value == "UNKNOWN" or value == "":
+        return True
+    if isinstance(value, dict):
+        # Date facts encode uncertainty in precision; inventories carry per-document states.
+        # Do not treat a known date's optional null fields as an unknown fact.
+        if "precision" in value:
+            return value.get("precision") == "UNKNOWN" or not value.get("date")
+        return not value or any(_contains_unknown(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return not value or any(_contains_unknown(item) for item in value)
+    return False
 
 
 def _is_effective(fragment: ApprovedLegalFragment, as_of_date: date) -> bool:
@@ -142,7 +156,7 @@ def _structurally_applicable_evidence(
         for fragment in returned
         if fragment is not None and _is_effective(fragment, as_of_date)
     )
-    if not applicable:
+    if len(applicable) != len(returned):
         return VerifiedClaim(
             claim_id=claim.claim_id,
             result=VerificationResult.NOT_APPLICABLE,

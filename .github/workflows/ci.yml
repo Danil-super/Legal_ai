@@ -20,13 +20,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: '3.11'
+          python-version: '3.13.7'
           cache: pip
 
       - name: Install locked dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.lock
+          python -m pip install --require-hashes -r requirements.lock
           python -m pip install -e '.[dev]' --no-deps
 
       - name: Ruff
@@ -47,6 +47,13 @@ jobs:
         id: unit_tests
         continue-on-error: true
         run: python -m pytest
+
+      - name: Verify checked-in official legal PDFs
+        id: official_pdfs
+        continue-on-error: true
+        run: |
+          python -m legal_core.official_fetch --manifest services/legal_core/corpus/official/pp736-a7de08b6176991ed.json --verify-only
+          python -m legal_core.official_fetch --manifest services/legal_core/corpus/official/pp659-7af320a12723f96f.json --verify-only
 
       - name: Dependency vulnerability audit
         id: dependency_audit
@@ -121,31 +128,69 @@ jobs:
           --profile analysis
           config --quiet
 
+      - name: Validate production analysis overlays together
+        id: production_analysis_compose
+        continue-on-error: true
+        env:
+          POSTGRES_PASSWORD: ci-only-postgres-password
+          POSTGRES_APP_PASSWORD: ci-only-runtime-database-password-1234567890
+          MINIO_ROOT_PASSWORD: ci-only-minio-password
+          TELEGRAM_BOT_TOKEN: 123456:ci_config_validation_token_1234567890
+          AGENT_INTERNAL_KEY: ci-only-agent-internal-key-12345678901234567890
+          HERMES_LLM_BASE_URL: https://llm.example.invalid/v1
+          HERMES_LLM_API_KEY: ci-only-provider-key
+          HERMES_RESEARCHER_LLM_MODEL: synthetic-researcher-model
+          HERMES_REVIEWER_LLM_MODEL: synthetic-reviewer-model
+          HERMES_RESEARCHER_API_KEY: ci-only-researcher-server-key-12345678901234567890
+          HERMES_REVIEWER_API_KEY: ci-only-reviewer-server-key-12345678901234567890
+        run: |
+          set -euo pipefail
+          docker compose \
+            -f docker-compose.yml \
+            -f ops/deploy/docker-compose.production.yml \
+            -f ops/hermes/docker-compose.hermes.yml \
+            --profile analysis config --format json | jq -e '
+              .services as $s |
+              ($s["telegram-gateway"].environment.AGENT_ORCHESTRATOR_URL == "http://agent-orchestrator:8010") and
+              ($s["legal-core"].environment.AGENT_ORCHESTRATOR_URL == "http://agent-orchestrator:8010") and
+              ($s["telegram-gateway"].networks | keys == ["backend"]) and
+              ($s["agent-orchestrator"].networks | keys == ["backend"]) and
+              ($s["telegram-gateway"].depends_on["agent-orchestrator"].condition == "service_healthy") and
+              ($s["hermes-researcher"].pull_policy == "never") and
+              ($s["hermes-reviewer"].pull_policy == "never") and
+              ($s["legal-watcher"] | has("profiles") | not) and
+              ($s["legal-watch-importer"] | has("profiles") | not)'
+
       - name: Enforce quality gate
         if: always()
         env:
           RUFF_OUTCOME: ${{ steps.ruff.outcome }}
           MYPY_OUTCOME: ${{ steps.mypy.outcome }}
           UNIT_TESTS_OUTCOME: ${{ steps.unit_tests.outcome }}
+          OFFICIAL_PDFS_OUTCOME: ${{ steps.official_pdfs.outcome }}
           DEPENDENCY_AUDIT_OUTCOME: ${{ steps.dependency_audit.outcome }}
           COMPOSE_OUTCOME: ${{ steps.compose.outcome }}
           PRODUCTION_COMPOSE_OUTCOME: ${{ steps.production_compose.outcome }}
           PRODUCTION_LEGAL_WATCHER_OUTCOME: ${{ steps.production_legal_watcher.outcome }}
           HERMES_COMPOSE_OUTCOME: ${{ steps.hermes_compose.outcome }}
+          PRODUCTION_ANALYSIS_COMPOSE_OUTCOME: ${{ steps.production_analysis_compose.outcome }}
         run: |
           set -euo pipefail
           test "$RUFF_OUTCOME" = success
           test "$MYPY_OUTCOME" = success
           test "$UNIT_TESTS_OUTCOME" = success
+          test "$OFFICIAL_PDFS_OUTCOME" = success
           test "$DEPENDENCY_AUDIT_OUTCOME" = success
           test "$COMPOSE_OUTCOME" = success
           test "$PRODUCTION_COMPOSE_OUTCOME" = success
           test "$PRODUCTION_LEGAL_WATCHER_OUTCOME" = success
           test "$HERMES_COMPOSE_OUTCOME" = success
+          test "$PRODUCTION_ANALYSIS_COMPOSE_OUTCOME" = success
 
   postgres-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The first build compiles the pinned MinIO security release from source.
+    timeout-minutes: 30
     services:
       postgres:
         image: pgvector/pgvector:0.8.1-pg16
@@ -184,14 +229,19 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: '3.11'
+          python-version: '3.13.7'
           cache: pip
 
       - name: Install locked dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.lock
+          python -m pip install --require-hashes -r requirements.lock
           python -m pip install -e '.[dev]' --no-deps
+
+      - name: Build fixed MinIO from pinned upstream source
+        run: >-
+          docker build --file ops/minio/Dockerfile
+          --tag dental-legal-minio:9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a .
 
       - name: Start MinIO integration service
         run: |
@@ -199,7 +249,7 @@ jobs:
             -p 9000:9000 \
             -e MINIO_ROOT_USER="$MINIO_ACCESS_KEY" \
             -e MINIO_ROOT_PASSWORD="$MINIO_SECRET_KEY" \
-            minio/minio:RELEASE.2025-04-22T22-12-26Z \
+            dental-legal-minio:9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a \
             server /data
           for attempt in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
@@ -257,7 +307,7 @@ jobs:
       needs.postgres-integration.result == 'success' &&
       (needs.codeql.result == 'success' || needs.codeql.result == 'skipped')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     environment:
       name: production
     permissions:

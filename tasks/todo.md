@@ -287,3 +287,43 @@ approved-only retrieval, applicable-date resolution and claim-to-evidence verifi
 - [ ] A commit after runtime configuration reaches a healthy base-profile deployment; Hermes and maintenance profiles remain disabled.
 
 **Dependencies:** Task 0.5; explicit human provision of Telegram production configuration
+
+## Task 6.1: Six-point bot reliability remediation
+
+**Acceptance and local evidence:**
+- [x] Human-approved verified copies reach production retrieval; a real Core/orchestrator/worker
+  HTTP integration test produces an evidence-linked LOW report and persisted PDF after approval.
+- [x] Pending/date-inapplicable evidence blocks recommendations; software does not approve laws.
+- [x] Analysis intent survives app recreation; workers use exclusive expiring leases and reconcile
+  committed responses; duplicate callbacks do not create concurrent work for a case.
+- [x] Versioned opt-in early triage creates HIGH/CRITICAL cards with unavailable evidence/model;
+  v1 behavior stays unchanged; deterministic routing does not authorize legal recommendations.
+- [x] Actual PTB dispatcher tests isolate wizard/quick/admin/discussion modes and old buttons.
+- [x] Lawyer card, claim, answer, resolution, chronological history and pagination have role,
+  tenant, concurrency, retention and immutable-audit regression tests.
+- [x] Editor can download full source PDF and complete selected excerpts; list queries avoid
+  pulling PDF/full-text columns or running approval preflight on every row.
+- [x] Independent security review findings were reproduced, fixed and rechecked by root.
+- [x] Clean local PostgreSQL/MinIO suite: 503 passed; all-three-package mypy, Ruff, Compose and
+  dependency audit passed. Final file-delivery closeout requires one more integrated run.
+- [ ] GitHub CI passes on the final release commit; human review/merge approval recorded.
+- [ ] Deploy via existing main workflow and verify production service, migrations and queue.
+- [ ] Owner authorizes and activates the new early-triage policy, retaining the 50,000 RUB threshold.
+- [ ] Lawyers manually approve applicable legal versions; owner checks private-chat user flow.
+
+**Dependencies:** `SPEC-bot-reliability.md`; ADR0021/0023/0024/0026/0029/0030.
+
+## Task 6.2: Integrated launch audit (2026-09-15)
+
+- [x] Integrate PR #42 without dropping durable analysis, lawyer workspace or reviewed-copy retrieval.
+- [x] Restore private Telegram delivery, durable input transitions and complete long reports.
+- [x] Persist model abstention, reject unknown/invalid evidence dependencies and uncertain dates.
+- [x] Validate fenced job headers before invoking models; preserve committed results on timeout.
+- [x] Prevent starvation and concurrent replacement in official-source updates; provide hash-locked PDF recovery.
+- [x] Fix Alembic password escaping and provide persistent opt-in full Hermes deployment.
+- [x] First integrated GitHub run passes: 500 general tests and 301 Core/PostgreSQL/MinIO tests
+  on `ddd0da92a3e5af0eb1c2837945a8488a6c557778`, including the synthetic HTTP end-to-end scenario.
+- [ ] Final CI passes after the fixed MinIO source-build update and official PDF verification.
+- [ ] Deployment host smoke with actual Telegram/Hermes settings and human-approved legal versions.
+
+**Evidence:** `docs/launch-audit-2026-09-15.md`; PR #43.

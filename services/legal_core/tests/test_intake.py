@@ -1,5 +1,7 @@
 from datetime import date
 
+import pytest
+
 from legal_core.contracts import FactKey, MissingFactSeverity
 from legal_core.intake import missing_facts_for
 
@@ -43,9 +45,10 @@ def test_money_demand_requires_integer_minor_amount() -> None:
     assert missing[0].question_id == "demand_amount"
 
 
-def test_formal_claim_requires_received_date_and_deadline() -> None:
+@pytest.mark.parametrize("formal_claim", [True, "YES"])
+def test_formal_claim_requires_received_date_and_deadline(formal_claim: object) -> None:
     facts = complete_synthetic_facts()
-    facts[FactKey.FORMAL_CLAIM] = True
+    facts[FactKey.FORMAL_CLAIM] = formal_claim
 
     missing = missing_facts_for(facts)
 

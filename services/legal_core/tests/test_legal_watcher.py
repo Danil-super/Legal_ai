@@ -7,6 +7,7 @@ import pytest
 from legal_core.legal_watcher import (
     PORTAL_PAGE_SIZE,
     WatchManifest,
+    _write_once,
     load_watch_manifest,
     publication_source_from_environment,
     stage_official_publications,
@@ -16,6 +17,32 @@ from legal_core.pravo_source import PravoDocumentHit, PravoPdfArtifact
 
 EO_NUMBER = "0001202606010083"
 ROOT = Path(__file__).parents[3]
+
+
+def test_quarantine_write_never_replaces_a_concurrent_writers_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "official.pdf"
+    original = b"%PDF-1.7 original winner"
+
+    def competing_link(source: Path, target: Path) -> None:
+        target.write_bytes(original)
+        raise FileExistsError("another watcher published first")
+
+    monkeypatch.setattr("legal_core.legal_watcher.os.link", competing_link)
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        _write_once(destination, b"%PDF-1.7 different artifact")
+    assert destination.read_bytes() == original
+    assert list(tmp_path.iterdir()) == [destination]
+
+
+def test_quarantine_write_rejects_a_symlink_to_identical_content(tmp_path: Path) -> None:
+    original = tmp_path / "original.pdf"
+    original.write_bytes(b"%PDF-1.7 original")
+    destination = tmp_path / "official.pdf"
+    destination.symlink_to(original)
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        _write_once(destination, original.read_bytes())
 
 
 def _hit() -> PravoDocumentHit:

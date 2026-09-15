@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Header, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -112,10 +112,31 @@ def _analysis_date(facts: dict[FactKey, object]) -> date:
         FactKey.INCIDENT_DATE,
         FactKey.SERVICE_DATE,
     ):
-        resolved = _exact_date(facts.get(key))
+        value = facts.get(key)
+        resolved = _exact_date(value)
         if resolved is not None:
+            if isinstance(value, dict) and value.get("precision") == "APPROXIMATE":
+                # Preserve the selected event's priority. A different exact event date cannot
+                # resolve uncertainty about this event or the legal revision applicable to it.
+                raise ApiError(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    code="ANALYSIS_DATE_UNCERTAIN",
+                    message="An exact case date is required to select the applicable legal version",
+                    details={"factKey": key.value, "precision": "APPROXIMATE"},
+                )
             return resolved
-    return datetime.now(UTC).date()
+    raise ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code="ANALYSIS_DATE_UNCERTAIN",
+        message="An exact case date is required to select the applicable legal version",
+        details={
+            "missingFactKeys": [
+                FactKey.CLAIM_DATE.value,
+                FactKey.INCIDENT_DATE.value,
+                FactKey.SERVICE_DATE.value,
+            ]
+        },
+    )
 
 
 def _require_analysis_eligible_case(case: Case) -> None:
@@ -126,6 +147,9 @@ def _require_analysis_eligible_case(case: Case) -> None:
             code="CASE_ANALYSIS_ALREADY_COMPLETED",
             message="A completed case must not be analysed again without a new intake",
         )
+    if case.retention_due_at is not None and case.retention_due_at <= datetime.now(UTC):
+        raise ApiError(status_code=410, code="CASE_CONTENT_EXPIRED",
+                       message="Case content expired")
 
 
 async def _load_analysis_state(session: AsyncSession, actor: Any, case_id: UUID) -> AnalysisState:
@@ -379,8 +403,21 @@ def create_analysis_router(
         telegram_user_id: TelegramUserId,
         idempotency_key: IdempotencyKey,
         session: AsyncSession = Depends(get_session),
+        x_analysis_job_id: UUID | None = Header(default=None),
+        x_analysis_job_token: UUID | None = Header(default=None),
     ) -> AnalysisSubmissionResponse:
         actor = await resolve_actor(session, telegram_user_id)
+        # A successful idempotency record is not an exemption from case retention.
+        # Do not require analysis eligibility here: a valid completed case must still replay.
+        await _tenant_case(session, actor, case_id)
+        if x_analysis_job_id is not None or x_analysis_job_token is not None:
+            from legal_core.analysis_jobs import require_job_lease
+            if (x_analysis_job_id is None or x_analysis_job_token is None
+                    or idempotency_key != x_analysis_job_id):
+                raise ApiError(status_code=409, code="ANALYSIS_JOB_LEASE_EXPIRED",
+                               message="Invalid analysis job lease")
+            await require_job_lease(session, actor, case_id,
+                                    x_analysis_job_id, x_analysis_job_token)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         scope = f"cases:{case_id}:analysis-submissions"
         replay = await _idempotency_replay(

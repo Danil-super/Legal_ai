@@ -166,3 +166,21 @@ host. Hermes/LLM and maintenance profiles remain disabled.
 
 Rollback is an explicit, audited workflow action rather than an automatic database downgrade.
 Schema changes therefore require backward-compatible deployment discipline and a restore plan.
+
+## Active remediation: complete bot interactions (2026-09-12)
+
+The owner requested all six audit fixes in `SPEC-bot-reliability.md`. Implementation lives on
+`fix/bot-reliability`, based on the actual production/GitHub revision `f9e1165`, without replacing
+the older local main worktree. Three implementation agents and a separate adversarial reviewer
+worked in isolated worktrees; root integrated, reviewed and reran the combined tests.
+
+Implemented: approved-copy retrieval and complete human excerpt review; durable two-consumer
+analysis queue; opt-in versioned early triage; dialogue mode isolation; assigned/resolved lawyer
+workspace and chronological history; nonblocking PDF delivery. Regression review additionally
+closed retention replay/purge defects, inaccessible-notification starvation and typed UUID false
+positives in the provider privacy guard.
+
+Release order: clean PostgreSQL/MinIO verification → GitHub PR quality gates → human review and
+release approval → existing main autodeploy → read-only health/migration/queue checks → explicit
+risk-policy activation if approved → owner/lawyer private-chat smoke test. Normative approvals
+are never part of deployment: lawyers must review and approve the relevant legal versions.

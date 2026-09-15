@@ -2,6 +2,20 @@ from legal_core.contracts import FactKey
 from legal_core.risk_engine import RiskLevel, RiskPolicy, evaluate_risk
 
 
+def test_early_triage_routes_known_emergency_even_with_unknown_other_signals() -> None:
+    from legal_core.risk_engine import evaluate_early_triage
+
+    policy = RiskPolicy(version="dental-risk.v2", high_demand_threshold_kopecks=5_000_000)
+    result = evaluate_early_triage({FactKey.HOSPITALIZATION: "YES"}, policy=policy)
+    assert result is not None and result.level is RiskLevel.CRITICAL
+    assert result.external_draft_allowed is False
+    assert evaluate_early_triage({}, policy=policy) is None
+    result = evaluate_early_triage(
+        {FactKey.DEMAND_AMOUNT: {"amountKopecks": 5_000_000, "currency": "RUB"}}, policy=policy
+    )
+    assert result is not None and result.level is RiskLevel.HIGH
+
+
 def _complete_safe_facts() -> dict[FactKey, object]:
     return {
         FactKey.HARM_CLAIMED: "NO",

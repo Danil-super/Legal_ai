@@ -132,9 +132,7 @@ class SubscriptionEntitlementEvent(Base):
     performed_by_user_id: Mapped[UUID | None] = mapped_column(
         UUID_PK, ForeignKey("users.id", ondelete="RESTRICT")
     )
-    metadata_json: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, server_default=text("'{}'::jsonb")
-    )
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 
@@ -366,6 +364,35 @@ class CaseEscalation(Base):
     level: Mapped[str] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(20), server_default="REQUIRED")
     reason_codes_json: Mapped[list[str]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
+class CaseEscalationWorkflowEvent(Base):
+    """Append-only assignment/resolution history; the original escalation stays immutable."""
+
+    __tablename__ = "case_escalation_workflow_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["clinic_id", "escalation_id"],
+            ["case_escalations.clinic_id", "case_escalations.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "actor_membership_id"],
+            ["clinic_users.clinic_id", "clinic_users.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("action IN ('CLAIMED', 'RESOLVED')"),
+        Index("ix_escalation_workflow_thread", "clinic_id", "escalation_id", "sequence"),
+    )
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    sequence: Mapped[int] = mapped_column(BigInteger, Identity(), unique=True)
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    escalation_id: Mapped[UUID] = mapped_column(UUID_PK)
+    actor_membership_id: Mapped[UUID] = mapped_column(UUID_PK)
+    action: Mapped[str] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 
@@ -666,8 +693,7 @@ class LegalVersion(Base):
         UniqueConstraint("document_id", "version_no"),
         CheckConstraint("effective_to IS NULL OR effective_to > effective_from"),
         CheckConstraint(
-            "artifact_kind IN "
-            "('NORMALIZED_EXCERPT', 'OFFICIAL_RAW', 'THIRD_PARTY_VERIFIED_COPY')",
+            "artifact_kind IN ('NORMALIZED_EXCERPT', 'OFFICIAL_RAW', 'THIRD_PARTY_VERIFIED_COPY')",
             name="ck_legal_versions_artifact_kind",
         ),
         CheckConstraint(
@@ -721,9 +747,7 @@ class LegalVersion(Base):
     effective_from: Mapped[date] = mapped_column(Date)
     effective_to: Mapped[date | None] = mapped_column(Date)
     approval_state: Mapped[str] = mapped_column(String(30), server_default="REVIEW_REQUIRED")
-    artifact_kind: Mapped[str] = mapped_column(
-        String(30), server_default="NORMALIZED_EXCERPT"
-    )
+    artifact_kind: Mapped[str] = mapped_column(String(30), server_default="NORMALIZED_EXCERPT")
     raw_sha256: Mapped[str] = mapped_column(String(64))
     raw_mime_type: Mapped[str] = mapped_column(String(100))
     raw_bytes: Mapped[bytes] = mapped_column(LargeBinary)

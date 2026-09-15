@@ -1,4 +1,14 @@
-from telegram.ext import CallbackQueryHandler, CommandHandler
+import asyncio
+import hashlib
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+from uuid import UUID
+
+import httpx2
+import pytest
+from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, CommandHandler
+from telegram_gateway import legal_library_runtime as runtime
+from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.legal_library_runtime import (
     _new_editor_state,
     build_application_with_legal_library,
@@ -153,6 +163,21 @@ def test_editor_detail_opens_the_preserved_pdf_instead_of_fragment_screen() -> N
     assert "📑 Проверить фрагменты" not in labels
     assert "editor:artifact:00000000-0000-0000-0000-000000000002" in callbacks
     assert not any(callback.startswith("editor:fragments:") for callback in callbacks)
+    assert "📑 Полные выдержки для проверки" in labels
+    assert "editor:excerpts:00000000-0000-0000-0000-000000000002" in callbacks
+
+
+def test_editor_detail_displays_numeric_counts() -> None:
+    detail = {
+        "versionId": "00000000-0000-0000-0000-000000000002",
+        "rawSizeBytes": 13579,
+        "artifactPageCount": 42,
+        "fragmentCount": 17,
+    }
+    rendered, _ = render_editor_version_detail(detail, _new_editor_state(detail))
+    assert "13579 байт" in rendered
+    assert "Страниц: 42" in rendered
+    assert "Выбранных фрагментов: 17" in rendered
 
 
 def test_editor_detail_labels_a_consultant_copy_without_calling_it_an_official_source() -> None:
@@ -199,3 +224,124 @@ def test_composed_application_registers_lawyer_library_before_menu_handler(monke
         for handler in handlers
     )
     assert any(isinstance(handler, CommandHandler) for handler in handlers)
+
+
+@pytest.mark.parametrize("excerpts", [False, True])
+def test_editor_attachment_is_complete_and_has_return_buttons(monkeypatch, excerpts) -> None:
+    version_id = UUID("00000000-0000-0000-0000-000000000002")
+    content = "Полная выдержка".encode() if excerpts else b"%PDF-1.7"
+    mime = "text/plain" if excerpts else "application/pdf"
+    client = SimpleNamespace(
+        download_editor_artifact=AsyncMock(return_value=(content, mime)),
+        download_editor_excerpts=AsyncMock(return_value=(content, mime)),
+        aclose=AsyncMock(),
+    )
+    monkeypatch.setattr(runtime, "LegalLibraryClient", lambda: client)
+    monkeypatch.setattr(runtime.gateway_bot, "_actor_id", lambda _: 12345)
+    message = SimpleNamespace(reply_document=AsyncMock())
+    asyncio.run(runtime._send_editor_artifact(
+        SimpleNamespace(effective_message=message), version_id=version_id, excerpts=excerpts
+    ))
+    sent = message.reply_document.call_args.kwargs
+    assert sent["document"].input_file_content == content
+    assert (
+        sent["reply_markup"].inline_keyboard[0][0].callback_data == f"editor:detail:{version_id}:1"
+    )
+    assert sent["reply_markup"].inline_keyboard[1][0].callback_data == "editor:open"
+
+
+def test_excerpts_client_checks_integrity_and_editor_credentials(monkeypatch) -> None:
+    monkeypatch.setenv("LEGAL_EDITOR_GATEWAY_KEY", "editor-test-gateway-key-12345678901234")
+    version_id = UUID("00000000-0000-0000-0000-000000000002")
+    content = "Полный текст выдержки".encode()
+    tamper = False
+
+    def serve(request):
+        assert request.url.path == f"/v1/legal/review-queue/{version_id}/excerpts"
+        assert request.headers["X-Telegram-User-Id"] == "12345"
+        assert request.headers["X-Legal-Editor-Gateway-Key"]
+        return httpx2.Response(200, content=content, headers={
+            "Content-Type": "text/plain; charset=utf-8",
+            "X-Legal-Artifact-Sha256": "f" * 64 if tamper else hashlib.sha256(content).hexdigest(),
+        })
+
+    async def scenario():
+        nonlocal tamper
+        async with httpx2.AsyncClient(
+            base_url="http://legal-core:8000", transport=httpx2.MockTransport(serve)
+        ) as http:
+            client = runtime.LegalLibraryClient(client=http)
+            assert await client.download_editor_excerpts(12345, version_id) == (
+                content, "text/plain"
+            )
+            tamper = True
+            with pytest.raises(LegalCoreApiError, match="Invalid artifact"):
+                await client.download_editor_excerpts(12345, version_id)
+
+    asyncio.run(scenario())
+
+
+def test_return_from_pdf_keeps_attestations_for_the_same_immutable_version(monkeypatch) -> None:
+    version_id = "00000000-0000-0000-0000-000000000002"
+    detail = {"versionId": version_id, "rawSha256": "a" * 64}
+    pending = _new_editor_state(detail)
+    pending["attestations"]["source"] = True
+    context = SimpleNamespace(user_data={runtime._EDITOR_PENDING_KEY: pending})
+    monkeypatch.setattr(runtime.gateway_bot, "_actor_id", lambda _: 12345)
+    monkeypatch.setattr(runtime.gateway_bot, "_answer_callback", AsyncMock(
+        return_value=f"editor:detail:{version_id}:1"
+    ))
+    monkeypatch.setattr(runtime, "_editor_reply", AsyncMock())
+    monkeypatch.setattr(runtime, "LegalLibraryClient", lambda: SimpleNamespace(
+        get_editor_version=AsyncMock(return_value=detail), aclose=AsyncMock()
+    ))
+    with pytest.raises(ApplicationHandlerStop):
+        asyncio.run(runtime.legal_editor_callback(SimpleNamespace(), context))
+    assert context.user_data[runtime._EDITOR_PENDING_KEY]["attestations"]["source"] is True
+
+
+def test_queue_does_not_mislabel_deferred_integrity_checks_as_unavailable() -> None:
+    rendered, _ = render_platform_review_queue({"items": [{
+        "versionId": "00000000-0000-0000-0000-000000000002",
+        "approvalState": "REVIEW_REQUIRED",
+        "approvalEligible": False,
+        "approvalPreflightChecked": False,
+    }]})
+    assert "проверка доступности — при открытии карточки" in rendered
+    assert "старая/недоступная" not in rendered
+
+
+@pytest.mark.parametrize("resource", ["artifact", "excerpts"])
+def test_editor_file_callback_returns_before_download_completes(monkeypatch, resource) -> None:
+    version_id = "00000000-0000-0000-0000-000000000002"
+    monkeypatch.setattr(runtime.gateway_bot, "_actor_id", lambda _: 12345)
+    monkeypatch.setattr(runtime.gateway_bot, "_answer_callback", AsyncMock(
+        return_value=f"editor:{resource}:{version_id}"
+    ))
+    monkeypatch.setattr(runtime.gateway_bot, "_reply", AsyncMock())
+
+    async def scenario():
+        finished = asyncio.Event()
+        started = asyncio.Event()
+
+        async def send(*args, **kwargs):
+            started.set()
+            await finished.wait()
+
+        monkeypatch.setattr(runtime, "_send_editor_artifact", send)
+        application = SimpleNamespace(
+            running=True, bot_data={}, create_task=asyncio.create_task
+        )
+        context = SimpleNamespace(application=application, user_data={"unrelated": "keep"})
+        with pytest.raises(ApplicationHandlerStop):
+            await asyncio.wait_for(
+                runtime.legal_editor_callback(SimpleNamespace(effective_message=object()), context),
+                timeout=0.1,
+            )
+        await started.wait()
+        assert not finished.is_set()
+        assert context.user_data == {"unrelated": "keep"}
+        finished.set()
+        await application.bot_data[runtime._EDITOR_DELIVERY_KEY].drain()
+
+    asyncio.run(scenario())

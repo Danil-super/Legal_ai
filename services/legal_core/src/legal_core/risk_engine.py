@@ -55,8 +55,7 @@ def fact_snapshot_sha256(facts: Mapping[FactKey, object]) -> str:
     """Hash the canonical typed-fact snapshot used by risk and analysis concurrency checks."""
 
     payload = {
-        key.value: value
-        for key, value in sorted(facts.items(), key=lambda item: item[0].value)
+        key.value: value for key, value in sorted(facts.items(), key=lambda item: item[0].value)
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
@@ -117,6 +116,30 @@ def _assessment(
     )
 
 
+def evaluate_early_triage(
+    facts: Mapping[FactKey, object], *, policy: RiskPolicy
+) -> RiskAssessment | None:
+    """Route explicit safety signals, never produce a legal conclusion or LOW clearance."""
+    for key, reason in (
+        (FactKey.HOSPITALIZATION, "HOSPITALIZATION_REPORTED"),
+        (FactKey.REGULATOR_OR_COURT, "OFFICIAL_REGULATOR_OR_COURT_SIGNAL"),
+    ):
+        if _signal_state(facts.get(key)) == "YES":
+            return _assessment(RiskLevel.CRITICAL, (reason,), policy, facts)
+    reasons = [
+        reason
+        for key, reason in (
+            (FactKey.LAWYER_CONTACT, "LAWYER_OR_REPRESENTATIVE_CONTACT"),
+            (FactKey.FORMAL_CLAIM, "FORMAL_CLAIM_RECEIVED"),
+            (FactKey.HARM_CLAIMED, "HARM_REPORTED"),
+        )
+        if _signal_state(facts.get(key)) == "YES"
+    ]
+    if _demand_is_at_or_above_threshold(facts, policy.high_demand_threshold_kopecks):
+        reasons.append("HIGH_DEMAND_AMOUNT")
+    return _assessment(RiskLevel.HIGH, tuple(reasons), policy, facts) if reasons else None
+
+
 def evaluate_risk(
     facts: Mapping[FactKey, object],
     *,
@@ -126,9 +149,7 @@ def evaluate_risk(
     """Assess facts without model inference and fail closed on absent safety prerequisites."""
 
     if not evidence_verified:
-        return _assessment(
-            RiskLevel.UNAVAILABLE, ("EVIDENCE_NOT_VERIFIED",), policy, facts
-        )
+        return _assessment(RiskLevel.UNAVAILABLE, ("EVIDENCE_NOT_VERIFIED",), policy, facts)
 
     unknown_signal = _unknown_required_signal(facts)
     if unknown_signal is not None:
@@ -142,9 +163,7 @@ def evaluate_risk(
     hospitalization = _signal_state(facts.get(FactKey.HOSPITALIZATION))
     regulator_or_court = _signal_state(facts.get(FactKey.REGULATOR_OR_COURT))
     if hospitalization == "YES":
-        return _assessment(
-            RiskLevel.CRITICAL, ("HOSPITALIZATION_REPORTED",), policy, facts
-        )
+        return _assessment(RiskLevel.CRITICAL, ("HOSPITALIZATION_REPORTED",), policy, facts)
     if regulator_or_court == "YES":
         return _assessment(
             RiskLevel.CRITICAL, ("OFFICIAL_REGULATOR_OR_COURT_SIGNAL",), policy, facts

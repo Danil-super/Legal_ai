@@ -410,18 +410,45 @@ class LegalCoreClient:
             payload={"telegramUserId": target_telegram_user_id, "role": role},
         )
 
-    async def list_case_escalations(self, telegram_user_id: int) -> dict[str, Any]:
+    async def list_case_escalations(self, telegram_user_id: int, *,
+                                   status: str = "OPEN", before: UUID | None = None,
+                                   limit: int = 20) -> dict[str, Any]:
+        if status not in {"OPEN", "RESOLVED", "ALL"} or not 1 <= limit <= 100:
+            raise ValueError("invalid escalation queue parameters")
+        query = f"?status={status}&limit={limit}" + (f"&before={before}" if before else "")
         return await self._json_request(
-            "GET", "/v1/case-escalations", telegram_user_id=telegram_user_id
+            "GET", f"/v1/case-escalations{query}", telegram_user_id=telegram_user_id
         )
 
     async def get_escalation_discussion(
-        self, escalation_id: UUID, telegram_user_id: int
+        self, escalation_id: UUID, telegram_user_id: int, *,
+        before: UUID | None = None, limit: int = 20,
     ) -> dict[str, Any]:
+        if not 1 <= limit <= 100:
+            raise ValueError("discussion page limit out of range")
+        query = f"?limit={limit}" + (f"&before={before}" if before else "")
         return await self._json_request(
             "GET",
-            f"/v1/case-escalations/{escalation_id}/discussion",
+            f"/v1/case-escalations/{escalation_id}/discussion{query}",
             telegram_user_id=telegram_user_id,
+        )
+
+    async def get_escalation(self, escalation_id: UUID, telegram_user_id: int) -> dict[str, Any]:
+        return await self._json_request(
+            "GET", f"/v1/case-escalations/{escalation_id}", telegram_user_id=telegram_user_id,
+        )
+
+    async def claim_escalation(self, escalation_id: UUID, telegram_user_id: int) -> dict[str, Any]:
+        return await self._json_request(
+            "POST", f"/v1/case-escalations/{escalation_id}/claim",
+            telegram_user_id=telegram_user_id, payload={},
+        )
+
+    async def resolve_escalation(self, escalation_id: UUID, telegram_user_id: int, *,
+                                 body: str) -> dict[str, Any]:
+        return await self._json_request(
+            "POST", f"/v1/case-escalations/{escalation_id}/resolve",
+            telegram_user_id=telegram_user_id, payload={"body": body},
         )
 
     async def post_escalation_discussion_message(

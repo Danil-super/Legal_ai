@@ -18,6 +18,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Upda
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
@@ -62,6 +63,7 @@ LEGAL_CORE_CLIENT_KEY = "legal_core_client"
 WIZARD_DATA_KEY = "case_wizard"
 DRAFT_ID_KEY = "draft_id"
 DRAFT_REVISION_KEY = "draft_revision"
+DRAFT_STATE_KEY = "draft_state"
 ADMIN_GRANT_ACCESS_KEY = "admin_grant_access"
 ADMIN_GRANT_PILOT_KEY = "admin_grant_pilot"
 TEAM_MEMBER_ROLE_KEY = "team_member_role"
@@ -235,6 +237,24 @@ async def _polling_watchdog(context: ContextTypes.DEFAULT_TYPE) -> None:
         application.stop_running()
 
 
+async def _require_private_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Never render clinic data or consume a private intake in a shared chat."""
+
+    del context
+    chat = update.effective_chat
+    if chat is not None and chat.type == "private":
+        return
+    notice = "Откройте личный чат с ботом: кейсы и документы доступны только там."
+    try:
+        if update.callback_query is not None:
+            await update.callback_query.answer(notice, show_alert=True)
+        elif update.effective_message is not None:
+            await update.effective_message.reply_text(notice)
+    except TelegramError:
+        logger.warning("could not notify user about private chat requirement")
+    raise ApplicationHandlerStop
+
+
 async def _reply(
     update: Update,
     text: str,
@@ -246,16 +266,62 @@ async def _reply(
         await message.reply_text(text, reply_markup=reply_markup)
 
 
-def _clear_pending_admin_grant(context: ContextTypes.DEFAULT_TYPE | None) -> None:
+def _clear_pending_inputs(context: ContextTypes.DEFAULT_TYPE | None) -> None:
     if context is not None and context.user_data is not None:
         context.user_data.pop(ADMIN_GRANT_ACCESS_KEY, None)
         context.user_data.pop(ADMIN_GRANT_PILOT_KEY, None)
         context.user_data.pop(TEAM_MEMBER_ROLE_KEY, None)
         context.user_data.pop("escalation_discussion_id", None)
+        context.user_data.pop("quick_intake_pending", None)
+        context.user_data.pop("quick_intake_candidate", None)
+        context.user_data.pop("clinic_document_upload", None)
+        context.user_data.pop("clinic_document_effective_date_pending", None)
+        context.user_data.pop("escalation_resolution_pending", None)
+
+
+def _clear_pending_admin_grant(context: ContextTypes.DEFAULT_TYPE | None) -> None:
+    """Compatibility entry point for the lawyer workspace navigation handlers."""
+    _clear_pending_inputs(context)
+
+
+async def _route_input_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Navigation leaves the free-text discussion before any earlier-group consumer runs.
+
+    The wizard remains owned by ConversationHandler; its durable draft is never deleted.
+    An old discussion button cannot replace an active wizard (checked by that handler).
+    """
+    query = update.callback_query
+    callback = query.data if query is not None else None
+    if isinstance(callback, str) and callback.startswith(("analysis:pdf:", "esc:pdf:")):
+        # Read-only background file delivery must not cancel the active text-input mode.
+        return
+    message = update.effective_message
+    command = message.text if query is None and message is not None else None
+    navigating = isinstance(callback, str) or (
+        isinstance(command, str) and command.startswith("/")
+    )
+    if not navigating:
+        return
+    data = _user_data(context)
+    if not isinstance(callback, str) or not callback.startswith(
+        ("case:escalation:", "case:discussion:", "esc:")
+    ):
+        data.pop("escalation_discussion_id", None)
+        data.pop("escalation_resolution_pending", None)
+    # Modes waiting for arbitrary text must not survive navigation to a different flow.
+    # Callback handlers establish their new pending state after this boundary runs.
+    for key in (ADMIN_GRANT_ACCESS_KEY, ADMIN_GRANT_PILOT_KEY, TEAM_MEMBER_ROLE_KEY):
+        data.pop(key, None)
+    if not isinstance(callback, str) or not callback.startswith("quick:"):
+        data.pop("quick_intake_pending", None)
+        data.pop("quick_intake_candidate", None)
+    if not isinstance(callback, str) or not callback.startswith("clinicdoc:"):
+        data.pop("clinic_document_upload", None)
+        data.pop("clinic_document_effective_date_pending", None)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> None:
-    _clear_pending_admin_grant(context)
+    _clear_pending_inputs(context)
     message = update.effective_message
     if message is not None:
         # Path uploads and inline keyboards follow the official PTB 22.8 APIs.
@@ -273,7 +339,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> Non
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> None:
-    _clear_pending_admin_grant(context)
+    _clear_pending_inputs(context)
     await _reply(update, HELP_MESSAGE)
 
 
@@ -287,7 +353,7 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> N
 
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> None:
-    _clear_pending_admin_grant(context)
+    _clear_pending_inputs(context)
     message = update.effective_message
     if message is not None:
         await message.reply_text(
@@ -298,7 +364,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE | None)
 
 
 async def clinic_team(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> None:
-    _clear_pending_admin_grant(context)
+    _clear_pending_inputs(context)
     actor_id = _actor_id(update)
     if actor_id is None:
         await _reply(update, "Не удалось определить пользователя.")
@@ -325,6 +391,10 @@ async def prompt_team_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     role = roles.get(callback or "")
     if role is None:
         return
+    if WIZARD_DATA_KEY in _user_data(context):
+        await _reply(update, "Сначала завершите или отмените заполнение текущего кейса.")
+        return
+    _clear_pending_inputs(context)
     _user_data(context)[TEAM_MEMBER_ROLE_KEY] = role
     title = "администратора" if role == "CLINIC_ADMIN" else "юриста"
     await _reply(update, f"Введите Telegram ID {title} одним числом.")
@@ -452,6 +522,7 @@ async def prompt_admin_grant_access(update: Update, context: ContextTypes.DEFAUL
     if WIZARD_DATA_KEY in _user_data(context):
         await _reply(update, "Сначала завершите или отмените заполнение текущего кейса.")
         return
+    _clear_pending_inputs(context)
     _user_data(context)[ADMIN_GRANT_ACCESS_KEY] = True
     await _reply(
         update,
@@ -466,6 +537,7 @@ async def prompt_admin_grant_pilot(update: Update, context: ContextTypes.DEFAULT
     if WIZARD_DATA_KEY in _user_data(context):
         await _reply(update, "Сначала завершите или отмените заполнение текущего кейса.")
         return
+    _clear_pending_inputs(context)
     _user_data(context)[ADMIN_GRANT_PILOT_KEY] = True
     await _reply(
         update,
@@ -590,7 +662,7 @@ def _draft_payload(data: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value
         for key, value in data.items()
-        if key not in {"workflow_id", DRAFT_ID_KEY, DRAFT_REVISION_KEY}
+        if key not in {"workflow_id", DRAFT_ID_KEY, DRAFT_REVISION_KEY, DRAFT_STATE_KEY}
     }
 
 
@@ -602,7 +674,9 @@ async def _persist_transition(
     data = _wizard_data(context)
     before = _draft_payload(data)
     next_state = await handler(update, context)
-    if not isinstance(next_state, WizardState) or _draft_payload(data) == before:
+    if not isinstance(next_state, WizardState):
+        return next_state
+    if _draft_payload(data) == before and data.get(DRAFT_STATE_KEY) == next_state.name:
         return next_state
     actor_id = _actor_id(update)
     try:
@@ -621,6 +695,7 @@ async def _persist_transition(
         if not isinstance(saved_revision, int) or saved_revision < 1:
             raise ValueError("draft response is invalid")
         data[DRAFT_REVISION_KEY] = saved_revision
+        data[DRAFT_STATE_KEY] = next_state.name
     except (KeyError, ValueError, LegalCoreApiError) as exc:
         logger.warning("intake draft save failed: %s", type(exc).__name__)
         _clear_wizard(context)
@@ -657,13 +732,14 @@ async def _main_menu_for_actor(
     actor_id = _actor_id(update)
     if context is None or actor_id is None:
         return main_menu_keyboard()
-    client = _legal_core(context)
     try:
+        client = _legal_core(context)
         actor = await client.get_actor(actor_id)
     except (LegalCoreApiError, AttributeError):
         actor = {}
     role = actor.get("role") if isinstance(actor, dict) else None
     try:
+        client = _legal_core(context)
         editor_status = await client.get_legal_editor_status(actor_id)
     except (LegalCoreApiError, AttributeError):
         editor_status = {}
@@ -697,6 +773,7 @@ async def _answer_callback(update: Update) -> str | None:
 
 async def case_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await _answer_callback(update)
+    _clear_pending_inputs(context)
     _clear_wizard(context)
     actor_id = _actor_id(update)
     if actor_id is None:
@@ -740,6 +817,7 @@ async def case_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "workflow_id": str(draft_id),
         DRAFT_ID_KEY: str(draft_id),
         DRAFT_REVISION_KEY: revision,
+        DRAFT_STATE_KEY: WizardState.INCIDENT.name,
     }
     await _reply(
         update,
@@ -997,6 +1075,7 @@ async def _prompt_resumed_draft(update: Update, state: WizardState, data: dict[s
 
 async def resume_intake_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     callback = await _answer_callback(update)
+    _clear_pending_admin_grant(context)
     actor_id = _actor_id(update)
     if callback is None or actor_id is None:
         return ConversationHandler.END
@@ -1016,15 +1095,18 @@ async def resume_intake_draft(update: Update, context: ContextTypes.DEFAULT_TYPE
         state = WizardState[state_name]
     except (KeyError, ValueError, LegalCoreApiError) as exc:
         logger.warning("intake draft resume failed: %s", type(exc).__name__)
+        _clear_wizard(context)
         await _reply(update, "⚠️ Этот черновик недоступен. Обновите список через /menu.")
         return ConversationHandler.END
     _clear_wizard(context)
+    _clear_pending_inputs(context)
     data = dict(draft_data)
     data.update(
         {
             "workflow_id": str(draft_id),
             DRAFT_ID_KEY: str(draft_id),
             DRAFT_REVISION_KEY: revision,
+            DRAFT_STATE_KEY: state.name,
         }
     )
     _user_data(context)[WIZARD_DATA_KEY] = data
@@ -1538,6 +1620,16 @@ async def _send_workflow_report(
         raise ValueError("workflow response is invalid")
     report_id = UUID(str(report_id_value))
     telegram_summary = telegram_summary_from_report(report_json)
+    early_escalation_id = case.get("earlyEscalationId")
+    if early_escalation_id is not None:
+        escalation_id = UUID(str(early_escalation_id))
+        await _reply(
+            update,
+            "⚖️ Карточка уже передана юристу. Правовой анализ выполняется отдельно.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "Открыть карточку юриста", callback_data=f"case:escalation:{escalation_id}")],
+                *back_keyboard().inline_keyboard]),
+        )
     pdf = await client.download_pdf(report_id, actor_id)
     safe_number = re.sub(r"[^A-Za-z0-9_-]", "-", public_number)[:64]
     message = update.effective_message
@@ -1563,12 +1655,14 @@ async def resume_workflow(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         client = _legal_core(context)
         workflow = await client.get_workflow(workflow_id, actor_id)
         await _send_workflow_report(update, client, workflow, actor_id)
-    except (ValueError, LegalCoreApiError) as exc:
+    except (ValueError, LegalCoreApiError, TelegramError) as exc:
         logger.warning("workflow recovery failed: %s", type(exc).__name__)
         if isinstance(exc, LegalCoreApiError) and exc.status_code == 404:
             await _reply(
                 update,
-                "Эта карточка не была подтверждена. Откройте /menu и заполните её заново.",
+                "Эта карточка ещё не была подтверждена. "
+                "Откройте /menu → «Мои черновики», продолжите сохранённую карточку "
+                "и подтвердите её. Если черновик удалён, создайте новый.",
             )
         elif isinstance(exc, LegalCoreApiError) and exc.status_code == 403:
             await _reply(update, "🔒 Доступ администратора отозван.")
@@ -1595,6 +1689,14 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         client = _legal_core(context)
         workflow = await client.submit_workflow(workflow_id, facts, actor_id)
         await _send_workflow_report(update, client, workflow, actor_id)
+    except TelegramError as exc:
+        logger.warning("case report delivery failed: %s", type(exc).__name__)
+        await _reply(
+            update,
+            "✅ Карточка сохранена, но Telegram не доставил отчёт. "
+            "Нажмите «Сформировать отчёт» ещё раз — повторный кейс не создаётся.",
+        )
+        return WizardState.CONFIRM
     except (KeyError, ValueError, LegalCoreApiError) as exc:
         if isinstance(exc, LegalCoreApiError) and exc.status_code == 403:
             _clear_wizard(context)
@@ -1691,7 +1793,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE | Non
     # Source: https://docs.python-telegram-bot.org/en/v22.7/examples.inlinekeyboard.html
     await query.answer()
     if callback_data == "menu":
-        _clear_pending_admin_grant(context)
+        _clear_pending_inputs(context)
         caption = START_MESSAGE
         keyboard = await _main_menu_for_actor(update, context)
     elif callback_data == "team:open":
@@ -1800,6 +1902,8 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
         builder = builder.proxy(configured_proxy_url).get_updates_proxy(configured_proxy_url)
     application = builder.build()
     application.add_handler(TypeHandler(Update, _record_update_heartbeat), group=-100)
+    application.add_handler(TypeHandler(Update, _require_private_chat), group=-99)
+    application.add_handler(TypeHandler(Update, _route_input_mode), group=-90)
     application.add_handler(
         ConversationHandler(
             entry_points=[

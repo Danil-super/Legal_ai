@@ -308,7 +308,7 @@ async def start_quick_intake(
         await gateway_bot._reply(update, "⚠️ Legal Core вернул некорректный ответ.")
         return
 
-    _clear_quick(context)
+    gateway_bot._clear_pending_inputs(context)
     _user_data(context)[_QUICK_PENDING_KEY] = True
     await gateway_bot._reply(
         update,

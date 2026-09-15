@@ -413,6 +413,7 @@ async def arm_clinic_document_upload(
         )
         return False
 
+    gateway_bot._clear_pending_inputs(context)
     _set_pending(context, pending)
     validity_message = (
         f"Версия будет применяться к кейсам с {pending.valid_from.isoformat()}.\n\n"

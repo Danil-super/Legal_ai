@@ -5,12 +5,12 @@ import json
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Header, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Response, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -24,6 +24,7 @@ from legal_core.api_contracts import (
     ClinicRole,
     CreateCaseRequest,
     CreateReportRequest,
+    EscalationDetailResponse,
     EscalationDiscussionMessageRequest,
     EscalationDiscussionMessageResponse,
     EscalationDiscussionResponse,
@@ -51,6 +52,7 @@ from legal_core.models import (
     Case,
     CaseEscalation,
     CaseEscalationMessage,
+    CaseEscalationWorkflowEvent,
     CaseFact,
     CaseReport,
     Clinic,
@@ -63,6 +65,7 @@ from legal_core.models import (
 )
 from legal_core.pseudonymization import pseudonymize_text
 from legal_core.reports import build_intake_report, render_report_pdf
+from legal_core.risk_persistence import ensure_early_triage
 from legal_core.subscription_provisioning import provision_entitlement_in_session
 
 TelegramUserId = Annotated[int, Header(alias="X-Telegram-User-Id", gt=0)]
@@ -337,7 +340,64 @@ async def _discussion_escalation(
             raise ApiError(
                 status_code=404, code="ESCALATION_NOT_FOUND", message="Escalation not found"
             )
+    await _tenant_case(session, actor, escalation.case_id)
     return escalation
+
+
+async def _escalation_state(
+    session: AsyncSession,
+    actor: ActorContext,
+    escalation_id: UUID,
+) -> tuple[Literal["REQUIRED", "IN_PROGRESS", "RESOLVED"], UUID | None]:
+    latest = await session.scalar(
+        select(CaseEscalationWorkflowEvent)
+        .where(
+            CaseEscalationWorkflowEvent.clinic_id == actor.clinic_id,
+            CaseEscalationWorkflowEvent.escalation_id == escalation_id,
+        )
+        .order_by(CaseEscalationWorkflowEvent.sequence.desc())
+        .limit(1)
+    )
+    if latest is None:
+        return "REQUIRED", None
+    return (
+        "RESOLVED" if latest.action == "RESOLVED" else "IN_PROGRESS"
+    ), latest.actor_membership_id
+
+
+async def _escalation_detail(
+    session: AsyncSession,
+    actor: ActorContext,
+    escalation: CaseEscalation,
+) -> EscalationDetailResponse:
+    case = await _tenant_case(session, actor, escalation.case_id)
+    state, assignee = await _escalation_state(session, actor, escalation.id)
+    report = await session.scalar(
+        select(CaseReport.report_json)
+        .where(
+            CaseReport.clinic_id == actor.clinic_id,
+            CaseReport.case_id == case.id,
+        )
+        .order_by(CaseReport.report_version.desc())
+        .limit(1)
+    )
+    return EscalationDetailResponse(
+        escalationId=escalation.id,
+        publicNumber=_case_response(case).public_number,
+        riskLevel=cast(Literal["HIGH", "CRITICAL"], escalation.level),
+        reasonCodes=escalation.reason_codes_json,
+        createdAt=escalation.created_at,
+        status=state,
+        assignedToMe=assignee == actor.membership_id,
+        assignedMembershipId=assignee,
+        caseId=case.id,
+        caseStatus=case.status,
+        facts={
+            key.value: value
+            for key, value in _domain_facts(await _current_fact_rows(session, case.id)).items()
+        },
+        report=report,
+    )
 
 
 def _configured_platform_owner_telegram_id() -> int:
@@ -450,13 +510,24 @@ async def _tenant_case(session: AsyncSession, actor: ActorContext, case_id: UUID
             code="CASE_NOT_FOUND",
             message="Case not found",
         )
+    _require_case_content_available(case)
+    return case
+
+
+def _require_case_content_available(case: Case) -> None:
+    """Retention gates every content path, including a stored successful response."""
     if case.content_purged_at is not None:
         raise ApiError(
             status_code=status.HTTP_410_GONE,
             code="CASE_CONTENT_PURGED",
             message="Case content is no longer available under the retention policy",
         )
-    return case
+    if case.retention_due_at is not None and case.retention_due_at <= datetime.now(UTC):
+        raise ApiError(
+            status_code=status.HTTP_410_GONE,
+            code="CASE_CONTENT_EXPIRED",
+            message="Case content is no longer available under the retention policy",
+        )
 
 
 async def _current_fact_rows(session: AsyncSession, case_id: UUID) -> list[CaseFact]:
@@ -518,10 +589,18 @@ async def _workflow_response(
     )
     if case is None or report is None:
         raise RuntimeError("durable workflow references are inconsistent")
+    _require_case_content_available(case)
+    case_response = _case_response(case)
+    case_response.early_escalation_id = await session.scalar(
+        select(CaseEscalation.id).where(
+            CaseEscalation.clinic_id == workflow.clinic_id,
+            CaseEscalation.case_id == workflow.case_id,
+        ).order_by(CaseEscalation.created_at, CaseEscalation.id).limit(1)
+    )
     return TelegramWorkflowResponse(
         workflowId=workflow.id,
         state="SUCCEEDED",
-        case=_case_response(case),
+        case=case_response,
         report=ReportResponse(
             id=report.id,
             caseId=report.case_id,
@@ -668,24 +747,58 @@ def create_case_router(
     async def list_case_escalations(
         telegram_user_id: TelegramUserId,
         session: Session,
+        queue_status: Literal["OPEN", "RESOLVED", "ALL"] = Query(default="OPEN", alias="status"),
+        before: UUID | None = None,
+        limit: int = Query(default=20, ge=1, le=100),
     ) -> EscalationQueueResponse:
         """List only the de-identified human-review queue visible to this actor."""
 
         actor = await resolve_actor(session, telegram_user_id)
+        ranked = (
+            select(
+                CaseEscalationWorkflowEvent.escalation_id,
+                CaseEscalationWorkflowEvent.action,
+                CaseEscalationWorkflowEvent.actor_membership_id,
+                func.row_number()
+                .over(
+                    partition_by=CaseEscalationWorkflowEvent.escalation_id,
+                    order_by=CaseEscalationWorkflowEvent.sequence.desc(),
+                )
+                .label("rank"),
+            )
+            .where(CaseEscalationWorkflowEvent.clinic_id == actor.clinic_id)
+            .subquery()
+        )
         statement = (
-            select(CaseEscalation, Case)
+            select(CaseEscalation, Case, ranked.c.action, ranked.c.actor_membership_id)
             .join(
                 Case,
                 (Case.clinic_id == CaseEscalation.clinic_id) & (Case.id == CaseEscalation.case_id),
             )
+            .outerjoin(ranked, (ranked.c.escalation_id == CaseEscalation.id) & (ranked.c.rank == 1))
             .where(CaseEscalation.clinic_id == actor.clinic_id)
+            .where(Case.content_purged_at.is_(None))
+            .where((Case.retention_due_at.is_(None)) | (Case.retention_due_at > datetime.now(UTC)))
             .order_by(CaseEscalation.created_at.desc(), CaseEscalation.id.desc())
-            .limit(100)
+            .limit(limit + 1)
         )
         if actor.role == "CLINIC_ADMIN":
             statement = statement.where(Case.created_by_membership_id == actor.membership_id)
+        if queue_status == "OPEN":
+            statement = statement.where(func.coalesce(ranked.c.action, "REQUIRED") != "RESOLVED")
+        elif queue_status == "RESOLVED":
+            statement = statement.where(ranked.c.action == "RESOLVED")
+        if before is not None:
+            cursor = await _discussion_escalation(session, actor, before)
+            statement = statement.where(
+                tuple_(CaseEscalation.created_at, CaseEscalation.id)
+                < tuple_(literal(cursor.created_at), literal(cursor.id))
+            )
         rows = list((await session.execute(statement)).all())
+        has_more = len(rows) > limit
+        rows = rows[:limit]
         return EscalationQueueResponse(
+            nextBefore=rows[-1][0].id if has_more else None,
             items=[
                 EscalationQueueItemResponse(
                     escalationId=escalation.id,
@@ -693,10 +806,135 @@ def create_case_router(
                     riskLevel=escalation.level,
                     reasonCodes=list(escalation.reason_codes_json),
                     createdAt=escalation.created_at,
+                    status="RESOLVED"
+                    if action == "RESOLVED"
+                    else ("IN_PROGRESS" if action else "REQUIRED"),
+                    assignedMembershipId=assignee,
+                    assignedToMe=assignee == actor.membership_id,
                 )
-                for escalation, case in rows
+                for escalation, case, action, assignee in rows
+            ],
+        )
+
+    @router.get("/case-escalations/{escalation_id}", response_model=EscalationDetailResponse)
+    async def get_escalation_detail(
+        escalation_id: UUID,
+        telegram_user_id: TelegramUserId,
+        session: Session,
+    ) -> EscalationDetailResponse:
+        actor = await resolve_actor(session, telegram_user_id)
+        escalation = await _discussion_escalation(session, actor, escalation_id)
+        return await _escalation_detail(session, actor, escalation)
+
+    async def lock_lawyer_escalation(
+        session: AsyncSession,
+        actor: ActorContext,
+        escalation_id: UUID,
+    ) -> CaseEscalation:
+        if actor.role not in {"CLINIC_OWNER", "CLINIC_LAWYER"}:
+            raise ApiError(status_code=403, code="LAWYER_REQUIRED", message="Lawyer role required")
+        escalation = await _discussion_escalation(session, actor, escalation_id)
+        await session.scalar(
+            select(CaseEscalation)
+            .where(
+                CaseEscalation.id == escalation_id,
+                CaseEscalation.clinic_id == actor.clinic_id,
+            )
+            .with_for_update()
+        )
+        return escalation
+
+    @router.post("/case-escalations/{escalation_id}/claim", response_model=EscalationDetailResponse)
+    async def claim_escalation(
+        escalation_id: UUID,
+        telegram_user_id: TelegramUserId,
+        session: Session,
+    ) -> EscalationDetailResponse:
+        actor = await resolve_actor(session, telegram_user_id)
+        escalation = await lock_lawyer_escalation(session, actor, escalation_id)
+        state, assignee = await _escalation_state(session, actor, escalation_id)
+        if state == "RESOLVED" or (assignee is not None and assignee != actor.membership_id):
+            raise ApiError(
+                status_code=409,
+                code="ESCALATION_UNAVAILABLE",
+                message="Already assigned or resolved",
+            )
+        if assignee is None:
+            session.add(
+                CaseEscalationWorkflowEvent(
+                    clinic_id=actor.clinic_id,
+                    escalation_id=escalation_id,
+                    actor_membership_id=actor.membership_id,
+                    action="CLAIMED",
+                )
+            )
+            session.add(
+                _audit(
+                    actor=actor,
+                    action="ESCALATION_CLAIMED",
+                    resource_type="CASE_ESCALATION",
+                    resource_id=escalation_id,
+                    metadata={},
+                )
+            )
+            await session.flush()
+        result = await _escalation_detail(session, actor, escalation)
+        await session.commit()
+        return result
+
+    @router.post(
+        "/case-escalations/{escalation_id}/resolve", response_model=EscalationDetailResponse
+    )
+    async def resolve_escalation(
+        escalation_id: UUID,
+        payload: EscalationDiscussionMessageRequest,
+        telegram_user_id: TelegramUserId,
+        session: Session,
+    ) -> EscalationDetailResponse:
+        actor = await resolve_actor(session, telegram_user_id)
+        escalation = await lock_lawyer_escalation(session, actor, escalation_id)
+        state, assignee = await _escalation_state(session, actor, escalation_id)
+        if assignee != actor.membership_id:
+            raise ApiError(
+                status_code=403,
+                code="ASSIGNEE_REQUIRED",
+                message="Only the assigned lawyer may resolve",
+            )
+        if state == "RESOLVED":
+            raise ApiError(status_code=409, code="ESCALATION_RESOLVED", message="Already resolved")
+        if pseudonymize_text(payload.body).changed:
+            raise ApiError(
+                status_code=422,
+                code="DIRECT_IDENTIFIER_NOT_ALLOWED",
+                message="Conclusion must not contain direct identifiers",
+            )
+        session.add_all(
+            [
+                CaseEscalationWorkflowEvent(
+                    clinic_id=actor.clinic_id,
+                    escalation_id=escalation_id,
+                    actor_membership_id=actor.membership_id,
+                    action="RESOLVED",
+                ),
+                CaseEscalationMessage(
+                    clinic_id=actor.clinic_id,
+                    escalation_id=escalation_id,
+                    author_membership_id=actor.membership_id,
+                    body=payload.body,
+                ),
+                _audit(
+                    actor=actor,
+                    action="ESCALATION_RESOLVED",
+                    resource_type="CASE_ESCALATION",
+                    resource_id=escalation_id,
+                    metadata={"bodySha256": hashlib.sha256(payload.body.encode()).hexdigest()},
+                ),
             ]
         )
+        await session.flush()
+        result = await _escalation_detail(session, actor, escalation)
+        await session.commit()
+        return result
 
     @router.get(
         "/case-escalations/{escalation_id}/discussion",
@@ -706,22 +944,38 @@ def create_case_router(
         escalation_id: UUID,
         telegram_user_id: TelegramUserId,
         session: Session,
+        before: UUID | None = None,
+        limit: int = Query(default=20, ge=1, le=100),
     ) -> EscalationDiscussionResponse:
         actor = await resolve_actor(session, telegram_user_id)
         await _discussion_escalation(session, actor, escalation_id)
+        statement = select(CaseEscalationMessage).where(
+            CaseEscalationMessage.clinic_id == actor.clinic_id,
+            CaseEscalationMessage.escalation_id == escalation_id,
+        )
+        if before is not None:
+            cursor = await session.scalar(statement.where(CaseEscalationMessage.id == before))
+            if cursor is None:
+                raise ApiError(
+                    status_code=422,
+                    code="INVALID_DISCUSSION_CURSOR",
+                    message="Cursor is not in this discussion",
+                )
+            statement = statement.where(
+                tuple_(CaseEscalationMessage.created_at, CaseEscalationMessage.id)
+                < tuple_(literal(cursor.created_at), literal(cursor.id))
+            )
         messages = list(
             (
                 await session.scalars(
-                    select(CaseEscalationMessage)
-                    .where(
-                        CaseEscalationMessage.clinic_id == actor.clinic_id,
-                        CaseEscalationMessage.escalation_id == escalation_id,
-                    )
-                    .order_by(CaseEscalationMessage.id)
-                    .limit(100)
+                    statement.order_by(
+                        CaseEscalationMessage.created_at.desc(), CaseEscalationMessage.id.desc()
+                    ).limit(limit + 1)
                 )
             ).all()
         )
+        has_more = len(messages) > limit
+        messages = list(reversed(messages[:limit]))
         role_rows = cast(
             list[tuple[UUID, str]],
             (
@@ -731,12 +985,15 @@ def create_case_router(
                         ClinicUser.id.in_([message.author_membership_id for message in messages]),
                     )
                 )
-            ).tuples().all(),
+            )
+            .tuples()
+            .all(),
         )
         roles: dict[UUID, ClinicRole] = {
             membership_id: cast(ClinicRole, role) for membership_id, role in role_rows
         }
         return EscalationDiscussionResponse(
+            nextBefore=messages[0].id if has_more else None,
             items=[
                 EscalationDiscussionMessageResponse(
                     id=message.id,
@@ -745,7 +1002,7 @@ def create_case_router(
                     createdAt=message.created_at,
                 )
                 for message in messages
-            ]
+            ],
         )
 
     @router.post(
@@ -761,6 +1018,16 @@ def create_case_router(
     ) -> EscalationDiscussionMessageResponse:
         actor = await resolve_actor(session, telegram_user_id)
         await _discussion_escalation(session, actor, escalation_id)
+        await session.scalar(
+            select(CaseEscalation)
+            .where(CaseEscalation.id == escalation_id, CaseEscalation.clinic_id == actor.clinic_id)
+            .with_for_update()
+        )
+        state, _ = await _escalation_state(session, actor, escalation_id)
+        if state == "RESOLVED":
+            raise ApiError(
+                status_code=409, code="ESCALATION_RESOLVED", message="Discussion is resolved"
+            )
         if pseudonymize_text(payload.body).changed:
             raise ApiError(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -1361,7 +1628,15 @@ def create_case_router(
         case.status = CaseStatus.ANALYSIS_BLOCKED.value
         case.updated_at = now
         _set_case_retention_due(case, now)
+        early_escalation_id = await ensure_early_triage(
+            session,
+            clinic_id=actor.clinic_id,
+            case_id=case.id,
+            actor_membership_id=actor.membership_id,
+            facts=facts,
+        )
         result = _case_response(case)
+        result.early_escalation_id = early_escalation_id
         response_json = result.model_dump(mode="json", by_alias=True)
         _finish_idempotency(
             idempotency,
@@ -1608,11 +1883,20 @@ def create_case_router(
         )
         session.add_all([*fact_rows, report_row])
         await session.flush()
+        early_escalation_id = await ensure_early_triage(
+            session,
+            clinic_id=actor.clinic_id,
+            case_id=case.id,
+            actor_membership_id=actor.membership_id,
+            facts=facts,
+        )
 
+        case_response = _case_response(case)
+        case_response.early_escalation_id = early_escalation_id
         result = TelegramWorkflowResponse(
             workflowId=workflow_id,
             state="SUCCEEDED",
-            case=_case_response(case),
+            case=case_response,
             report=ReportResponse(
                 id=report_row.id,
                 caseId=report_row.case_id,
@@ -1734,6 +2018,7 @@ def create_case_router(
                 code="REPORT_NOT_FOUND",
                 message="Report not found",
             )
+        await _tenant_case(session, actor, report.case_id)
         return StreamingResponse(
             iter([report.pdf_bytes]),
             media_type="application/pdf",

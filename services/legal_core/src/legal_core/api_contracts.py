@@ -128,6 +128,7 @@ class CaseResponse(ContractModel):
     status: CaseStatus
     intake_schema_version: str = Field(alias="intakeSchemaVersion")
     created_at: datetime = Field(alias="createdAt")
+    early_escalation_id: UUID | None = Field(default=None, alias="earlyEscalationId")
 
 
 ClinicRole = Literal["CLINIC_OWNER", "CLINIC_ADMIN", "CLINIC_LAWYER"]
@@ -172,6 +173,7 @@ class EscalationDiscussionMessageResponse(ContractModel):
 
 class EscalationDiscussionResponse(ContractModel):
     items: list[EscalationDiscussionMessageResponse]
+    next_before: UUID | None = Field(default=None, alias="nextBefore")
 
 
 class EscalationQueueItemResponse(ContractModel):
@@ -181,9 +183,21 @@ class EscalationQueueItemResponse(ContractModel):
     reason_codes: list[str] = Field(alias="reasonCodes", min_length=1, max_length=20)
     created_at: datetime = Field(alias="createdAt")
 
+    status: Literal["REQUIRED", "IN_PROGRESS", "RESOLVED"] = "REQUIRED"
+    assigned_to_me: bool = Field(default=False, alias="assignedToMe")
+    assigned_membership_id: UUID | None = Field(default=None, alias="assignedMembershipId")
+
+
+class EscalationDetailResponse(EscalationQueueItemResponse):
+    case_id: UUID = Field(alias="caseId")
+    case_status: str = Field(alias="caseStatus")
+    facts: dict[str, Any]
+    report: dict[str, Any] | None = None
+
 
 class EscalationQueueResponse(ContractModel):
     items: list[EscalationQueueItemResponse] = Field(default_factory=list, max_length=100)
+    next_before: UUID | None = Field(default=None, alias="nextBefore")
 
 
 class TelegramIntakeDraftUpdateRequest(ContractModel):
@@ -340,6 +354,7 @@ class LegalEditorCandidateSummary(ContractModel):
         "NORMALIZED_EXCERPT", "OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"
     ] = Field(alias="artifactKind")
     approval_eligible: bool = Field(alias="approvalEligible")
+    approval_preflight_checked: bool = Field(default=True, alias="approvalPreflightChecked")
 
 
 class LegalEditorCandidatePage(ContractModel):

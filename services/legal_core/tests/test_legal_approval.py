@@ -20,6 +20,7 @@ from legal_core.legal_approval import (
     approve_legal_version,
     approve_legal_version_in_session,
 )
+from legal_core.legal_retrieval import ApprovedLegalCorpusRepository
 from legal_core.models import (
     LegalApprovalEvent,
     LegalFragment,
@@ -27,6 +28,7 @@ from legal_core.models import (
     LegalVersion,
     User,
 )
+from legal_core.retrieval_plan import retrieve_planned_evidence
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -453,6 +455,8 @@ def test_legal_editor_can_approve_a_consultant_copy_only_after_attesting_compari
                 source = await session.get(LegalSource, version.source_id)
                 assert source is not None
                 assert source.trust_level == "VERIFIED_COPY"
+                repository = ApprovedLegalCorpusRepository(session)
+                assert not await repository.search(fragment_text, as_of_date=date(2026, 9, 12))
 
             attestation = ApprovalAttestation(
                 reviewer_telegram_user_id=reviewer_telegram_id,
@@ -478,6 +482,15 @@ def test_legal_editor_can_approve_a_consultant_copy_only_after_attesting_compari
                 version = await session.get(LegalVersion, version_id)
                 assert version is not None
                 assert version.approval_state == "APPROVED"
+                repository = ApprovedLegalCorpusRepository(session)
+                library = await repository.list_documents(as_of_date=date(2026, 9, 12))
+                assert any(item.version_id == version_id for item in library)
+                evidence = await retrieve_planned_evidence(
+                    repository, queries=[fragment_text], as_of_date=date(2026, 9, 12)
+                )
+                assert any(item.version_id == version_id for item in evidence)
+                assert all(item.fragment_text == fragment_text for item in evidence)
+                assert not await repository.search(fragment_text, as_of_date=date(2026, 8, 3))
         finally:
             await engine.dispose()
 

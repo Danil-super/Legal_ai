@@ -85,6 +85,7 @@ def application_client() -> TestClient:
             session_factory=factory,
             managed_engine=engine,
             enable_draft_retention=False,
+            enable_analysis_worker=False,
         )
     )
 

@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from legal_core.contracts import FactKey
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -86,7 +88,7 @@ class ClaimProposal(StrictModel):
     evidence_fragment_ids: list[UUID] = Field(
         alias="evidenceFragmentIds", min_length=1, max_length=10
     )
-    required_fact_keys: list[str] = Field(
+    required_fact_keys: list[FactKey] = Field(
         default_factory=list, alias="requiredFactKeys", max_length=20
     )
 
@@ -97,9 +99,16 @@ class ClaimProposal(StrictModel):
             raise ValueError("evidence fragment ids must be unique")
         return value
 
+    @field_validator("required_fact_keys")
+    @classmethod
+    def unique_fact_keys(cls, value: list[FactKey]) -> list[FactKey]:
+        if len(value) != len(set(value)):
+            raise ValueError("required fact keys must be unique")
+        return value
+
 
 class ClaimProposalBatch(StrictModel):
-    claims: list[ClaimProposal] = Field(min_length=1, max_length=30)
+    claims: list[ClaimProposal] = Field(max_length=30)
     internal_recommendations: list[str] = Field(
         default_factory=list, alias="internalRecommendations", max_length=20
     )

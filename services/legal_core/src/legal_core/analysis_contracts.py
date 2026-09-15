@@ -124,10 +124,17 @@ class AnalysisSubmissionRequest(ContractModel):
     expected_risk_policy_version: str = Field(
         alias="expectedRiskPolicyVersion", min_length=1, max_length=80
     )
-    claims: list[AnalysisClaimInput] = Field(min_length=1, max_length=30)
+    claims: list[AnalysisClaimInput] = Field(max_length=30)
     semantic_reviews: list[SemanticReviewInput] = Field(
-        alias="semanticReviews", min_length=1, max_length=30
+        alias="semanticReviews", max_length=30
     )
+
+    @model_validator(mode="after")
+    def reviews_reference_submitted_claims(self) -> AnalysisSubmissionRequest:
+        claim_ids = {item.claim_id for item in self.claims}
+        if any(item.claim_id not in claim_ids for item in self.semantic_reviews):
+            raise ValueError("semantic reviews contain unknown claim identifiers")
+        return self
 
     @field_validator("claims")
     @classmethod

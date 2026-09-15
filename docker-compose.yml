@@ -34,7 +34,12 @@ services:
     restart: unless-stopped
 
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    # Build the fixed upstream source; legacy public images contain CVE-2025-62506.
+    image: dental-legal-minio:9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+    build:
+      context: .
+      dockerfile: ops/minio/Dockerfile
+    pull_policy: build
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dental_legal}
@@ -75,6 +80,8 @@ services:
       BOOTSTRAP_CLINIC_NAME: ${BOOTSTRAP_CLINIC_NAME:-Моя стоматология}
       PLATFORM_OWNER_TELEGRAM_ID: ${PLATFORM_OWNER_TELEGRAM_ID:-}
       LEGAL_EDITOR_GATEWAY_KEY: ${LEGAL_EDITOR_GATEWAY_KEY:-}
+      AGENT_ORCHESTRATOR_URL: ${AGENT_ORCHESTRATOR_URL:-}
+      AGENT_INTERNAL_KEY: ${AGENT_INTERNAL_KEY:-}
       LEGAL_EMBEDDING_BASE_URL: ${LEGAL_EMBEDDING_BASE_URL:-}
       LEGAL_EMBEDDING_API_KEY: ${LEGAL_EMBEDDING_API_KEY:-}
       LEGAL_EMBEDDING_MODEL: ${LEGAL_EMBEDDING_MODEL:-}
