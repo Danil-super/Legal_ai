@@ -61,7 +61,7 @@ def missing_facts_for(facts: Mapping[FactKey, object]) -> list[MissingFact]:
             )
         )
 
-    if facts.get(FactKey.FORMAL_CLAIM) is True:
+    if facts.get(FactKey.FORMAL_CLAIM) in (True, "YES"):
         if _is_absent(facts, FactKey.CLAIM_RECEIVED_AT):
             missing.append(
                 _missing(

@@ -16,7 +16,9 @@ if config.config_file_name is not None:
 
 config.set_main_option(
     "sqlalchemy.url",
-    owner_database_url().render_as_string(hide_password=False),
+    # Alembic stores options in ConfigParser. URL-escaped password characters
+    # contain percent signs, which must survive ConfigParser interpolation.
+    owner_database_url().render_as_string(hide_password=False).replace("%", "%%"),
 )
 target_metadata = Base.metadata
 

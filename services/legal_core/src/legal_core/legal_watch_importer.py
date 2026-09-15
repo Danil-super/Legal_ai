@@ -257,9 +257,16 @@ async def import_watch_inbox(
     if not inbox.is_dir():
         raise ValueError("legal watch inbox does not exist")
 
+    # Quarantine receipts are immutable and remain on disk after import. Prioritise
+    # receipts not yet present in the DB so the same first batch cannot starve
+    # every subsequently discovered publication.
+    async with session_factory() as session:
+        imported_eo_numbers = set(
+            await session.scalars(text("SELECT eo_number FROM legal_watch_discoveries"))
+        )
     directories = sorted(
         (path for path in inbox.iterdir() if path.is_dir() and not path.is_symlink()),
-        key=lambda path: path.name,
+        key=lambda path: (path.name in imported_eo_numbers, path.name),
     )[:max_candidates]
     imported = 0
     existing_count = 0

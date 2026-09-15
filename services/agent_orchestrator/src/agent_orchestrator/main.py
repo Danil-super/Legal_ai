@@ -138,6 +138,15 @@ def create_app(
         x_analysis_job_token: Annotated[UUID | None, Header()] = None,
     ) -> AnalysisSubmissionResponse:
         require_internal_key(x_agent_internal_key)
+        if (x_analysis_job_id is not None or x_analysis_job_token is not None) and (
+            x_analysis_job_id is None
+            or x_analysis_job_token is None
+            or x_analysis_job_id != idempotency_key
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "ANALYSIS_JOB_LEASE_EXPIRED"},
+            )
         try:
             context = await dependencies.legal_core.get_analysis_context(
                 case_id=case_id,

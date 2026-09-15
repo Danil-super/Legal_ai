@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
+from shlex import quote
 from subprocess import run
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "ops" / "deploy"
@@ -14,13 +19,203 @@ def test_deployment_scripts_are_valid_bash() -> None:
         assert result.returncode == 0, result.stderr
 
 
-def test_deployment_accepts_only_main_ancestry_and_base_profile() -> None:
+def test_deployment_accepts_only_main_ancestry_and_explicit_analysis_mode() -> None:
     script = (DEPLOY / "deploy-commit.sh").read_text(encoding="utf-8")
 
     assert 'merge-base --is-ancestor "$revision" origin/main' in script
-    assert 'docker compose --project-name "$project_name" --env-file "$env_file"' in script
-    assert "--profile analysis" not in script
+    assert 'compose_args=(--project-name "$project_name" --env-file "$env_file"' in script
+    assert 'if [[ "$analysis_enabled" == 1 ]]; then' in script
+    assert "ops/hermes/docker-compose.hermes.yml --profile analysis" in script
     assert "--profile maintenance" not in script
+
+
+def analysis_compose_fixture() -> dict:
+    image = "dental-legal-hermes:5fc308a70719a83cccdbba4c0e39c23f5a8239d5"
+    research_key, review_key, agent_key = "r" * 32, "v" * 32, "a" * 32
+    return {"services": {
+        "legal-core": {"environment": {
+            "AGENT_INTERNAL_KEY": agent_key,
+            "AGENT_ORCHESTRATOR_URL": "http://agent-orchestrator:8010",
+        }},
+        "hermes-researcher": {
+            "image": image, "pull_policy": "never", "environment": {
+                "API_SERVER_KEY": research_key,
+                "OPENAI_BASE_URL": "https://synthetic.example.invalid/v1",
+                "OPENAI_API_KEY": "synthetic-provider-key",
+                "HERMES_MODEL": "synthetic-researcher",
+            },
+        },
+        "hermes-reviewer": {
+            "image": image, "pull_policy": "never", "environment": {
+                "API_SERVER_KEY": review_key,
+                "OPENAI_BASE_URL": "https://synthetic.example.invalid/v1",
+                "OPENAI_API_KEY": "synthetic-provider-key",
+                "HERMES_MODEL": "synthetic-reviewer",
+            },
+        },
+        "agent-orchestrator": {"environment": {
+            "AGENT_INTERNAL_KEY": agent_key,
+            "HERMES_RESEARCHER_URL": "http://hermes-researcher:8642",
+            "HERMES_REVIEWER_URL": "http://hermes-reviewer:8642",
+            "HERMES_RESEARCHER_API_KEY": research_key,
+            "HERMES_REVIEWER_API_KEY": review_key,
+        }},
+        "telegram-gateway": {"environment": {
+            "AGENT_INTERNAL_KEY": agent_key,
+            "AGENT_ORCHESTRATOR_URL": "http://agent-orchestrator:8010",
+        }},
+    }}
+
+
+@pytest.mark.parametrize(
+    ("flag", "config_exit", "stack_exit", "image_exit", "expected_exit"),
+    [
+        ("", 0, 0, 0, 0),
+        ("DEPLOY_ANALYSIS_ENABLED=0", 0, 1, 0, 1),
+        ("DEPLOY_ANALYSIS_ENABLED=0", 1, 0, 0, 1),
+        ("DEPLOY_ANALYSIS_ENABLED=1", 0, 0, 0, 0),
+        ("DEPLOY_ANALYSIS_ENABLED=1", 0, 0, 1, 1),
+        ("DEPLOY_ANALYSIS_ENABLED=1", 0, 1, 0, 1),
+        ("DEPLOY_ANALYSIS_ENABLED=1\nDEPLOY_ANALYSIS_ENABLED=0", 0, 0, 0, 64),
+        ("DEPLOY_ANALYSIS_ENABLED=SENTINEL_SECRET", 0, 0, 0, 64),
+    ],
+)
+def test_deploy_records_success_only_when_the_selected_stack_is_ready(
+    tmp_path: Path, flag: str, config_exit: int, stack_exit: int,
+    image_exit: int, expected_exit: int,
+) -> None:
+    """Run real mode selection and preflight with local Docker and syslog stubs."""
+    command_log = tmp_path / "commands"
+    docker = tmp_path / "docker"
+    docker.write_text(
+        '#!/bin/bash\n'
+        'printf "%s\\n" "$*" >> "$COMMAND_LOG"\n'
+        'if [[ "$*" == *"image inspect"* ]]; then\n'
+        '  echo SENTINEL_SECRET >&2; exit "$IMAGE_EXIT"\n'
+        'fi\n'
+        'if [[ "$*" == *"config --format json"* ]]; then\n'
+        '  printf "%s" "$COMPOSE_JSON"; exit 0\n'
+        'fi\n'
+        'for arg in "$@"; do\n'
+        '  if [[ "$arg" == config ]]; then\n'
+        '    echo SENTINEL_SECRET >&2; exit "$CONFIG_EXIT"\n'
+        '  fi\n'
+        '  if [[ "$arg" == --wait ]]; then exit "$STACK_EXIT"; fi\n'
+        'done\nexit 99\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o700)
+    (tmp_path / "python3").symlink_to(sys.executable)
+    logger = tmp_path / "logger"
+    logger.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    logger.chmod(0o700)
+    env_file = tmp_path / "app.env"
+    env_file.write_text(flag + "\n", encoding="utf-8")
+    revision, previous = "a" * 40, "b" * 40
+    state_file = tmp_path / "last-successful-revision"
+    state_file.write_text(previous + "\n", encoding="utf-8")
+    source = (DEPLOY / "deploy-commit.sh").read_text(encoding="utf-8")
+    gate = source[source.index("# Select the persistent server mode") :]
+    script = tmp_path / "readiness.sh"
+    script.write_text(
+        "set -euo pipefail\n"
+        "readonly project_name=synthetic-deploy operation=deploy\n"
+        f"readonly env_file={quote(str(env_file))}\n"
+        f"readonly state_dir={quote(str(tmp_path))} revision={quote(revision)}\n"
+        + gate,
+        encoding="utf-8",
+    )
+    result = run(
+        ["/bin/bash", str(script)], cwd=ROOT, capture_output=True,
+        text=True, check=False, timeout=5,
+        env={
+            "PATH": str(tmp_path), "COMMAND_LOG": str(command_log),
+            "CONFIG_EXIT": str(config_exit), "STACK_EXIT": str(stack_exit),
+            "IMAGE_EXIT": str(image_exit),
+            "COMPOSE_JSON": json.dumps(analysis_compose_fixture()),
+        },
+    )
+    assert result.returncode == expected_exit, result.stderr
+    assert "SENTINEL_SECRET" not in result.stdout + result.stderr
+    assert state_file.read_text(encoding="utf-8").strip() == (
+        revision if expected_exit == 0 else previous
+    )
+    if expected_exit == 64:
+        assert not command_log.exists()
+        return
+    commands = command_log.read_text(encoding="utf-8").splitlines()
+    assert "config --quiet" in commands[0]
+    assert ("--profile analysis" in commands[0]) == (flag == "DEPLOY_ANALYSIS_ENABLED=1")
+    if config_exit or image_exit:
+        assert not any("up --build" in command for command in commands)
+    else:
+        assert "--wait --wait-timeout 180" in commands[-1]
+
+
+@pytest.mark.parametrize("fault", ["missing_key", "reused_key", "bad_url", "wrong_gateway", "json"])
+def test_analysis_preflight_rejects_bad_configuration_without_exposing_secrets(fault: str) -> None:
+    document = analysis_compose_fixture()
+    services = document["services"]
+    sentinel = "SENTINEL_SECRET"
+    if fault == "missing_key":
+        services["hermes-researcher"]["environment"]["OPENAI_API_KEY"] = ""
+    elif fault == "reused_key":
+        services["hermes-reviewer"]["environment"]["API_SERVER_KEY"] = "r" * 32
+    elif fault == "bad_url":
+        for name in ("hermes-researcher", "hermes-reviewer"):
+            services[name]["environment"]["OPENAI_BASE_URL"] = f"https://user:{sentinel}@host/v1"
+    elif fault == "wrong_gateway":
+        services["telegram-gateway"]["environment"]["AGENT_ORCHESTRATOR_URL"] = sentinel
+    body = sentinel if fault == "json" else json.dumps(document)
+    result = run(
+        [sys.executable, str(DEPLOY / "analysis-preflight.py")], input=body,
+        capture_output=True, text=True, check=False, timeout=5, env={},
+    )
+    assert result.returncode == 1
+    assert sentinel not in result.stdout + result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_ci_uses_the_production_python_and_hashed_lockfile() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "services" / "legal_core" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    python_version = dockerfile.split("FROM python:", maxsplit=1)[1].split("-", maxsplit=1)[0]
+    assert workflow.count(f"python-version: '{python_version}'") == 2
+    assert workflow.count("python -m pip install --require-hashes -r requirements.lock") == 2
+
+
+def test_minio_ci_and_runtime_use_the_same_verified_quay_digest() -> None:
+    image = (
+        "quay.io/minio/minio@sha256:"
+        "a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"
+    )
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert image in compose
+    assert image in workflow
+    assert "minio/minio:RELEASE.2025-04-22T22-12-26Z" not in compose + workflow
+
+
+def test_alembic_accepts_reserved_characters_in_generated_passwords() -> None:
+    result = run(
+        # Later migrations inspect the live database and cannot render offline.
+        [sys.executable, "-m", "alembic", "upgrade", "8b1773dcd131", "--sql"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+        env={
+            "POSTGRES_HOST": "localhost",
+            "POSTGRES_DB": "synthetic_offline_migration",
+            "POSTGRES_USER": "synthetic_owner",
+            "POSTGRES_PASSWORD": "synthetic-only:p@ss/with%reserved?characters#",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert "CREATE TABLE" in result.stdout
 
 
 def test_production_known_hosts_pins_the_vps_ed25519_key() -> None:

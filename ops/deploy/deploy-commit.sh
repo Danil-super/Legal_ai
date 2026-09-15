@@ -11,7 +11,6 @@ readonly github_deploy_key="/etc/dental-legal-ai/github-deploy-readonly"
 readonly github_known_hosts="/etc/dental-legal-ai/github_known_hosts"
 readonly git_ssh_command="ssh -i ${github_deploy_key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${github_known_hosts}"
 readonly project_name="dental-legal-ai"
-readonly readiness_url="http://127.0.0.1:8000/health/ready"
 readonly lock_file="/run/lock/dental-legal-ai-deploy.lock"
 
 if [[ "${EUID}" -ne 0 ]]; then
@@ -54,19 +53,49 @@ fi
 git -C "$repository_dir" checkout --detach --force "$revision"
 cd "$repository_dir"
 
-docker compose --project-name "$project_name" --env-file "$env_file" \
-  -f docker-compose.yml -f ops/deploy/docker-compose.production.yml \
-  up --build --detach --remove-orphans
-
-for _ in $(seq 1 30); do
-  if curl --fail --silent --show-error "$readiness_url" >/dev/null; then
-    printf '%s\n' "$revision" >"$state_dir/last-successful-revision"
-    logger --tag dental-legal-ai-deploy "${operation} succeeded for ${revision}"
-    exit 0
+# Select the persistent server mode. Never source the secrets file as shell code.
+# This deployment flag deliberately accepts only a literal 0 or 1.
+analysis_enabled=0
+analysis_flag_seen=0
+while IFS= read -r env_line || [[ -n "$env_line" ]]; do
+  if [[ "$env_line" =~ ^[[:space:]]*(export[[:space:]]+)?DEPLOY_ANALYSIS_ENABLED[[:space:]]*=(.*)$ ]]; then
+    if [[ "$analysis_flag_seen" -eq 1 || ! "${BASH_REMATCH[2]}" =~ ^[[:space:]]*([01])[[:space:]]*(#.*)?$ ]]; then
+      echo "DEPLOY_ANALYSIS_ENABLED must occur once and contain a literal 0 or 1." >&2
+      exit 64
+    fi
+    analysis_enabled="${BASH_REMATCH[1]}"
+    analysis_flag_seen=1
   fi
-  sleep 2
-done
+done <"$env_file"
 
-logger --tag dental-legal-ai-deploy "${operation} failed readiness for ${revision}"
-echo "Legal Core did not become ready; the last successful revision was preserved for manual rollback." >&2
-exit 1
+compose_args=(--project-name "$project_name" --env-file "$env_file"
+  -f docker-compose.yml -f ops/deploy/docker-compose.production.yml)
+if [[ "$analysis_enabled" == 1 ]]; then
+  compose_args+=(-f ops/hermes/docker-compose.hermes.yml --profile analysis)
+fi
+
+# Validate before replacing containers. Suppress Compose interpolation diagnostics,
+# which can include malformed secret values; report only a bounded operator action.
+if ! docker compose "${compose_args[@]}" config --quiet >/dev/null 2>&1; then
+  echo "Compose configuration is invalid. Check app.env and the selected deployment overlays." >&2
+  exit 1
+fi
+if [[ "$analysis_enabled" == 1 ]]; then
+  if ! docker compose "${compose_args[@]}" config --format json 2>/dev/null \
+    | python3 ops/deploy/analysis-preflight.py; then
+    exit 1
+  fi
+fi
+
+# Legal Core alone can be healthy while Telegram fails authentication or cannot poll.
+# Compose checks every enabled service, including the gateway's readiness marker;
+# the Core healthcheck runs inside the container and honors any host port mapping.
+if ! docker compose "${compose_args[@]}" \
+  up --build --detach --remove-orphans --wait --wait-timeout 180; then
+  logger --tag dental-legal-ai-deploy "${operation} failed readiness for ${revision}"
+  echo "The application stack did not become ready; the last successful revision was preserved for manual rollback." >&2
+  exit 1
+fi
+
+printf '%s\n' "$revision" >"$state_dir/last-successful-revision"
+logger --tag dental-legal-ai-deploy "${operation} succeeded for ${revision}"

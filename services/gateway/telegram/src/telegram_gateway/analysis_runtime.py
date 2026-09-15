@@ -127,6 +127,10 @@ def _bounded_text(value: object, *, limit: int) -> str | None:
 def analysis_error_message(code: str) -> str:
     messages = {
         "INSUFFICIENT_FACTS": "В кейсе не хватает обязательных фактов.",
+        "ANALYSIS_DATE_UNCERTAIN": (
+            "Не удалось определить применимую редакцию закона: уточните точную дату "
+            "обращения, события или оказания услуги. Создайте новый кейс с уточнённой датой."
+        ),
         "LEGAL_EVIDENCE_UNAVAILABLE": "Для этого кейса пока не хватает одобренной правовой базы.",
         "RISK_POLICY_NOT_READY": "Политика риска пока не активирована.",
         "ANALYSIS_CONTEXT_STALE": "Кейс изменился во время анализа. Запустите проверку ещё раз.",
@@ -272,7 +276,7 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
     clinic_status = _bounded_text(clinic_documents_data.get("status"), limit=24)
     draft_status = _bounded_text(draft_data.get("status"), limit=32)
     draft_reason = _bounded_text(draft_data.get("reasonCode"), limit=80)
-    draft_text = _bounded_text(draft_data.get("text"), limit=1_600)
+    draft_text = _bounded_text(draft_data.get("text"), limit=8_000)
     draft_policy_version = _bounded_text(draft_data.get("policyVersion"), limit=80)
     if (
         public_number is None
@@ -355,10 +359,7 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
         lines.append(f"Draft policy: {draft_policy_version}")
     lines.append("Автоматическая отправка пациенту отключена.")
 
-    rendered = "\n".join(lines)
-    if len(rendered) > 4_000:
-        rendered = rendered[:3_900] + "\n…"
-    return rendered
+    return "\n".join(lines)
 
 
 def telegram_lawyer_handoff_summary(payload: dict[str, Any]) -> str | None:
@@ -446,7 +447,23 @@ def telegram_analysis_messages(payload: dict[str, Any]) -> tuple[str, ...]:
 
     summary = telegram_analysis_summary(payload)
     handoff = telegram_lawyer_handoff_summary(payload)
-    return (summary,) if handoff is None else (summary, handoff)
+    texts = (summary,) if handoff is None else (summary, handoff)
+    messages: list[str] = []
+    for text in texts:
+        # Telegram counts UTF-16 code units, so astral emoji occupy two units.
+        # Split without dropping any text: a legal draft or its review warning
+        # must never disappear because the report exceeds one message.
+        start = 0
+        units = 0
+        for index, character in enumerate(text):
+            width = 2 if ord(character) > 0xFFFF else 1
+            if units + width > 4_000:
+                messages.append(text[start:index])
+                start = index
+                units = 0
+            units += width
+        messages.append(text[start:])
+    return tuple(messages)
 
 
 async def _show_escalation_queue(
@@ -454,7 +471,7 @@ async def _show_escalation_queue(
     context: ContextTypes.DEFAULT_TYPE,
     *, status: str = "OPEN", before: UUID | None = None,
 ) -> None:
-    gateway_bot._clear_pending_admin_grant(context)
+    gateway_bot._clear_pending_inputs(context)
     actor_id = gateway_bot._actor_id(update)
     if actor_id is None:
         await gateway_bot._reply(update, "Не удалось определить пользователя.")
@@ -532,7 +549,7 @@ async def open_escalation_discussion(
             reply_markup=back_keyboard(),
         )
         raise ApplicationHandlerStop
-    gateway_bot._clear_pending_admin_grant(context)
+    gateway_bot._clear_pending_inputs(context)
     try:
         escalation_id = UUID(query.data.removeprefix(ESCALATION_CALLBACK_PREFIX))
         await show_workspace(update, context, escalation_id)

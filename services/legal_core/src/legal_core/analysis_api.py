@@ -112,10 +112,31 @@ def _analysis_date(facts: dict[FactKey, object]) -> date:
         FactKey.INCIDENT_DATE,
         FactKey.SERVICE_DATE,
     ):
-        resolved = _exact_date(facts.get(key))
+        value = facts.get(key)
+        resolved = _exact_date(value)
         if resolved is not None:
+            if isinstance(value, dict) and value.get("precision") == "APPROXIMATE":
+                # Preserve the selected event's priority. A different exact event date cannot
+                # resolve uncertainty about this event or the legal revision applicable to it.
+                raise ApiError(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    code="ANALYSIS_DATE_UNCERTAIN",
+                    message="An exact case date is required to select the applicable legal version",
+                    details={"factKey": key.value, "precision": "APPROXIMATE"},
+                )
             return resolved
-    return datetime.now(UTC).date()
+    raise ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code="ANALYSIS_DATE_UNCERTAIN",
+        message="An exact case date is required to select the applicable legal version",
+        details={
+            "missingFactKeys": [
+                FactKey.CLAIM_DATE.value,
+                FactKey.INCIDENT_DATE.value,
+                FactKey.SERVICE_DATE.value,
+            ]
+        },
+    )
 
 
 def _require_analysis_eligible_case(case: Case) -> None:

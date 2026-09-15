@@ -19,9 +19,11 @@ if [[ "${EUID}" -ne 0 || "$#" -ne 2 || ! "$deploy_key" =~ ^ssh-ed25519[[:space:]
   exit 64
 fi
 
+# These utilities are also required when Docker was installed before bootstrap.
+apt-get update
+apt-get install --yes ca-certificates curl git python3 sudo openssh-client util-linux
+
 if ! command -v docker >/dev/null || ! docker compose version >/dev/null 2>&1; then
-  apt-get update
-  apt-get install --yes ca-certificates curl git
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
   chmod a+r /etc/apt/keyrings/docker.asc

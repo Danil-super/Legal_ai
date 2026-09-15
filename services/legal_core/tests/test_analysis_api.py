@@ -16,9 +16,31 @@ from legal_core.api_contracts import ReportResponse
 from legal_core.case_api import ApiError
 from legal_core.contracts import CaseStatus, FactKey
 from legal_core.verifier import ClaimKind, SemanticVerdict, VerificationResult
+from legal_core.analysis import analyze_frozen_case
+from legal_core.risk_engine import RiskLevel, RiskPolicy
 
 
 FRAGMENT_ID = UUID("00000000-0000-0000-0000-000000000001")
+
+
+def test_abstention_contract_reaches_blocked_domain_outcome() -> None:
+    data = _submission().model_dump(by_alias=True)
+    data.update(claims=[], semanticReviews=[])
+    payload = AnalysisSubmissionRequest.model_validate(data)
+    outcome = analyze_frozen_case(
+        facts={}, as_of_date=payload.as_of_date, evidence=[],
+        claims=_domain_claims(payload), semantic_reviews=_semantic_reviews(payload),
+        risk_policy=RiskPolicy("risk.v1", 100_000),
+    )
+    assert not outcome.analysis_allowed
+    assert outcome.risk.level is RiskLevel.UNAVAILABLE
+
+
+def test_submission_rejects_review_for_another_claim_at_contract_boundary() -> None:
+    data = _submission().model_dump(by_alias=True)
+    data["semanticReviews"][0]["claimId"] = "unknown-claim"
+    with pytest.raises(ValueError, match="unknown claim identifiers"):
+        AnalysisSubmissionRequest.model_validate(data)
 
 
 def _submission() -> AnalysisSubmissionRequest:
@@ -61,10 +83,46 @@ def test_analysis_date_ignores_unknown_or_invalid_dates() -> None:
     facts = {
         FactKey.CLAIM_DATE: {"precision": "UNKNOWN", "date": None},
         FactKey.INCIDENT_DATE: {"precision": "EXACT", "date": "not-a-date"},
-        FactKey.SERVICE_DATE: {"precision": "APPROXIMATE", "date": "2026-01-10"},
+        FactKey.SERVICE_DATE: {"precision": "EXACT", "date": "2026-01-10"},
     }
 
     assert _analysis_date(facts) == date(2026, 1, 10)
+
+
+@pytest.mark.parametrize(
+    "facts",
+    [
+        {},
+        {key: {"precision": "UNKNOWN", "date": None} for key in (
+            FactKey.CLAIM_DATE, FactKey.INCIDENT_DATE, FactKey.SERVICE_DATE
+        )},
+        {FactKey.CLAIM_DATE: {"precision": "EXACT", "date": "not-a-date"}},
+    ],
+)
+def test_analysis_date_never_substitutes_today_for_unknown_dates(facts) -> None:
+    with pytest.raises(ApiError) as raised:
+        _analysis_date(facts)
+    assert raised.value.status_code == 422
+    assert raised.value.code == "ANALYSIS_DATE_UNCERTAIN"
+
+
+@pytest.mark.parametrize("approximate_date", ["2026-08-31", "2026-09-01"])
+def test_approximate_primary_date_cannot_select_a_legal_revision(approximate_date: str) -> None:
+    with pytest.raises(ApiError) as raised:
+        _analysis_date({
+            FactKey.CLAIM_DATE: {"precision": "APPROXIMATE", "date": approximate_date},
+            FactKey.INCIDENT_DATE: {"precision": "EXACT", "date": "2026-08-20"},
+        })
+    assert raised.value.code == "ANALYSIS_DATE_UNCERTAIN"
+    assert raised.value.details["factKey"] == "CLAIM_DATE"
+
+
+def test_exact_primary_date_does_not_require_lower_priority_dates() -> None:
+    assert _analysis_date({
+        FactKey.CLAIM_DATE: {"precision": "EXACT", "date": "2026-09-01"},
+        FactKey.INCIDENT_DATE: {"precision": "APPROXIMATE", "date": "2026-08-31"},
+        FactKey.SERVICE_DATE: {"precision": "UNKNOWN", "date": None},
+    }) == date(2026, 9, 1)
 
 
 def test_completed_case_is_rejected_before_agent_reasoning_can_start() -> None:

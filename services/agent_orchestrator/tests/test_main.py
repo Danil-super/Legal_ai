@@ -1,6 +1,8 @@
 from datetime import UTC, date, datetime
 from uuid import UUID
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import ServiceDependencies, ServiceSettings, create_app
@@ -211,3 +213,24 @@ def test_completed_case_is_rejected_before_hermes_reasoning() -> None:
     assert response.json()["detail"]["code"] == "CASE_ANALYSIS_ALREADY_COMPLETED"
     assert reasoning.calls == 0
     assert legal_core.submit_calls == 0
+
+
+@pytest.mark.parametrize("job_headers", [
+    {"X-Analysis-Job-Id": str(IDEMPOTENCY_KEY)},
+    {"X-Analysis-Job-Token": str(IDEMPOTENCY_KEY)},
+    {"X-Analysis-Job-Id": str(CASE_ID), "X-Analysis-Job-Token": str(IDEMPOTENCY_KEY)},
+])
+def test_incomplete_or_mismatched_lease_is_not_downgraded_to_unfenced_submission(job_headers):
+    client, legal_core, reasoning = _client()
+    response = client.post(
+        f"/v1/cases/{CASE_ID}/analyze",
+        headers={
+            "X-Agent-Internal-Key": INTERNAL_KEY,
+            "X-Telegram-User-Id": "123",
+            "Idempotency-Key": str(IDEMPOTENCY_KEY),
+            **job_headers,
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "ANALYSIS_JOB_LEASE_EXPIRED"
+    assert legal_core.context_calls == reasoning.calls == legal_core.submit_calls == 0

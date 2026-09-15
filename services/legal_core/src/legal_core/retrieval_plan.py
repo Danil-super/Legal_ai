@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import date
+from itertools import zip_longest
 from typing import Final
 from uuid import UUID
 
@@ -97,14 +98,24 @@ async def retrieve_planned_evidence(
     if not 1 <= max_fragments <= 30:
         raise ValueError("max_fragments must be between 1 and 30")
 
-    unique: dict[UUID, ApprovedLegalFragment] = {}
+    ranked_results: list[list[ApprovedLegalFragment]] = []
     for query in queries:
-        for fragment in await repository.search(
-            query,
-            as_of_date=as_of_date,
-            limit=limit_per_query,
-            semantic=is_semantic_safe_query(query),
-        ):
+        ranked_results.append(
+            await repository.search(
+                query,
+                as_of_date=as_of_date,
+                limit=limit_per_query,
+                semantic=is_semantic_safe_query(query),
+            )
+        )
+
+    # Give each scenario query a place before filling the remaining budget with lower ranks.
+    # Otherwise broad base queries can consume the entire context before harm/refund queries run.
+    unique: dict[UUID, ApprovedLegalFragment] = {}
+    for rank in zip_longest(*ranked_results):
+        for fragment in rank:
+            if fragment is None:
+                continue
             unique.setdefault(fragment.fragment_id, fragment)
             if len(unique) >= max_fragments:
                 return list(unique.values())

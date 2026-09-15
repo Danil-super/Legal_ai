@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 from uuid import uuid4
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from legal_core.database import database_url
@@ -62,6 +63,32 @@ def test_candidate_loader_rejects_tampered_pdf(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match=r"size|SHA-256"):
         load_staged_candidate(inbox=tmp_path, directory=directory)
+
+
+def test_import_prioritizes_new_receipts_after_a_full_existing_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old_number = "0001202606010001"
+    new_number = "0001202606010002"
+    _write_candidate(tmp_path, eo_number=old_number)
+    _write_candidate(tmp_path, eo_number=new_number)
+    session = MagicMock()
+    session.scalars = AsyncMock(return_value=[old_number])
+    session.begin.return_value = MagicMock()
+    session.begin.return_value.__aenter__ = AsyncMock()
+    session.begin.return_value.__aexit__ = AsyncMock(return_value=False)
+    context = MagicMock()
+    context.__aenter__ = AsyncMock(return_value=session)
+    context.__aexit__ = AsyncMock(return_value=False)
+    factory = MagicMock(return_value=context)
+    record = AsyncMock(return_value=True)
+    monkeypatch.setattr("legal_core.legal_watch_importer._record_candidate", record)
+
+    result = asyncio.run(import_watch_inbox(factory, inbox=tmp_path, max_candidates=1))
+
+    assert result.scanned == result.imported == 1
+    assert result.existing == 0
+    assert record.await_args.args[1].metadata.eo_number == new_number
 
 
 @pytest.mark.skipif(

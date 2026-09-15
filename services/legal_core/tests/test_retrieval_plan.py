@@ -1,5 +1,7 @@
 import asyncio
 from datetime import date
+from types import SimpleNamespace
+from uuid import UUID
 
 from legal_core.contracts import FactKey
 from legal_core.retrieval_plan import (
@@ -74,6 +76,31 @@ def test_retrieval_marks_free_text_service_query_lexical_only() -> None:
         assert repository.calls == [
             ("платные медицинские услуги", True),
             ("медицинская услуга пациент Иванов установка винира", False),
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_general_queries_cannot_exclude_later_scenario_queries() -> None:
+    class FakeRepository:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def search(self, query, **kwargs):
+            self.calls.append(query)
+            offset = int(query) * 10
+            return [SimpleNamespace(fragment_id=UUID(int=offset + rank)) for rank in range(1, 6)]
+
+    async def scenario() -> None:
+        repository = FakeRepository()
+        result = await retrieve_planned_evidence(  # type: ignore[arg-type]
+            repository, queries=[str(index) for index in range(6)],
+            as_of_date=date(2026, 9, 1), max_fragments=20,
+        )
+        assert repository.calls == [str(index) for index in range(6)]
+        assert len(result) == 20
+        assert [item.fragment_id for item in result[:6]] == [
+            UUID(int=index * 10 + 1) for index in range(6)
         ]
 
     asyncio.run(scenario())

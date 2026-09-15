@@ -72,6 +72,8 @@ class LegalCoreClient:
         job_id: UUID | None = None,
         job_token: UUID | None = None,
     ) -> dict[str, Any]:
+        if (job_id is None) != (job_token is None):
+            raise ValueError("analysis job id and lease token must be provided together")
         headers = {"X-Telegram-User-Id": str(telegram_user_id)}
         if idempotency_key is not None:
             headers["Idempotency-Key"] = str(idempotency_key)

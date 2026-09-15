@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import json
 import os
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -126,14 +127,24 @@ def _stable_identity(metadata: dict[str, object]) -> dict[str, object]:
 
 def _write_once(path: Path, content: bytes) -> bool:
     if path.exists():
-        if not path.is_file() or path.read_bytes() != content:
+        if path.is_symlink() or not path.is_file() or path.read_bytes() != content:
             raise FileExistsError(f"refusing to overwrite different quarantine content: {path}")
         return False
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    # Publish a fully written inode without replacing an existing receipt, even
+    # when an overlapping watcher run wins the race after the initial check.
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
     try:
-        temporary.write_bytes(content)
-        temporary.chmod(0o600)
-        temporary.replace(path)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            if path.is_symlink() or not path.is_file() or path.read_bytes() != content:
+                raise FileExistsError(
+                    f"refusing to overwrite different quarantine content: {path}"
+                ) from None
+            return False
     finally:
         temporary.unlink(missing_ok=True)
     return True

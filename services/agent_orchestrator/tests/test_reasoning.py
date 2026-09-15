@@ -311,3 +311,59 @@ def test_researcher_cannot_promote_a_clinic_document_id_to_legal_evidence() -> N
         assert reviewer.calls == 0
 
     asyncio.run(scenario())
+
+
+def test_researcher_abstention_skips_reviewer_and_discards_unverified_text() -> None:
+    async def scenario() -> None:
+        researcher = FakeHermes(
+            name="researcher",
+            response={
+                "claims": [],
+                "internalRecommendations": ["Unverified recommendation"],
+                "patientDraft": "Unverified draft",
+            },
+        )
+        reviewer = FakeHermes(name="reviewer", response={})
+        orchestrator = LegalReasoningOrchestrator(  # type: ignore[arg-type]
+            researcher=researcher, reviewer=reviewer
+        )
+        result = await orchestrator.reason(_projection())
+        assert result.claims == result.semantic_reviews == result.internal_recommendations == ()
+        assert result.patient_draft is None
+        assert reviewer.calls == 0
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("fact_keys", [["NOT_A_FACT"], ["FORMAL_CLAIM", "FORMAL_CLAIM"]])
+def test_invalid_fact_dependencies_are_rejected_before_review(fact_keys: list[str]) -> None:
+    async def scenario() -> None:
+        response = _claim_response()
+        response["claims"][0]["requiredFactKeys"] = fact_keys
+        researcher = FakeHermes(name="researcher", response=response)
+        reviewer = FakeHermes(name="reviewer", response=_review_response())
+        orchestrator = LegalReasoningOrchestrator(  # type: ignore[arg-type]
+            researcher=researcher, reviewer=reviewer
+        )
+        with pytest.raises(HermesProtocolError, match="claim contract"):
+            await orchestrator.reason(_projection())
+        assert reviewer.calls == 0
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("identifier", ["+7 999 123-45-67", "f47d4f14-4956-4014-b010-d60921631939"])
+def test_researcher_identifier_is_not_forwarded_to_reviewer(identifier: str) -> None:
+    async def scenario() -> None:
+        response = _claim_response()
+        response["patientDraft"] = f"Свяжитесь с нами: {identifier}"
+        researcher = FakeHermes(name="researcher", response=response)
+        reviewer = FakeHermes(name="reviewer", response=_review_response())
+        orchestrator = LegalReasoningOrchestrator(  # type: ignore[arg-type]
+            researcher=researcher, reviewer=reviewer
+        )
+        with pytest.raises(HermesProtocolError, match="direct identifier"):
+            await orchestrator.reason(_projection())
+        assert reviewer.calls == 0
+
+    asyncio.run(scenario())
