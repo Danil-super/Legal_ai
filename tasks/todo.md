@@ -323,7 +323,10 @@ approved-only retrieval, applicable-date resolution and claim-to-evidence verifi
 - [x] Fix Alembic password escaping and provide persistent opt-in full Hermes deployment.
 - [x] First integrated GitHub run passes: 500 general tests and 301 Core/PostgreSQL/MinIO tests
   on `ddd0da92a3e5af0eb1c2837945a8488a6c557778`, including the synthetic HTTP end-to-end scenario.
-- [ ] Final CI passes after the fixed MinIO source-build update and official PDF verification.
+- [x] Final CI passes after the fixed MinIO source-build update and official PDF verification
+  (PR run 34994520047; main quality and integration jobs in run 34996415369).
+- [ ] Production retry after SSH disconnected during the initial MinIO source build;
+  keepalive and smaller build concurrency are being validated. OOM is not confirmed.
 - [ ] Deployment host smoke with actual Telegram/Hermes settings and human-approved legal versions.
 
 **Evidence:** `docs/launch-audit-2026-09-15.md`; PR #43.

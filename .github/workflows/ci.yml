@@ -328,4 +328,7 @@ jobs:
           ssh-add - <<<"$DEPLOY_SSH_PRIVATE_KEY"
           install -d -m 0700 "$HOME/.ssh"
           install -m 0600 ops/deploy/known_hosts.production "$HOME/.ssh/known_hosts"
-          ssh -o BatchMode=yes -o IdentitiesOnly=no deploy@84.201.153.147 "deploy $DEPLOY_SHA"
+          # Source builds can be silent for minutes; keep the SSH transport alive.
+          ssh -o BatchMode=yes -o IdentitiesOnly=no \
+            -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            deploy@84.201.153.147 "deploy $DEPLOY_SHA"

@@ -5,8 +5,8 @@ FROM golang:1.24.8-bookworm AS build
 ENV CGO_ENABLED=0 \
     GOTOOLCHAIN=local \
     GOFLAGS=-mod=readonly \
-    GOMAXPROCS=2 \
-    GOMEMLIMIT=768MiB
+    GOMAXPROCS=1 \
+    GOMEMLIMIT=512MiB
 
 WORKDIR /src/minio
 
@@ -21,7 +21,9 @@ RUN git init . \
 RUN go mod download && go mod verify
 
 # Use upstream's build flags and version generator, with a stable release timestamp.
-RUN go build -p 2 -tags kqueue -trimpath \
+# Compile one package at a time to leave headroom for the live app on small VPSs.
+# GOMEMLIMIT is a per-process soft target, not a cap on the entire Docker build.
+RUN go build -p 1 -tags kqueue -trimpath \
     --ldflags "$(MINIO_RELEASE=RELEASE go run buildscripts/gen-ldflags.go 2025-10-15T17:29:55Z)" \
     -o /out/minio .
 
