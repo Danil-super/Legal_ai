@@ -34,8 +34,12 @@ services:
     restart: unless-stopped
 
   minio:
-    # Official Quay manifest for RELEASE.2025-04-22T22-12-26Z, verified 2026-09-15.
-    image: quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
+    # Build the fixed upstream source; legacy public images contain CVE-2025-62506.
+    image: dental-legal-minio:9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+    build:
+      context: .
+      dockerfile: ops/minio/Dockerfile
+    pull_policy: build
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dental_legal}

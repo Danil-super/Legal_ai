@@ -48,6 +48,13 @@ jobs:
         continue-on-error: true
         run: python -m pytest
 
+      - name: Verify checked-in official legal PDFs
+        id: official_pdfs
+        continue-on-error: true
+        run: |
+          python -m legal_core.official_fetch --manifest services/legal_core/corpus/official/pp736-a7de08b6176991ed.json --verify-only
+          python -m legal_core.official_fetch --manifest services/legal_core/corpus/official/pp659-substantive-selection.json --verify-only
+
       - name: Dependency vulnerability audit
         id: dependency_audit
         continue-on-error: true
@@ -160,6 +167,7 @@ jobs:
           RUFF_OUTCOME: ${{ steps.ruff.outcome }}
           MYPY_OUTCOME: ${{ steps.mypy.outcome }}
           UNIT_TESTS_OUTCOME: ${{ steps.unit_tests.outcome }}
+          OFFICIAL_PDFS_OUTCOME: ${{ steps.official_pdfs.outcome }}
           DEPENDENCY_AUDIT_OUTCOME: ${{ steps.dependency_audit.outcome }}
           COMPOSE_OUTCOME: ${{ steps.compose.outcome }}
           PRODUCTION_COMPOSE_OUTCOME: ${{ steps.production_compose.outcome }}
@@ -171,6 +179,7 @@ jobs:
           test "$RUFF_OUTCOME" = success
           test "$MYPY_OUTCOME" = success
           test "$UNIT_TESTS_OUTCOME" = success
+          test "$OFFICIAL_PDFS_OUTCOME" = success
           test "$DEPENDENCY_AUDIT_OUTCOME" = success
           test "$COMPOSE_OUTCOME" = success
           test "$PRODUCTION_COMPOSE_OUTCOME" = success
@@ -180,7 +189,8 @@ jobs:
 
   postgres-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The first build compiles the pinned MinIO security release from source.
+    timeout-minutes: 30
     services:
       postgres:
         image: pgvector/pgvector:0.8.1-pg16
@@ -228,13 +238,18 @@ jobs:
           python -m pip install --require-hashes -r requirements.lock
           python -m pip install -e '.[dev]' --no-deps
 
+      - name: Build fixed MinIO from pinned upstream source
+        run: >-
+          docker build --file ops/minio/Dockerfile
+          --tag dental-legal-minio:9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a .
+
       - name: Start MinIO integration service
         run: |
           docker run -d --name minio-ci \
             -p 9000:9000 \
             -e MINIO_ROOT_USER="$MINIO_ACCESS_KEY" \
             -e MINIO_ROOT_PASSWORD="$MINIO_SECRET_KEY" \
-            quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e \
+            dental-legal-minio:9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a \
             server /data
           for attempt in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
@@ -292,7 +307,7 @@ jobs:
       needs.postgres-integration.result == 'success' &&
       (needs.codeql.result == 'success' || needs.codeql.result == 'skipped')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     environment:
       name: production
     permissions:

@@ -186,15 +186,26 @@ def test_ci_uses_the_production_python_and_hashed_lockfile() -> None:
     assert workflow.count("python -m pip install --require-hashes -r requirements.lock") == 2
 
 
-def test_minio_ci_and_runtime_use_the_same_verified_quay_digest() -> None:
-    image = (
-        "quay.io/minio/minio@sha256:"
-        "a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"
-    )
+def test_minio_ci_and_runtime_build_the_same_pinned_security_release() -> None:
+    commit = "9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a"
+    image = f"dental-legal-minio:{commit}"
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "ops" / "minio" / "Dockerfile").read_text(encoding="utf-8")
     assert image in compose
-    assert image in workflow
+    assert workflow.count(image) == 2
+    assert "dockerfile: ops/minio/Dockerfile" in compose
+    assert "docker build --file ops/minio/Dockerfile" in workflow
+    assert "FROM golang:1.24.8-bookworm AS build" in dockerfile
+    assert f"git fetch --depth 1 origin {commit}" in dockerfile
+    assert f'test "$(git rev-parse HEAD)" = {commit}' in dockerfile
+    assert "go mod download && go mod verify" in dockerfile
+    assert "GOTOOLCHAIN=local" in dockerfile
+    assert "GOFLAGS=-mod=readonly" in dockerfile
+    assert "buildscripts/gen-ldflags.go 2025-10-15T17:29:55Z" in dockerfile
+    assert "ca-certificates curl" in dockerfile
+    assert "FROM minio/minio" not in dockerfile
+    assert "quay.io/minio/minio@" not in compose + workflow
     assert "minio/minio:RELEASE.2025-04-22T22-12-26Z" not in compose + workflow
 
 
