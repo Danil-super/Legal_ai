@@ -23,9 +23,13 @@ def test_deployment_accepts_only_main_ancestry_and_explicit_analysis_mode() -> N
     script = (DEPLOY / "deploy-commit.sh").read_text(encoding="utf-8")
 
     assert 'merge-base --is-ancestor "$revision" origin/main' in script
-    assert 'compose_args=(--project-name "$project_name" --env-file "$env_file"' in script
+    assert (
+        'compose_args=(--parallel 1 --project-name "$project_name" --env-file "$env_file"'
+        in script
+    )
     assert 'if [[ "$analysis_enabled" == 1 ]]; then' in script
     assert "ops/hermes/docker-compose.hermes.yml --profile analysis" in script
+    assert "--parallel 1" in script
     assert "--profile maintenance" not in script
 
 

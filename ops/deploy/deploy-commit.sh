@@ -68,7 +68,9 @@ while IFS= read -r env_line || [[ -n "$env_line" ]]; do
   fi
 done <"$env_file"
 
-compose_args=(--project-name "$project_name" --env-file "$env_file"
+# BuildKit on the constrained VPS rejects concurrent Compose build sessions.
+# Keep service builds serial so a deploy cannot strand a partially replaced stack.
+compose_args=(--parallel 1 --project-name "$project_name" --env-file "$env_file"
   -f docker-compose.yml -f ops/deploy/docker-compose.production.yml)
 if [[ "$analysis_enabled" == 1 ]]; then
   compose_args+=(-f ops/hermes/docker-compose.hermes.yml --profile analysis)
