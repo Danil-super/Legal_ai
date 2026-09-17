@@ -12,6 +12,7 @@ services:
     mem_limit: 512m
     environment:
       AGENT_ORCHESTRATOR_URL: ""
+      AGENT_INTERNAL_KEY: ""
 
   telegram-gateway:
     mem_limit: 192m
@@ -19,6 +20,7 @@ services:
       TELEGRAM_PROXY_URL: http://telegram-vpn-proxy:8080
       # The analysis overlay sets the internal URL only in the enabled deployment mode.
       AGENT_ORCHESTRATOR_URL: ""
+      AGENT_INTERNAL_KEY: ""
     depends_on:
       telegram-vpn-proxy:
         condition: service_healthy

@@ -33,6 +33,13 @@ def test_deployment_accepts_only_main_ancestry_and_explicit_analysis_mode() -> N
     assert "--profile maintenance" not in script
 
 
+def test_production_overlay_disables_the_complete_analysis_runtime() -> None:
+    production = (DEPLOY / "docker-compose.production.yml").read_text(encoding="utf-8")
+
+    assert production.count('AGENT_ORCHESTRATOR_URL: ""') == 2
+    assert production.count('AGENT_INTERNAL_KEY: ""') == 2
+
+
 def analysis_compose_fixture() -> dict:
     image = "dental-legal-hermes:5fc308a70719a83cccdbba4c0e39c23f5a8239d5"
     research_key, review_key, agent_key = "r" * 32, "v" * 32, "a" * 32
