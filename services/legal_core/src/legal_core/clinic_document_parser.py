@@ -7,7 +7,6 @@ extracts text locally. It never treats client-provided hashes or extracted text 
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 import subprocess
 import tempfile
@@ -20,6 +19,7 @@ from xml.etree.ElementTree import Element, ParseError
 from defusedxml import ElementTree as SafeElementTree  # type: ignore[import-untyped]
 from defusedxml.common import DefusedXmlException  # type: ignore[import-untyped]
 
+from legal_core.bounded_parser_process import run_parser_tool
 from legal_core.clinic_documents import normalize_clinic_document_text
 
 MAX_UPLOAD_BYTES = 15_000_000
@@ -75,26 +75,7 @@ def _run_tool(
     *,
     timeout_seconds: int = 30,
 ) -> subprocess.CompletedProcess[str]:
-    environment = dict(os.environ)
-    environment["LC_ALL"] = "C"
-    try:
-        return subprocess.run(
-            list(arguments),
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="strict",
-            timeout=timeout_seconds,
-            env=environment,
-        )
-    except FileNotFoundError as exc:
-        raise RuntimeError(f"required document parser is not installed: {arguments[0]}") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise ValueError(f"document parser timed out: {arguments[0]}") from exc
-    except subprocess.CalledProcessError:
-        # Native-tool diagnostics may include document content. Never reflect it to the API.
-        raise ValueError("document parser rejected the file") from None
+    return run_parser_tool(arguments, timeout_seconds=timeout_seconds)
 
 
 def _parse_pdf(raw: bytes) -> tuple[str, str]:
@@ -105,10 +86,12 @@ def _parse_pdf(raw: bytes) -> tuple[str, str]:
         temporary.flush()
         info = _run_tool(["pdfinfo", temporary.name]).stdout
         pages_match = re.search(r"(?m)^Pages:\s+(\d+)\s*$", info)
-        encrypted_match = re.search(r"(?m)^Encrypted:\s+(\S+)\s*$", info)
+        encrypted_match = re.search(r"(?m)^Encrypted:\s+(\S+)", info)
         if pages_match is None:
             raise ValueError("pdfinfo did not report a page count")
-        if encrypted_match is not None and encrypted_match.group(1).lower() != "no":
+        if encrypted_match is None:
+            raise ValueError("pdfinfo did not report encryption state")
+        if encrypted_match.group(1).lower() != "no":
             raise ValueError("encrypted clinic PDFs are not supported")
         page_count = int(pages_match.group(1))
         if not 1 <= page_count <= MAX_PDF_PAGES:
@@ -125,7 +108,7 @@ def _parse_pdf(raw: bytes) -> tuple[str, str]:
                 "clinic PDF has no extractable text; scanned PDFs require a separate OCR flow"
             ) from exc
         raise
-    return normalized, "pdftotext-clinic.v1"
+    return normalized, "pdftotext-clinic.v2"
 
 
 def _validate_docx_archive(archive: zipfile.ZipFile) -> None:

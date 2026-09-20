@@ -1,0 +1,25 @@
+title = "Legal AI: narrowly scoped reviewed false positives"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Pydantic alias, not an API credential; reviewed 2026-09-20"
+condition = "AND"
+regexTarget = "secret"
+regexes = ['''^requiredFactKeys$''']
+paths = [
+  '''^services/agent_orchestrator/src/agent_orchestrator/contracts\.py$''',
+  '''^services/legal_core/src/legal_core/analysis_contracts\.py$''',
+  '''^services/legal_core/src/legal_core/contracts\.py$''',
+]
+
+[[rules.allowlists]]
+description = "Exact nonfunctional placeholder in the deployment example"
+condition = "AND"
+regexTarget = "secret"
+regexes = ['''^REPLACE_WITH_A_UNIQUE_32_PLUS_CHARACTER_SECRET$''']
+paths = ['''^ops/deploy/production\.env\.example$''']

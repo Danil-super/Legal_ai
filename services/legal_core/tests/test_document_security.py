@@ -63,7 +63,7 @@ def test_valid_unicode_docx_still_parses(encoding: str) -> None:
 @pytest.mark.parametrize("part", ["word/document.xml", "word/./document.xml", "word\\document.xml"])
 def test_duplicate_or_ambiguous_archive_names_are_rejected(part: str) -> None:
     raw = docx(xml_document().encode(), (part, xml_document("Different text").encode()))
-    with pytest.raises(ValueError, match="duplicate|unsafe"):
+    with pytest.raises(ValueError, match=r"duplicate|unsafe"):
         parse(raw)
 
 
@@ -86,7 +86,7 @@ def test_encrypted_docx_is_validation_error_not_missing_parser() -> None:
     "word/../document.xml", "/word/document.xml", "word//document.xml",
 ])
 def test_unsafe_archive_paths_are_rejected(name: str) -> None:
-    with pytest.raises(ValueError, match="unsafe|duplicate"):
+    with pytest.raises(ValueError, match=r"unsafe|duplicate"):
         parse(docx(xml_document().encode(), (name, b"unused")))
 
 
@@ -106,6 +106,10 @@ def test_parser_stderr_is_not_reflected_in_application_errors(monkeypatch) -> No
             1, ["pdfinfo", "synthetic.pdf"], stderr="SYNTHETIC_PRIVATE_TEXT",
         )
 
+    monkeypatch.setattr(
+        "legal_core.bounded_parser_process.shutil.which",
+        lambda name, **kwargs: f"/usr/bin/{name}",
+    )
     monkeypatch.setattr(parser.subprocess, "run", failed)
     with pytest.raises(ValueError) as error:
         parser._run_tool(["pdfinfo", "synthetic.pdf"])

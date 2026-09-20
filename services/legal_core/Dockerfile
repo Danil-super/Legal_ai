@@ -13,6 +13,8 @@ RUN apt-get update \
         poppler-utils \
         tesseract-ocr \
         tesseract-ocr-rus \
+        util-linux \
+    && test -x /usr/bin/prlimit \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system app \
     && useradd --system --gid app --home-dir /app app

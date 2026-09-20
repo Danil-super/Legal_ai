@@ -57,6 +57,8 @@ jobs:
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $directory/archive.tar.gz" | sha256sum --check --strict
           tar -xzf "$directory/archive.tar.gz" -C "$directory" gitleaks
           "$directory/gitleaks" version
+      - name: Verify false-positive exceptions preserve secret detection
+        run: python3 ops/ci/check_secret_scan.py "$RUNNER_TEMP/gitleaks-tool/gitleaks"
       - name: Scan checkout without publishing matched secrets
         shell: bash
         run: |
@@ -110,3 +112,11 @@ jobs:
             -e POSTGRES_APP_PASSWORD=synthetic-runtime-password-12345678901234567890 \
             -e MODULE="$MODULE" --entrypoint python "$IMAGE" -c \
             'import importlib, os; assert os.getuid() != 0; importlib.import_module(os.environ["MODULE"]); print("Offline container import passed")'
+      - name: Exercise native PDF limits in the actual Core image
+        if: matrix.service == 'core'
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 128 --memory 768m \
+            --tmpfs /tmp:rw,nosuid,size=16777216 \
+            -v "$PWD/services/legal_core/tests/test_bounded_parser_process.py:/app/test_native_limits.py:ro" \
+            --entrypoint python dental-ci-core -m pytest -q -p no:cacheprovider /app/test_native_limits.py
