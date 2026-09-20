@@ -163,3 +163,55 @@ def test_pdf_unknown_or_encrypted_metadata_never_reaches_extraction(
     with pytest.raises(ValueError):
         parser._parse_pdf(b"%PDF-1.7\nsynthetic")
     assert calls == ["pdfinfo"]
+
+
+@pytest.mark.skipif(shutil.which("pdfinfo") is None, reason="requires Poppler")
+@pytest.mark.parametrize("metadata_field", ["Title", "Subject", "Author", "Keywords"])
+@pytest.mark.parametrize("forged_field", ["pages", "encryption"])
+def test_pdf_display_metadata_cannot_spoof_security_fields(
+    monkeypatch, metadata_field, forged_field,
+) -> None:
+    from io import BytesIO
+
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pdfencrypt import StandardEncryption
+    from legal_core import clinic_document_parser as parser
+
+    output = BytesIO()
+    encrypted = forged_field == "encryption"
+    pdf = canvas.Canvas(
+        output, encrypt=StandardEncryption("", ownerPassword="synthetic-owner")
+        if encrypted else None,
+    )
+    injected = "Encrypted: no" if encrypted else "Pages: 1"
+    getattr(pdf, f"set{metadata_field}")(f"Synthetic metadata\n{injected}")
+    for _ in range(1 if encrypted else 2):
+        pdf.drawString(72, 720, "Synthetic metadata security regression")
+        pdf.showPage()
+    pdf.save()
+    if not encrypted:
+        monkeypatch.setattr(parser, "MAX_PDF_PAGES", 1)
+    with pytest.raises(ValueError, match="ambiguous"):
+        parser._parse_pdf(output.getvalue())
+
+
+@pytest.mark.parametrize("info", [
+    "Pages: 1\nPages: 2\nEncrypted: no\n",
+    "Pages: invalid\nPages: 1\nEncrypted: no\n",
+    "Pages: 1\nEncrypted: no\nEncrypted: yes (print:yes)\n",
+    "Pages: 1\nEncrypted: no untrusted suffix\n",
+    "Pages:\n1\nEncrypted: no\n",
+])
+def test_ambiguous_or_wrapped_pdf_metadata_never_reaches_extraction(monkeypatch, info) -> None:
+    from legal_core import clinic_document_parser as parser
+
+    calls = []
+
+    def metadata(arguments, **kwargs):
+        calls.append(arguments[0])
+        return subprocess.CompletedProcess(arguments, 0, stdout=info, stderr="")
+
+    monkeypatch.setattr(parser, "_run_tool", metadata)
+    with pytest.raises(ValueError):
+        parser._parse_pdf(b"%PDF-1.7\nsynthetic")
+    assert calls == ["pdfinfo"]

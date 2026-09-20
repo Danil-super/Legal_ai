@@ -85,15 +85,19 @@ def _parse_pdf(raw: bytes) -> tuple[str, str]:
         temporary.write(raw)
         temporary.flush()
         info = _run_tool(["pdfinfo", temporary.name]).stdout
-        pages_match = re.search(r"(?m)^Pages:\s+(\d+)\s*$", info)
-        encrypted_match = re.search(r"(?m)^Encrypted:\s+(\S+)", info)
-        if pages_match is None:
-            raise ValueError("pdfinfo did not report a page count")
-        if encrypted_match is None:
-            raise ValueError("pdfinfo did not report encryption state")
-        if encrypted_match.group(1).lower() != "no":
-            raise ValueError("encrypted clinic PDFs are not supported")
-        page_count = int(pages_match.group(1))
+        # Display metadata (Title/Author/etc.) is controlled by the PDF and may
+        # contain newlines that imitate pdfinfo's security fields. Require exactly
+        # one complete value of each field; never trust the first or last match.
+        page_fields = re.findall(r"(?m)^Pages:[ \t]*([^\r\n]*)", info)
+        encryption_fields = re.findall(r"(?m)^Encrypted:[ \t]*([^\r\n]*)", info)
+        if len(page_fields) != 1 or len(encryption_fields) != 1:
+            raise ValueError("pdfinfo reported missing or ambiguous security metadata")
+        page_value = page_fields[0].strip()
+        if re.fullmatch(r"[0-9]{1,6}", page_value) is None:
+            raise ValueError("pdfinfo reported an invalid page count")
+        if encryption_fields[0].strip() != "no":
+            raise ValueError("encrypted or uncertain clinic PDFs are not supported")
+        page_count = int(page_value)
         if not 1 <= page_count <= MAX_PDF_PAGES:
             raise ValueError("clinic PDF page count exceeds the supported limit")
         extracted = _run_tool(
