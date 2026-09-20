@@ -48,6 +48,11 @@ def check(scanner: str) -> None:
             findings = json.loads(report.read_text(encoding="utf-8"))
             actual = {row["File"] for row in findings}
             if actual != expected_files or result.returncode != (1 if expected_files else 0):
+                print(
+                    f"Control failed: exit={result.returncode}, "
+                    f"expected_files={len(expected_files)}, actual_files={len(actual)}",
+                    file=sys.stderr,
+                )
                 raise RuntimeError("Gitleaks sensitivity regression")
 
         scan(set())

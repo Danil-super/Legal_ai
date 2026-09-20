@@ -7,10 +7,10 @@ useDefault = true
 id = "generic-api-key"
 
 [[rules.allowlists]]
-description = "Pydantic alias, not an API credential; reviewed 2026-09-20"
+description = "Exact Pydantic alias-and-bound expression, not an API credential"
 condition = "AND"
-regexTarget = "secret"
-regexes = ['''^requiredFactKeys$''']
+regexTarget = "match"
+regexes = ['''^requiredFactKeys", max_length=20[\r\n\t ]*$''']
 paths = [
   '''^services/agent_orchestrator/src/agent_orchestrator/contracts\.py$''',
   '''^services/legal_core/src/legal_core/analysis_contracts\.py$''',

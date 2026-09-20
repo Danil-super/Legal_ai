@@ -46,7 +46,9 @@ def test_kernel_limits_and_clean_environment_are_active(monkeypatch: pytest.Monk
 
 
 @pytest.mark.parametrize("descriptor", [1, 2])
-def test_output_is_bounded_while_child_runs(monkeypatch: pytest.MonkeyPatch, descriptor: int) -> None:
+def test_output_is_bounded_while_child_runs(
+    monkeypatch: pytest.MonkeyPatch, descriptor: int,
+) -> None:
     use_python_as_tool(monkeypatch)
     script = f"import os; [os.write({descriptor}, b'x' * 65536) for _ in range(64)]"
     with pytest.raises(ValueError, match="output exceeds"):
@@ -145,7 +147,9 @@ def test_real_pdf_tools_keep_text_and_reject_encrypted_document() -> None:
 
 
 @pytest.mark.parametrize("encryption", ["yes (print:yes copy:yes)", "unknown", ""])
-def test_pdf_unknown_or_encrypted_metadata_never_reaches_extraction(monkeypatch, encryption) -> None:
+def test_pdf_unknown_or_encrypted_metadata_never_reaches_extraction(
+    monkeypatch, encryption,
+) -> None:
     from legal_core import clinic_document_parser as parser
 
     calls = []
