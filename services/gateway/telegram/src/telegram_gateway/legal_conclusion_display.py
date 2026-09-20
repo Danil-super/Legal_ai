@@ -1,4 +1,3 @@
-# ruff: noqa: RUF001
 """Plain-text presentation of canonical, server-verified legal conclusions."""
 
 from __future__ import annotations

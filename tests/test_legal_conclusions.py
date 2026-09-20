@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
-
 from legal_core.contracts import CanonicalReport, CaseStatus, FactKey, LegalConclusion
 from legal_core.legal_conclusions import select_verified_legal_conclusions
 from legal_core.reports import build_analysis_report, build_intake_report, render_report_pdf
