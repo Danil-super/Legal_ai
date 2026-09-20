@@ -53,15 +53,16 @@ async def inspect_analysis_runtime() -> RuntimeStatus:
     try:
         # Fixed server configuration only: the request cannot supply a probe destination.
         # No provider API keys, model calls, embedding requests or prompts are involved.
-        async with asyncio.timeout(3), httpx.AsyncClient(
-            timeout=2, trust_env=False, follow_redirects=False,
-        ) as client:
-            async with client.stream("GET", f"{settings.url}/health/live") as response:
-                if response.status_code != 200:
-                    return "UNREACHABLE"
-                # A liveness HTTP response is deliberately reported only as REACHABLE.
-                # It is not proof that either provider can execute a legal analysis.
-                return "REACHABLE"
+        async with (
+            asyncio.timeout(3),
+            httpx.AsyncClient(timeout=2, trust_env=False, follow_redirects=False) as client,
+            client.stream("GET", f"{settings.url}/health/live") as response,
+        ):
+            if response.status_code != 200:
+                return "UNREACHABLE"
+            # A liveness HTTP response is deliberately reported only as REACHABLE.
+            # It is not proof that either provider can execute a legal analysis.
+            return "REACHABLE"
     except (httpx.HTTPError, TimeoutError):
         return "UNREACHABLE"
 

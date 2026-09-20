@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 """Owner-only diagnostics, composed even when model execution is disabled."""
 
 from __future__ import annotations

@@ -23,10 +23,21 @@ _BASE_QUERIES: Final = (
     "права пациента медицинская помощь",
     "ответственность исполнитель медицинские услуги",
 )
+_REWORK_QUERIES: Final = (
+    "безвозмездное устранение недостатков",
+    "повторное выполнение работы",
+)
+_INCIDENT_QUERIES: Final = {
+    "QUALITY_COMPLAINT": ("недостатки оказанной услуги", "гарантийный срок"),  # noqa: RUF001
+    "INFORMED_CONSENT": ("информированное добровольное согласие",),
+    "PERSONAL_DATA": ("врачебная тайна", "персональные данные"),
+}
 
 _SEMANTIC_SAFE_QUERIES: Final = frozenset(
     (
         *_BASE_QUERIES,
+        *_REWORK_QUERIES,
+        *(query for queries in _INCIDENT_QUERIES.values() for query in queries),
         "требования потребителя претензия медицинские услуги",
         "возмещение вреда здоровью медицинские услуги",
         "ответственность медицинская организация проверка",
@@ -69,6 +80,17 @@ def plan_legal_queries(facts: Mapping[FactKey, object]) -> tuple[str, ...]:
         queries.append("возмещение убытков вреда медицинские услуги")
     if any("DOCUMENT" in token or "RECORD" in token for token in demands):
         queries.append("медицинская документация пациент копии")
+    if "REWORK_DEMAND" in demands:
+        queries.extend(_REWORK_QUERIES)
+
+    # These are search candidates, not legal findings. A quality complaint does not
+    # establish a defect or the existence/applicability of a contractual warranty.
+    incidents = _tokens(facts.get(FactKey.INCIDENT_TYPES)) | _tokens(
+        facts.get(FactKey.PRIMARY_INCIDENT_TYPE)
+    )
+    for incident, scenario_queries in _INCIDENT_QUERIES.items():
+        if incident in incidents:
+            queries.extend(scenario_queries)
 
     service_type = facts.get(FactKey.SERVICE_TYPE)
     if isinstance(service_type, str) and service_type.strip():
