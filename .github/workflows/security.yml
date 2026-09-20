@@ -1,0 +1,112 @@
+name: Security and container gates
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  static-security:
+    name: Bandit (production Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13.7'
+          cache: pip
+      - name: Install hashed scanner and dependencies
+        run: |
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install --only-binary=:all: --no-deps --require-hashes -r ops/ci/security-tools.lock
+      - name: Scan production sources without publishing their contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/bandit.json"
+          result=0
+          python -m bandit -q -r \
+            services/legal_core/src services/gateway/telegram/src services/agent_orchestrator/src \
+            --severity-level medium --confidence-level high \
+            -f json -o "$report" >"$RUNNER_TEMP/bandit.log" 2>&1 || result=$?
+          python ops/ci/security_summary.py bandit "$report"
+          exit "$result"
+
+  secret-scan:
+    name: Gitleaks (current checkout)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned Gitleaks CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          directory="$RUNNER_TEMP/gitleaks-tool"
+          mkdir -p "$directory"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 15 --max-time 120 --retry 3 \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            -o "$directory/archive.tar.gz"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $directory/archive.tar.gz" | sha256sum --check --strict
+          tar -xzf "$directory/archive.tar.gz" -C "$directory" gitleaks
+          "$directory/gitleaks" version
+      - name: Scan checkout without publishing matched secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/gitleaks.json"
+          result=0
+          "$RUNNER_TEMP/gitleaks-tool/gitleaks" dir . --no-banner --no-color --redact=100 \
+            --report-format=json --report-path="$report" \
+            >"$RUNNER_TEMP/gitleaks.log" 2>&1 || result=$?
+          python3 ops/ci/security_summary.py gitleaks "$report"
+          exit "$result"
+
+  container-smoke:
+    name: Container import (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: telegram
+            dockerfile: services/gateway/telegram/Dockerfile
+            module: telegram_gateway.__main__
+          - service: core
+            dockerfile: services/legal_core/Dockerfile
+            module: legal_core.main
+          - service: orchestrator
+            dockerfile: services/agent_orchestrator/Dockerfile
+            module: agent_orchestrator.main
+          - service: watcher
+            dockerfile: services/legal_core/watcher.Dockerfile
+            module: legal_core.legal_watch_importer
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build actual production Dockerfile
+        env:
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          IMAGE: dental-ci-${{ matrix.service }}
+        run: docker build --file "$DOCKERFILE" --tag "$IMAGE" .
+      - name: Import as non-root in an offline read-only container
+        env:
+          MODULE: ${{ matrix.module }}
+          IMAGE: dental-ci-${{ matrix.service }}
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 128 --memory 512m \
+            --tmpfs /tmp:rw,nosuid,size=16777216 \
+            -e POSTGRES_PASSWORD=synthetic-container-password \
+            -e POSTGRES_APP_PASSWORD=synthetic-runtime-password-12345678901234567890 \
+            -e MODULE="$MODULE" --entrypoint python "$IMAGE" -c \
+            'import importlib, os; assert os.getuid() != 0; importlib.import_module(os.environ["MODULE"]); print("Offline container import passed")'

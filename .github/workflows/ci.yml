@@ -10,6 +10,9 @@ permissions:
   contents: read
 
 jobs:
+  security:
+    uses: ./.github/workflows/security.yml
+
   quality:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -299,15 +302,19 @@ jobs:
 
   deploy-production:
     name: Deploy production
-    needs: [quality, postgres-integration, codeql]
+    needs: [quality, postgres-integration, security, codeql]
     if: >-
       always() &&
       github.event_name == 'push' && github.ref == 'refs/heads/main' &&
       needs.quality.result == 'success' &&
       needs.postgres-integration.result == 'success' &&
+      needs.security.result == 'success' &&
       (needs.codeql.result == 'success' || needs.codeql.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    concurrency:
+      group: dental-legal-ai-production
+      cancel-in-progress: false
     environment:
       name: production
     permissions:

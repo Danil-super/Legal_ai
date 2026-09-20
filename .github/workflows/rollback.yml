@@ -15,6 +15,9 @@ jobs:
   rollback-production:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    concurrency:
+      group: dental-legal-ai-production
+      cancel-in-progress: false
     environment:
       name: production
     steps:

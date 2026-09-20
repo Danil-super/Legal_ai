@@ -15,7 +15,10 @@ import zipfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from xml.etree import ElementTree
+from xml.etree.ElementTree import Element, ParseError
+
+from defusedxml import ElementTree as SafeElementTree  # type: ignore[import-untyped]
+from defusedxml.common import DefusedXmlException  # type: ignore[import-untyped]
 
 from legal_core.clinic_documents import normalize_clinic_document_text
 
@@ -50,6 +53,8 @@ def sha256_bytes(value: bytes) -> str:
 
 
 def _safe_filename(value: str) -> str:
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise ValueError("source filename must not contain control characters")
     filename = value.strip()
     if not filename or len(filename) > 255:
         raise ValueError("source filename must contain 1 to 255 characters")
@@ -87,9 +92,9 @@ def _run_tool(
         raise RuntimeError(f"required document parser is not installed: {arguments[0]}") from exc
     except subprocess.TimeoutExpired as exc:
         raise ValueError(f"document parser timed out: {arguments[0]}") from exc
-    except subprocess.CalledProcessError as exc:
-        diagnostic = exc.stderr.strip()[:300]
-        raise ValueError(f"document parser rejected the file: {diagnostic}") from exc
+    except subprocess.CalledProcessError:
+        # Native-tool diagnostics may include document content. Never reflect it to the API.
+        raise ValueError("document parser rejected the file") from None
 
 
 def _parse_pdf(raw: bytes) -> tuple[str, str]:
@@ -133,8 +138,15 @@ def _validate_docx_archive(archive: zipfile.ZipFile) -> None:
     for info in infos:
         name = info.filename.replace("\\", "/")
         path = PurePosixPath(name)
-        if path.is_absolute() or ".." in path.parts:
+        if (
+            path.is_absolute() or ".." in path.parts or "\\" in info.filename
+            or name.rstrip("/") != path.as_posix()
+        ):
             raise ValueError("DOCX archive contains an unsafe path")
+        if name in names:
+            raise ValueError("DOCX archive contains duplicate parts")
+        if info.flag_bits & 1:
+            raise ValueError("encrypted DOCX archives are not supported")
         names.add(name)
         if info.file_size > MAX_DOCX_SINGLE_ENTRY_BYTES:
             raise ValueError("DOCX archive entry exceeds the supported size")
@@ -157,7 +169,7 @@ def _validate_docx_archive(archive: zipfile.ZipFile) -> None:
         raise ValueError("embedded objects in DOCX are not supported")
 
 
-def _docx_paragraph_text(paragraph: ElementTree.Element) -> str:
+def _docx_paragraph_text(paragraph: Element) -> str:
     pieces: list[str] = []
     for element in paragraph.iter():
         if element.tag == f"{_WORD_NS}t":
@@ -175,17 +187,22 @@ def _parse_docx(raw: bytes) -> tuple[str, str]:
 
         with zipfile.ZipFile(BytesIO(raw)) as archive:
             _validate_docx_archive(archive)
-            document_xml = archive.read("word/document.xml")
+            with archive.open("word/document.xml") as part:
+                document_xml = part.read(MAX_DOCX_SINGLE_ENTRY_BYTES + 1)
+            if len(document_xml) > MAX_DOCX_SINGLE_ENTRY_BYTES:
+                raise ValueError("DOCX archive entry exceeds the supported size")
     except (zipfile.BadZipFile, KeyError) as exc:
         raise ValueError("DOCX archive is invalid") from exc
 
-    upper_xml = document_xml.upper()
-    if b"<!DOCTYPE" in upper_xml or b"<!ENTITY" in upper_xml:
-        raise ValueError("DOCX XML declarations are unsafe")
     try:
-        root = ElementTree.fromstring(document_xml)
-    except ElementTree.ParseError as exc:
-        raise ValueError("DOCX document XML is invalid") from exc
+        # Parser-level controls also apply to UTF-16, unlike ASCII byte searches.
+        root = SafeElementTree.fromstring(
+            document_xml, forbid_dtd=True, forbid_entities=True, forbid_external=True,
+        )
+    except DefusedXmlException:
+        raise ValueError("DOCX XML declarations are unsafe") from None
+    except (ParseError, ValueError, LookupError):
+        raise ValueError("DOCX document XML is invalid") from None
 
     paragraphs = [
         text
@@ -194,7 +211,7 @@ def _parse_docx(raw: bytes) -> tuple[str, str]:
     ]
     if not paragraphs:
         raise ValueError("DOCX contains no extractable text")
-    return _bounded_text("\n\n".join(paragraphs)), "docx-wordprocessingml.v1"
+    return _bounded_text("\n\n".join(paragraphs)), "docx-wordprocessingml.v2"
 
 
 def _parse_text(raw: bytes) -> tuple[str, str]:

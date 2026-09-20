@@ -63,7 +63,7 @@ def test_docx_upload_extracts_wordprocessingml_paragraphs() -> None:
     assert parsed.normalized_text == (
         "Договор оказания услуг.\n\nГарантийный срок указан ниже."
     )
-    assert parsed.parser_version == "docx-wordprocessingml.v1"
+    assert parsed.parser_version == "docx-wordprocessingml.v2"
 
 
 def test_docx_rejects_path_traversal_and_macros() -> None:
