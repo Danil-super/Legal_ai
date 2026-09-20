@@ -61,6 +61,7 @@ from legal_core.contracts import (
     FactKey,
 )
 from legal_core.intake import missing_facts_for
+from legal_core.legal_conclusions import select_verified_legal_conclusions
 from legal_core.legal_retrieval import ApprovedLegalCorpusRepository, ApprovedLegalFragment
 from legal_core.models import Case, CaseReport
 from legal_core.reports import build_analysis_report, build_intake_report, render_report_pdf
@@ -524,6 +525,9 @@ def create_analysis_router(
                 ),
                 clinic_document_context=state.clinic_document_context,
                 verified_action_items=_verified_action_items(claims, result_by_claim),
+                verified_legal_conclusions=select_verified_legal_conclusions(
+                    claims, outcome.verification
+                ),
             )
         else:
             block_reason = (

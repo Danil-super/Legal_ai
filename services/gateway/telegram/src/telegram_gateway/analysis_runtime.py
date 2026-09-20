@@ -24,6 +24,7 @@ from telegram.ext import (
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError, LegalCoreClient
 from telegram_gateway.escalation_workspace import show_workspace, workspace_action
+from telegram_gateway.legal_conclusion_display import legal_conclusion_lines
 from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
@@ -307,6 +308,8 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
     if safe_reasons:
         lines.extend(["", "Почему:", *(f"• {item}" for item in safe_reasons)])
 
+    lines.extend(legal_conclusion_lines(report_json))
+
     safe_actions = [
         item[:500] for item in action_items[:8] if isinstance(item, str) and item.strip()
     ]
@@ -314,14 +317,16 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
         lines.extend(["", "Что сделать:", *(f"• {item}" for item in safe_actions)])
 
     source_lines: list[str] = []
-    for source in sources[:6]:
+    # Conclusions can cite any returned fragment, not only the first six.
+    displayed_sources = sources if report_json.get("legalConclusions") else sources[:6]
+    for source_index, source in enumerate(displayed_sources, start=1):
         if not isinstance(source, dict):
             continue
         title = _bounded_text(source.get("documentTitle"), limit=180)
         path = _bounded_text(source.get("structuralPath"), limit=100)
         url = _bounded_text(source.get("sourceUrl"), limit=500)
         if title and path and url:
-            source_lines.append(f"• {title}, {path}\n  {url}")
+            source_lines.append(f"[{source_index}] {title}, {path}\n  {url}")
     if source_lines:
         lines.extend(["", "Правовая основа:", *source_lines])
 

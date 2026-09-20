@@ -11,7 +11,7 @@ from functools import partial
 from html import escape
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import UUID
 
 from reportlab.lib import colors  # type: ignore[import-untyped]
@@ -30,7 +30,6 @@ from reportlab.platypus import (  # type: ignore[import-untyped]
     TableStyle,
 )
 
-from legal_core.clinic_document_retrieval import ApprovedClinicDocumentFragment
 from legal_core.contracts import (
     AnalysisAvailability,
     AnalysisSnapshot,
@@ -41,6 +40,7 @@ from legal_core.contracts import (
     DraftResponse,
     FactKey,
     LegalBasis,
+    LegalConclusion,
     LegalSourceCard,
     MissingFact,
     Recommendations,
@@ -48,9 +48,12 @@ from legal_core.contracts import (
     ReportSummary,
     RiskSummary,
 )
-from legal_core.legal_retrieval import ApprovedLegalFragment
 from legal_core.risk_engine import RiskAssessment, RiskLevel
 from legal_core.safe_patient_draft import build_safe_patient_draft
+
+if TYPE_CHECKING:
+    from legal_core.clinic_document_retrieval import ApprovedClinicDocumentFragment
+    from legal_core.legal_retrieval import ApprovedLegalFragment
 
 DISCLAIMER = (
     "Внутренняя карточка. Не является окончательным юридическим заключением "
@@ -191,6 +194,7 @@ def build_analysis_report(
     clinic_document_context_trace_sha256: str,
     clinic_document_context: Sequence[ApprovedClinicDocumentFragment],
     verified_action_items: Sequence[str],
+    verified_legal_conclusions: Sequence[LegalConclusion] = (),
 ) -> CanonicalReport:
     """Build a user-visible report only after all server-side evidence gates passed."""
 
@@ -237,6 +241,7 @@ def build_analysis_report(
         recommendations=recommendation,
         draftResponse=draft_response,
         legalBasis=LegalBasis(status="AVAILABLE", sources=_source_cards(evidence)),
+        legalConclusions=list(verified_legal_conclusions),
         clinicDocuments=clinic_basis,
         risk=RiskSummary(
             level=risk_level,
@@ -362,6 +367,24 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
         for reason in report.risk.reason_codes:
             story.append(Paragraph(f"• {escape(reason)}", body))
 
+        story.append(Paragraph("Юридическая оценка", heading))
+        if report.legal_conclusions:
+            source_numbers = {
+                source.fragment_id: index
+                for index, source in enumerate(report.legal_basis.sources, start=1)
+            }
+            for index, conclusion in enumerate(report.legal_conclusions, start=1):
+                story.append(Paragraph(f"{index}. {escape(conclusion.text)}", body))
+                citations = ", ".join(
+                    f"[{source_numbers[fragment_id]}]"
+                    for fragment_id in conclusion.evidence_fragment_ids
+                )
+                story.append(Paragraph(f"Основание: {citations}.", muted))
+        else:
+            story.append(Paragraph(
+                "Отдельные проверенные юридические выводы в этом отчёте не сохранены.", body
+            ))
+
         story.append(Paragraph("Рекомендованные действия", heading))
         for recommendation_item in report.recommendations.items:
             story.append(Paragraph(f"• {escape(recommendation_item)}", body))
@@ -381,7 +404,7 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
             )
 
         story.append(Paragraph("Правовая основа", heading))
-        for legal_source in report.legal_basis.sources:
+        for source_index, legal_source in enumerate(report.legal_basis.sources, start=1):
             number = (
                 f" № {escape(legal_source.official_number)}"
                 if legal_source.official_number
@@ -389,7 +412,7 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
             )
             story.append(
                 Paragraph(
-                    f"• {escape(legal_source.document_title)}{number}; "
+                    f"[{source_index}] {escape(legal_source.document_title)}{number}; "
                     f"{escape(legal_source.structural_path)}; действует с "
                     f"{legal_source.effective_from.isoformat()}.<br/>"
                     f"Источник: {escape(legal_source.source_url)}",

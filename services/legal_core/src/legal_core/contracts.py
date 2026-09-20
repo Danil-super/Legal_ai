@@ -212,6 +212,32 @@ class AnalysisSnapshot(ContractModel):
     )
 
 
+class LegalConclusion(ContractModel):
+    """Server-selected LEGAL claim, not a model-authored verification flag."""
+
+    claim_id: str = Field(alias="claimId", min_length=1, max_length=80)
+    text: str = Field(min_length=1, max_length=4_000)
+    verification_status: Literal["VERIFIED"] = Field(
+        default="VERIFIED", alias="verificationStatus"
+    )
+    evidence_fragment_ids: list[UUID] = Field(
+        alias="evidenceFragmentIds", min_length=1, max_length=10
+    )
+    required_fact_keys: list[FactKey] = Field(
+        default_factory=list, alias="requiredFactKeys", max_length=20
+    )
+
+    @model_validator(mode="after")
+    def validate_conclusion(self) -> "LegalConclusion":
+        if not self.claim_id.strip() or not self.text.strip():
+            raise ValueError("legal conclusion identifier and text must not be blank")
+        if len(self.evidence_fragment_ids) != len(set(self.evidence_fragment_ids)):
+            raise ValueError("legal conclusion evidence identifiers must be unique")
+        if len(self.required_fact_keys) != len(set(self.required_fact_keys)):
+            raise ValueError("legal conclusion required fact keys must be unique")
+        return self
+
+
 class CanonicalReport(ContractModel):
     schema_version: Literal["dental-case-report.v1"] = Field(
         default="dental-case-report.v1", alias="schemaVersion"
@@ -226,6 +252,9 @@ class CanonicalReport(ContractModel):
     recommendations: Recommendations
     draft_response: DraftResponse = Field(alias="draftResponse")
     legal_basis: LegalBasis = Field(alias="legalBasis")
+    legal_conclusions: list[LegalConclusion] = Field(
+        default_factory=list, alias="legalConclusions", max_length=30
+    )
     clinic_documents: ClinicDocumentBasis = Field(
         default_factory=ClinicDocumentBasis,
         alias="clinicDocuments",
@@ -249,4 +278,25 @@ class CanonicalReport(ContractModel):
             raise ValueError("BLOCKED intake report cannot contain analysis snapshots")
         if not ready and self.clinic_documents.status != "NOT_USED":
             raise ValueError("BLOCKED intake report cannot expose clinic document analysis context")
+        if self.legal_conclusions:
+            if not ready or self.analysis is None or self.analysis.verifier_status != "PASSED":
+                raise ValueError("legal conclusions require a passed analysis")
+            if self.risk is None or self.risk.level == "UNAVAILABLE":
+                raise ValueError("legal conclusions require an available risk assessment")
+            identifiers = [item.claim_id for item in self.legal_conclusions]
+            if len(identifiers) != len(set(identifiers)):
+                raise ValueError("legal conclusion identifiers must be unique")
+            sources = {item.fragment_id: item for item in self.legal_basis.sources}
+            if len(sources) != len(self.legal_basis.sources):
+                raise ValueError("legal conclusion source identifiers must be unique")
+            for conclusion in self.legal_conclusions:
+                for fragment_id in conclusion.evidence_fragment_ids:
+                    source = sources.get(fragment_id)
+                    if source is None:
+                        raise ValueError("legal conclusion references evidence outside legal basis")
+                    as_of_date = self.analysis.as_of_date
+                    if source.effective_from > as_of_date or (
+                        source.effective_to is not None and as_of_date >= source.effective_to
+                    ):
+                        raise ValueError("legal conclusion source is not applicable on case date")
         return self
