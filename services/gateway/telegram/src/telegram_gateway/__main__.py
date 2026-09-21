@@ -1,5 +1,5 @@
-# Runtime composition: diagnostics -> legal library -> intake -> clinic docs -> analysis -> wizard.
-from telegram_gateway.analysis_diagnostics_runtime import main
+# Runtime composition includes diagnostics, guided intake and optional human work notes.
+from telegram_gateway.case_experience_runtime import main
 
 if __name__ == "__main__":
     main()
