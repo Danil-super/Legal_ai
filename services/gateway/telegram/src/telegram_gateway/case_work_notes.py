@@ -14,7 +14,11 @@ from uuid import UUID, uuid4
 from legal_core.pseudonymization import pseudonymize_text
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
-    ApplicationHandlerStop, CallbackQueryHandler, ContextTypes, MessageHandler, filters,
+    ApplicationHandlerStop,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
 )
 
 from telegram_gateway import bot as gateway_bot
@@ -69,7 +73,9 @@ def _pending(context: ContextTypes.DEFAULT_TYPE) -> dict[str, Any] | None:
 
 def _return_keyboard(escalation_id: UUID) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("← Отмена, к кейсу", callback_data=f"case:escalation:{escalation_id}")],
+        [InlineKeyboardButton(
+            "← Отмена, к кейсу", callback_data=f"case:escalation:{escalation_id}",
+        )],
         *back_keyboard().inline_keyboard,
     ])
 
@@ -82,9 +88,12 @@ async def _show_workspace(
         await gateway_bot._reply(
             update, "Дополнительно для ответственного специалиста — необязательно:",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📌 Следующий шаг", callback_data=f"esc:plan:{escalation_id}")],
-                [InlineKeyboardButton("📝 Комментарий специалиста",
-                                      callback_data=f"esc:review:{escalation_id}")],
+                [InlineKeyboardButton(
+                    "📌 Следующий шаг", callback_data=f"esc:plan:{escalation_id}",
+                )],
+                [InlineKeyboardButton(
+                    "📝 Комментарий специалиста", callback_data=f"esc:review:{escalation_id}",
+                )],
             ]),
         )
 
@@ -104,8 +113,10 @@ async def workspace_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _show_workspace(update, context, escalation_id)
     except (ValueError, LegalCoreApiError):
         logger.warning("case workspace unavailable")
-        await gateway_bot._reply(update, "Не удалось открыть кейс. Обновите список обращений.",
-                                 reply_markup=back_keyboard())
+        await gateway_bot._reply(
+            update, "Не удалось открыть кейс. Обновите список обращений.",
+            reply_markup=back_keyboard(),
+        )
     raise ApplicationHandlerStop
 
 
@@ -128,8 +139,10 @@ async def begin_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         membership = await client.get_actor(actor)
         if (detail.get("status") != "IN_PROGRESS" or detail.get("assignedToMe") is not True
                 or membership.get("role") not in {"CLINIC_OWNER", "CLINIC_LAWYER"}):
-            await gateway_bot._reply(update, "Запись доступна текущему ответственному "
-                                     "специалисту по незавершённому кейсу. Сначала возьмите его в работу.")
+            await gateway_bot._reply(
+                update, "Запись доступна текущему ответственному специалисту "
+                "по незавершённому кейсу. Сначала возьмите его в работу.",
+            )
             raise ApplicationHandlerStop
         gateway_bot._clear_pending_inputs(context)
         data = gateway_bot._user_data(context)
@@ -168,7 +181,8 @@ async def receive_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     closing = pending["kind"] == "close"
     await gateway_bot._reply(
         update, "Проверьте запись:\n\n" + body + (
-            "\n\nТолько после подтверждения обращение будет завершено. Пациенту ничего не отправляется."
+            "\n\nТолько после подтверждения обращение будет завершено. "
+            "Пациенту ничего не отправляется."
             if closing else "\n\nЗапись останется в истории с автором и временем. "
             "Она не меняет факты и риск автоматического анализа."
         ),
@@ -187,9 +201,11 @@ async def save_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     callback = await gateway_bot._answer_callback(update)
     actor = gateway_bot._actor_id(update)
     pending = _pending(context)
-    if (callback is None or actor is None or pending is None or not pending.get("body")
-            or callback.rsplit(":", 1)[1] != pending.get("nonce")
-            or gateway_bot._user_data(context).get(workspace.DISCUSSION_KEY) != pending["escalationId"]):
+    if (
+        callback is None or actor is None or pending is None or not pending.get("body")
+        or callback.rsplit(":", 1)[1] != pending.get("nonce")
+        or gateway_bot._user_data(context).get(workspace.DISCUSSION_KEY) != pending["escalationId"]
+    ):
         await gateway_bot._reply(update, "Эта запись уже изменена, отменена или сохранена.")
         raise ApplicationHandlerStop
     escalation_id = UUID(pending["escalationId"])

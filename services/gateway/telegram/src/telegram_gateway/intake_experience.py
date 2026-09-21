@@ -8,6 +8,7 @@ persisted until the person explicitly confirms the complete review card.
 from __future__ import annotations
 
 import re
+from contextlib import suppress
 from datetime import date, datetime
 from typing import Any
 
@@ -28,16 +29,16 @@ FIELDS = {
     "DEMAND_AMOUNT": ("demand_amount_kopecks", "Заявленная сумма"),
     "FORMAL_CLAIM": ("formal_claim", "Письменная претензия"),
     "CLAIM_RECEIVED_AT": ("claim_received_at", "Дата получения претензии"),
-    "CLAIM_DEADLINE": ("response_deadline", "Срок из документа / сообщения"),
+    "CLAIM_DEADLINE": ("response_deadline", "Ближайший указанный срок ответа"),
     "HARM": ("harm_claimed", "Заявление о вреде здоровью"),
     "HOSPITALIZATION": ("hospitalization", "Госпитализация"),
     "LAWYER": ("lawyer_contact", "Обращение представителя"),
     "REPRESENTATIVE_AUTHORITY": ("representative_authority", "Полномочия представителя"),
-    "LAWYER_DEADLINE": ("response_deadline", "Срок из документа / сообщения"),
+    "LAWYER_DEADLINE": ("response_deadline", "Ближайший указанный срок ответа"),
     "AUTHORITY": ("regulator_or_court", "Обращение органа или суда"),
     "AUTHORITY_KIND": ("authority_kind", "Орган или суд"),
     "AUTHORITY_DATE": ("authority_document_date", "Дата документа органа"),
-    "AUTHORITY_DEADLINE": ("response_deadline", "Срок из документа / сообщения"),
+    "AUTHORITY_DEADLINE": ("response_deadline", "Ближайший указанный срок ответа"),
     "REGULATOR_THREAT": ("regulator_threat", "Угроза обращения в орган / суд"),
     "DOCUMENTS": ("documents_status", "Документы по сообщению сотрудника"),
 }
@@ -69,6 +70,7 @@ DATE_FIELDS = frozenset({
     "service_date", "incident_date", "claim_date", "claim_received_at",
     "response_deadline", "authority_document_date",
 })
+DEADLINE_STATES = frozenset({"CLAIM_DEADLINE", "LAWYER_DEADLINE", "AUTHORITY_DEADLINE"})
 TEXT_BOUNDS = {"service_type": (2, 120), "problem_summary": (10, 1500), "authority_kind": (2, 120)}
 DEPENDENTS = {
     "patient_demand": ("demand_amount_kopecks",),
@@ -89,16 +91,19 @@ def valid_value(field: str, value: object) -> bool:
         return isinstance(normalized, str) and normalized in CHOICES[field]
     if field in DATE_FIELDS:
         if isinstance(value, str):
-            return parse_date_answer(value, allow_future=field == "response_deadline") is not None
+            parsed = parse_date_answer(value, allow_future=field == "response_deadline")
+            return parsed is not None and parsed["precision"] == "EXACT"
         if not isinstance(value, dict) or set(value) != {"date", "precision"}:
             return False
-        if value["precision"] == "UNKNOWN":
-            return value["date"] is None
-        if value["precision"] not in {"EXACT", "APPROXIMATE"} or not isinstance(value["date"], str):
+        precision = value["precision"]
+        if not isinstance(precision, str):
             return False
-        return parse_date_answer(
-            value["date"], allow_future=field == "response_deadline",
-        ) is not None
+        if precision == "UNKNOWN":
+            return value["date"] is None
+        if precision not in {"EXACT", "APPROXIMATE"} or not isinstance(value["date"], str):
+            return False
+        parsed = parse_date_answer(value["date"], allow_future=field == "response_deadline")
+        return parsed is not None and parsed["precision"] == "EXACT"
     if field == "demand_amount_kopecks":
         return type(value) is int and 1 <= value <= 100_000_000_000
     if field in TEXT_BOUNDS:
@@ -127,10 +132,17 @@ def active_states(data: dict[str, Any]) -> list[str]:
     return states
 
 
-def next_missing_state(data: dict[str, Any]) -> str:
-    for state in active_states(data):
+def next_missing_state(data: dict[str, Any], *, after: str | None = None) -> str:
+    states = active_states(data)
+    after_index = states.index(after) if after in states else -1
+    for index, state in enumerate(states):
         field = FIELDS[state][0]
-        if not valid_value(field, data.get(field)):
+        # One stored deadline aggregates distinct claim/representative/authority sources.
+        # A previous source's answer must not silently satisfy a later source's question.
+        needs_source_deadline = (
+            after is not None and state in DEADLINE_STATES and index > after_index
+        )
+        if needs_source_deadline or not valid_value(field, data.get(field)):
             return state
     return "CONFIRM"
 
@@ -150,10 +162,8 @@ def parse_answer(field: str, raw: str) -> object:
     if field in DATE_FIELDS:
         value = raw.strip()
         if re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", value):
-            try:
+            with suppress(ValueError):
                 value = datetime.strptime(value, "%d.%m.%Y").date().isoformat()
-            except ValueError:
-                pass
         parsed = parse_date_answer(value, allow_future=field == "response_deadline")
         if parsed is None:
             raise ValueError("Укажите дату ГГГГ-ММ-ДД, ДД.ММ.ГГГГ или «неизвестно».")
@@ -210,9 +220,7 @@ def value_label(field: str, value: object) -> str:
         return str(value.get("date")) + (" (примерно)" if precision == "APPROXIMATE" else "")
     if field == "demand_amount_kopecks" and type(value) is int:
         rubles, kopecks = divmod(value, 100)
-        return f"{rubles:,},{kopecks:02d} ₽".replace(",", " ", 1) if rubles >= 1000 else (
-            f"{rubles},{kopecks:02d} ₽"
-        )
+        return f"{rubles:,}".replace(",", " ") + f",{kopecks:02d} ₽"
     return str(value)
 
 
@@ -229,6 +237,9 @@ def review_blocks(data: dict[str, Any], *, final: bool = False) -> list[str]:
                       "Уже подтверждённое повторно вводить не потребуется.")
     blocks.append("Это сведения сотрудника, не установленное нарушение и не юридический вывод. "
                   "Неупомянутое не считается ответом «нет». Сумма — требование пациента, не долг.")
+    if "response_deadline" in data:
+        blocks.append("Показан ближайший срок, сообщённый сотрудником. "
+                      "Это не автоматический расчёт срока по закону.")
     if any(data.get(key) == "YES" for key in (
         "formal_claim", "harm_claimed", "lawyer_contact", "regulator_or_court",
     )):

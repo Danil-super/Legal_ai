@@ -14,8 +14,14 @@ from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_experience_runtime import build_application_with_case_experience
 from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.intake_experience import (
-    FIELDS, active_states, confirmed_candidates, drop_field, next_missing_state, parse_answer,
-    valid_value, value_label,
+    FIELDS,
+    active_states,
+    confirmed_candidates,
+    drop_field,
+    next_missing_state,
+    parse_answer,
+    valid_value,
+    value_label,
 )
 from test_dialog_isolation import ACTOR, DRAFT, ESCALATION, Core
 
@@ -83,7 +89,9 @@ def test_hospitalization_requires_a_human_answer_not_substring_match(description
 
 
 def test_uncertain_or_conflicting_extraction_is_not_silently_prefilled():
-    data = confirmed_candidates("Примерно 01.06.2026 установили коронку. Пациент просит переделать.")
+    data = confirmed_candidates(
+        "Примерно 01.06.2026 установили коронку. Пациент просит переделать."
+    )
     assert "service_date" not in data
     data = confirmed_candidates("Письменной претензии нет. Позже получили претензию о лечении.")
     assert "formal_claim" not in data
@@ -241,7 +249,7 @@ def test_production_flow_persists_all_confirmed_fields_then_skips_repetition():
 
 def test_correct_only_selected_field_and_reject_stale_card():
     async def scenario():
-        async with harness() as (app, core, sent, dispatch):
+        async with harness() as (app, core, _sent, dispatch):
             await dispatch("quick:start")
             await dispatch("text:" + DESCRIPTION)
             pending = app.user_data[ACTOR]["quick_intake_candidate"]
@@ -262,7 +270,7 @@ def test_correct_only_selected_field_and_reject_stale_card():
 
 def test_ambiguous_save_retry_keeps_idempotency_keys():
     async def scenario():
-        async with harness() as (app, core, sent, dispatch):
+        async with harness() as (app, core, _sent, dispatch):
             await dispatch("quick:start")
             await dispatch("text:" + DESCRIPTION)
             pending = app.user_data[ACTOR]["quick_intake_candidate"]
@@ -280,7 +288,7 @@ def test_ambiguous_save_retry_keeps_idempotency_keys():
 
 def test_revoked_access_and_group_commands_do_not_save():
     async def scenario():
-        async with harness() as (app, core, sent, dispatch):
+        async with harness() as (app, core, _sent, dispatch):
             await dispatch("quick:start")
             await dispatch("text:" + DESCRIPTION)
             pending = app.user_data[ACTOR]["quick_intake_candidate"]
@@ -296,7 +304,7 @@ def test_revoked_access_and_group_commands_do_not_save():
 
 def test_plan_and_specialist_note_require_preview_confirmation_and_keep_history():
     async def scenario():
-        async with harness() as (app, core, sent, dispatch):
+        async with harness() as (app, core, _sent, dispatch):
             await dispatch(f"esc:claim:{ESCALATION}")
             for kind in ("plan", "review"):
                 await dispatch(f"esc:{kind}:{ESCALATION}")
@@ -316,7 +324,7 @@ def test_plan_and_specialist_note_require_preview_confirmation_and_keep_history(
 
 def test_closure_requires_confirmation_and_blocks_new_discussion_afterwards():
     async def scenario():
-        async with harness() as (app, core, sent, dispatch):
+        async with harness() as (app, core, _sent, dispatch):
             await dispatch(f"esc:claim:{ESCALATION}")
             await dispatch(f"esc:resolve:{ESCALATION}")
             await dispatch("text:Проверка закончена. Причина: информирование. Улучшить инструкцию.")
@@ -335,7 +343,7 @@ def test_closure_requires_confirmation_and_blocks_new_discussion_afterwards():
 @pytest.mark.parametrize("change", ["assignment", "menu", "another_case"])
 def test_pending_note_cannot_write_after_context_or_assignment_change(change):
     async def scenario():
-        async with harness() as (app, core, sent, dispatch):
+        async with harness() as (app, core, _sent, dispatch):
             await dispatch(f"esc:claim:{ESCALATION}")
             await dispatch(f"esc:resolve:{ESCALATION}")
             await dispatch("text:Не сохранять после изменения контекста.")

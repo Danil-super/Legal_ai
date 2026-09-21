@@ -211,6 +211,12 @@ def facts_from_draft(draft: CaseDraft) -> list[dict[str, Any]]:
         facts.append(
             _signal_fact("REPRESENTATIVE_AUTHORITY", draft.representative_authority)
         )
+        # The other branches emit the shared deadline when present. A representative-only
+        # case must emit it too, exactly once, including an explicitly UNKNOWN date.
+        if not _is_yes(draft.formal_claim) and not _is_yes(draft.regulator_or_court):
+            facts.append(
+                _fact("RESPONSE_DEADLINE", "DATE", _date_fact(draft.response_deadline))
+            )
     if _is_yes(draft.regulator_or_court):
         if (
             draft.authority_kind is None

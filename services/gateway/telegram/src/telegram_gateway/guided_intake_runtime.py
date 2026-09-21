@@ -9,21 +9,30 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
-    ApplicationHandlerStop, CallbackQueryHandler, ContextTypes, ConversationHandler,
-    MessageHandler, filters,
+    ApplicationHandlerStop,
+    CallbackQueryHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
 )
 
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway import quick_intake_runtime as quick
-from telegram_gateway.case_wizard import INTAKE_SCHEMA_VERSION, LegalCoreApiError
+from telegram_gateway.case_wizard import INTAKE_SCHEMA_VERSION, DateFactValue, LegalCoreApiError
 from telegram_gateway.escalation_workspace import _chunks
 from telegram_gateway.intake_experience import (
-    FIELDS, PREFIXES, confirmed_candidates, drop_field, next_missing_state, parse_answer,
+    FIELDS,
+    PREFIXES,
+    confirmed_candidates,
+    drop_field,
+    next_missing_state,
+    parse_answer,
     review_blocks,
 )
 from telegram_gateway.quick_intake import QuickIntakeError, QuickIntakePrivacyError
@@ -112,7 +121,7 @@ async def review_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     label, callback_data=f"quick:review:{pending['nonce']}:drop:{field}",
                 )])
                 seen.add(field)
-        rows.extend(back_keyboard().inline_keyboard)
+        rows.extend(list(row) for row in back_keyboard().inline_keyboard)
         await gateway_bot._reply(
             update, "Выберите неверное поле. Его и зависимые сведения уточним отдельно; "
             "остальное сохранится. Изменение исходного описания сбрасывает все его кандидаты.",
@@ -154,13 +163,15 @@ async def review_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await gateway_bot._reply(
                 update, "Не удалось подтвердить сохранение. Нажмите «Всё верно» повторно: "
                 "бот проверит то же сохранение, не создавая новый запрос. "
-                "Также можно открыть /menu → «Мои черновики».", reply_markup=_review_keyboard(pending),
+                "Также можно открыть /menu → «Мои черновики».",
+                reply_markup=_review_keyboard(pending),
             )
             raise ApplicationHandlerStop from None
         quick._clear_quick(context)
         await gateway_bot._reply(
             update, "✅ Подтверждённые сведения сохранены, в том числе после пропущенных дат. "
-            "Продолжим только с недостающего вопроса. Перед созданием кейса будет итоговая проверка.",
+            "Продолжим только с недостающего вопроса. "
+            "Перед созданием кейса будет итоговая проверка.",
             reply_markup=quick._continue_keyboard(draft_id),
         )
     raise ApplicationHandlerStop
@@ -191,10 +202,19 @@ def _step_handler(state: gateway_bot.WizardState) -> Handler:
             await gateway_bot._reply(update, str(exc))
             return state
         data = gateway_bot._wizard_data(context)
+        if state.name in {"LAWYER_DEADLINE", "AUTHORITY_DEADLINE"}:
+            value, changed = gateway_bot._earliest_known_deadline(
+                data.get(field), cast(DateFactValue, value),
+            )
+            if changed:
+                await gateway_bot._reply(
+                    update, "У обращений разные сроки. В карточке сохранён ближайший "
+                    "из указанных вами; это не расчёт срока по закону.",
+                )
         if field in data and data[field] != value:
             drop_field(data, field)
         data[field] = value
-        following = gateway_bot.WizardState[next_missing_state(data)]
+        following = gateway_bot.WizardState[next_missing_state(data, after=state.name)]
         await _ask(update, following, data)
         return following
 
