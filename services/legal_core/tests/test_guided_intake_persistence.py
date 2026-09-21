@@ -19,7 +19,9 @@ def test_sparse_draft_survives_readback_and_replay_but_not_foreign_clinic_access
     inactive = 8_000_000_000 + uuid4().int % 100_000_000
     seed_admin(actor)
     seed_admin(foreign)
-    seed_admin(inactive, entitlement_status="INACTIVE")
+    # A valid but expired entitlement exercises the real active-access gate.
+    # INACTIVE is not an allowed database status and would fail before the API test.
+    seed_admin(inactive, entitlement_is_expired=True)
     proposal = confirmed_candidates(
         "После установки коронки появился скол. Пациент требует вернуть 35 000 рублей. "
         "Письменной претензии нет."

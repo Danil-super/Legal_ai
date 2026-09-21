@@ -1,4 +1,3 @@
-# ruff: noqa: RUF001
 """Deadline regressions through the actual composed gateway, without external I/O."""
 
 import asyncio
