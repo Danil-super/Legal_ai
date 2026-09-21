@@ -4,13 +4,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 import httpx2
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from telegram_gateway import bot as gateway_bot
@@ -18,6 +20,26 @@ from telegram_gateway.legal_library_runtime import build_application_with_legal_
 from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
+
+DIAGNOSTICS_TASKS_KEY = "analysis_diagnostics_tasks"
+DIAGNOSTICS_TIMEOUT_SECONDS = 6.0
+TELEGRAM_DELIVERY_TIMEOUT_SECONDS = 3.0
+CALLBACK_TIMEOUT_SECONDS = 1.0
+MAX_PENDING_DIAGNOSTICS = 8
+MAX_DIAGNOSTICS_BYTES = 16_384
+_PROGRESS_TEXT = (
+    "⏳ Проверяю состояние юридического анализа…\n"
+    "Проверка Legal Core занимает не более 6 секунд. "
+    "Модели не вызываются; другими командами можно пользоваться."
+)
+_UNAVAILABLE_TEXT = (
+    "Не удалось получить диагностику Legal Core. Это не результат юридического анализа."
+)
+_TIMEOUT_TEXT = (
+    "⚠️ Legal Core не ответил на диагностику за отведённое время (до 6 секунд).\n"
+    "Это не означает, что анализ отключён. Остальные команды доступны; "
+    "повторите проверку немного позже."
+)
 
 _RUNTIME_LABELS = {
     "DISABLED": "Отключён: сервер работает в режиме сбора обращений без вызова моделей.",
@@ -73,43 +95,137 @@ def render_analysis_diagnostics(payload: dict[str, Any]) -> str:
     ])
 
 
+def _diagnostics_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Обновить диагностику", callback_data="analysis:service-status")],
+        *back_keyboard().inline_keyboard,
+    ])
+
+
+async def _fetch_diagnostics_text(actor: int) -> str:
+    try:
+        async with asyncio.timeout(DIAGNOSTICS_TIMEOUT_SECONDS), httpx2.AsyncClient(
+            base_url=gateway_bot.load_legal_core_url(), timeout=5,
+            trust_env=False, follow_redirects=False,
+        ) as client:
+            async with client.stream(
+                "GET", "/v1/analysis-diagnostics",
+                headers={"X-Telegram-User-Id": str(actor), "Accept-Encoding": "identity"},
+            ) as response:
+                if response.status_code == 403:
+                    return "Диагностика доступна владельцу клиники с активным доступом."
+                if response.status_code == 404:
+                    return (
+                        "Диагностика ещё не установлена в Legal Core. "
+                        "Обновите сервисы одной версией."
+                    )
+                response.raise_for_status()
+                if response.headers.get("content-encoding", "identity").lower() != "identity":
+                    raise ValueError("compressed diagnostics response")
+                # Bound actual bytes before JSON decoding, not after client.get buffers them.
+                raw = bytearray()
+                async for chunk in response.aiter_bytes():
+                    if len(raw) + len(chunk) > MAX_DIAGNOSTICS_BYTES:
+                        raise ValueError("oversized diagnostics response")
+                    raw.extend(chunk)
+                payload = json.loads(raw)
+                if not isinstance(payload, dict):
+                    raise ValueError("invalid diagnostics envelope")
+                return render_analysis_diagnostics(payload)
+    except (TimeoutError, httpx2.TimeoutException):
+        logger.warning("analysis diagnostics timed out")
+        return _TIMEOUT_TEXT
+    except (httpx2.HTTPError, ValueError, RecursionError):
+        # Logs and messages contain neither response bodies nor endpoint/credential values.
+        logger.warning("analysis diagnostics unavailable")
+        return _UNAVAILABLE_TEXT
+
+
+async def _answer_status_callback(update: Update, text: str | None = None) -> None:
+    if update.callback_query is None:
+        return
+    try:
+        async with asyncio.timeout(CALLBACK_TIMEOUT_SECONDS):
+            await update.callback_query.answer(text=text)
+    except (TelegramError, TimeoutError):
+        # Expired callbacks must not suppress the actual diagnosis.
+        logger.warning("analysis diagnostics callback acknowledgement unavailable")
+
+
+async def _deliver_analysis_diagnostics(update: Update, actor: int) -> None:
+    message = update.effective_message
+    if message is None:
+        return
+    await _answer_status_callback(update)
+    progress: Message | None = None
+    try:
+        async with asyncio.timeout(TELEGRAM_DELIVERY_TIMEOUT_SECONDS):
+            progress = await message.reply_text(_PROGRESS_TEXT)
+    except (TelegramError, TimeoutError):
+        logger.warning("analysis diagnostics progress delivery unavailable")
+    text = await _fetch_diagnostics_text(actor)
+    if progress is not None:
+        try:
+            async with asyncio.timeout(TELEGRAM_DELIVERY_TIMEOUT_SECONDS):
+                # Edit only our own progress message, never a menu the user has since opened.
+                await progress.edit_text(text, reply_markup=_diagnostics_keyboard())
+            return
+        except BadRequest as exc:
+            if "message is not modified" in str(exc).lower():
+                return
+        except (TelegramError, TimeoutError):
+            logger.warning("analysis diagnostics result edit unavailable")
+    try:
+        async with asyncio.timeout(TELEGRAM_DELIVERY_TIMEOUT_SECONDS):
+            await message.reply_text(text, reply_markup=_diagnostics_keyboard())
+    except (TelegramError, TimeoutError):
+        logger.warning("analysis diagnostics result delivery unavailable")
+
+
 async def show_analysis_diagnostics(
     update: Update, context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
     actor = gateway_bot._actor_id(update)
-    if update.callback_query is not None:
-        await update.callback_query.answer()
-    if actor is None:
+    chat = update.effective_chat
+    if actor is None or chat is None or chat.type != "private":
         raise ApplicationHandlerStop
-    try:
-        async with asyncio.timeout(6), httpx2.AsyncClient(
-            base_url=gateway_bot.load_legal_core_url(), timeout=5,
-            trust_env=False, follow_redirects=False,
-        ) as client:
-            response = await client.get(
-                "/v1/analysis-diagnostics", headers={"X-Telegram-User-Id": str(actor)},
-            )
-        if response.status_code == 403:
-            text = "Диагностика доступна владельцу клиники с активным доступом."
-        elif response.status_code == 404:
-            text = "Диагностика ещё не установлена в Legal Core. Обновите сервисы одной версией."
+    application = context.application
+    tasks = cast(
+        dict[tuple[int, int], asyncio.Task[None]],
+        application.bot_data.setdefault(DIAGNOSTICS_TASKS_KEY, {}),
+    )
+    # Coalesce refreshes only while running. Never cache another user's authorized result.
+    for old_key, old_task in list(tasks.items()):
+        if old_task.done():
+            tasks.pop(old_key, None)
+    key = (chat.id, actor)
+    if key in tasks or len(tasks) >= MAX_PENDING_DIAGNOSTICS:
+        notice = (
+            "Проверка уже идёт. Результат появится в сообщении «Проверяю…»."
+            if key in tasks else "Диагностика занята. Повторите проверку немного позже."
+        )
+        if update.callback_query is not None:
+            await _answer_status_callback(update, notice)
         else:
-            response.raise_for_status()
-            if len(response.content) > 16_384:
-                raise ValueError("oversized diagnostics response")
-            payload = response.json()
-            if not isinstance(payload, dict):
-                raise ValueError("invalid diagnostics envelope")
-            text = render_analysis_diagnostics(payload)
-    except (httpx2.HTTPError, TimeoutError, ValueError):
-        # Logs and messages contain neither response bodies nor endpoint/credential values.
-        logger.warning("analysis diagnostics unavailable")
-        text = "Не удалось получить диагностику Legal Core. Это не результат юридического анализа."
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Обновить диагностику", callback_data="analysis:service-status")],
-        *back_keyboard().inline_keyboard,
-    ])
-    await gateway_bot._reply(update, text, reply_markup=keyboard)
+            try:
+                async with asyncio.timeout(CALLBACK_TIMEOUT_SECONDS):
+                    await gateway_bot._reply(update, notice)
+            except (TelegramError, TimeoutError):
+                logger.warning("analysis diagnostics busy notice unavailable")
+        raise ApplicationHandlerStop
+
+    def forget(completed: asyncio.Task[None]) -> None:
+        # Also handles cancellation before the coroutine enters its first try/finally.
+        if tasks.get(key) is completed:
+            tasks.pop(key, None)
+
+    task = application.create_task(
+        _deliver_analysis_diagnostics(update, actor), update=update, name="analysis-status",
+    )
+    tasks[key] = task
+    task.add_done_callback(forget)
+    # Keep the dispatcher sequential for conversation state. Only this read-only I/O is
+    # detached; block=False would make ApplicationHandlerStop ineffective in PTB.
     raise ApplicationHandlerStop
 
 
