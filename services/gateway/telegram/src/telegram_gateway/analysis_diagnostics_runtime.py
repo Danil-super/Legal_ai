@@ -104,34 +104,37 @@ def _diagnostics_keyboard() -> InlineKeyboardMarkup:
 
 async def _fetch_diagnostics_text(actor: int) -> str:
     try:
-        async with asyncio.timeout(DIAGNOSTICS_TIMEOUT_SECONDS), httpx2.AsyncClient(
-            base_url=gateway_bot.load_legal_core_url(), timeout=5,
-            trust_env=False, follow_redirects=False,
-        ) as client:
-            async with client.stream(
+        async with (
+            asyncio.timeout(DIAGNOSTICS_TIMEOUT_SECONDS),
+            httpx2.AsyncClient(
+                base_url=gateway_bot.load_legal_core_url(), timeout=5,
+                trust_env=False, follow_redirects=False,
+            ) as client,
+            client.stream(
                 "GET", "/v1/analysis-diagnostics",
                 headers={"X-Telegram-User-Id": str(actor), "Accept-Encoding": "identity"},
-            ) as response:
-                if response.status_code == 403:
-                    return "Диагностика доступна владельцу клиники с активным доступом."
-                if response.status_code == 404:
-                    return (
-                        "Диагностика ещё не установлена в Legal Core. "
-                        "Обновите сервисы одной версией."
-                    )
-                response.raise_for_status()
-                if response.headers.get("content-encoding", "identity").lower() != "identity":
-                    raise ValueError("compressed diagnostics response")
-                # Bound actual bytes before JSON decoding, not after client.get buffers them.
-                raw = bytearray()
-                async for chunk in response.aiter_bytes():
-                    if len(raw) + len(chunk) > MAX_DIAGNOSTICS_BYTES:
-                        raise ValueError("oversized diagnostics response")
-                    raw.extend(chunk)
-                payload = json.loads(raw)
-                if not isinstance(payload, dict):
-                    raise ValueError("invalid diagnostics envelope")
-                return render_analysis_diagnostics(payload)
+            ) as response,
+        ):
+            if response.status_code == 403:
+                return "Диагностика доступна владельцу клиники с активным доступом."
+            if response.status_code == 404:
+                return (
+                    "Диагностика ещё не установлена в Legal Core. "
+                    "Обновите сервисы одной версией."
+                )
+            response.raise_for_status()
+            if response.headers.get("content-encoding", "identity").lower() != "identity":
+                raise ValueError("compressed diagnostics response")
+            # Bound actual bytes before JSON decoding, not after client.get buffers them.
+            raw = bytearray()
+            async for chunk in response.aiter_bytes():
+                if len(raw) + len(chunk) > MAX_DIAGNOSTICS_BYTES:
+                    raise ValueError("oversized diagnostics response")
+                raw.extend(chunk)
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                raise ValueError("invalid diagnostics envelope")
+            return render_analysis_diagnostics(payload)
     except (TimeoutError, httpx2.TimeoutException):
         logger.warning("analysis diagnostics timed out")
         return _TIMEOUT_TEXT
@@ -214,13 +217,17 @@ async def show_analysis_diagnostics(
                 logger.warning("analysis diagnostics busy notice unavailable")
         raise ApplicationHandlerStop
 
+    work = _deliver_analysis_diagnostics(update, actor)
+
     def forget(completed: asyncio.Task[None]) -> None:
-        # Also handles cancellation before the coroutine enters its first try/finally.
+        # PTB wraps the coroutine: pre-start cancellation otherwise leaves it unawaited.
+        # The outer task is done, so closing either a finished or unstarted work is safe.
+        work.close()
         if tasks.get(key) is completed:
             tasks.pop(key, None)
 
     task = application.create_task(
-        _deliver_analysis_diagnostics(update, actor), update=update, name="analysis-status",
+        work, update=update, name="analysis-status",
     )
     tasks[key] = task
     task.add_done_callback(forget)

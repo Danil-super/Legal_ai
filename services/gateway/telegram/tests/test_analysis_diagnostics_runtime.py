@@ -2,6 +2,7 @@
 """Read-only diagnostics must not monopolize the sequential Telegram dispatcher."""
 
 import asyncio
+import inspect
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
@@ -161,6 +162,15 @@ def test_two_actors_have_separate_results_and_refresh_reauthorizes(monkeypatch):
 def test_pending_work_is_bounded_and_early_cancellation_releases_slot(monkeypatch):
     async def scenario():
         monkeypatch.setattr(runtime, "MAX_PENDING_DIAGNOSTICS", 1)
+        work_items = []
+        original = runtime._deliver_analysis_diagnostics
+
+        def track_work(update, actor):
+            work = original(update, actor)
+            work_items.append(work)
+            return work
+
+        monkeypatch.setattr(runtime, "_deliver_analysis_diagnostics", track_work)
         fetch = AsyncMock(return_value="Synthetic diagnosis")
         monkeypatch.setattr(runtime, "_fetch_diagnostics_text", fetch)
         async with running_application(monkeypatch) as (app, calls, errors):
@@ -172,6 +182,7 @@ def test_pending_work_is_bounded_and_early_cancellation_releases_slot(monkeypatc
             await asyncio.gather(first, return_exceptions=True)
             await asyncio.sleep(0)
             assert not tasks
+            assert inspect.getcoroutinestate(work_items[0]) == inspect.CORO_CLOSED
             fetch.assert_not_awaited()
             await app.process_update(update_for(app, 2))
             await app.process_update(update_for(app, 3, actor=778))
@@ -206,6 +217,7 @@ def test_group_command_never_starts_diagnostics(monkeypatch):
             await app.process_update(update_for(app, 1, chat_type="group"))
             fetch.assert_not_called()
             assert runtime.DIAGNOSTICS_TASKS_KEY not in app.bot_data
+            assert any("личный чат" in data.get("text", "") for _, data in calls)
             assert not errors
 
     asyncio.run(scenario())
