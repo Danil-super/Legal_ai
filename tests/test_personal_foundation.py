@@ -4,8 +4,6 @@ from datetime import date
 from uuid import uuid4
 
 import pytest
-from pydantic import ValidationError
-
 from legal_core.personal.catalog import CATALOG, get_topic, render_demo
 from legal_core.personal.contracts import (
     Audience,
@@ -24,6 +22,7 @@ from legal_core.personal.contracts import (
     owner_access_allowed,
 )
 from legal_core.personal.settings import PreviewMode, PreviewSettings, personal_bot_token
+from pydantic import ValidationError
 
 
 def preview_env():

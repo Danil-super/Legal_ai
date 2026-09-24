@@ -4,7 +4,6 @@ import secrets
 
 import pytest
 from fastapi.testclient import TestClient
-
 from legal_core.personal.catalog import CATALOG
 from legal_core.personal.preview_api import create_app
 from legal_core.personal.settings import PreviewMode, PreviewSettings

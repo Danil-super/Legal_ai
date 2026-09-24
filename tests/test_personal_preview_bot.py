@@ -6,7 +6,6 @@ from contextlib import asynccontextmanager
 import pytest
 from telegram import Update
 from telegram.ext import ExtBot
-
 from telegram_gateway.personal_preview import build_application
 
 
@@ -79,8 +78,10 @@ def test_allowlisted_navigation_has_no_live_answer(monkeypatch, callback):
     async def scenario():
         async with application(monkeypatch) as (app, calls):
             await app.process_update(update_for(app, callback=callback))
-            texts = [data.get("text", "") for _, data in calls]
-            assert any("прототип" in text.lower() for text in texts)
+            texts = [data["text"] for method, data in calls
+                     if method in {"sendMessage", "editMessageText"}]
+            # answerCallbackQuery legitimately has text=None; it is not a sent message.
+            assert len(texts) == 1 and "прототип" in texts[0].lower()
             assert not app.bot_data
             assert all(not value for value in app.user_data.values())
             assert all(not value for value in app.chat_data.values())

@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 """Fixed synthetic scenarios, not a legal corpus or a live intake engine."""
 
 from dataclasses import dataclass

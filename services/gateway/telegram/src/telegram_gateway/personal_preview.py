@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 """Second bot entrypoint: OFF by default; allowlisted synthetic navigation only.
 
 Not imported into telegram_gateway.__main__ or any clinic handler composition.
@@ -9,6 +10,9 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
+from legal_core.personal.catalog import CATALOG, PREVIEW_NOTICE, get_topic, render_demo
+from legal_core.personal.contracts import Audience
+from legal_core.personal.settings import PreviewSettings, personal_bot_token
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
 from telegram.ext import (
@@ -20,10 +24,6 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-
-from legal_core.personal.catalog import CATALOG, PREVIEW_NOTICE, get_topic, render_demo
-from legal_core.personal.contracts import Audience
-from legal_core.personal.settings import PreviewSettings, personal_bot_token
 
 PreviewApplication = Application[Any, Any, Any, Any, Any, Any]
 logger = logging.getLogger(__name__)

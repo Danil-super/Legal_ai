@@ -48,16 +48,32 @@ def test_personal_flag_never_mounts_private_routes_in_clinic_app(monkeypatch):
 
 
 def test_clinic_composition_registers_no_personal_handlers(monkeypatch):
-    from telegram.ext import CallbackQueryHandler, CommandHandler
-
+    from telegram.ext import CallbackQueryHandler, CommandHandler, ConversationHandler
     from telegram_gateway.case_experience_runtime import build_application_with_case_experience
 
     monkeypatch.setenv("PERSONAL_PREVIEW_MODE", "synthetic")
     app = build_application_with_case_experience("123456:" + "q" * 40)
+    checked = 0
+
+    def inspect_handler(handler):
+        nonlocal checked
+        if isinstance(handler, ConversationHandler):
+            # Conversations are containers, not leaf callbacks. Inspect every nested
+            # entry, state and fallback so the test also detects hidden registration.
+            for child in [*handler.entry_points, *handler.fallbacks]:
+                inspect_handler(child)
+            for group in handler.states.values():
+                for child in group:
+                    inspect_handler(child)
+            return
+        checked += 1
+        assert "personal_preview" not in handler.callback.__module__
+        if isinstance(handler, CommandHandler):
+            assert not any("personal" in command for command in handler.commands)
+        if isinstance(handler, CallbackQueryHandler) and handler.pattern is not None:
+            assert not handler.pattern.match("pp:audience:PATIENT")
+
     for group in app.handlers.values():
         for handler in group:
-            assert "personal_preview" not in handler.callback.__module__
-            if isinstance(handler, CommandHandler):
-                assert not any("personal" in command for command in handler.commands)
-            if isinstance(handler, CallbackQueryHandler) and handler.pattern is not None:
-                assert not handler.pattern.match("pp:audience:PATIENT")
+            inspect_handler(handler)
+    assert checked > 20
