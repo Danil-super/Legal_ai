@@ -1,0 +1,143 @@
+{
+  "register_version": "personal-source-review.v1",
+  "purpose": "REVIEW_BACKLOG_NOT_PRODUCTION_CORPUS",
+  "production_ingestion_allowed": false,
+  "checked_on": "2026-09-24",
+  "limitation": "Неполный стартовый перечень. Проверка реквизитов не удостоверяет текущую редакцию. Новые артефакты не загружены и не одобрены.",
+  "sources": [
+    {
+      "source_id": "fz323",
+      "reference": "Федеральный закон от 21.11.2011 № 323-ФЗ",
+      "title": "Об основах охраны здоровья граждан в Российской Федерации",
+      "official_url": "https://pravo.gov.ru/proxy/ips/?docbody=&nd=102152259",
+      "audiences": [
+        "PATIENT",
+        "EMPLOYEE",
+        "CLINIC"
+      ],
+      "observed_on": "2026-09-24",
+      "status": "REVIEW_REQUIRED",
+      "scope": "DISCOVERY_ONLY",
+      "raw_sha256": null,
+      "applicable_edition_verified": false,
+      "approved_for_personal_runtime": false,
+      "existing_candidate_path": null,
+      "observation": "Официальный поисковый индекс; текст страницы Минздрава прочитан, актуальная консолидированная редакция не установлена.",
+      "review_required": "Права пациента, согласие, врачебная тайна, документы и профессиональные обязанности; проверить применимые статьи и редакции."
+    },
+    {
+      "source_id": "consumer2300",
+      "reference": "Закон РФ от 07.02.1992 № 2300-1",
+      "title": "О защите прав потребителей",
+      "official_url": "https://pravo.gov.ru/proxy/ips/?docbody=&nd=102014512",
+      "audiences": [
+        "PATIENT",
+        "CLINIC"
+      ],
+      "observed_on": "2026-09-24",
+      "status": "REVIEW_REQUIRED",
+      "scope": "DISCOVERY_ONLY",
+      "raw_sha256": null,
+      "applicable_edition_verified": false,
+      "approved_for_personal_runtime": false,
+      "existing_candidate_path": null,
+      "observation": "Найдена официальная карточка в поисковом индексе; полный актуальный артефакт в этом этапе не получен.",
+      "review_required": "Проверить основания требований, различие отказа/недостатка, сроки и условия санкций; не применять универсальные суммы/сроки."
+    },
+    {
+      "source_id": "labor197",
+      "reference": "Федеральный закон от 30.12.2001 № 197-ФЗ",
+      "title": "Трудовой кодекс Российской Федерации",
+      "official_url": "https://pravo.gov.ru/proxy/ips/?docbody=&nd=102074279",
+      "audiences": [
+        "EMPLOYEE"
+      ],
+      "observed_on": "2026-09-24",
+      "status": "REVIEW_REQUIRED",
+      "scope": "DISCOVERY_ONLY",
+      "raw_sha256": null,
+      "applicable_edition_verified": false,
+      "approved_for_personal_runtime": false,
+      "existing_candidate_path": null,
+      "observation": "Найдена официальная карточка в поисковом индексе; прямое чтение портала завершилось ошибкой.",
+      "review_required": "Отдельно проверить действующие редакции оплаты, увольнения, удержаний, материальной ответственности и сроков обращения."
+    },
+    {
+      "source_id": "fz152",
+      "reference": "Федеральный закон от 27.07.2006 № 152-ФЗ",
+      "title": "О персональных данных",
+      "official_url": "https://pravo.gov.ru/proxy/ips/?docbody=&nd=102108261",
+      "audiences": [
+        "PATIENT",
+        "EMPLOYEE",
+        "CLINIC"
+      ],
+      "observed_on": "2026-09-24",
+      "status": "REVIEW_REQUIRED",
+      "scope": "DISCOVERY_ONLY",
+      "raw_sha256": null,
+      "applicable_edition_verified": false,
+      "approved_for_personal_runtime": false,
+      "existing_candidate_path": null,
+      "observation": "Найдена официальная карточка в поисковом индексе; прямое чтение портала завершилось ошибкой.",
+      "review_required": "До реального ввода проверить основания обработки, форму согласий, здоровье как спецкатегорию, локализацию, передачу и права субъектов."
+    },
+    {
+      "source_id": "pp736",
+      "reference": "Постановление Правительства РФ от 11.05.2023 № 736",
+      "title": "Правила предоставления платных медицинских услуг",
+      "official_url": "https://publication.pravo.gov.ru/document/0001202305120025",
+      "audiences": [
+        "PATIENT",
+        "CLINIC"
+      ],
+      "observed_on": "2026-09-24",
+      "status": "REVIEW_REQUIRED",
+      "scope": "DISCOVERY_ONLY",
+      "raw_sha256": null,
+      "applicable_edition_verified": false,
+      "approved_for_personal_runtime": false,
+      "existing_candidate_path": "services/legal_core/corpus/official/pp736-a7de08b6176991ed.json",
+      "observation": "Прочитаны метаданные существующего локального манифеста; в нём REVIEW_REQUIRED. Состояние production БД не проверялось.",
+      "review_required": "Историческая применимость и переход на новые правила требуют проверки по дате соответствующего события."
+    },
+    {
+      "source_id": "pp659",
+      "reference": "Постановление Правительства РФ от 30.05.2026 № 659",
+      "title": "Правила предоставления платных медицинских услуг",
+      "official_url": "https://publication.pravo.gov.ru/document/0001202606010083",
+      "audiences": [
+        "PATIENT",
+        "CLINIC"
+      ],
+      "observed_on": "2026-09-24",
+      "status": "REVIEW_REQUIRED",
+      "scope": "DISCOVERY_ONLY",
+      "raw_sha256": null,
+      "applicable_edition_verified": false,
+      "approved_for_personal_runtime": false,
+      "existing_candidate_path": "services/legal_core/corpus/official/pp659-7af320a12723f96f.json",
+      "observation": "Официальная публикация обнаружена в индексе; прямое чтение недоступно. Существующий локальный манифест имеет REVIEW_REQUIRED.",
+      "review_required": "Проверить переход редакций, действительность текста и фрагменты. Одобрение клинического источника не означает готовность пациентского сценария."
+    },
+    {
+      "source_id": "order789n",
+      "reference": "Приказ Минздрава России от 31.07.2020 № 789н",
+      "title": "Порядок и сроки предоставления медицинских документов (их копий) и выписок из них",
+      "official_url": "https://publication.pravo.gov.ru/Document/View/0001202009240027",
+      "audiences": [
+        "PATIENT",
+        "CLINIC"
+      ],
+      "observed_on": "2026-09-24",
+      "status": "REVIEW_REQUIRED",
+      "scope": "DISCOVERY_ONLY",
+      "raw_sha256": null,
+      "applicable_edition_verified": false,
+      "approved_for_personal_runtime": false,
+      "existing_candidate_path": null,
+      "observation": "Официальная публикация найдена в индексе; прямое получение полного артефакта не завершено.",
+      "review_required": "Проверить действительность, изменения, полномочия заявителя и сроки. Не путать с приказами других дат и органов с номером 789н."
+    }
+  ]
+}
