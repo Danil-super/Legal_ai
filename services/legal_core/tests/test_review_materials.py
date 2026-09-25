@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from legal_core.review_materials import review_material_from_path
+from legal_core.review_materials import collect_review_materials, review_material_from_path
 
 
 def test_review_material_preserves_a_garant_rtf_as_a_non_approved_legal_copy(
@@ -51,3 +51,19 @@ def test_review_material_rejects_rtf_with_embedded_object(tmp_path: Path) -> Non
 
     with pytest.raises(ValueError, match="unsafe"):
         review_material_from_path(artifact, received_at=datetime(2026, 9, 25, tzinfo=UTC))
+
+
+def test_collect_review_materials_is_sorted_and_rejects_symlinks(tmp_path: Path) -> None:
+    (tmp_path / "z.pdf").write_bytes(b"%PDF-1.7\\nclinical recommendation\\n%%EOF\\n")
+    (tmp_path / "a.rtf").write_bytes(
+        b"{\\rtf1\\ansi https://internet.garant.ru/document/redirect/12191967/0}"
+    )
+    (tmp_path / "outside.rtf").symlink_to(tmp_path / "a.rtf")
+
+    with pytest.raises(ValueError, match="regular file"):
+        collect_review_materials(tmp_path, received_at=datetime(2026, 9, 25, tzinfo=UTC))
+
+    (tmp_path / "outside.rtf").unlink()
+    materials = collect_review_materials(tmp_path, received_at=datetime(2026, 9, 25, tzinfo=UTC))
+
+    assert [material.original_filename for material in materials] == ["a.rtf", "z.pdf"]

@@ -33,6 +33,20 @@ class ReviewMaterialInput:
     received_at: datetime
 
 
+def collect_review_materials(
+    directory: Path, *, received_at: datetime
+) -> list[ReviewMaterialInput]:
+    """Read an immutable package in deterministic filename order."""
+
+    resolved_directory = directory.resolve()
+    if directory.is_symlink() or not resolved_directory.is_dir():
+        raise ValueError("review material directory must be a regular directory")
+    return [
+        review_material_from_path(path, received_at=received_at)
+        for path in sorted(resolved_directory.iterdir(), key=lambda item: item.name.casefold())
+    ]
+
+
 def review_material_from_path(path: Path, *, received_at: datetime) -> ReviewMaterialInput:
     """Classify a bounded local input without treating it as approved evidence."""
 
