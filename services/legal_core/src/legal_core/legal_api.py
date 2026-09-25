@@ -5,7 +5,7 @@ import json
 import os
 import secrets
 from datetime import UTC, date, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, status
@@ -20,6 +20,8 @@ from legal_core.api_contracts import (
     LegalEditorCandidateSummary,
     LegalEditorFragment,
     LegalEditorFragmentPage,
+    LegalEditorReviewMaterialPage,
+    LegalEditorReviewMaterialSummary,
     LegalEditorStatusResponse,
     LegalEditorVersionDetail,
     LegalFragmentResponse,
@@ -43,6 +45,7 @@ from legal_core.models import (
     LegalApprovalEvent,
     LegalDocument,
     LegalFragment,
+    LegalReviewMaterial,
     LegalSource,
     LegalVersion,
     User,
@@ -298,6 +301,102 @@ def create_legal_router(
             pageSize=10,
             totalItems=total_items,
             items=items,
+        )
+
+    @router.get("/review-materials", response_model=LegalEditorReviewMaterialPage)
+    async def list_editor_review_materials(
+        telegram_user_id: TelegramUserId,
+        session: Session,
+        page: EditorPage = 1,
+        gateway_key: EditorGatewayKey = None,
+    ) -> LegalEditorReviewMaterialPage:
+        """List immutable incoming files without representing them as approved evidence."""
+
+        await require_platform_legal_editor(
+            session, telegram_user_id=telegram_user_id, gateway_key=gateway_key
+        )
+        total_items = int(
+            await session.scalar(select(func.count()).select_from(LegalReviewMaterial)) or 0
+        )
+        materials = list(
+            (
+                await session.scalars(
+                    select(LegalReviewMaterial)
+                    .order_by(
+                        LegalReviewMaterial.received_at.desc(), LegalReviewMaterial.id.desc()
+                    )
+                    .offset((page - 1) * EDITOR_PAGE_SIZE)
+                    .limit(EDITOR_PAGE_SIZE)
+                )
+            ).all()
+        )
+        return LegalEditorReviewMaterialPage(
+            page=page,
+            pageSize=10,
+            totalItems=total_items,
+            items=[
+                LegalEditorReviewMaterialSummary(
+                    materialId=material.id,
+                    packageKey=material.package_key,
+                    title=material.title,
+                    kind=cast(Literal["LEGAL_COPY", "CLINICAL_REFERENCE"], material.kind),
+                    reviewState=cast(Literal["METADATA_REQUIRED"], material.review_state),
+                    sourceName=material.source_name,
+                    sourceUrl=material.source_url,
+                    rawMimeType=cast(
+                        Literal["application/pdf", "application/rtf"], material.raw_mime_type
+                    ),
+                    rawSizeBytes=material.raw_size_bytes,
+                    rawSha256=material.raw_sha256,
+                    receivedAt=material.received_at,
+                )
+                for material in materials
+            ],
+        )
+
+    @router.get("/review-materials/{material_id}/artifact")
+    async def editor_review_material_artifact(
+        material_id: UUID,
+        telegram_user_id: TelegramUserId,
+        session: Session,
+        gateway_key: EditorGatewayKey = None,
+    ) -> StreamingResponse:
+        """Deliver an incoming source file only to a platform legal editor."""
+
+        await require_platform_legal_editor(
+            session, telegram_user_id=telegram_user_id, gateway_key=gateway_key
+        )
+        material = await session.get(LegalReviewMaterial, material_id)
+        if material is None:
+            raise ApiError(
+                status_code=status.HTTP_404_NOT_FOUND,
+                code="LEGAL_REVIEW_MATERIAL_NOT_FOUND",
+                message="Legal review material not found",
+            )
+        raw_size = len(material.raw_bytes)
+        if (
+            raw_size != material.raw_size_bytes
+            or hashlib.sha256(material.raw_bytes).hexdigest() != material.raw_sha256
+            or raw_size > EDITOR_ARTIFACT_MAX_BYTES
+            or material.raw_mime_type not in {"application/pdf", "application/rtf"}
+        ):
+            raise ApiError(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                code="LEGAL_REVIEW_MATERIAL_NOT_DELIVERABLE",
+                message="Legal review material cannot be delivered",
+            )
+        suffix = {"application/pdf": ".pdf", "application/rtf": ".rtf"}[material.raw_mime_type]
+        return StreamingResponse(
+            iter([material.raw_bytes]),
+            media_type=material.raw_mime_type,
+            headers={
+                "Content-Length": str(raw_size),
+                "Content-Disposition": (
+                    f'attachment; filename="review-material-{material.id}{suffix}"'
+                ),
+                "X-Content-Type-Options": "nosniff",
+                "X-Legal-Artifact-Sha256": material.raw_sha256,
+            },
         )
 
     @router.get("/review-queue/{version_id}", response_model=LegalEditorVersionDetail)

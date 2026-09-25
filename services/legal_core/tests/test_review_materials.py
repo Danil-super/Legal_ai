@@ -6,6 +6,7 @@ import pytest
 
 from legal_core.review_materials import collect_review_materials, review_material_from_path
 from legal_core.models import LegalReviewMaterial
+from legal_core.api_contracts import LegalEditorReviewMaterialPage
 
 
 def test_review_material_preserves_a_garant_rtf_as_a_non_approved_legal_copy(
@@ -81,3 +82,30 @@ def test_review_materials_have_a_separate_non_retrievable_persistence_table() ->
         "raw_sha256",
         "raw_bytes",
     }
+
+
+def test_review_material_api_contract_keeps_the_file_identity_without_approval_state() -> None:
+    payload = LegalEditorReviewMaterialPage.model_validate(
+        {
+            "page": 1,
+            "pageSize": 10,
+            "totalItems": 1,
+            "items": [
+                {
+                    "materialId": "00000000-0000-0000-0000-000000000001",
+                    "packageKey": "garant-lawyer-2026-09-25",
+                    "title": "323-ФЗ",
+                    "kind": "LEGAL_COPY",
+                    "reviewState": "METADATA_REQUIRED",
+                    "sourceName": "Гарант",
+                    "sourceUrl": "https://internet.garant.ru/document/redirect/12191967/0",
+                    "rawMimeType": "application/rtf",
+                    "rawSizeBytes": 123,
+                    "rawSha256": "a" * 64,
+                    "receivedAt": "2026-09-25T12:00:00Z",
+                }
+            ],
+        }
+    )
+
+    assert payload.items[0].review_state == "METADATA_REQUIRED"

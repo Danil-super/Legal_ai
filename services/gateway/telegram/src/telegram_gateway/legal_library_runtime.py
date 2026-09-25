@@ -39,8 +39,10 @@ _VERIFIED_COPY_SOURCE_LABELS = {
 }
 _EDITOR_CALLBACK_RE = re.compile(
     r"^editor:(?:open|page:(?:[1-9]|[1-9][0-9]|100)|"
+    r"materials:(?:[1-9]|[1-9][0-9]|100)|"
     r"detail:[0-9a-f-]{36}:(?:[1-9]|[1-9][0-9]|100)|"
     r"artifact:[0-9a-f-]{36}|"
+    r"material:[0-9a-f-]{36}|"
     r"excerpts:[0-9a-f-]{36}|"
     r"fragments:[0-9a-f-]{36}:(?:[1-9]|[1-9][0-9]|100)|"
     r"attest:[0-9a-f-]{36}:(?:source|artifact|dates|fragments)|"
@@ -185,6 +187,21 @@ class LegalLibraryClient:
             raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response")
         return payload
 
+    async def get_review_materials(
+        self, telegram_user_id: int, *, page: int = 1
+    ) -> dict[str, Any]:
+        payload = await self._editor_json(
+            "GET", f"/v1/legal/review-materials?page={page}", telegram_user_id
+        )
+        if (
+            not isinstance(payload.get("items"), list)
+            or payload.get("page") != page
+            or payload.get("pageSize") != 10
+            or not isinstance(payload.get("totalItems"), int)
+        ):
+            raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response")
+        return payload
+
     async def get_editor_version(self, telegram_user_id: int, version_id: UUID) -> dict[str, Any]:
         payload = await self._editor_json(
             "GET", f"/v1/legal/review-queue/{version_id}", telegram_user_id
@@ -241,13 +258,35 @@ class LegalLibraryClient:
     ) -> tuple[bytes, str]:
         return await self._download_editor_file(telegram_user_id, version_id, resource="excerpts")
 
+    async def download_editor_review_material(
+        self, telegram_user_id: int, material_id: UUID
+    ) -> tuple[bytes, str]:
+        return await self._download_editor_url(
+            telegram_user_id,
+            f"/v1/legal/review-materials/{material_id}/artifact",
+            allowed_mime_types={"application/pdf", "application/rtf"},
+        )
+
     async def _download_editor_file(
         self, telegram_user_id: int, version_id: UUID, *, resource: str
+    ) -> tuple[bytes, str]:
+        return await self._download_editor_url(
+            telegram_user_id,
+            f"/v1/legal/review-queue/{version_id}/{resource}",
+            allowed_mime_types={"application/pdf", "application/rtf", "text/plain"},
+        )
+
+    async def _download_editor_url(
+        self,
+        telegram_user_id: int,
+        path: str,
+        *,
+        allowed_mime_types: set[str],
     ) -> tuple[bytes, str]:
         try:
             async with self._http.stream(
                 "GET",
-                f"/v1/legal/review-queue/{version_id}/{resource}",
+                path,
                 headers=self._editor_headers(telegram_user_id),
             ) as response:
                 if 300 <= response.status_code < 400:
@@ -261,7 +300,7 @@ class LegalLibraryClient:
                         "Artifact unavailable",
                     )
                 mime_type = response.headers.get("content-type", "").split(";", 1)[0]
-                if mime_type not in {"application/pdf", "application/rtf", "text/plain"}:
+                if mime_type not in allowed_mime_types:
                     raise LegalCoreApiError(502, "INVALID_LEGAL_ARTIFACT", "Invalid artifact")
                 raw_length = response.headers.get("content-length")
                 if raw_length is not None:
@@ -520,6 +559,76 @@ def render_platform_review_queue(payload: dict[str, Any]) -> tuple[str, InlineKe
             callback_prefix="editor:page",
         )
     )
+    buttons.append(
+        [InlineKeyboardButton("📥 Загруженные материалы", callback_data="editor:materials:1")]
+    )
+    buttons.extend([list(row) for row in back_keyboard().inline_keyboard])
+    return _bounded_message("\n".join(lines)), InlineKeyboardMarkup(buttons)
+
+
+def render_editor_review_materials(
+    payload: dict[str, Any], *, return_to_queue: bool = True
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Render incoming files as review input, never as approved legal evidence."""
+
+    raw_items = payload.get("items")
+    if not isinstance(raw_items, list):
+        raise ValueError("review material items")
+    page = _editor_page(payload.get("page"))
+    page_size = payload.get("pageSize")
+    total_items = payload.get("totalItems")
+    if not isinstance(page_size, int) or not isinstance(total_items, int):
+        raise ValueError("review material page metadata")
+    lines = [
+        "📥 МАТЕРИАЛЫ ДЛЯ ПРОВЕРКИ",
+        "",
+        "Это исходные файлы для подготовки версии. Они не одобрены и не участвуют "
+        "в рекомендациях.",
+        "",
+    ]
+    buttons: list[list[InlineKeyboardButton]] = []
+    for item in raw_items[:_MAX_DOCUMENTS]:
+        if not isinstance(item, dict):
+            continue
+        try:
+            material_id = _editor_version_id(item.get("materialId"))
+        except ValueError:
+            continue
+        kind = item.get("kind")
+        kind_label = (
+            "копия правового документа"
+            if kind == "LEGAL_COPY"
+            else "клинический справочный материал"
+        )
+        lines.extend(
+            [
+                f"• {_bounded(item.get('title'), limit=300)}",
+                f"  {kind_label}; статус: требуются реквизиты и проверка",
+                f"  Источник: {_bounded(item.get('sourceName'), limit=200)}",
+                f"  SHA raw: {_short_sha(item.get('rawSha256'))}",
+                "",
+            ]
+        )
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    f"📄 Открыть: {_bounded(item.get('title'), limit=40)}"[:64],
+                    callback_data=f"editor:material:{material_id}",
+                )
+            ]
+        )
+    if not raw_items:
+        lines.append("Загруженных материалов пока нет.")
+    buttons.extend(
+        _editor_pagination(
+            page=page,
+            page_size=page_size,
+            total_items=total_items,
+            callback_prefix="editor:materials",
+        )
+    )
+    if return_to_queue:
+        buttons.append([InlineKeyboardButton("← К очереди норм", callback_data="editor:open")])
     buttons.extend([list(row) for row in back_keyboard().inline_keyboard])
     return _bounded_message("\n".join(lines)), InlineKeyboardMarkup(buttons)
 
@@ -763,6 +872,29 @@ async def show_platform_review_queue(
     await _editor_reply(update, text, keyboard)
 
 
+async def show_editor_review_materials(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, page: int = 1
+) -> None:
+    actor_id = gateway_bot._actor_id(update)
+    if actor_id is None:
+        return
+    client = LegalLibraryClient()
+    try:
+        text, keyboard = render_editor_review_materials(
+            await client.get_review_materials(actor_id, page=page)
+        )
+    except (LegalCoreApiError, ValueError) as exc:
+        code = exc.code if isinstance(exc, LegalCoreApiError) else type(exc).__name__
+        logger.warning("legal review materials load failed: %s", code)
+        await gateway_bot._reply(
+            update, "⚠️ Не удалось открыть материалы для проверки. Попробуйте ещё раз."
+        )
+        return
+    finally:
+        await client.aclose()
+    await _editor_reply(update, text, keyboard)
+
+
 async def _show_editor_detail(
     update: Update, context: ContextTypes.DEFAULT_TYPE, *, version_id: UUID, reset: bool
 ) -> None:
@@ -856,6 +988,44 @@ def _editor_return_keyboard(version_id: UUID) -> InlineKeyboardMarkup:
     ])
 
 
+def _editor_material_return_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("← К материалам", callback_data="editor:materials:1")],
+            [InlineKeyboardButton("← К очереди норм", callback_data="editor:open")],
+        ]
+    )
+
+
+async def _send_editor_review_material(update: Update, *, material_id: UUID) -> None:
+    actor_id = gateway_bot._actor_id(update)
+    if actor_id is None or update.effective_message is None:
+        return
+    client = LegalLibraryClient()
+    try:
+        content, mime_type = await client.download_editor_review_material(actor_id, material_id)
+        await update.effective_message.reply_document(
+            document=InputFile(
+                BytesIO(content),
+                filename=f"review-material-{material_id}{_artifact_suffix(mime_type)}",
+            ),
+            caption=(
+                "Неодобренный исходный материал. Укажите реквизиты, сверьте источник и "
+                "создайте версию для отдельного утверждения."
+            ),
+            reply_markup=_editor_material_return_keyboard(),
+        )
+    except LegalCoreApiError as exc:
+        logger.warning("legal review material delivery failed: %s", exc.code)
+        await gateway_bot._reply(
+            update,
+            "⚠️ Материал не удалось загрузить. Попробуйте позже.",
+            reply_markup=_editor_material_return_keyboard(),
+        )
+    finally:
+        await client.aclose()
+
+
 async def _start_editor_delivery(
     update: Update, context: ContextTypes.DEFAULT_TYPE, *, version_id: UUID, excerpts: bool
 ) -> None:
@@ -878,6 +1048,43 @@ async def _start_editor_delivery(
     async def report_error() -> None:
         await gateway_bot._reply(
             update, "⚠️ Файл не удалось доставить вовремя. Нажмите кнопку загрузки ещё раз.",
+            reply_markup=keyboard,
+        )
+
+    admission = queue.submit(actor_id, deliver, report_error)
+    if admission != "STARTED":
+        message = (
+            "📥 Ваш файл уже загружается. Дождитесь завершения; меню доступны."
+            if admission == "DUPLICATE"
+            else "⚠️ Загрузка временно занята. Попробуйте чуть позже; меню доступны."
+        )
+        await gateway_bot._reply(update, message, reply_markup=keyboard)
+
+
+async def _start_editor_material_delivery(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, material_id: UUID
+) -> None:
+    actor_id = gateway_bot._actor_id(update)
+    if actor_id is None or update.effective_message is None:
+        return
+    queue = context.application.bot_data.get(_EDITOR_DELIVERY_KEY)
+    if not isinstance(queue, EditorFileDeliveryQueue):
+        queue = EditorFileDeliveryQueue(context.application)
+        context.application.bot_data[_EDITOR_DELIVERY_KEY] = queue
+    keyboard = _editor_material_return_keyboard()
+
+    async def deliver() -> None:
+        await gateway_bot._reply(
+            update,
+            "📥 Готовлю исходный файл. Остальные меню доступны во время загрузки.",
+            reply_markup=keyboard,
+        )
+        await _send_editor_review_material(update, material_id=material_id)
+
+    async def report_error() -> None:
+        await gateway_bot._reply(
+            update,
+            "⚠️ Файл не удалось доставить вовремя. Нажмите кнопку загрузки ещё раз.",
             reply_markup=keyboard,
         )
 
@@ -959,12 +1166,20 @@ async def legal_editor_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await show_platform_review_queue(
                 update, context, page=int(callback_data.rsplit(":", 1)[1])
             )
+        elif callback_data.startswith("editor:materials:"):
+            await show_editor_review_materials(
+                update, context, page=int(callback_data.rsplit(":", 1)[1])
+            )
         elif callback_data.startswith("editor:detail:"):
             _, _, raw_version_id, _ = callback_data.split(":")
             await _show_editor_detail(update, context, version_id=UUID(raw_version_id), reset=False)
         elif callback_data.startswith("editor:artifact:"):
             await _start_editor_delivery(
                 update, context, version_id=UUID(callback_data.rsplit(":", 1)[1]), excerpts=False
+            )
+        elif callback_data.startswith("editor:material:"):
+            await _start_editor_material_delivery(
+                update, context, material_id=UUID(callback_data.rsplit(":", 1)[1])
             )
         elif callback_data.startswith("editor:excerpts:"):
             await _start_editor_delivery(

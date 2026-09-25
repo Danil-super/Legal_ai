@@ -364,6 +364,29 @@ class LegalEditorCandidatePage(ContractModel):
     items: list[LegalEditorCandidateSummary] = Field(default_factory=list, max_length=10)
 
 
+class LegalEditorReviewMaterialSummary(ContractModel):
+    """Immutable source file awaiting metadata before it can become legal evidence."""
+
+    material_id: UUID = Field(alias="materialId")
+    package_key: str = Field(alias="packageKey", min_length=1, max_length=80)
+    title: str = Field(min_length=1, max_length=2_000)
+    kind: Literal["LEGAL_COPY", "CLINICAL_REFERENCE"]
+    review_state: Literal["METADATA_REQUIRED"] = Field(alias="reviewState")
+    source_name: str = Field(alias="sourceName", min_length=1, max_length=240)
+    source_url: str | None = Field(default=None, alias="sourceUrl", max_length=2_000)
+    raw_mime_type: Literal["application/pdf", "application/rtf"] = Field(alias="rawMimeType")
+    raw_size_bytes: int = Field(alias="rawSizeBytes", ge=1, le=50_000_000)
+    raw_sha256: str = Field(alias="rawSha256", pattern=r"^[0-9a-f]{64}$")
+    received_at: datetime = Field(alias="receivedAt")
+
+
+class LegalEditorReviewMaterialPage(ContractModel):
+    page: int = Field(ge=1, le=100)
+    page_size: Literal[10] = Field(alias="pageSize")
+    total_items: int = Field(alias="totalItems", ge=0)
+    items: list[LegalEditorReviewMaterialSummary] = Field(default_factory=list, max_length=10)
+
+
 class LegalEditorVersionDetail(ContractModel):
     document_id: UUID = Field(alias="documentId")
     version_id: UUID = Field(alias="versionId")

@@ -12,6 +12,7 @@ from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.legal_library_runtime import (
     _new_editor_state,
     build_application_with_legal_library,
+    render_editor_review_materials,
     render_editor_version_detail,
     render_legal_library,
     render_platform_review_queue,
@@ -308,6 +309,98 @@ def test_excerpts_client_checks_integrity_and_editor_credentials(monkeypatch) ->
             tamper = True
             with pytest.raises(LegalCoreApiError, match="Invalid artifact"):
                 await client.download_editor_excerpts(12345, version_id)
+
+    asyncio.run(scenario())
+
+
+def test_editor_material_client_requires_the_paginated_review_contract(monkeypatch) -> None:
+    monkeypatch.setenv("LEGAL_EDITOR_GATEWAY_KEY", "editor-test-gateway-key-12345678901234")
+
+    def serve(request):
+        assert request.url.path == "/v1/legal/review-materials"
+        assert request.url.query == b"page=1"
+        return httpx2.Response(
+            200,
+            json={"page": 1, "pageSize": 10, "totalItems": 0, "items": []},
+        )
+
+    async def scenario() -> None:
+        client = runtime.LegalLibraryClient(
+            client=httpx2.AsyncClient(
+                transport=httpx2.MockTransport(serve), base_url="http://legal-core.test"
+            )
+        )
+        try:
+            assert await client.get_review_materials(12345, page=1) == {
+                "page": 1,
+                "pageSize": 10,
+                "totalItems": 0,
+                "items": [],
+            }
+        finally:
+            await client.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_editor_review_materials_are_openable_but_not_mislabeled_as_approved() -> None:
+    material_id = "00000000-0000-0000-0000-000000000003"
+    text, keyboard = render_editor_review_materials(
+        {
+            "page": 1,
+            "pageSize": 10,
+            "totalItems": 1,
+            "items": [
+                {
+                    "materialId": material_id,
+                    "title": "Федеральный закон № 323-ФЗ",
+                    "kind": "LEGAL_COPY",
+                    "reviewState": "METADATA_REQUIRED",
+                    "sourceName": "Гарант",
+                    "rawSha256": "a" * 64,
+                }
+            ],
+        }
+    )
+
+    callbacks = {
+        button.callback_data
+        for row in keyboard.inline_keyboard
+        for button in row
+        if button.callback_data is not None
+    }
+    assert "не одобрены" in text
+    assert "требуются реквизиты и проверка" in text
+    assert f"editor:material:{material_id}" in callbacks
+
+
+def test_editor_review_material_client_checks_integrity_and_editor_credentials(monkeypatch) -> None:
+    monkeypatch.setenv("LEGAL_EDITOR_GATEWAY_KEY", "editor-test-gateway-key-12345678901234")
+    material_id = UUID("00000000-0000-0000-0000-000000000003")
+    content = b"{\\rtf1\\ansi review material}"
+
+    def serve(request):
+        assert request.url.path == f"/v1/legal/review-materials/{material_id}/artifact"
+        assert request.headers["X-Telegram-User-Id"] == "12345"
+        assert request.headers["X-Legal-Editor-Gateway-Key"]
+        return httpx2.Response(
+            200,
+            content=content,
+            headers={
+                "Content-Type": "application/rtf",
+                "X-Legal-Artifact-Sha256": hashlib.sha256(content).hexdigest(),
+            },
+        )
+
+    async def scenario() -> None:
+        async with httpx2.AsyncClient(
+            base_url="http://legal-core:8000", transport=httpx2.MockTransport(serve)
+        ) as http:
+            client = runtime.LegalLibraryClient(client=http)
+            assert await client.download_editor_review_material(12345, material_id) == (
+                content,
+                "application/rtf",
+            )
 
     asyncio.run(scenario())
 
