@@ -33,6 +33,16 @@ outside legal recommendations.
 
 ## Consequences
 
+### 2026-09-25: grouped review inbox
+
+The editor inbox groups source files by subject using one deterministic SQL
+expression, with per-group counts and ten-item pagination. This is navigation,
+not an inference of relevance, current legal effect or trust. Clinical references
+are always a separate group. Metadata listing defers raw artifact bytes; exact
+artifact delivery remains a separately authorised, checksum-verified action.
+An exact raw-checksum match may link to an existing legal-version review card;
+otherwise the UI states that metadata preparation remains outstanding.
+
 - Editors can view the supplied originals without Telegram exposing them to ordinary users.
 - A supplied file cannot become `APPROVED`, legal evidence, or a patient recommendation by import.
 - The database stores the package once; re-running a verified import does not duplicate it.

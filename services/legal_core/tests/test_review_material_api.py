@@ -51,7 +51,7 @@ def _seed_user(telegram_user_id: int, *, system_role: str | None = None) -> None
         engine.dispose()
 
 
-def _seed_material() -> tuple[UUID, bytes]:
+def _seed_material(title: str = "Проверочный материал") -> tuple[UUID, bytes]:
     raw = b"{\\rtf1\\ansi review material API test}"
     material_id = uuid4()
 
@@ -65,7 +65,7 @@ def _seed_material() -> tuple[UUID, bytes]:
                         id=material_id,
                         package_key=f"api-test-{uuid4().hex}",
                         original_filename="review.rtf",
-                        title="Проверочный материал",
+                        title=title,
                         kind="LEGAL_COPY",
                         review_state="METADATA_REQUIRED",
                         source_name="Гарант",
@@ -129,3 +129,24 @@ def test_review_materials_are_editor_only_and_artifacts_are_integrity_checked(
     assert artifact.status_code == 200
     assert artifact.content == raw
     assert artifact.headers["x-legal-artifact-sha256"] == hashlib.sha256(raw).hexdigest()
+
+
+def test_material_groups_filter_without_loading_artifact_bytes(monkeypatch) -> None:
+    monkeypatch.setenv("LEGAL_EDITOR_GATEWAY_KEY", _GATEWAY_KEY)
+    editor_id = 8_710_000_000 + uuid4().int % 100_000_000
+    _seed_user(editor_id, system_role="LEGAL_EDITOR")
+    labour_id, _ = _seed_material("Трудовой кодекс Российской Федерации")
+    other_id, _ = _seed_material("Постановление Пленума Верховного Суда РФ")
+    headers = _headers(editor_id, key=_GATEWAY_KEY)
+    with _client() as client:
+        response = client.get("/v1/legal/review-materials?group=labour", headers=headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["selectedGroup"] == "labour"
+        assert str(labour_id) in {item["materialId"] for item in body["items"]}
+        assert str(other_id) not in {item["materialId"] for item in body["items"]}
+        assert all(item["groupKey"] == "labour" for item in body["items"])
+        assert any(item["key"] == "courts" for item in body["groups"])
+        invalid = client.get("/v1/legal/review-materials?group=unknown", headers=headers)
+        assert invalid.status_code == 422
+        assert client.get("/v1/legal/review-materials?group=labour").status_code in {403, 422}

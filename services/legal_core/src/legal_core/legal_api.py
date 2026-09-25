@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, Header, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import defer
 
 from legal_core.api_contracts import (
     LegalEditorApprovalRequest,
@@ -20,6 +21,7 @@ from legal_core.api_contracts import (
     LegalEditorCandidateSummary,
     LegalEditorFragment,
     LegalEditorFragmentPage,
+    LegalEditorReviewMaterialGroup,
     LegalEditorReviewMaterialPage,
     LegalEditorReviewMaterialSummary,
     LegalEditorStatusResponse,
@@ -50,6 +52,7 @@ from legal_core.models import (
     LegalVersion,
     User,
 )
+from legal_core.review_material_groups import GROUP_TITLES, ReviewGroup, material_group_expression
 
 EDITOR_GATEWAY_KEY_ENV = "LEGAL_EDITOR_GATEWAY_KEY"
 EDITOR_GATEWAY_HEADER = "X-Legal-Editor-Gateway-Key"
@@ -309,19 +312,26 @@ def create_legal_router(
         session: Session,
         page: EditorPage = 1,
         gateway_key: EditorGatewayKey = None,
+        group: ReviewGroup | None = None,
     ) -> LegalEditorReviewMaterialPage:
         """List immutable incoming files without representing them as approved evidence."""
 
         await require_platform_legal_editor(
             session, telegram_user_id=telegram_user_id, gateway_key=gateway_key
         )
-        total_items = int(
-            await session.scalar(select(func.count()).select_from(LegalReviewMaterial)) or 0
-        )
+        grouping = material_group_expression()
+        count_rows = (await session.execute(
+            select(grouping, func.count()).select_from(LegalReviewMaterial).group_by(grouping)
+        )).all()
+        counts = {key: count for key, count in count_rows}
+        total_items = counts.get(group, 0) if group else sum(counts.values())
+        query = select(LegalReviewMaterial).options(defer(LegalReviewMaterial.raw_bytes))
+        if group is not None:
+            query = query.where(grouping == group)
         materials = list(
             (
                 await session.scalars(
-                    select(LegalReviewMaterial)
+                    query
                     .order_by(
                         LegalReviewMaterial.received_at.desc(), LegalReviewMaterial.id.desc()
                     )
@@ -330,10 +340,26 @@ def create_legal_router(
                 )
             ).all()
         )
+        group_rows = (await session.execute(
+            select(LegalReviewMaterial.id, grouping).where(
+                LegalReviewMaterial.id.in_([material.id for material in materials])
+            )
+        )).all()
+        item_groups = {material_id: key for material_id, key in group_rows}
+        versions = (await session.execute(
+            select(LegalVersion.raw_sha256, LegalVersion.id)
+            .where(LegalVersion.raw_sha256.in_([material.raw_sha256 for material in materials]))
+            .order_by(LegalVersion.version_no)
+        )).all()
+        version_by_hash = {raw_hash: version_id for raw_hash, version_id in versions}
         return LegalEditorReviewMaterialPage(
             page=page,
             pageSize=10,
             totalItems=total_items,
+            selectedGroup=group,
+            groups=[LegalEditorReviewMaterialGroup(
+                key=cast(ReviewGroup, key), title=title, totalItems=counts.get(key, 0)
+            ) for key, title in GROUP_TITLES.items() if counts.get(key, 0)],
             items=[
                 LegalEditorReviewMaterialSummary(
                     materialId=material.id,
@@ -349,6 +375,8 @@ def create_legal_router(
                     rawSizeBytes=material.raw_size_bytes,
                     rawSha256=material.raw_sha256,
                     receivedAt=material.received_at,
+                    groupKey=cast(ReviewGroup, item_groups[material.id]),
+                    versionId=version_by_hash.get(material.raw_sha256),
                 )
                 for material in materials
             ],
