@@ -40,7 +40,7 @@ def test_importing_the_same_package_twice_is_idempotent_and_never_approves_it(
                 factory,
                 tmp_path,
                 package_key=package_key,
-                received_at=datetime(2026, 9, 25, 12, tzinfo=UTC),
+                received_at=datetime(2026, 9, 26, 12, tzinfo=UTC),
             )
             assert second == first
             async with factory() as session:
@@ -58,6 +58,10 @@ def test_importing_the_same_package_twice_is_idempotent_and_never_approves_it(
             }
             assert all(material.review_state == "METADATA_REQUIRED" for material in materials)
             assert all(material.raw_bytes for material in materials)
+            assert all(
+                material.received_at == datetime(2026, 9, 25, 12, tzinfo=UTC)
+                for material in materials
+            )
         finally:
             await engine.dispose()
 

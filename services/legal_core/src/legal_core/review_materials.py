@@ -79,15 +79,16 @@ def review_material_from_path(path: Path, *, received_at: datetime) -> ReviewMat
         if not is_safe_rtf(raw):
             raise ValueError("review material RTF is unsafe or has an invalid signature")
         matches = _GARANT_URL.findall(raw)
-        if not matches:
-            raise ValueError("review material RTF must contain a Garant source URL")
-        if len(matches) > 1:
+        if len(matches) != 1:
             return ReviewMaterialInput(
                 original_filename=resolved.name,
                 title=title,
                 kind="LEGAL_COPY",
                 review_state="METADATA_REQUIRED",
-                source_name="Гарант; требуется сверка конкретной страницы",
+                source_name=(
+                    "Гарант; требуется сверка конкретной страницы"
+                    if matches else "Передано юристом; первоисточник не зафиксирован"
+                ),
                 source_url=None,
                 source_external_id=None,
                 mime_type="application/rtf",
@@ -138,7 +139,7 @@ def _same_material(existing: LegalReviewMaterial, candidate: ReviewMaterialInput
         and existing.raw_mime_type == candidate.mime_type
         and existing.raw_bytes == candidate.raw_bytes
         and existing.raw_size_bytes == len(candidate.raw_bytes)
-        and existing.received_at == candidate.received_at
+        # A retry has a new receipt time; retain the original stored timestamp.
     )
 
 
