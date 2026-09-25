@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from legal_core.review_materials import collect_review_materials, review_material_from_path
+from legal_core.models import LegalReviewMaterial
 
 
 def test_review_material_preserves_a_garant_rtf_as_a_non_approved_legal_copy(
@@ -67,3 +68,16 @@ def test_collect_review_materials_is_sorted_and_rejects_symlinks(tmp_path: Path)
     materials = collect_review_materials(tmp_path, received_at=datetime(2026, 9, 25, tzinfo=UTC))
 
     assert [material.original_filename for material in materials] == ["a.rtf", "z.pdf"]
+
+
+def test_review_materials_have_a_separate_non_retrievable_persistence_table() -> None:
+    table = LegalReviewMaterial.__table__
+
+    assert table.name == "legal_review_materials"
+    assert {column.name for column in table.columns} >= {
+        "package_key",
+        "kind",
+        "review_state",
+        "raw_sha256",
+        "raw_bytes",
+    }

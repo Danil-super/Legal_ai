@@ -671,6 +671,51 @@ class LegalSource(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 
+class LegalReviewMaterial(Base):
+    """Immutable incoming source file that is not yet legal-corpus evidence."""
+
+    __tablename__ = "legal_review_materials"
+    __table_args__ = (
+        UniqueConstraint("package_key", "raw_sha256"),
+        CheckConstraint(
+            "kind IN ('LEGAL_COPY', 'CLINICAL_REFERENCE')",
+            name="ck_legal_review_materials_kind",
+        ),
+        CheckConstraint(
+            "review_state = 'METADATA_REQUIRED'",
+            name="ck_legal_review_materials_review_state",
+        ),
+        CheckConstraint(
+            "encode(digest(raw_bytes, 'sha256'), 'hex') = raw_sha256",
+            name="ck_legal_review_materials_raw_sha256",
+        ),
+        CheckConstraint(
+            "octet_length(raw_bytes) = raw_size_bytes",
+            name="ck_legal_review_materials_raw_size",
+        ),
+        CheckConstraint("raw_size_bytes > 0 AND raw_size_bytes <= 50000000"),
+        Index("ix_legal_review_materials_queue", "package_key", "received_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    package_key: Mapped[str] = mapped_column(String(80))
+    original_filename: Mapped[str] = mapped_column(String(240))
+    title: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(30))
+    review_state: Mapped[str] = mapped_column(String(30), server_default="METADATA_REQUIRED")
+    source_name: Mapped[str] = mapped_column(String(240))
+    source_url: Mapped[str | None] = mapped_column(Text)
+    source_external_id: Mapped[str | None] = mapped_column(String(120))
+    raw_mime_type: Mapped[str] = mapped_column(String(100))
+    raw_sha256: Mapped[str] = mapped_column(String(64))
+    raw_bytes: Mapped[bytes] = mapped_column(LargeBinary)
+    raw_size_bytes: Mapped[int] = mapped_column(BigInteger)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
 class LegalDocument(Base):
     __tablename__ = "legal_documents"
 
