@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime
+from time import sleep
 from uuid import UUID
 
 from legal_core.clinic_document_retrieval import ApprovedClinicDocumentFragment
@@ -191,6 +192,7 @@ def test_pdf_is_deterministic_and_uses_report_snapshot() -> None:
     )
 
     first = render_report_pdf(report)
+    sleep(1.1)
     second = render_report_pdf(report)
 
     assert first.startswith(b"%PDF-")

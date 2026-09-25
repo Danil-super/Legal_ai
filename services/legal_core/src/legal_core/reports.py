@@ -7,7 +7,6 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
-from functools import partial
 from html import escape
 from io import BytesIO
 from pathlib import Path
@@ -21,7 +20,6 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet  # type: ig
 from reportlab.lib.units import mm  # type: ignore[import-untyped]
 from reportlab.pdfbase import pdfmetrics  # type: ignore[import-untyped]
 from reportlab.pdfbase.ttfonts import TTFont  # type: ignore[import-untyped]
-from reportlab.pdfgen import canvas  # type: ignore[import-untyped]
 from reportlab.platypus import (  # type: ignore[import-untyped]
     Paragraph,
     SimpleDocTemplate,
@@ -285,6 +283,7 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
         bottomMargin=16 * mm,
         title=f"Dental Legal AI — {report.case.public_number}",
         author="Dental Legal AI",
+        invariant=1,
     )
     styles = getSampleStyleSheet()
     title = ParagraphStyle(
@@ -480,8 +479,7 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
             ),
         ]
     )
-    deterministic_canvas = partial(canvas.Canvas, invariant=1)
-    document.build(story, canvasmaker=deterministic_canvas)
+    document.build(story)
     rendered = output.getvalue()
     # ReportLab 5 still varies only the trailer document ID between identical renders.
     # Replacing the fixed-width ID with the canonical report digest keeps the file byte-stable
