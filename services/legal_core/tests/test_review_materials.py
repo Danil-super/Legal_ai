@@ -55,6 +55,26 @@ def test_review_material_rejects_rtf_with_embedded_object(tmp_path: Path) -> Non
         review_material_from_path(artifact, received_at=datetime(2026, 9, 25, tzinfo=UTC))
 
 
+def test_review_material_quarantines_an_ambiguous_garant_rtf_for_editor_verification(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "ambiguous.rtf"
+    artifact.write_bytes(
+        b"{\\rtf1\\ansi https://internet.garant.ru/document/redirect/12191967/0 "
+        b"https://internet.garant.ru/document/redirect/12191968/0}"
+    )
+
+    material = review_material_from_path(
+        artifact, received_at=datetime(2026, 9, 25, 12, tzinfo=UTC)
+    )
+
+    assert material.kind == "LEGAL_COPY"
+    assert material.review_state == "METADATA_REQUIRED"
+    assert material.source_url is None
+    assert material.source_external_id is None
+    assert "сверка" in material.source_name
+
+
 def test_collect_review_materials_is_sorted_and_rejects_symlinks(tmp_path: Path) -> None:
     (tmp_path / "z.pdf").write_bytes(b"%PDF-1.7\\nclinical recommendation\\n%%EOF\\n")
     (tmp_path / "a.rtf").write_bytes(

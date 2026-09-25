@@ -79,8 +79,22 @@ def review_material_from_path(path: Path, *, received_at: datetime) -> ReviewMat
         if not is_safe_rtf(raw):
             raise ValueError("review material RTF is unsafe or has an invalid signature")
         matches = _GARANT_URL.findall(raw)
-        if len(matches) != 1:
-            raise ValueError("review material RTF must contain exactly one Garant source URL")
+        if not matches:
+            raise ValueError("review material RTF must contain a Garant source URL")
+        if len(matches) > 1:
+            return ReviewMaterialInput(
+                original_filename=resolved.name,
+                title=title,
+                kind="LEGAL_COPY",
+                review_state="METADATA_REQUIRED",
+                source_name="Гарант; требуется сверка конкретной страницы",
+                source_url=None,
+                source_external_id=None,
+                mime_type="application/rtf",
+                raw_bytes=raw,
+                raw_sha256=hashlib.sha256(raw).hexdigest(),
+                received_at=received_at,
+            )
         external_id = matches[0].decode("ascii")
         return ReviewMaterialInput(
             original_filename=resolved.name,
