@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import Field, field_validator, model_validator
 
 from legal_core.contracts import CaseStatus, ContractModel, FactKey, MissingFact
+from legal_core.review_material_groups import ReviewGroup
 
 _TEXT_FACT_KEYS = frozenset(
     {FactKey.SERVICE_TYPE, FactKey.PROBLEM_SUMMARY, FactKey.AUTHORITY_KIND}
@@ -378,6 +379,14 @@ class LegalEditorReviewMaterialSummary(ContractModel):
     raw_size_bytes: int = Field(alias="rawSizeBytes", ge=1, le=50_000_000)
     raw_sha256: str = Field(alias="rawSha256", pattern=r"^[0-9a-f]{64}$")
     received_at: datetime = Field(alias="receivedAt")
+    group_key: ReviewGroup = Field(default="other", alias="groupKey")
+    version_id: UUID | None = Field(default=None, alias="versionId")
+
+
+class LegalEditorReviewMaterialGroup(ContractModel):
+    key: ReviewGroup
+    title: str
+    total_items: int = Field(alias="totalItems", ge=0)
 
 
 class LegalEditorReviewMaterialPage(ContractModel):
@@ -385,6 +394,8 @@ class LegalEditorReviewMaterialPage(ContractModel):
     page_size: Literal[10] = Field(alias="pageSize")
     total_items: int = Field(alias="totalItems", ge=0)
     items: list[LegalEditorReviewMaterialSummary] = Field(default_factory=list, max_length=10)
+    selected_group: ReviewGroup | None = Field(default=None, alias="selectedGroup")
+    groups: list[LegalEditorReviewMaterialGroup] = Field(default_factory=list, max_length=8)
 
 
 class LegalEditorVersionDetail(ContractModel):

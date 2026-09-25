@@ -374,6 +374,24 @@ def test_editor_review_materials_are_openable_but_not_mislabeled_as_approved() -
     assert f"editor:material:{material_id}" in callbacks
 
 
+def test_material_groups_keep_counts_filter_pagination_and_back_navigation() -> None:
+    payload = {
+        "page": 1, "pageSize": 10, "totalItems": 21, "items": [],
+        "selectedGroup": "labour",
+        "groups": [
+            {"key": "labour", "title": "Труд и квалификация", "totalItems": 21},
+            {"key": "clinical", "title": "Клинические материалы", "totalItems": 7},
+        ],
+    }
+    text, keyboard = render_editor_review_materials(payload)
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert "21" in text
+    assert "editor:group:labour:2" in callbacks
+    assert "editor:materials:1" in callbacks
+    assert "editor:group:clinical:1" in callbacks
+    assert "editor:open" in callbacks
+
+
 def test_editor_review_material_client_checks_integrity_and_editor_credentials(monkeypatch) -> None:
     monkeypatch.setenv("LEGAL_EDITOR_GATEWAY_KEY", "editor-test-gateway-key-12345678901234")
     material_id = UUID("00000000-0000-0000-0000-000000000003")

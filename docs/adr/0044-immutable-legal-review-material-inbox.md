@@ -22,13 +22,26 @@ Only a platform `LEGAL_EDITOR` authenticated through the Telegram gateway can li
 download the file. The table accepts only a `LEGAL_COPY` or `CLINICAL_REFERENCE` with
 `METADATA_REQUIRED`; it has no approval state and is not queried by Legal Core retrieval.
 
-The import command is idempotent by package key and raw checksum. The inbox is mounted read-only
-into Legal Core solely for an explicit import command; the application does not automatically scan
-or promote files. A legal copy can become a production source only when an editor creates a
+The import command is idempotent by package key and raw checksum; retries retain the original
+receipt timestamp. Files are supplied to an explicit import command (a protected temporary copy
+or a read-only mount); the application does not automatically scan or promote files. Safe RTF
+files without an identifiable source URL remain review materials with unknown provenance, not
+trusted sources. Multiple source links likewise require an editor to resolve the canonical page.
+A legal copy can become a production source only when an editor creates a
 complete version and makes the existing explicit approval attestation. Clinical references remain
 outside legal recommendations.
 
 ## Consequences
+
+### 2026-09-25: grouped review inbox
+
+The editor inbox groups source files by subject using one deterministic SQL
+expression, with per-group counts and ten-item pagination. This is navigation,
+not an inference of relevance, current legal effect or trust. Clinical references
+are always a separate group. Metadata listing defers raw artifact bytes; exact
+artifact delivery remains a separately authorised, checksum-verified action.
+An exact raw-checksum match may link to an existing legal-version review card;
+otherwise the UI states that metadata preparation remains outstanding.
 
 - Editors can view the supplied originals without Telegram exposing them to ordinary users.
 - A supplied file cannot become `APPROVED`, legal evidence, or a patient recommendation by import.

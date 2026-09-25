@@ -91,6 +91,35 @@ def test_collect_review_materials_is_sorted_and_rejects_symlinks(tmp_path: Path)
     assert [material.original_filename for material in materials] == ["a.rtf", "z.pdf"]
 
 
+def test_safe_rtf_without_identifiable_source_is_preserved_for_review(tmp_path: Path) -> None:
+    artifact = tmp_path / "unidentified.rtf"
+    raw = b"{\\rtf1\\ansi review material without an identifiable publication URL}"
+    artifact.write_bytes(raw)
+    material = review_material_from_path(artifact, received_at=datetime.now(UTC))
+    assert material.raw_bytes == raw
+    assert material.source_url is None
+    assert material.source_external_id is None
+    assert material.source_name == "Передано юристом; первоисточник не зафиксирован"
+    assert material.review_state == "METADATA_REQUIRED"
+
+
+def test_reimport_receipt_time_does_not_change_original_material_identity(tmp_path: Path) -> None:
+    from legal_core.review_materials import _same_material
+
+    artifact = tmp_path / "review.pdf"
+    artifact.write_bytes(b"%PDF-1.7\nreview reference\n%%EOF\n")
+    first = review_material_from_path(artifact, received_at=datetime(2026, 9, 25, tzinfo=UTC))
+    existing = LegalReviewMaterial(
+        original_filename=first.original_filename, title=first.title, kind=first.kind,
+        review_state=first.review_state, source_name=first.source_name,
+        source_url=first.source_url, source_external_id=first.source_external_id,
+        raw_mime_type=first.mime_type, raw_bytes=first.raw_bytes,
+        raw_size_bytes=len(first.raw_bytes), received_at=first.received_at,
+    )
+    later = review_material_from_path(artifact, received_at=datetime(2026, 9, 26, tzinfo=UTC))
+    assert _same_material(existing, later)
+
+
 def test_review_materials_have_a_separate_non_retrievable_persistence_table() -> None:
     table = LegalReviewMaterial.__table__
 

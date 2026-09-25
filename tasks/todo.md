@@ -1,5 +1,15 @@
 # Dental Legal AI task list
 
+## Attorney package review, 2026-09-25
+
+- [x] Grouped editor inbox with counts, filters, pagination and preserved originals.
+- [x] Retry-safe import accepts safe files with explicitly unresolved provenance.
+- [ ] Deploy and import all 58 files; verify every stored/downloaded checksum.
+  Blocked: GitHub Actions run 36169017320 cannot start due to account payments/spending limit.
+  Actual 58-file import, retry and all artifact downloads verified in isolated PostgreSQL.
+- [ ] Complete metadata preparation and explicit human approval for all legal copies.
+  Receipt, grouping and file download are not normative approval.
+
 ## Task 0.1: Зафиксировать bootstrap-контракт
 
 **Acceptance criteria:**

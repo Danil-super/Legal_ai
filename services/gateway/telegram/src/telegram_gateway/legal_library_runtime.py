@@ -40,6 +40,8 @@ _VERIFIED_COPY_SOURCE_LABELS = {
 _EDITOR_CALLBACK_RE = re.compile(
     r"^editor:(?:open|page:(?:[1-9]|[1-9][0-9]|100)|"
     r"materials:(?:[1-9]|[1-9][0-9]|100)|"
+    r"group:(?:clinical|labour|courts|privacy|licensing|healthcare|general|other):"
+    r"(?:[1-9]|[1-9][0-9]|100)|"
     r"detail:[0-9a-f-]{36}:(?:[1-9]|[1-9][0-9]|100)|"
     r"artifact:[0-9a-f-]{36}|"
     r"material:[0-9a-f-]{36}|"
@@ -188,10 +190,18 @@ class LegalLibraryClient:
         return payload
 
     async def get_review_materials(
-        self, telegram_user_id: int, *, page: int = 1
+        self, telegram_user_id: int, *, page: int = 1, group: str | None = None
     ) -> dict[str, Any]:
+        suffix = ""
+        if group is not None:
+            if group not in {
+                "clinical", "labour", "courts", "privacy", "licensing", "healthcare",
+                "general", "other",
+            }:
+                raise ValueError("review material group")
+            suffix = f"&group={group}"
         payload = await self._editor_json(
-            "GET", f"/v1/legal/review-materials?page={page}", telegram_user_id
+            "GET", f"/v1/legal/review-materials?page={page}{suffix}", telegram_user_id
         )
         if (
             not isinstance(payload.get("items"), list)
@@ -579,14 +589,38 @@ def render_editor_review_materials(
     total_items = payload.get("totalItems")
     if not isinstance(page_size, int) or not isinstance(total_items, int):
         raise ValueError("review material page metadata")
+    selected_group = payload.get("selectedGroup")
+    groups = payload.get("groups", [])
+    if not isinstance(groups, list):
+        raise ValueError("review material groups")
     lines = [
         "📥 МАТЕРИАЛЫ ДЛЯ ПРОВЕРКИ",
+        f"В этом списке: {total_items}. Страница {page}.",
         "",
         "Это исходные файлы для подготовки версии. Они не одобрены и не участвуют "
         "в рекомендациях.",
         "",
     ]
     buttons: list[list[InlineKeyboardButton]] = []
+    for group in groups:
+        if not isinstance(group, dict):
+            raise ValueError("review material group")
+        key = group.get("key")
+        callback = f"editor:group:{key}:1"
+        if _EDITOR_CALLBACK_RE.fullmatch(callback) is None:
+            raise ValueError("review material group key")
+        buttons.append([InlineKeyboardButton(
+            f"📂 {_bounded(group.get('title'), limit=43)} ({group.get('totalItems', 0)})"[:64],
+            callback_data=callback,
+        )])
+        if key == selected_group:
+            lines.append(f"Раздел: {_bounded(group.get('title'), limit=100)}")
+    if selected_group is not None:
+        if _EDITOR_CALLBACK_RE.fullmatch(f"editor:group:{selected_group}:1") is None:
+            raise ValueError("selected review material group")
+        buttons.append([
+            InlineKeyboardButton("📚 Все материалы", callback_data="editor:materials:1")
+        ])
     for item in raw_items[:_MAX_DOCUMENTS]:
         if not isinstance(item, dict):
             continue
@@ -602,9 +636,9 @@ def render_editor_review_materials(
         )
         lines.extend(
             [
-                f"• {_bounded(item.get('title'), limit=300)}",
+                f"• {_bounded(item.get('title'), limit=180)}",
                 f"  {kind_label}; статус: требуются реквизиты и проверка",
-                f"  Источник: {_bounded(item.get('sourceName'), limit=200)}",
+                f"  Источник: {_bounded(item.get('sourceName'), limit=100)}",
                 f"  SHA raw: {_short_sha(item.get('rawSha256'))}",
                 "",
             ]
@@ -617,6 +651,12 @@ def render_editor_review_materials(
                 )
             ]
         )
+        if item.get("versionId") is not None:
+            version_id = _editor_version_id(item["versionId"])
+            buttons.append([InlineKeyboardButton(
+                "⚖️ Открыть подготовленную версию",
+                callback_data=f"editor:detail:{version_id}:1",
+            )])
     if not raw_items:
         lines.append("Загруженных материалов пока нет.")
     buttons.extend(
@@ -624,7 +664,9 @@ def render_editor_review_materials(
             page=page,
             page_size=page_size,
             total_items=total_items,
-            callback_prefix="editor:materials",
+            callback_prefix=(
+                f"editor:group:{selected_group}" if selected_group else "editor:materials"
+            ),
         )
     )
     if return_to_queue:
@@ -873,7 +915,7 @@ async def show_platform_review_queue(
 
 
 async def show_editor_review_materials(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, *, page: int = 1
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, page: int = 1, group: str | None = None
 ) -> None:
     actor_id = gateway_bot._actor_id(update)
     if actor_id is None:
@@ -881,7 +923,7 @@ async def show_editor_review_materials(
     client = LegalLibraryClient()
     try:
         text, keyboard = render_editor_review_materials(
-            await client.get_review_materials(actor_id, page=page)
+            await client.get_review_materials(actor_id, page=page, group=group)
         )
     except (LegalCoreApiError, ValueError) as exc:
         code = exc.code if isinstance(exc, LegalCoreApiError) else type(exc).__name__
@@ -1170,6 +1212,9 @@ async def legal_editor_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await show_editor_review_materials(
                 update, context, page=int(callback_data.rsplit(":", 1)[1])
             )
+        elif callback_data.startswith("editor:group:"):
+            _, _, group, raw_page = callback_data.split(":")
+            await show_editor_review_materials(update, context, page=int(raw_page), group=group)
         elif callback_data.startswith("editor:detail:"):
             _, _, raw_version_id, _ = callback_data.split(":")
             await _show_editor_detail(update, context, version_id=UUID(raw_version_id), reset=False)
