@@ -33,6 +33,10 @@ _MAX_MESSAGE = 3_900
 _EDITOR_PENDING_KEY = "legal_editor_pending"
 _EDITOR_ARTIFACT_MAX_BYTES = 50_000_000
 _EDITOR_DELIVERY_KEY = "legal_editor_file_deliveries"
+_VERIFIED_COPY_SOURCE_LABELS = {
+    "www.consultant.ru": "КонсультантПлюс",
+    "internet.garant.ru": "Гарант",
+}
 _EDITOR_CALLBACK_RE = re.compile(
     r"^editor:(?:open|page:(?:[1-9]|[1-9][0-9]|100)|"
     r"detail:[0-9a-f-]{36}:(?:[1-9]|[1-9][0-9]|100)|"
@@ -257,7 +261,7 @@ class LegalLibraryClient:
                         "Artifact unavailable",
                     )
                 mime_type = response.headers.get("content-type", "").split(";", 1)[0]
-                if mime_type not in {"application/pdf", "text/plain"}:
+                if mime_type not in {"application/pdf", "application/rtf", "text/plain"}:
                     raise LegalCoreApiError(502, "INVALID_LEGAL_ARTIFACT", "Invalid artifact")
                 raw_length = response.headers.get("content-length")
                 if raw_length is not None:
@@ -318,6 +322,23 @@ def _official_url(value: object) -> str | None:
     ):
         return None
     return value
+
+
+def _verified_copy_source_label(source_url: str | None) -> str:
+    hostname = urlsplit(source_url).hostname if source_url is not None else None
+    return _VERIFIED_COPY_SOURCE_LABELS.get(hostname or "", "проверенная копия")
+
+
+def _artifact_button_label(mime_type: object) -> str:
+    return "📄 Открыть PDF" if mime_type == "application/pdf" else "📄 Открыть документ"
+
+
+def _artifact_suffix(mime_type: str) -> str:
+    return {
+        "application/pdf": ".pdf",
+        "application/rtf": ".rtf",
+        "text/plain": ".txt",
+    }[mime_type]
 
 
 def _applicability(effective_from: object, effective_to: object) -> str:
@@ -550,6 +571,8 @@ def render_editor_version_detail(
     version_id = _editor_version_id(detail.get("versionId"))
     source_url = _official_url(detail.get("sourceUrl"))
     third_party_copy = detail.get("artifactKind") == "THIRD_PARTY_VERIFIED_COPY"
+    source_label = _verified_copy_source_label(source_url)
+    artifact_is_pdf = detail.get("rawMimeType") == "application/pdf"
     approval_eligible = detail.get("approvalEligible") is True
     approval_state = _bounded(detail.get("approvalState"), limit=30)
     lines = [
@@ -560,7 +583,7 @@ def render_editor_version_detail(
         f"Номер: {_bounded(detail.get('officialNumber'), limit=80)}",
         f"Статус: {approval_state}",
         (
-            "Источник: КонсультантПлюс — проверенная копия, не первичная публикация."
+            f"Источник: {source_label} — проверенная копия, не первичная публикация."
             if third_party_copy
             else "Источник: официальная публикация."
         ),
@@ -574,8 +597,19 @@ def render_editor_version_detail(
         f"SHA text: {_short_sha(detail.get('normalizedSha256'))}",
         f"SHA fragments: {_short_sha(detail.get('fragmentsSha256'))}",
         f"Выбранных фрагментов: {_bounded(detail.get('fragmentCount'), limit=12)}",
-        "Сначала прочитайте PDF, затем сверьте полные выбранные выдержки с его текстом.",
-        "Выгрузка содержит статьи/пункты; страницы PDF для выдержек не размечены.",
+        (
+            "Сначала прочитайте PDF, затем сверьте полные выбранные выдержки с его текстом."
+            if artifact_is_pdf
+            else (
+                "Сначала прочитайте документ, затем сверьте полные выбранные выдержки "
+                "с его текстом."
+            )
+        ),
+        (
+            "Выгрузка содержит статьи/пункты; страницы PDF для выдержек не размечены."
+            if artifact_is_pdf
+            else "Выгрузка содержит статьи/пункты; сверяйте их с исходным документом."
+        ),
         "",
         (
             "Подтверждение доступно после всех четырёх ручных проверок."
@@ -588,7 +622,7 @@ def render_editor_version_detail(
         buttons.append(
             [
                 InlineKeyboardButton(
-                    "🌐 Источник: КонсультантПлюс"
+                    f"🌐 Источник: {source_label}"
                     if third_party_copy
                     else "🌐 Официальный источник",
                     url=source_url,
@@ -599,7 +633,8 @@ def render_editor_version_detail(
         [
             [
                 InlineKeyboardButton(
-                    "📄 Открыть PDF", callback_data=f"editor:artifact:{version_id}"
+                    _artifact_button_label(detail.get("rawMimeType")),
+                    callback_data=f"editor:artifact:{version_id}",
                 )
             ],
             [
@@ -793,11 +828,12 @@ async def _send_editor_artifact(
             if excerpts else client.download_editor_artifact(actor_id, version_id)
         )
         prefix = "legal-excerpts" if excerpts else "legal"
-        filename = f"{prefix}-{version_id}{'.pdf' if mime_type == 'application/pdf' else '.txt'}"
+        filename = f"{prefix}-{version_id}{_artifact_suffix(mime_type)}"
         await update.effective_message.reply_document(
             document=InputFile(BytesIO(content), filename=filename),
             caption=(
-                "Полные выбранные выдержки. Сверьте с PDF до подтверждения проверки."
+                "Полные выбранные выдержки. Сверьте с исходным документом до "
+                "подтверждения проверки."
                 if excerpts
                 else "Сохранённая неизменяемая версия документа для юридической проверки."
             ),

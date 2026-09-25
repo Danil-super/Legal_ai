@@ -17,6 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from legal_core.database import create_engine, create_session_factory
 from legal_core.models import LegalDocument, LegalFragment, LegalSource, LegalVersion
 
+_VERIFIED_COPY_SOURCE_PROFILES: dict[str, tuple[str, str]] = {
+    "dental-legal-corpus.v3": ("consultant-plus", "www.consultant.ru"),
+    "dental-legal-corpus.v4": ("garant", "internet.garant.ru"),
+}
+_UNSAFE_RTF_CONTROLS = (b"\\object", b"\\objdata", b"\\objclass", b"\\objupdate")
+
 
 class CorpusFragment(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -42,6 +48,15 @@ def corpus_fragments_sha256(fragments: list[CorpusFragment]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+def is_safe_rtf(raw_bytes: bytes) -> bool:
+    """Allow only a bare RTF document, never an embedded OLE object."""
+
+    lowered = raw_bytes.lower()
+    return raw_bytes.startswith(b"{\\rtf") and not any(
+        control in lowered for control in _UNSAFE_RTF_CONTROLS
+    )
+
+
 class CorpusManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -49,6 +64,7 @@ class CorpusManifest(BaseModel):
         "dental-legal-corpus.v1",
         "dental-legal-corpus.v2",
         "dental-legal-corpus.v3",
+        "dental-legal-corpus.v4",
     ]
     source_key: str
     source_revision: int = Field(default=1, ge=1)
@@ -127,20 +143,23 @@ class CorpusManifest(BaseModel):
                     f"{self.manifest_version} manifests must declare "
                     f"{expected_trust_level} source trust"
                 )
-            if self.manifest_version == "dental-legal-corpus.v3" and (
-                self.source_key != "consultant-plus"
-                or parsed.hostname != "www.consultant.ru"
-                or parsed_base.hostname != "www.consultant.ru"
-                or self.allowed_hosts != ["www.consultant.ru"]
-            ):
-                raise ValueError(
-                    "v3 verified-copy manifests are restricted to the configured "
-                    "ConsultantPlus host"
-                )
+            verified_copy_profile = _VERIFIED_COPY_SOURCE_PROFILES.get(self.manifest_version)
+            if verified_copy_profile is not None:
+                expected_source_key, expected_host = verified_copy_profile
+                if (
+                    self.source_key != expected_source_key
+                    or parsed.hostname != expected_host
+                    or parsed_base.hostname != expected_host
+                    or self.allowed_hosts != [expected_host]
+                ):
+                    raise ValueError(
+                        f"{self.manifest_version} verified-copy manifests are restricted to "
+                        f"the configured {expected_host} host"
+                    )
             if self.artifact_path is None or self.normalized_text is None:
-                raise ValueError("v2/v3 manifests require artifact_path and normalized_text")
+                raise ValueError("v2/v3/v4 manifests require artifact_path and normalized_text")
             if self.artifact_text is not None:
-                raise ValueError("v2 manifests cannot embed artifact_text")
+                raise ValueError("v2/v3/v4 manifests cannot embed artifact_text")
             if (
                 self.artifact_retrieved_at is None
                 or self.artifact_retrieved_at.utcoffset() is None
@@ -150,10 +169,10 @@ class CorpusManifest(BaseModel):
                 or self.normalization_scope != "FULL_DOCUMENT"
             ):
                 raise ValueError(
-                    "v2/v3 manifests require complete retrieval and normalization metadata"
+                    "v2/v3/v4 manifests require complete retrieval and normalization metadata"
                 )
             if self.artifact_mime_type == "application/pdf" and self.artifact_page_count is None:
-                raise ValueError("v2/v3 PDF manifests require artifact_page_count")
+                raise ValueError("v2/v3/v4 PDF manifests require artifact_page_count")
             if normalized_text_sha256(self.normalized_text) != self.normalized_sha256:
                 raise ValueError("normalized text SHA-256 does not match the manifest")
             if corpus_fragments_sha256(self.fragments) != self.fragments_sha256:
@@ -219,6 +238,8 @@ def load_artifact(manifest: CorpusManifest, manifest_path: Path) -> bytes:
     if manifest.artifact_kind in {"OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"}:
         if manifest.artifact_mime_type == "application/pdf" and not raw_bytes.startswith(b"%PDF-"):
             raise ValueError("legal PDF artifact has an invalid signature")
+        if manifest.artifact_mime_type == "application/rtf" and not is_safe_rtf(raw_bytes):
+            raise ValueError("legal RTF artifact has unsafe embedded object or invalid signature")
         if not raw_bytes:
             raise ValueError("legal raw artifact is empty")
     return raw_bytes
@@ -239,7 +260,12 @@ def load_manifest(path: Path) -> CorpusManifest:
             raise ValueError("selection base manifest does not exist")
         base = load_manifest(base_path)
         if (
-            base.manifest_version not in {"dental-legal-corpus.v2", "dental-legal-corpus.v3"}
+            base.manifest_version
+            not in {
+                "dental-legal-corpus.v2",
+                "dental-legal-corpus.v3",
+                "dental-legal-corpus.v4",
+            }
             or base.artifact_kind not in {"OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"}
         ):
             raise ValueError(

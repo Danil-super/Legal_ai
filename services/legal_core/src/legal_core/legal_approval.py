@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from legal_core.corpus_loader import (
     CorpusFragment,
     corpus_fragments_sha256,
+    is_safe_rtf,
     normalized_text_sha256,
 )
 from legal_core.database import create_engine, create_session_factory
@@ -122,6 +123,8 @@ async def _block_reason(
         return "STORED_RAW_SHA_MISMATCH"
     if version.raw_mime_type == "application/pdf" and not version.raw_bytes.startswith(b"%PDF-"):
         return "INVALID_PDF_SIGNATURE"
+    if version.raw_mime_type == "application/rtf" and not is_safe_rtf(version.raw_bytes):
+        return "INVALID_RTF_SIGNATURE_OR_UNSAFE_CONTENT"
     if version.raw_size_bytes != len(version.raw_bytes):
         return "STORED_RAW_SIZE_MISMATCH"
     if version.artifact_retrieved_at is None:

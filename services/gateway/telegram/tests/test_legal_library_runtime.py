@@ -211,6 +211,37 @@ def test_editor_detail_labels_a_consultant_copy_without_calling_it_an_official_s
     assert any("редакцией" in label for label in labels)
 
 
+def test_editor_detail_labels_a_garant_rtf_copy_and_offers_the_document() -> None:
+    detail = {
+        "versionId": "00000000-0000-0000-0000-000000000002",
+        "documentTitle": "Федеральный закон",
+        "issuer": "Российская Федерация",
+        "officialNumber": "323-ФЗ",
+        "sourceUrl": "https://internet.garant.ru/document/redirect/12191967/0",
+        "approvalState": "REVIEW_REQUIRED",
+        "artifactKind": "THIRD_PARTY_VERIFIED_COPY",
+        "rawMimeType": "application/rtf",
+        "rawSizeBytes": 100,
+        "artifactPageCount": None,
+        "artifactRetrievedAt": "2026-09-25T12:00:00Z",
+        "effectiveFrom": "2011-11-21",
+        "effectiveTo": None,
+        "rawSha256": "a" * 64,
+        "normalizedSha256": "b" * 64,
+        "fragmentsSha256": "c" * 64,
+        "fragmentCount": 1,
+        "approvalEligible": True,
+    }
+
+    text, keyboard = render_editor_version_detail(detail, _new_editor_state(detail))
+
+    assert "Гарант" in text
+    assert "не первичная публикация" in text
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+    assert "🌐 Источник: Гарант" in labels
+    assert "📄 Открыть документ" in labels
+
+
 def test_composed_application_registers_lawyer_library_before_menu_handler(monkeypatch) -> None:
     monkeypatch.delenv("AGENT_ORCHESTRATOR_URL", raising=False)
     monkeypatch.delenv("AGENT_INTERNAL_KEY", raising=False)

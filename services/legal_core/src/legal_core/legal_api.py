@@ -54,7 +54,7 @@ EDITOR_PAGE_SIZE = 10
 EDITOR_FRAGMENT_PAGE_SIZE = 5
 EDITOR_MAX_PAGE = 100
 EDITOR_ARTIFACT_MAX_BYTES = 50_000_000
-EDITOR_ARTIFACT_MIME_TYPES = frozenset({"application/pdf", "text/plain"})
+EDITOR_ARTIFACT_MIME_TYPES = frozenset({"application/pdf", "application/rtf", "text/plain"})
 
 
 def create_legal_router(
@@ -383,7 +383,11 @@ def create_legal_router(
                 code="LEGAL_ARTIFACT_NOT_DELIVERABLE",
                 message="Legal artifact cannot be delivered",
             )
-        suffix = ".pdf" if version.raw_mime_type == "application/pdf" else ".txt"
+        suffix = {
+            "application/pdf": ".pdf",
+            "application/rtf": ".rtf",
+            "text/plain": ".txt",
+        }[version.raw_mime_type]
         return StreamingResponse(
             iter([version.raw_bytes]),
             media_type=version.raw_mime_type,
