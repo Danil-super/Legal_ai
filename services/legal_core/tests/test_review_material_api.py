@@ -136,7 +136,7 @@ def test_material_groups_filter_without_loading_artifact_bytes(monkeypatch) -> N
     editor_id = 8_710_000_000 + uuid4().int % 100_000_000
     _seed_user(editor_id, system_role="LEGAL_EDITOR")
     labour_id, _ = _seed_material("Трудовой кодекс Российской Федерации")
-    other_id, _ = _seed_material("Постановление Пленума Верховного Суда РФ")
+    other_id, _ = _seed_material("Обзор практики рассмотрения судами дел по спорам")
     headers = _headers(editor_id, key=_GATEWAY_KEY)
     with _client() as client:
         response = client.get("/v1/legal/review-materials?group=labour", headers=headers)
@@ -147,6 +147,14 @@ def test_material_groups_filter_without_loading_artifact_bytes(monkeypatch) -> N
         assert str(other_id) not in {item["materialId"] for item in body["items"]}
         assert all(item["groupKey"] == "labour" for item in body["items"])
         assert any(item["key"] == "courts" for item in body["groups"])
+        courts = client.get("/v1/legal/review-materials?group=courts", headers=headers).json()
+        court_ids = {item["materialId"] for item in courts["items"]}
+        for page in range(2, (courts["totalItems"] + 9) // 10 + 1):
+            more = client.get(
+                f"/v1/legal/review-materials?group=courts&page={page}", headers=headers
+            ).json()
+            court_ids.update(item["materialId"] for item in more["items"])
+        assert str(other_id) in court_ids
         invalid = client.get("/v1/legal/review-materials?group=unknown", headers=headers)
         assert invalid.status_code == 422
         assert client.get("/v1/legal/review-materials?group=labour").status_code in {403, 422}
