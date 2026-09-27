@@ -4,10 +4,14 @@ import hashlib
 import json
 from datetime import date
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from legal_core.contracts import ContractModel
+from legal_core.models import LegalMaterialPreparation, LegalReviewMaterial
 
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 EvidenceLocator = Annotated[str, Field(min_length=3, max_length=1000)]
@@ -127,3 +131,36 @@ class MaterialPreparationInput(ContractModel):
         return hashlib.sha256(json.dumps(
             self.metadata(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode()).hexdigest()
+
+
+async def store_preparation(
+    session: AsyncSession, material_id: UUID, payload: MaterialPreparationInput,
+) -> LegalMaterialPreparation:
+    """Append in a caller-owned transaction; replay never replaces a newer revision."""
+    original = (await session.execute(
+        select(LegalReviewMaterial.raw_sha256, LegalReviewMaterial.kind)
+        .where(LegalReviewMaterial.id == material_id).with_for_update()
+    )).one_or_none()
+    if original is None or original.raw_sha256 != payload.raw_sha256:
+        raise ValueError("preparation does not match the original artifact")
+    if (original.kind == "CLINICAL_REFERENCE") != (payload.kind == "CLINICAL_REFERENCE"):
+        raise ValueError("preparation kind conflicts with original artifact")
+    digest = payload.digest()
+    existing = await session.scalar(select(LegalMaterialPreparation).where(
+        LegalMaterialPreparation.material_id == material_id,
+        LegalMaterialPreparation.preparation_sha256 == digest,
+    ))
+    if existing is not None:
+        return existing
+    revision = await session.scalar(select(func.max(LegalMaterialPreparation.revision)).where(
+        LegalMaterialPreparation.material_id == material_id,
+    ))
+    prepared = LegalMaterialPreparation(
+        material_id=material_id, raw_sha256=payload.raw_sha256, revision=(revision or 0) + 1,
+        preparation_sha256=digest, title=payload.title, kind=payload.kind,
+        group_key=payload.group_key, metadata_json=payload.metadata(),
+        normalized_text=payload.normalized_text,
+    )
+    session.add(prepared)
+    await session.flush()
+    return prepared

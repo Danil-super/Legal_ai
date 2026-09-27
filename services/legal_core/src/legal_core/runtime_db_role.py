@@ -114,6 +114,15 @@ def provision_runtime_role() -> str:
         cursor.execute(
             sql.SQL("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {}").format(role)
         )
+        # New preparation ledgers are append-only even after broad legacy grants.
+        # Check existence because provisioning also runs before migrations.
+        for ledger in ("legal_material_preparations",):
+            cursor.execute("SELECT to_regclass(%s)", (f"public.{ledger}",))
+            found = cursor.fetchone()
+            if found is not None and found[0] is not None:
+                cursor.execute(sql.SQL("REVOKE UPDATE, DELETE ON TABLE {} FROM {}").format(
+                    sql.Identifier(ledger), role,
+                ))
 
     return app_user
 
