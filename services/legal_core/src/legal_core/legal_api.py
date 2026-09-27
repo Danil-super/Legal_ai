@@ -21,6 +21,8 @@ from legal_core.api_contracts import (
     LegalEditorCandidateSummary,
     LegalEditorFragment,
     LegalEditorFragmentPage,
+    LegalEditorGroupItem,
+    LegalEditorGroupPage,
     LegalEditorReviewMaterialGroup,
     LegalEditorReviewMaterialPage,
     LegalEditorReviewMaterialSummary,
@@ -28,6 +30,9 @@ from legal_core.api_contracts import (
     LegalEditorVersionDetail,
     LegalFragmentResponse,
     LegalFragmentSearchResponse,
+    LegalGroupApprovalRequest,
+    LegalGroupApprovalResponse,
+    LegalGroupPreview,
     LegalLibraryDocumentResponse,
     LegalLibraryResponse,
 )
@@ -36,6 +41,8 @@ from legal_core.case_api import (
     TelegramUserId,
     resolve_actor,
 )
+from legal_core.editor_groups import EDITOR_GROUP_TITLES, editor_group_items
+from legal_core.group_approval import approve_group, group_preview
 from legal_core.legal_approval import (
     ApprovalAttestation,
     LegalApprovalRejected,
@@ -305,6 +312,67 @@ def create_legal_router(
             totalItems=total_items,
             items=items,
         )
+
+    @router.get("/editor/groups", response_model=LegalEditorGroupPage)
+    @router.get("/editor/groups/{group}", response_model=LegalEditorGroupPage)
+    async def list_editor_groups(
+        telegram_user_id: TelegramUserId,
+        session: Session,
+        group: ReviewGroup | None = None,
+        page: EditorPage = 1,
+        gateway_key: EditorGatewayKey = None,
+    ) -> LegalEditorGroupPage:
+        await require_platform_legal_editor(
+            session, telegram_user_id=telegram_user_id, gateway_key=gateway_key
+        )
+        # Old "other" callbacks remain navigable without an eighth top-level group.
+        if group == "other":
+            group = "general"
+        items = editor_group_items()
+        count_rows = (await session.execute(
+            select(items.c.group_key, func.count()).group_by(items.c.group_key)
+        )).all()
+        counts = {key: count for key, count in count_rows}
+        rows = [] if group is None else (await session.execute(
+            select(items).where(items.c.group_key == group)
+            .order_by(items.c.title, items.c.version_id, items.c.material_id)
+            .offset((page - 1) * EDITOR_PAGE_SIZE).limit(EDITOR_PAGE_SIZE)
+        )).mappings().all()
+        return LegalEditorGroupPage(
+            page=page, totalItems=counts.get(group, 0) if group else sum(counts.values()),
+            selectedGroup=group,
+            groups=[LegalEditorReviewMaterialGroup(
+                key=cast(ReviewGroup, key), title=title, totalItems=counts.get(key, 0)
+            ) for key, title in EDITOR_GROUP_TITLES.items()],
+            items=[LegalEditorGroupItem(
+                materialId=row["material_id"], versionId=row["version_id"], title=row["title"],
+                kind=row["kind"], reviewState=row["review_state"], groupKey=row["group_key"],
+            ) for row in rows],
+        )
+
+    @router.get("/editor/groups/{group}/approval-preview", response_model=LegalGroupPreview)
+    async def preview_editor_group(
+        group: ReviewGroup, telegram_user_id: TelegramUserId, session: Session,
+        gateway_key: EditorGatewayKey = None,
+    ) -> LegalGroupPreview:
+        await require_platform_legal_editor(
+            session, telegram_user_id=telegram_user_id, gateway_key=gateway_key
+        )
+        return await group_preview(session, group)
+
+    @router.post(
+        "/editor/groups/{group}/approval-events", response_model=LegalGroupApprovalResponse
+    )
+    async def approve_editor_group(
+        group: ReviewGroup, payload: LegalGroupApprovalRequest, telegram_user_id: TelegramUserId,
+        idempotency_key: EditorIdempotencyKey, session: Session,
+        gateway_key: EditorGatewayKey = None,
+    ) -> LegalGroupApprovalResponse:
+        editor = await require_platform_legal_editor(
+            session, telegram_user_id=telegram_user_id, gateway_key=gateway_key
+        )
+        return await approve_group(session, group=group, payload=payload, editor=editor,
+                                   idempotency_key=idempotency_key)
 
     @router.get("/review-materials", response_model=LegalEditorReviewMaterialPage)
     async def list_editor_review_materials(

@@ -4,11 +4,20 @@
 
 - [x] Grouped editor inbox with counts, filters, pagination and preserved originals.
 - [x] Retry-safe import accepts safe files with explicitly unresolved provenance.
-- [ ] Deploy and import all 58 files; verify every stored/downloaded checksum.
-  Blocked: GitHub Actions run 36169017320 cannot start due to account payments/spending limit.
-  Actual 58-file import, retry and all artifact downloads verified in isolated PostgreSQL.
+- [x] Deploy and import all 58 files; verify every stored/downloaded checksum.
+  Production import completed on revision 2cd32d6: all 58 originals, retry without
+  duplicates and every downloaded checksum verified (2026-09-25).
 - [ ] Complete metadata preparation and explicit human approval for all legal copies.
   Receipt, grouping and file download are not normative approval.
+
+## Simplified groups and human batch approval, 2026-09-27
+
+- [x] Seven-group landing page without a separate six-document queue or mixed file list.
+- [x] Prepared versions and incoming originals share the same subject groups.
+- [x] Explicit ready-subset confirmation with immutable individual audit and safe retry.
+- [x] Authorization, stale membership, concurrent confirmations and atomic rollback tests.
+- [ ] Full quality/security gates and GitHub deployment.
+- [ ] Read-only production verification; do not approve actual laws during smoke tests.
 
 ## Task 0.1: Зафиксировать bootstrap-контракт
 

@@ -3,6 +3,7 @@
 from typing import Literal
 
 from sqlalchemy import case, or_
+from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql.elements import ColumnElement
 
 from legal_core.models import LegalReviewMaterial
@@ -36,10 +37,17 @@ _RULES = (
 
 
 def material_group_expression() -> ColumnElement[str]:
+    return review_group_expression(LegalReviewMaterial.title, LegalReviewMaterial.kind)
+
+
+def review_group_expression(
+    title: ColumnElement[str] | InstrumentedAttribute[str],
+    kind: ColumnElement[str] | InstrumentedAttribute[str],
+) -> ColumnElement[str]:
     return case(
-        (LegalReviewMaterial.kind == "CLINICAL_REFERENCE", "clinical"),
+        (kind == "CLINICAL_REFERENCE", "clinical"),
         *[
-            (or_(*(LegalReviewMaterial.title.ilike(pattern) for pattern in patterns)), key)
+            (or_(*(title.ilike(pattern) for pattern in patterns)), key)
             for key, patterns in _RULES
         ],
         else_="other",

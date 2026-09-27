@@ -398,6 +398,26 @@ class LegalEditorReviewMaterialPage(ContractModel):
     groups: list[LegalEditorReviewMaterialGroup] = Field(default_factory=list, max_length=8)
 
 
+class LegalEditorGroupItem(ContractModel):
+    material_id: UUID | None = Field(alias="materialId")
+    version_id: UUID | None = Field(alias="versionId")
+    title: str = Field(min_length=1, max_length=2_000)
+    kind: Literal["LEGAL_COPY", "CLINICAL_REFERENCE"]
+    review_state: Literal["METADATA_REQUIRED", "REVIEW_REQUIRED", "APPROVED", "BLOCKED"] = Field(
+        alias="reviewState"
+    )
+    group_key: ReviewGroup = Field(alias="groupKey")
+
+
+class LegalEditorGroupPage(ContractModel):
+    page: int = Field(ge=1, le=100)
+    page_size: Literal[10] = Field(default=10, alias="pageSize")
+    total_items: int = Field(alias="totalItems", ge=0)
+    selected_group: ReviewGroup | None = Field(default=None, alias="selectedGroup")
+    groups: list[LegalEditorReviewMaterialGroup] = Field(max_length=7)
+    items: list[LegalEditorGroupItem] = Field(default_factory=list, max_length=10)
+
+
 class LegalEditorVersionDetail(ContractModel):
     document_id: UUID = Field(alias="documentId")
     version_id: UUID = Field(alias="versionId")
@@ -460,6 +480,41 @@ class LegalEditorApprovalResponse(ContractModel):
     version_id: UUID = Field(alias="versionId")
     approval_state: Literal["APPROVED"] = Field(alias="approvalState")
     approved_at: datetime = Field(alias="approvedAt")
+
+
+class LegalGroupCandidate(ContractModel):
+    version_id: UUID = Field(alias="versionId")
+    title: str = Field(max_length=2_000)
+    effective_from: date = Field(alias="effectiveFrom")
+    effective_to: date | None = Field(alias="effectiveTo")
+
+
+class LegalGroupBlocked(ContractModel):
+    title: str = Field(max_length=2_000)
+    reason_code: str = Field(alias="reasonCode", max_length=100)
+
+
+class LegalGroupPreview(ContractModel):
+    group: ReviewGroup
+    snapshot: str = Field(pattern=r"^[0-9a-f]{64}$")
+    ready: list[LegalGroupCandidate] = Field(max_length=200)
+    blocked: list[LegalGroupBlocked] = Field(max_length=200)
+    already_approved: int = Field(alias="alreadyApproved", ge=0)
+
+
+class LegalGroupApprovalRequest(ContractModel):
+    expected_snapshot: str = Field(alias="expectedSnapshot", pattern=r"^[0-9a-f]{64}$")
+    version_ids: list[UUID] = Field(alias="versionIds", min_length=1, max_length=200)
+    official_text_compared: Literal[True] = Field(alias="officialTextCompared")
+    artifact_is_complete: Literal[True] = Field(alias="artifactIsComplete")
+    effective_dates_verified: Literal[True] = Field(alias="effectiveDatesVerified")
+    fragments_verified: Literal[True] = Field(alias="fragmentsVerified")
+
+
+class LegalGroupApprovalResponse(ContractModel):
+    batch_id: UUID = Field(alias="batchId")
+    approved_count: int = Field(alias="approvedCount", ge=1, le=200)
+    version_ids: list[UUID] = Field(alias="versionIds", min_length=1, max_length=200)
 
 
 class FactInput(ContractModel):
