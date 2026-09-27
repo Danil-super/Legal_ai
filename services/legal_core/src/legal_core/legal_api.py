@@ -35,6 +35,7 @@ from legal_core.api_contracts import (
     LegalGroupPreview,
     LegalLibraryDocumentResponse,
     LegalLibraryResponse,
+    LegalMaterialPreparationDetail,
 )
 from legal_core.case_api import (
     ApiError,
@@ -50,10 +51,12 @@ from legal_core.legal_approval import (
     legal_approval_preflight_reason,
 )
 from legal_core.legal_retrieval import ApprovedLegalCorpusRepository
+from legal_core.material_preparation import MaterialGroup, MaterialKind, PreparedPart
 from legal_core.models import (
     LegalApprovalEvent,
     LegalDocument,
     LegalFragment,
+    LegalMaterialPreparation,
     LegalReviewMaterial,
     LegalSource,
     LegalVersion,
@@ -347,6 +350,7 @@ def create_legal_router(
             items=[LegalEditorGroupItem(
                 materialId=row["material_id"], versionId=row["version_id"], title=row["title"],
                 kind=row["kind"], reviewState=row["review_state"], groupKey=row["group_key"],
+                preparationId=row["preparation_id"], preparationKind=row["preparation_kind"],
             ) for row in rows],
         )
 
@@ -448,6 +452,37 @@ def create_legal_router(
                 )
                 for material in materials
             ],
+        )
+
+    @router.get("/review-materials/{material_id}/preparation",
+                response_model=LegalMaterialPreparationDetail)
+    async def editor_material_preparation(
+        material_id: UUID, telegram_user_id: TelegramUserId, session: Session,
+        gateway_key: EditorGatewayKey = None,
+    ) -> LegalMaterialPreparationDetail:
+        await require_platform_legal_editor(
+            session, telegram_user_id=telegram_user_id, gateway_key=gateway_key,
+        )
+        preparation = await session.scalar(select(LegalMaterialPreparation).options(
+            defer(LegalMaterialPreparation.normalized_text)
+        ).where(LegalMaterialPreparation.material_id == material_id)
+          .order_by(LegalMaterialPreparation.revision.desc()).limit(1))
+        if preparation is None:
+            raise ApiError(status_code=404, code="MATERIAL_PREPARATION_NOT_FOUND",
+                           message="Material preparation not found")
+        metadata = preparation.metadata_json
+        parts = [PreparedPart.model_validate(part) for part in metadata["parts"]]
+        missing = [f"{part.part_key}:{field}" for part in parts for field in part.missing_fields()]
+        if preparation.kind == "NORMATIVE" and not parts:
+            missing.append("intended_parts")
+        return LegalMaterialPreparationDetail(
+            materialId=material_id, preparationId=preparation.id, revision=preparation.revision,
+            title=preparation.title, kind=cast(MaterialKind, preparation.kind),
+            groupKey=cast(MaterialGroup, preparation.group_key), rawSha256=preparation.raw_sha256,
+            preparationSha256=preparation.preparation_sha256,
+            referenceYear=metadata["reference_year"], sourceUrl=metadata["source_url"],
+            sourceLocator=metadata["source_locator"], extractionScope=metadata["extraction_scope"],
+            limitations=metadata["limitations"], missingFields=missing, parts=parts,
         )
 
     @router.get("/review-materials/{material_id}/artifact")

@@ -148,3 +148,96 @@ Implementation: additive grouped-list and batch-preview/confirm contracts, exist
 per-version approval guards and immutable ledger; see ADR-0045. No schema migration
 or preparation of unresolved source metadata is included. Deployment status belongs
 in tasks/todo.md, not in this specification.
+
+## Increment 3: prepare every material and separate reference review
+
+### Status, objective and assumptions
+
+The owner explicitly approved separate confirmation of normative versions and
+reference materials within the same seven groups (2026-09-27). This detailed
+increment and the need for additive preparation/reference-review storage were
+**approved by the owner on 2026-09-27**. This is permission to design and implement,
+not a statement that a migration has run or the feature is deployed.
+
+Module: existing `legal-corpus`, consumed by existing `telegram-gateway`; no new
+capability or expansion of retrieval/medical-advice permissions. Prepare all 58
+supplied originals plus their relationship to the six existing prepared versions.
+The technical audit is `docs/legal-review/package-preparation-2026-09-27.md`.
+
+Assumptions: all originals remain available; the lawyer reviews groups without a
+per-file confirmation sequence; absent metadata is shown as unknown, not invented.
+Clinical PDF review and blank-form review acknowledge the identified original;
+they do not certify legal effect, exact edition dates or full text extraction.
+
+### User-visible acceptance contract
+
+1. Keep exactly seven landing-page groups. Inside a group show understandable
+   titles, original downloads, preparation progress and the unresolved fields.
+   Do not add another top-level queue or hide incomplete materials.
+2. Where applicable, show two distinct actions: approve the explicitly listed
+   ready normative versions; confirm review of the explicitly listed reference
+   originals. The clinical group has only the second action. Form 043/у stays in
+   healthcare as a reference, not a fabricated normative version.
+3. Both actions display the exact count and members, require an explicit human
+   attestation, preserve back/cancel and bind confirmation to the displayed
+   immutable snapshot. New files, changed metadata or changed text require a new
+   preview. Retries are idempotent; stale previews fail without partial approval.
+4. Record reference review separately with actor/time, original SHA-256 and
+   preparation identity. It must never set `LegalVersion.APPROVED`, approve a
+   source or make a clinical text/blank form retrievable as legal evidence.
+5. Prepare normative source identity, dates, original/normalised hashes, full
+   scoped text and source-linked fragments using existing corpus guards. Unknown
+   required dates remain blocked pending evidenced metadata or editor input.
+   Successful extraction alone never means ready or approved.
+6. Associate every source artifact with all intended canonical documents/parts.
+   GК/NК bundle preparation is complete only when every intended part is accounted
+   for; the shared raw checksum must not hide unprepared parts. Different copies
+   of the same act retain provenance without misleading duplicate act cards.
+7. A group is complete only when all its intended normative versions have explicit
+   human approval and all references have separate human review, with no hidden
+   preparation blockers. Report partial completion accurately.
+
+### Structure, persistence and style
+
+Preserve `review_materials.py` receipt semantics and original immutable rows.
+Use additive, versioned preparation/reference-review persistence, subject to schema
+approval and Alembic migration; exact tables/API schema belong in the reviewed
+technical plan and a numbered ADR. Reuse corpus_loader/legal_approval guards for
+norms and the current editor role, gateway authentication and group navigation.
+No production LibreOffice/OCR dependency is proposed: conversion is offline;
+server ingestion validates bounded, hash-bound prepared inputs.
+
+Source: `services/legal_core/src/legal_core/`; Telegram rendering:
+`services/gateway/telegram/src/`; tests remain in each service's existing tests.
+Keep strict types, explicit immutable inputs and fail-closed errors, for example:
+
+```python
+if preparation.raw_sha256 != material.raw_sha256:
+    raise ValueError("preparation does not match the original artifact")
+```
+
+### Verification and boundaries
+
+Use the full commands above, disposable PostgreSQL migration/integration tests,
+and synthetic fixtures only. Add regressions for heading-vs-cross-reference URLs,
+RTF unsafe content, missing/contradictory dates, repeated act numbers in different
+years, multi-part artifacts, partial extraction, unchanged receipt retries,
+reference-vs-normative confirmation, role negatives, stale snapshots, concurrent
+reviewers, replay, rollback and exclusion of reference material from retrieval.
+
+Verify the actual private package separately: all 58 originals accounted for,
+checksums preserved, all pages/items reachable, no incidental legal approval.
+Never claim all seven groups ready while even one required normative field or
+part is unresolved. Preparing reference cards does not imply full PDF OCR.
+
+- Always: preserve originals, show exact scope and blockers, retain audit without
+  raw text/PII, keep human approval and existing retrieval/date gates.
+- Ask first: additive DB schema/migrations, new dependencies/CI changes, new trusted
+  sources, changes to permissions or evidence policy; deployment after checks.
+- Never: auto-approve, invent edition/effective/publication dates, overwrite receipt
+  records, hide incomplete code parts, enable medical prescriptions, commit raw
+  supplied documents or unrelated local files.
+
+Review decision: the owner accepted this preparation/confirmation contract and
+additive storage. Detailed implementation plan/tasks follow their own review;
+approval of the specification is not a production mutation or legal approval.

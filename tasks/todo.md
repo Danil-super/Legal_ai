@@ -1,5 +1,173 @@
 # Dental Legal AI task list
 
+## Complete package preparation: discovery, 2026-09-27
+
+- [x] Owner confirmed separate normative/reference confirmation within seven groups.
+- [x] Inventory all 58 originals; extract all 51 RTF; inspect all seven PDF covers
+  and two additional pages with missing text layers. Record limitations and all
+  materials in `docs/legal-review/package-preparation-2026-09-27.md`.
+- [x] Review increment 3 in `SPEC-grouped-review-materials.md`, including
+  additive storage for preparation and separate human reference-review events.
+- [x] Owner approved the implementation plan and requested continuation.
+- [x] Owner approved tasks P1–P11 for implementation on 2026-09-27.
+- [ ] Prepare, test and deploy the complete workflow; do not equate this local
+  discovery record with production readiness or human legal approval.
+
+## Complete package preparation: implementation tasks
+
+Status: owner-approved task breakdown; no legal approval/deployment implied.
+Paths below are relative to `services/legal_core/` unless stated otherwise.
+Every code task follows red → green tests; only synthetic fixtures enter git.
+
+### P1. Validate an immutable preparation input
+
+- [x] Acceptance: strictly typed, bounded original/hash/title/kind/group, source
+  evidence, extraction limitations and intended parts; unknown dates stay null.
+  Reference inputs cannot claim normative readiness or approval.
+- Verify: `.venv/bin/python -m pytest services/legal_core/tests/test_material_preparation.py`.
+- Files (2): `src/legal_core/material_preparation.py`, `tests/test_material_preparation.py`.
+- Dependencies: approved tasks; size S.
+- Evidence: 13 focused tests; full local suite 980 passed / 91 dependency-gated
+  skips; focused Ruff and mypy passed (2026-09-27). No deployed behavior yet.
+
+### P2. Persist preparations without altering receipts
+
+- [x] Acceptance: additive model and Alembic migration, immutable revisions with
+  material locking and checksum-bound retry; original receipt import unchanged.
+  Runtime grants exclude update/delete of preparation records.
+- Verify: disposable PostgreSQL migration and focused persistence tests;
+  `.venv/bin/python -m pytest services/legal_core/tests/test_material_preparation_persistence.py services/legal_core/tests/test_review_material_persistence.py`.
+- Files (5): `src/legal_core/models.py`, new migration,
+  `src/legal_core/runtime_db_role.py`, `src/legal_core/material_preparation.py`,
+  `tests/test_material_preparation_persistence.py`.
+- Dependencies: P1; size M.
+- Evidence: 467 Core/PostgreSQL tests passed, one MinIO-only test skipped;
+  separate disposable database upgrade/down/upgrade passed; Ruff/mypy passed.
+
+### P3. Import the private preparation package safely
+
+- [x] Acceptance: explicit bounded CLI input, all originals accounted for, repeat
+  run creates no duplicates, paths/checksums verified, missing metadata retained;
+  no LegalVersion or approval created by this input path.
+- Verify: `.venv/bin/python -m pytest services/legal_core/tests/test_preparation_import.py`;
+  separate read-only validation of all 58 private originals and diagnostic output
+  containing counts/hashes/reasons only, never full document contents.
+- Files (3): `src/legal_core/preparation_import.py`, `tests/test_preparation_import.py`,
+  `docs/legal-review/package-preparation-2026-09-27.md` (repository-root path).
+- Dependencies: P2; size M.
+- Evidence: 7 input/atomic-import tests passed; actual 58-file preparation package
+  validated locally (50 legal originals / 54 intended parts and 8 references).
+  All extracted texts remain PARTIAL until completeness is independently checked.
+
+### P4. Expose preparation cards read-only
+
+- [x] Acceptance: additive editor API returns current title/classification/known
+  metadata/missing fields and original download identity. Existing authorization
+  enforced; metadata queries do not fetch full text/raw bytes.
+- Verify: `.venv/bin/python -m pytest services/legal_core/tests/test_review_material_api.py services/legal_core/tests/test_editor_groups_api.py`.
+- Files (5): `src/legal_core/legal_api.py`, `src/legal_core/api_contracts.py`,
+  `src/legal_core/editor_groups.py`, `tests/test_review_material_api.py`,
+  `tests/test_editor_groups_api.py`.
+- Dependencies: P3; size M.
+- Evidence: authenticated Core API and seven-group Telegram cards implemented;
+  original download and back navigation retained. Focused Core/gateway tests,
+  package validation, Ruff and mypy passed on 2026-09-27.
+
+### Checkpoint A: all originals have preparation cards
+
+- [x] Original 58 checksums and receipt retries preserved; cards enumerate actual
+  missing fields and extraction limitations; no accidental normative promotion.
+- [x] Focused tests, Ruff and mypy pass; review results before next slice.
+
+### P5. Persist separate reference-review events
+
+- [ ] Acceptance: separate append-only actor/time/preparation/hash/batch ledger,
+  uniqueness and retry constraints; no LegalVersion/source changes; actor resolved
+  by existing server-side LEGAL_EDITOR authorization.
+- Verify: `.venv/bin/python -m pytest services/legal_core/tests/test_reference_review_persistence.py` on disposable PostgreSQL.
+- Files (5): `src/legal_core/models.py`, new migration,
+  `src/legal_core/runtime_db_role.py`, `src/legal_core/reference_review.py`,
+  `tests/test_reference_review_persistence.py`.
+- Dependencies: P2, checkpoint A; size M.
+
+### P6. Confirm an exact reference group through the API
+
+- [ ] Acceptance: preview exact ready/blocked/already-reviewed originals; explicit
+  attestation and stable idempotency key; stale/concurrent changes never cause
+  partial review; clinical PDFs and form remain excluded from legal retrieval.
+- Verify: `.venv/bin/python -m pytest services/legal_core/tests/test_reference_review_api.py`;
+  include authorization, replay/payload mismatch, concurrency, rollback and retrieval negatives.
+- Files (5): `src/legal_core/reference_review.py`, `src/legal_core/api_contracts.py`,
+  `src/legal_core/legal_api.py`, `tests/test_reference_review_api.py`,
+  `docs/adr/0046-material-preparation-and-reference-review.md` (root-relative).
+- Dependencies: P5; size M.
+
+### P7. Present reference confirmation and preparation cards in Telegram
+
+- [ ] Acceptance: same seven roots, clear titles and original downloads, back/cancel
+  throughout, distinct norm/reference buttons with exact counts; stable retry key
+  after timeout; absent publication/cover dates displayed honestly.
+- Verify: `.venv/bin/python -m pytest services/gateway/telegram/tests/test_legal_library_runtime.py`;
+  synthetic Core-response rendering and callback flow, no real Telegram sends.
+- Files (2, root-relative): `services/gateway/telegram/src/telegram_gateway/legal_library_runtime.py`,
+  `services/gateway/telegram/tests/test_legal_library_runtime.py`.
+- Dependencies: P4, P6; size S.
+
+### Checkpoint B: reference review works without normative promotion
+
+- [ ] End-to-end synthetic group review is durable, idempotent and auditable;
+  old legal-approval flows still work and reference material is not legal evidence.
+- [ ] API and gateway regression suites pass; review results before next slice.
+
+### P8. Prepare complete normative candidates and document parts
+
+- [ ] Acceptance: source URL bound to matching heading, full canonical identity,
+  evidenced edition/publication/effective dates, source-linked fragments and
+  scoped normalized hashes. Code-part boundaries cannot match repeal notices;
+  missing evidence yields an explicit blocker, never guessed metadata.
+- Verify: `.venv/bin/python -m pytest services/legal_core/tests/test_normative_preparation.py`;
+  separately reconcile all 50 private legal originals with current canonical acts.
+- Files (4): `src/legal_core/normative_preparation.py`,
+  `tests/test_normative_preparation.py`, `src/legal_core/material_preparation.py`,
+  `docs/legal-review/package-preparation-2026-09-27.md` (root-relative).
+- Dependencies: P3, checkpoint B; size M.
+
+### P9. Bind every prepared part to a guarded corpus version
+
+- [ ] Acceptance: additive immutable part/version associations, exact-original and
+  canonical/text checks; existing corpus loader guards reused; one prepared part
+  never hides the other parts; no automatic APPROVED state.
+- Verify: `.venv/bin/python -m pytest services/legal_core/tests/test_prepared_material_versions.py`;
+  disposable PostgreSQL, failed association rollback and repeated import.
+- Files (5): `src/legal_core/models.py`, new migration,
+  `src/legal_core/runtime_db_role.py`, `src/legal_core/normative_preparation.py`,
+  `tests/test_prepared_material_versions.py`.
+- Dependencies: P8; size M.
+
+### P10. Reconcile unified group completeness
+
+- [ ] Acceptance: original downloads retained; canonical alternate copies linked;
+  all-part coverage replaces checksum-only suppression for prepared bundles;
+  mixed reference/legal progress and blockers determine accurate group completion.
+- Verify: `.venv/bin/python -m pytest services/legal_core/tests/test_editor_groups_api.py services/legal_core/tests/test_reference_review_api.py`.
+- Files (5): `src/legal_core/editor_groups.py`, `src/legal_core/group_approval.py`,
+  `src/legal_core/reference_review.py`, `tests/test_editor_groups_api.py`,
+  `tests/test_reference_review_api.py`.
+- Dependencies: P9, P7; size M.
+
+### Checkpoint C / P11. Package verification and release
+
+- [ ] Full `.venv/bin/python -m pytest`, Ruff, mypy for Core/gateway, Compose config,
+  disposable PostgreSQL/MinIO integration and existing security gates pass.
+- [ ] All 58 originals/parts accounted for; exact ready/blocked/reviewed counts
+  reported. Unresolved required dates/text coverage prevent a false all-ready result.
+- [ ] Human release review → existing GitHub deployment → idempotent preparation
+  import → read-only production health/artifact/group/preview verification.
+  Never submit a lawyer approval as a smoke check or drop ledgers during rollback.
+- Files (up to 3, root-relative): `tasks/todo.md`, package verification report,
+  operator instructions in existing `docs/` conventions; no CI redesign.
+- Dependencies: P10; size M.
+
 ## Attorney package review, 2026-09-25
 
 - [x] Grouped editor inbox with counts, filters, pagination and preserved originals.

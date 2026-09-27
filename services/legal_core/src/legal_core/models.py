@@ -677,6 +677,7 @@ class LegalReviewMaterial(Base):
     __tablename__ = "legal_review_materials"
     __table_args__ = (
         UniqueConstraint("package_key", "raw_sha256"),
+        UniqueConstraint("id", "raw_sha256", name="uq_review_material_id_sha"),
         CheckConstraint(
             "kind IN ('LEGAL_COPY', 'CLINICAL_REFERENCE')",
             name="ck_legal_review_materials_kind",
@@ -713,6 +714,45 @@ class LegalReviewMaterial(Base):
     raw_bytes: Mapped[bytes] = mapped_column(LargeBinary)
     raw_size_bytes: Mapped[int] = mapped_column(BigInteger)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
+class LegalMaterialPreparation(Base):
+    """Append-only metadata/extraction revisions; never legal evidence themselves."""
+
+    __tablename__ = "legal_material_preparations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["material_id", "raw_sha256"],
+            ["legal_review_materials.id", "legal_review_materials.raw_sha256"],
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("material_id", "revision"),
+        UniqueConstraint("material_id", "preparation_sha256"),
+        CheckConstraint("revision > 0"),
+        CheckConstraint("kind IN ('NORMATIVE', 'CLINICAL_REFERENCE', 'REFERENCE_FORM')"),
+        CheckConstraint("group_key IN ('clinical','labour','courts','privacy',"
+                        "'licensing','healthcare','general')"),
+        CheckConstraint("preparation_sha256 = legal_regression_result_sha256(metadata_json)"),
+        CheckConstraint(
+            "(metadata_json->>'normalized_sha256' IS NULL AND normalized_text = '') OR "
+            "(metadata_json->>'normalized_sha256' IS NOT NULL AND "
+            "metadata_json->>'normalized_sha256' = "
+            "encode(digest(convert_to(normalized_text, 'UTF8'), 'sha256'), 'hex'))"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUID_PK, primary_key=True,
+                                   server_default=text("gen_random_uuid()"))
+    material_id: Mapped[UUID] = mapped_column(UUID_PK)
+    raw_sha256: Mapped[str] = mapped_column(String(64))
+    revision: Mapped[int] = mapped_column(Integer)
+    preparation_sha256: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(1000))
+    kind: Mapped[str] = mapped_column(String(30))
+    group_key: Mapped[str] = mapped_column(String(30))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    normalized_text: Mapped[str] = mapped_column(Text, server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 

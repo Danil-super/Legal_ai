@@ -5,10 +5,26 @@ from datetime import date
 from sqlalchemy import Uuid, case, cast, exists, func, literal, null, or_, select, union_all
 from sqlalchemy.sql.selectable import Subquery
 
-from legal_core.models import LegalDocument, LegalReviewMaterial, LegalVersion
+from legal_core.models import (
+    LegalDocument,
+    LegalMaterialPreparation,
+    LegalReviewMaterial,
+    LegalVersion,
+)
 from legal_core.review_material_groups import GROUP_TITLES, review_group_expression
 
 EDITOR_GROUP_TITLES = {key: title for key, title in GROUP_TITLES.items() if key != "other"}
+
+
+def current_preparations() -> Subquery:
+    ranked = select(
+        LegalMaterialPreparation.id, LegalMaterialPreparation.material_id,
+        LegalMaterialPreparation.title, LegalMaterialPreparation.kind,
+        LegalMaterialPreparation.group_key, LegalMaterialPreparation.preparation_sha256,
+        func.row_number().over(partition_by=LegalMaterialPreparation.material_id,
+                               order_by=LegalMaterialPreparation.revision.desc()).label("rank"),
+    ).subquery()
+    return select(ranked).where(ranked.c.rank == 1).subquery("current_preparations")
 
 
 def editor_group_items() -> Subquery:
@@ -43,16 +59,23 @@ def editor_group_items() -> Subquery:
         (versions.c.official_number == "152-ФЗ", "privacy"),
         else_=version_group,
     )
+    preparations = current_preparations()
     originals = select(
         LegalReviewMaterial.id.label("material_id"),
         cast(null(), Uuid).label("version_id"),
-        LegalReviewMaterial.title,
+        func.coalesce(preparations.c.title, LegalReviewMaterial.title).label("title"),
         LegalReviewMaterial.kind,
         LegalReviewMaterial.review_state.label("review_state"),
-        case((material_group == "other", "general"), else_=material_group).label("group_key"),
+        func.coalesce(preparations.c.group_key,
+                      case((material_group == "other", "general"), else_=material_group)
+                      ).label("group_key"),
         LegalReviewMaterial.raw_sha256,
-    ).where(
+        preparations.c.id.label("preparation_id"),
+        preparations.c.kind.label("preparation_kind"),
+        preparations.c.preparation_sha256,
+    ).outerjoin(preparations, preparations.c.material_id == LegalReviewMaterial.id).where(
         or_(
+            preparations.c.id.is_not(None),
             LegalReviewMaterial.kind == "CLINICAL_REFERENCE",
             ~exists(
                 select(versions.c.id).where(versions.c.raw_sha256 == LegalReviewMaterial.raw_sha256)
@@ -67,5 +90,8 @@ def editor_group_items() -> Subquery:
         versions.c.approval_state.label("review_state"),
         case((version_group == "other", "general"), else_=version_group).label("group_key"),
         versions.c.raw_sha256,
+        cast(null(), Uuid).label("preparation_id"),
+        null().label("preparation_kind"),
+        null().label("preparation_sha256"),
     )
     return union_all(originals, prepared).subquery("editor_group_items")

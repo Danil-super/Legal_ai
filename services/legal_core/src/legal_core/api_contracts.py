@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import Field, field_validator, model_validator
 
 from legal_core.contracts import CaseStatus, ContractModel, FactKey, MissingFact
+from legal_core.material_preparation import MaterialGroup, MaterialKind, PreparedPart
 from legal_core.review_material_groups import ReviewGroup
 
 _TEXT_FACT_KEYS = frozenset(
@@ -407,6 +408,26 @@ class LegalEditorGroupItem(ContractModel):
         alias="reviewState"
     )
     group_key: ReviewGroup = Field(alias="groupKey")
+    preparation_id: UUID | None = Field(default=None, alias="preparationId")
+    preparation_kind: MaterialKind | None = Field(default=None, alias="preparationKind")
+
+
+class LegalMaterialPreparationDetail(ContractModel):
+    material_id: UUID = Field(alias="materialId")
+    preparation_id: UUID = Field(alias="preparationId")
+    revision: int = Field(ge=1)
+    title: str
+    kind: MaterialKind
+    group_key: MaterialGroup = Field(alias="groupKey")
+    raw_sha256: str = Field(alias="rawSha256")
+    preparation_sha256: str = Field(alias="preparationSha256")
+    reference_year: int | None = Field(alias="referenceYear")
+    source_url: str | None = Field(alias="sourceUrl")
+    source_locator: str | None = Field(alias="sourceLocator")
+    extraction_scope: str = Field(alias="extractionScope")
+    limitations: list[str]
+    missing_fields: list[str] = Field(alias="missingFields")
+    parts: list[PreparedPart]
 
 
 class LegalEditorGroupPage(ContractModel):
