@@ -11,6 +11,22 @@ import pytest
 from legal_core.preparation_import import read_preparation_package
 
 
+def test_cli_failure_does_not_print_document_content(monkeypatch, capsys):
+    from legal_core import preparation_import
+
+    async def rejected(*args):
+        raise ValueError("SYNTHETIC_PRIVATE_DOCUMENT_CONTENT")
+
+    monkeypatch.setattr(preparation_import, "_run", rejected)
+    monkeypatch.setattr("sys.argv", ["preparation_import", "package.json"])
+    with pytest.raises(SystemExit) as failure:
+        preparation_import.main()
+    assert failure.value.code == 1
+    output = capsys.readouterr()
+    assert "SYNTHETIC_PRIVATE_DOCUMENT_CONTENT" not in output.out + output.err
+    assert "no legal approval" in output.err
+
+
 def package(directory: Path) -> Path:
     source = directory / "package.json"
     text = "Synthetic text for a public reference fixture."

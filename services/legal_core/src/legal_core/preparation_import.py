@@ -5,12 +5,14 @@ import asyncio
 import json
 import os
 import stat
+import sys
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.contracts import ContractModel
@@ -134,7 +136,15 @@ def main() -> None:
     parser.add_argument("manifest", type=Path)
     parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args()
-    asyncio.run(_run(args.manifest, args.validate_only))
+    try:
+        asyncio.run(_run(args.manifest, args.validate_only))
+    except (ValueError, OSError, SQLAlchemyError):
+        # Validation/SQL exception strings may contain the full private document text.
+        print(
+            "preparation import failed; check package and database; no legal approval",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

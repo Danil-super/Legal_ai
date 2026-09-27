@@ -61,7 +61,7 @@ Every code task follows red → green tests; only synthetic fixtures enter git.
 
 ### P4. Expose preparation cards read-only
 
-- [ ] Acceptance: additive editor API returns current title/classification/known
+- [x] Acceptance: additive editor API returns current title/classification/known
   metadata/missing fields and original download identity. Existing authorization
   enforced; metadata queries do not fetch full text/raw bytes.
 - Verify: `.venv/bin/python -m pytest services/legal_core/tests/test_review_material_api.py services/legal_core/tests/test_editor_groups_api.py`.
@@ -69,12 +69,15 @@ Every code task follows red → green tests; only synthetic fixtures enter git.
   `src/legal_core/editor_groups.py`, `tests/test_review_material_api.py`,
   `tests/test_editor_groups_api.py`.
 - Dependencies: P3; size M.
+- Evidence: authenticated Core API and seven-group Telegram cards implemented;
+  original download and back navigation retained. Focused Core/gateway tests,
+  package validation, Ruff and mypy passed on 2026-09-27.
 
 ### Checkpoint A: all originals have preparation cards
 
-- [ ] Original 58 checksums and receipt retries preserved; cards enumerate actual
+- [x] Original 58 checksums and receipt retries preserved; cards enumerate actual
   missing fields and extraction limitations; no accidental normative promotion.
-- [ ] Focused tests, Ruff and mypy pass; review results before next slice.
+- [x] Focused tests, Ruff and mypy pass; review results before next slice.
 
 ### P5. Persist separate reference-review events
 

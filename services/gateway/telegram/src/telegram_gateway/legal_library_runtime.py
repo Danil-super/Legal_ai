@@ -46,6 +46,7 @@ _EDITOR_CALLBACK_RE = re.compile(
     r"detail:[0-9a-f-]{36}:(?:[1-9]|[1-9][0-9]|100)|"
     r"artifact:[0-9a-f-]{36}|"
     r"material:[0-9a-f-]{36}|"
+    r"preparation:[0-9a-f-]{36}|"
     r"batch:(?:clinical|labour|courts|privacy|licensing|healthcare|general)|"
     r"batchpage:[0-9a-f-]{36}:(?:[1-9]|[1-9][0-9]|100)|"
     r"batchconfirm:[0-9a-f-]{36}|"
@@ -223,6 +224,11 @@ class LegalLibraryClient:
             raise ValueError("review group")
         path = "/v1/legal/editor/groups" + (f"/{group}" if group else "")
         return await self._editor_json("GET", f"{path}?page={page}", telegram_user_id)
+
+    async def get_editor_preparation(self, actor_id: int, material_id: UUID) -> dict[str, Any]:
+        return await self._editor_json(
+            "GET", f"/v1/legal/review-materials/{material_id}/preparation", actor_id
+        )
 
     async def get_group_preview(self, actor_id: int, group: str) -> dict[str, Any]:
         if _EDITOR_CALLBACK_RE.fullmatch(f"editor:batch:{group}") is None:
@@ -685,6 +691,7 @@ def render_editor_review_materials(
                     f"📄 Открыть: {_bounded(item.get('title'), limit=40)}"[:64],
                     callback_data=(
                         f"editor:detail:{item_id}:1" if item.get("versionId")
+                        else f"editor:preparation:{item_id}" if item.get("preparationId")
                         else f"editor:material:{item_id}"
                     ),
                 )
@@ -708,6 +715,38 @@ def render_editor_review_materials(
         )])
     buttons.append([InlineKeyboardButton("← К группам", callback_data="editor:materials:1")])
     return _bounded_message("\n".join(lines)), InlineKeyboardMarkup(buttons)
+
+
+def render_material_preparation(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMarkup]:
+    material_id = _editor_version_id(payload.get("materialId"))
+    back = f"editor:group:{payload.get('groupKey')}:1"
+    if _EDITOR_CALLBACK_RE.fullmatch(back) is None:
+        raise ValueError("preparation group")
+    normative = payload.get("kind") == "NORMATIVE"
+    lines = [
+        _bounded(payload.get("title"), limit=1000), "",
+        "Правовой документ — подготовка к проверке." if normative
+        else "Справочный материал — не нормативный акт.",
+        "Эта карточка не означает утверждение документа.",
+    ]
+    if not normative:
+        lines.append(f"Год: {payload.get('referenceYear') or 'не указан'}")
+    limitations = payload.get("limitations", [])
+    missing = payload.get("missingFields", [])
+    if not isinstance(limitations, list) or not isinstance(missing, list):
+        raise ValueError("preparation details")
+    if limitations:
+        lines.extend(["", "Ограничения извлечённого текста:"])
+        lines.extend(f"• {_bounded(item, limit=250)}" for item in limitations[:6])
+    if missing:
+        lines.extend(["", "Не все реквизиты подготовлены для утверждения норм."])
+    lines.extend(["", "Для полной проверки откройте исходный документ ниже."])
+    return _bounded_message("\n".join(lines)), InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "📄 Скачать оригинал", callback_data=f"editor:material:{material_id}"
+        )],
+        [InlineKeyboardButton("← Назад к группе", callback_data=back)],
+    ])
 
 
 def render_group_approval_preview(
@@ -1008,6 +1047,26 @@ async def show_editor_review_materials(
         logger.warning("legal review materials load failed: %s", code)
         await gateway_bot._reply(
             update, "⚠️ Не удалось открыть материалы для проверки. Попробуйте ещё раз."
+        )
+        return
+    finally:
+        await client.aclose()
+    await _editor_reply(update, text, keyboard)
+
+
+async def _show_material_preparation(update: Update, *, material_id: UUID) -> None:
+    actor_id = gateway_bot._actor_id(update)
+    if actor_id is None:
+        return
+    client = LegalLibraryClient()
+    try:
+        text, keyboard = render_material_preparation(
+            await client.get_editor_preparation(actor_id, material_id)
+        )
+    except (LegalCoreApiError, ValueError) as exc:
+        logger.warning("material preparation load failed: %s", type(exc).__name__)
+        await gateway_bot._reply(
+            update, "⚠️ Не удалось открыть карточку. Вернитесь к группе и попробуйте ещё раз."
         )
         return
     finally:
@@ -1317,6 +1376,10 @@ async def legal_editor_callback(update: Update, context: ContextTypes.DEFAULT_TY
         elif callback_data.startswith("editor:artifact:"):
             await _start_editor_delivery(
                 update, context, version_id=UUID(callback_data.rsplit(":", 1)[1]), excerpts=False
+            )
+        elif callback_data.startswith("editor:preparation:"):
+            await _show_material_preparation(
+                update, material_id=UUID(callback_data.rsplit(":", 1)[1])
             )
         elif callback_data.startswith("editor:material:"):
             await _start_editor_material_delivery(
