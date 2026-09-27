@@ -11,6 +11,10 @@
 - Модульный монорепозиторий используется для MVP, но компоненты общаются через явные REST/MCP contracts.
 - PostgreSQL — system of record; Redis не хранит единственную копию юридически значимого состояния.
 - Legal updater создаёт immutable versions и не индексирует их до approval/regression gate.
+- Единые семь групп редактора и явное подтверждение готового набора — ADR-0045.
+  Порядок выпуска: API и транзакционные тесты → Telegram-навигация → quality/security
+  gates → GitHub deployment → read-only проверка групп, файлов и health. Подготовка
+  реквизитов входящих материалов остаётся отдельным этапом; автоматического approval нет.
 
 ## Task List
 

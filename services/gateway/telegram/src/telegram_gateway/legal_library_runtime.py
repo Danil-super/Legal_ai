@@ -33,6 +33,7 @@ _MAX_MESSAGE = 3_900
 _EDITOR_PENDING_KEY = "legal_editor_pending"
 _EDITOR_ARTIFACT_MAX_BYTES = 50_000_000
 _EDITOR_DELIVERY_KEY = "legal_editor_file_deliveries"
+_EDITOR_GROUP_PENDING_KEY = "legal_editor_group_pending"
 _VERIFIED_COPY_SOURCE_LABELS = {
     "www.consultant.ru": "КонсультантПлюс",
     "internet.garant.ru": "Гарант",
@@ -45,6 +46,9 @@ _EDITOR_CALLBACK_RE = re.compile(
     r"detail:[0-9a-f-]{36}:(?:[1-9]|[1-9][0-9]|100)|"
     r"artifact:[0-9a-f-]{36}|"
     r"material:[0-9a-f-]{36}|"
+    r"batch:(?:clinical|labour|courts|privacy|licensing|healthcare|general)|"
+    r"batchpage:[0-9a-f-]{36}:(?:[1-9]|[1-9][0-9]|100)|"
+    r"batchconfirm:[0-9a-f-]{36}|"
     r"excerpts:[0-9a-f-]{36}|"
     r"fragments:[0-9a-f-]{36}:(?:[1-9]|[1-9][0-9]|100)|"
     r"attest:[0-9a-f-]{36}:(?:source|artifact|dates|fragments)|"
@@ -211,6 +215,31 @@ class LegalLibraryClient:
         ):
             raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response")
         return payload
+
+    async def get_editor_groups(
+        self, telegram_user_id: int, *, page: int = 1, group: str | None = None
+    ) -> dict[str, Any]:
+        if group is not None and _EDITOR_CALLBACK_RE.fullmatch(f"editor:group:{group}:1") is None:
+            raise ValueError("review group")
+        path = "/v1/legal/editor/groups" + (f"/{group}" if group else "")
+        return await self._editor_json("GET", f"{path}?page={page}", telegram_user_id)
+
+    async def get_group_preview(self, actor_id: int, group: str) -> dict[str, Any]:
+        if _EDITOR_CALLBACK_RE.fullmatch(f"editor:batch:{group}") is None:
+            raise ValueError("review group")
+        return await self._editor_json(
+            "GET", f"/v1/legal/editor/groups/{group}/approval-preview", actor_id
+        )
+
+    async def approve_group(
+        self, actor_id: int, group: str, payload: dict[str, Any], key: UUID
+    ) -> dict[str, Any]:
+        if _EDITOR_CALLBACK_RE.fullmatch(f"editor:batch:{group}") is None:
+            raise ValueError("review group")
+        return await self._editor_json(
+            "POST", f"/v1/legal/editor/groups/{group}/approval-events", actor_id,
+            payload=payload, idempotency_key=key,
+        )
 
     async def get_editor_version(self, telegram_user_id: int, version_id: UUID) -> dict[str, Any]:
         payload = await self._editor_json(
@@ -594,11 +623,10 @@ def render_editor_review_materials(
     if not isinstance(groups, list):
         raise ValueError("review material groups")
     lines = [
-        "📥 МАТЕРИАЛЫ ДЛЯ ПРОВЕРКИ",
+        "⚖️ ПРОВЕРКА НОРМ",
         f"В этом списке: {total_items}. Страница {page}.",
         "",
-        "Это исходные файлы для подготовки версии. Они не одобрены и не участвуют "
-        "в рекомендациях.",
+        "Новые документы не одобрены и не участвуют в рекомендациях до утверждения.",
         "",
     ]
     buttons: list[list[InlineKeyboardButton]] = []
@@ -609,23 +637,27 @@ def render_editor_review_materials(
         callback = f"editor:group:{key}:1"
         if _EDITOR_CALLBACK_RE.fullmatch(callback) is None:
             raise ValueError("review material group key")
-        buttons.append([InlineKeyboardButton(
-            f"📂 {_bounded(group.get('title'), limit=43)} ({group.get('totalItems', 0)})"[:64],
-            callback_data=callback,
-        )])
+        if selected_group is None:
+            buttons.append([InlineKeyboardButton(
+                f"📂 {_bounded(group.get('title'), limit=43)} ({group.get('totalItems', 0)})"[:64],
+                callback_data=callback,
+            )])
         if key == selected_group:
             lines.append(f"Раздел: {_bounded(group.get('title'), limit=100)}")
-    if selected_group is not None:
-        if _EDITOR_CALLBACK_RE.fullmatch(f"editor:group:{selected_group}:1") is None:
-            raise ValueError("selected review material group")
-        buttons.append([
-            InlineKeyboardButton("📚 Все материалы", callback_data="editor:materials:1")
-        ])
+    if selected_group is None:
+        buttons.extend([list(row) for row in back_keyboard().inline_keyboard])
+        return (
+            "⚖️ ПРОВЕРКА НОРМ\n\nВыберите группу документов.\n"
+            "Внутри — документы для просмотра и проверки.",
+            InlineKeyboardMarkup(buttons),
+        )
+    if _EDITOR_CALLBACK_RE.fullmatch(f"editor:group:{selected_group}:1") is None:
+        raise ValueError("selected review material group")
     for item in raw_items[:_MAX_DOCUMENTS]:
         if not isinstance(item, dict):
             continue
         try:
-            material_id = _editor_version_id(item.get("materialId"))
+            item_id = _editor_version_id(item.get("versionId") or item.get("materialId"))
         except ValueError:
             continue
         kind = item.get("kind")
@@ -637,9 +669,13 @@ def render_editor_review_materials(
         lines.extend(
             [
                 f"• {_bounded(item.get('title'), limit=180)}",
-                f"  {kind_label}; статус: требуются реквизиты и проверка",
-                f"  Источник: {_bounded(item.get('sourceName'), limit=100)}",
-                f"  SHA raw: {_short_sha(item.get('rawSha256'))}",
+                (
+                    "  ✅ Утверждён"
+                    if item.get("reviewState") == "APPROVED"
+                    else "  Подготовленная версия для проверки"
+                    if item.get("versionId")
+                    else f"  {kind_label}; требуются реквизиты и проверка"
+                ),
                 "",
             ]
         )
@@ -647,16 +683,13 @@ def render_editor_review_materials(
             [
                 InlineKeyboardButton(
                     f"📄 Открыть: {_bounded(item.get('title'), limit=40)}"[:64],
-                    callback_data=f"editor:material:{material_id}",
+                    callback_data=(
+                        f"editor:detail:{item_id}:1" if item.get("versionId")
+                        else f"editor:material:{item_id}"
+                    ),
                 )
             ]
         )
-        if item.get("versionId") is not None:
-            version_id = _editor_version_id(item["versionId"])
-            buttons.append([InlineKeyboardButton(
-                "⚖️ Открыть подготовленную версию",
-                callback_data=f"editor:detail:{version_id}:1",
-            )])
     if not raw_items:
         lines.append("Загруженных материалов пока нет.")
     buttons.extend(
@@ -669,9 +702,69 @@ def render_editor_review_materials(
             ),
         )
     )
-    if return_to_queue:
-        buttons.append([InlineKeyboardButton("← К очереди норм", callback_data="editor:open")])
-    buttons.extend([list(row) for row in back_keyboard().inline_keyboard])
+    if selected_group != "clinical":
+        buttons.append([InlineKeyboardButton(
+            "✅ Подтвердить группу", callback_data=f"editor:batch:{selected_group}"
+        )])
+    buttons.append([InlineKeyboardButton("← К группам", callback_data="editor:materials:1")])
+    return _bounded_message("\n".join(lines)), InlineKeyboardMarkup(buttons)
+
+
+def render_group_approval_preview(
+    preview: dict[str, Any], *, batch_id: str, page: int
+) -> tuple[str, InlineKeyboardMarkup]:
+    _editor_version_id(batch_id)
+    page = _editor_page(page)
+    group = preview.get("group")
+    if _EDITOR_CALLBACK_RE.fullmatch(f"editor:batch:{group}") is None:
+        raise ValueError("review group")
+    ready, blocked = preview.get("ready"), preview.get("blocked")
+    if not isinstance(ready, list) or not isinstance(blocked, list):
+        raise ValueError("review group preview")
+    if len(ready) > 200 or len(blocked) > 200:
+        raise ValueError("review group bounds")
+    lines = [
+        "✅ ПОДТВЕРЖДЕНИЕ ГРУППЫ", f"К утверждению: {len(ready)}.",
+        f"Ранее утверждено: {preview.get('alreadyApproved', 0)}.", "",
+    ]
+    for item in ready[(page - 1) * 10:page * 10]:
+        effective_to = (
+            _bounded(item.get("effectiveTo"), limit=10) if item.get("effectiveTo") else "—"
+        )
+        lines.append(
+            f"• {_bounded(item.get('title'), limit=100)}\n"
+            f"  Действует с {_bounded(item.get('effectiveFrom'), limit=10)}; "
+            f"до {effective_to}"
+        )
+    if blocked:
+        lines.extend(["", f"Не будут утверждены: {len(blocked)}."])
+        for item in blocked[:4]:
+            reason = item.get("reasonCode")
+            label = (
+                "нужны реквизиты и подготовка версии" if reason == "METADATA_REQUIRED"
+                else "справочный материал, не нормативный акт"
+                if reason == "CLINICAL_REFERENCE_NOT_LEGAL_VERSION"
+                else "версия не прошла проверку; откройте карточку"
+            )
+            lines.append(f"• {_bounded(item.get('title'), limit=90)} — {label}")
+        if len(blocked) > 4:
+            lines.append(f"И ещё {len(blocked) - 4}; они остаются в списке группы.")
+    buttons = _editor_pagination(
+        page=page, page_size=10, total_items=len(ready),
+        callback_prefix=f"editor:batchpage:{batch_id}"
+    )
+    if ready and (page - 1) * 10 < len(ready) <= page * 10:
+        lines.extend(["", "Подтверждаю проверку всех перечисленных документов: источник и "
+                      "соответствие оригиналу, полноту текста, даты действия и фрагменты."])
+        buttons.append([InlineKeyboardButton(
+            f"✅ Подтверждаю — утвердить {len(ready)}",
+            callback_data=f"editor:batchconfirm:{batch_id}"
+        )])
+    elif not ready:
+        lines.extend(["", "Готовых к утверждению документов пока нет."])
+    buttons.append([InlineKeyboardButton(
+        "← К документам", callback_data=f"editor:group:{group}:1"
+    )])
     return _bounded_message("\n".join(lines)), InlineKeyboardMarkup(buttons)
 
 
@@ -895,23 +988,8 @@ async def _editor_reply(update: Update, text: str, keyboard: InlineKeyboardMarku
 async def show_platform_review_queue(
     update: Update, context: ContextTypes.DEFAULT_TYPE, *, page: int = 1
 ) -> None:
-    actor_id = gateway_bot._actor_id(update)
-    if actor_id is None:
-        return
-    client = LegalLibraryClient()
-    try:
-        text, keyboard = render_platform_review_queue(
-            await client.get_review_queue(actor_id, page=page)
-        )
-    except LegalCoreApiError as exc:
-        logger.warning("legal review queue load failed: %s", exc.code)
-        await gateway_bot._reply(
-            update, "🔒 Проверка норм доступна только уполномоченному редактору."
-        )
-        return
-    finally:
-        await client.aclose()
-    await _editor_reply(update, text, keyboard)
+    # Legacy entry points now lead to the same group directory, never a second queue.
+    await show_editor_review_materials(update, context)
 
 
 async def show_editor_review_materials(
@@ -923,7 +1001,7 @@ async def show_editor_review_materials(
     client = LegalLibraryClient()
     try:
         text, keyboard = render_editor_review_materials(
-            await client.get_review_materials(actor_id, page=page, group=group)
+            await client.get_editor_groups(actor_id, page=page, group=group)
         )
     except (LegalCoreApiError, ValueError) as exc:
         code = exc.code if isinstance(exc, LegalCoreApiError) else type(exc).__name__
@@ -1026,15 +1104,14 @@ async def _send_editor_artifact(
 def _editor_return_keyboard(version_id: UUID) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("← К карточке", callback_data=f"editor:detail:{version_id}:1")],
-        [InlineKeyboardButton("← К списку", callback_data="editor:open")],
+        [InlineKeyboardButton("← К группам", callback_data="editor:open")],
     ])
 
 
 def _editor_material_return_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("← К материалам", callback_data="editor:materials:1")],
-            [InlineKeyboardButton("← К очереди норм", callback_data="editor:open")],
+            [InlineKeyboardButton("← К группам", callback_data="editor:materials:1")],
         ]
     )
 
@@ -1215,6 +1292,25 @@ async def legal_editor_callback(update: Update, context: ContextTypes.DEFAULT_TY
         elif callback_data.startswith("editor:group:"):
             _, _, group, raw_page = callback_data.split(":")
             await show_editor_review_materials(update, context, page=int(raw_page), group=group)
+        elif callback_data.startswith("editor:batch:"):
+            await _show_group_approval(update, context, group=callback_data.rsplit(":", 1)[1])
+        elif callback_data.startswith("editor:batchpage:"):
+            _, _, batch_id, raw_page = callback_data.split(":")
+            pending = (context.user_data or {}).get(_EDITOR_GROUP_PENDING_KEY)
+            if isinstance(pending, dict) and pending.get("id") == batch_id:
+                page = _editor_page(int(raw_page))
+                text, keyboard = render_group_approval_preview(
+                    pending["preview"], batch_id=batch_id, page=page
+                )
+                if (page - 1) * 10 < len(pending["ids"]) <= page * 10:
+                    pending["lastPageShown"] = True
+                await _editor_reply(update, text, keyboard)
+            else:
+                await gateway_bot._reply(update, "Откройте подтверждение группы заново.")
+        elif callback_data.startswith("editor:batchconfirm:"):
+            await _confirm_group_approval(
+                update, context, batch_id=callback_data.rsplit(":", 1)[1]
+            )
         elif callback_data.startswith("editor:detail:"):
             _, _, raw_version_id, _ = callback_data.split(":")
             await _show_editor_detail(update, context, version_id=UUID(raw_version_id), reset=False)
@@ -1258,6 +1354,72 @@ async def legal_editor_callback(update: Update, context: ContextTypes.DEFAULT_TY
     except (ValueError, IndexError):
         await gateway_bot._reply(update, "⚠️ Некорректное действие проверки.")
     raise ApplicationHandlerStop
+
+
+async def _show_group_approval(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, group: str
+) -> None:
+    actor = gateway_bot._actor_id(update)
+    if actor is None or context.user_data is None:
+        return
+    client = LegalLibraryClient()
+    try:
+        preview = await client.get_group_preview(actor, group)
+        snapshot = preview.get("snapshot")
+        if not isinstance(snapshot, str) or re.fullmatch(r"[0-9a-f]{64}", snapshot) is None:
+            raise ValueError("group snapshot")
+        batch_id = str(uuid4())
+        text, keyboard = render_group_approval_preview(preview, batch_id=batch_id, page=1)
+        ids = [str(_editor_version_id(item.get("versionId"))) for item in preview["ready"]]
+        context.user_data[_EDITOR_GROUP_PENDING_KEY] = {
+            "id": batch_id, "group": group, "preview": preview, "ids": ids,
+            "lastPageShown": len(ids) <= 10,
+        }
+    except (LegalCoreApiError, ValueError):
+        await gateway_bot._reply(
+            update, "Не удалось подготовить подтверждение. Откройте группу снова."
+        )
+        return
+    finally:
+        await client.aclose()
+    await _editor_reply(update, text, keyboard)
+
+
+async def _confirm_group_approval(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, batch_id: str
+) -> None:
+    actor = gateway_bot._actor_id(update)
+    pending = (context.user_data or {}).get(_EDITOR_GROUP_PENDING_KEY)
+    if (actor is None or not isinstance(pending, dict) or pending.get("id") != batch_id
+            or not pending.get("lastPageShown") or not pending.get("ids")):
+        await gateway_bot._reply(update, "Откройте подтверждение группы и просмотрите список.")
+        return
+    client = LegalLibraryClient()
+    try:
+        result = await client.approve_group(actor, pending["group"], {
+            "expectedSnapshot": pending["preview"]["snapshot"], "versionIds": pending["ids"],
+            "officialTextCompared": True, "artifactIsComplete": True,
+            "effectiveDatesVerified": True, "fragmentsVerified": True,
+        }, UUID(batch_id))
+    except LegalCoreApiError as exc:
+        message = (
+            "Список или состояние документов изменились. Откройте подтверждение группы заново."
+            if exc.status_code == 409 else
+            "Не удалось получить результат. Повторите подтверждение: дублей не возникнет."
+        )
+        await gateway_bot._reply(update, message)
+        return
+    finally:
+        await client.aclose()
+    if context.user_data is not None:
+        context.user_data.pop(_EDITOR_GROUP_PENDING_KEY, None)
+    await _editor_reply(update,
+        f"✅ Утверждено документов: {result.get('approvedCount')}. "
+        "Неподготовленные материалы не утверждены.",
+        InlineKeyboardMarkup([[InlineKeyboardButton(
+            "← К документам", callback_data=f"editor:group:{pending['group']}:1"
+        )]]),
+    )
 
 
 async def show_legal_library(
