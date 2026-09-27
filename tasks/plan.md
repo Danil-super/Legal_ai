@@ -6,6 +6,107 @@
 
 ## Architecture Decisions
 
+### Complete attorney package preparation — approved plan, 2026-09-27
+
+Specification: owner-approved increment 3 in `SPEC-grouped-review-materials.md`.
+This extends the existing legal-corpus/editor work, preserving all unrelated tasks.
+The owner approved the implementation plan on 2026-09-27 and requested continuation.
+The focused task breakdown is recorded in tasks/todo.md for review before code.
+
+**Delivery order and dependency checkpoints:**
+
+1. **A readable preparation card for each original.** Add immutable preparation
+   revisions referencing existing incoming IDs/checksums. Store a strict typed
+   payload: reviewed display title, kind (`NORMATIVE`, `CLINICAL_REFERENCE`,
+   `REFERENCE_FORM`), original group, known metadata and its provenance, missing
+   fields, conversion identity, extraction scope/hashes and intended document
+   parts. Missing fields are explicit, not defaulted dates. An offline input
+   validator/importer creates preparations, never approvals. Metadata-only API
+   reads expose the current preparation without loading raw bytes or full text.
+   Original download routes and receipt-import retry behavior remain unchanged.
+   Checkpoint: all 58 have a traceable card; failed/partial extraction remains
+   visible; old APIs and import retries still pass.
+2. **Human group confirmation of eight reference originals.** A separate immutable
+   reference-review event records the selected preparation and raw hash, actor,
+   time, group/batch, explicit declarations and idempotency request digest.
+   Add `reference-review-preview` and `reference-review-events` routes under the
+   existing editor group resource; normative approval routes are unchanged.
+   Existing active LEGAL_EDITOR plus gateway-key authorization protects both.
+   One explicit action confirms only the displayed reference originals, not their
+   legal currency or complete extraction. A missing cover year stays visible.
+   Checkpoint: synthetic API/UI end-to-end, replay, conflict and concurrency tests;
+   no reference enters legal retrieval. No actual human event is submitted in smoke.
+3. **Prepare normative candidates and their complete artifact mapping.** Reconcile
+   heading identity with source evidence and current canonical keys. Parse all
+   parts in code bundles; maintain an immutable preparation-to-part/version link
+   for every intended part. Normalize scoped text, retain tables/structure, build
+   source-linked fragments and feed existing strict corpus_loader checks.
+   Every required date needs source evidence or explicit editor-supplied evidence;
+   unresolved items remain preparation cards, not dummy LegalVersions. Editor
+   corrections append a new revision and never rewrite original receipt metadata.
+   Checkpoint: every original and part accounted for; canonical duplicates linked
+   without losing alternate originals; all readiness blockers enumerated.
+4. **Unified group completion and simple Telegram actions.** Preserve seven roots,
+   pagination and back/cancel. Show full titles, original downloads, missing fields,
+   normative-ready counts and reference-review counts. Use the existing normative
+   confirmation for genuinely prepared versions and the separate reference action.
+   Replace checksum-only hiding for prepared artifacts with explicit all-part
+   completeness: a single prepared part must not conceal the rest. A changed
+   preparation invalidates prior previews and is not covered by an earlier review.
+   Checkpoint: complete clinical/healthcare mixed workflows, six legacy versions
+   remain reachable, root still contains exactly seven groups.
+5. **Verify and release through GitHub.** Run full unit/integration/type/lint/
+   security/Compose gates on disposable infrastructure. Verify checksums and
+   preparation coverage of the private package separately. After release review,
+   migrate and deploy through the existing workflow, import preparations
+   idempotently, then read-only check health, all pages, originals and both preview
+   types. Publish exact ready/blocked/reviewed counts. Stop short of calling a group
+   ready when required fields remain unresolved; never perform a lawyer's approval.
+
+**Persistence/API decisions for this plan:**
+
+- Additive preparation revisions, immutable part/version associations and separate
+  reference-review events; no alteration of stored incoming metadata or weakening
+  of LegalVersion requirements. Global legal materials retain platform scope,
+  not a fabricated clinic tenant. Audit rows have real server-resolved actors.
+- Revisions are ordered under a material lock; same input retries reuse the same
+  checksum-bound result. All-part associations are checked against the declared
+  preparation, canonical identity, original and normalized hashes.
+- Reference confirmations use atomic per-preparation events, stable lock order,
+  unique actor/idempotency keys and a stored request hash. Same-intent retry returns
+  the original result; different-intent key reuse returns 422; stale/in-flight
+  conflict returns 409. The exact displayed set must match, with no partial commit.
+- Preparation input is strictly bounded and untrusted. Do not execute embedded RTF
+  objects, arbitrary URLs or model instructions; no new fetch hosts, services,
+  production converters, OCR/LLM dependencies or CI changes in this plan.
+- Extend read responses additively with preparation/reference progress. Keep old
+  download and legal-approval response shapes/error conventions intact. Declare
+  a separate contract for metadata correction before exposing any new write route.
+- New tables require matching models, Alembic constraints/append-only protections,
+  runtime grants and migration tests. Record the critical contract in ADR-0046.
+
+**Risks, sequencing and rollback:**
+
+- Unknown consolidated-edition dates: resolve from evidence, otherwise explicit
+  editor input; do not substitute enactment, import or maximum mentioned date.
+- Multi-part originals and alternate copies: explicit coverage links, no dedup by
+  act number alone or by one shared raw hash. Preserve source download access.
+- Table/figure loss: distinguish extraction scope from original-file review; retain
+  full originals and page/section caveats. Do not advertise text completeness based
+  on a successful converter exit code.
+- Shared migrations and group contracts are sequential. No independent agents or
+  parallel writers are planned. Offline extraction can be inspected while awaiting
+  review without mutating server state.
+- Rollback uses the prior application revision and preserves additive records.
+  Do not downgrade/drop review ledgers on production or erase human attestations.
+  Old deployment reads the original inbox as before; no new automatic approval or
+  new evidence-policy activation needs undoing.
+
+After plan review, record focused tasks (at most about five files each), precise
+tests and dependencies in `tasks/todo.md`; review them before implementation.
+
+### Existing project decisions
+
 - Legal Core — единственный источник нормативной истины; см. ADR-0001.
 - Tenant context принадлежит серверу, а не клиенту/LLM; см. ADR-0002.
 - Модульный монорепозиторий используется для MVP, но компоненты общаются через явные REST/MCP contracts.
