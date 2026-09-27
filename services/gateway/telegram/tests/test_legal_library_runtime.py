@@ -350,6 +350,7 @@ def test_editor_review_materials_are_openable_but_not_mislabeled_as_approved() -
             "page": 1,
             "pageSize": 10,
             "totalItems": 1,
+            "selectedGroup": "healthcare",
             "items": [
                 {
                     "materialId": material_id,
@@ -388,8 +389,128 @@ def test_material_groups_keep_counts_filter_pagination_and_back_navigation() -> 
     assert "21" in text
     assert "editor:group:labour:2" in callbacks
     assert "editor:materials:1" in callbacks
-    assert "editor:group:clinical:1" in callbacks
-    assert "editor:open" in callbacks
+    assert "editor:group:clinical:1" not in callbacks
+
+
+def test_editor_directory_contains_only_seven_groups_and_back() -> None:
+    keys = ("clinical", "labour", "courts", "privacy", "licensing", "healthcare", "general")
+    payload = {
+        "page": 1, "pageSize": 10, "totalItems": 64, "selectedGroup": None,
+        "groups": [{"key": key, "title": key, "totalItems": 8} for key in keys],
+        "items": [{"materialId": "00000000-0000-0000-0000-000000000003",
+                   "title": "This file must not appear at group level", "rawSha256": "a" * 64}],
+    }
+    text, keyboard = render_editor_review_materials(payload)
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert callbacks == [f"editor:group:{key}:1" for key in keys] + ["menu"]
+    assert "This file must not appear" not in text
+    assert "SHA" not in text
+    assert "Страница" not in text
+
+
+def test_group_displays_prepared_version_alongside_unprepared_material() -> None:
+    version_id = "00000000-0000-0000-0000-000000000002"
+    text, keyboard = render_editor_review_materials({
+        "page": 1, "pageSize": 10, "totalItems": 1, "selectedGroup": "healthcare",
+        "groups": [{"key": "healthcare", "title": "Медицинские документы", "totalItems": 1}],
+        "items": [{"materialId": None, "versionId": version_id, "title": "Подготовленный акт",
+                   "reviewState": "REVIEW_REQUIRED"}],
+    })
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert "Подготовленный акт" in text
+    assert f"editor:detail:{version_id}:1" in callbacks
+    assert "editor:materials:1" in callbacks
+
+
+def test_group_preview_lists_exact_ready_subset_and_explicit_declaration() -> None:
+    batch = "00000000-0000-0000-0000-000000000004"
+    text, keyboard = runtime.render_group_approval_preview({
+        "group": "healthcare", "snapshot": "a" * 64, "alreadyApproved": 0,
+        "ready": [{"versionId": "00000000-0000-0000-0000-000000000002",
+                   "title": "Готовый документ", "effectiveFrom": "2026-01-01",
+                   "effectiveTo": None}],
+        "blocked": [{"title": "Неподготовленный документ", "reasonCode": "METADATA_REQUIRED"}],
+    }, batch_id=batch, page=1)
+    assert "Готовый документ" in text
+    assert "2026-01-01" in text
+    assert "Неподготовленный документ" in text
+    assert "Подтверждаю" in text
+    assert "источник" in text and "фрагменты" in text and "даты" in text
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert f"editor:batchconfirm:{batch}" in callbacks
+
+
+def test_group_preview_never_offers_approval_for_only_unprepared_files() -> None:
+    text, keyboard = runtime.render_group_approval_preview({
+        "group": "clinical", "snapshot": "a" * 64, "alreadyApproved": 0, "ready": [],
+        "blocked": [{"title": "Клинический материал",
+                     "reasonCode": "CLINICAL_REFERENCE_NOT_LEGAL_VERSION"}],
+    }, batch_id="00000000-0000-0000-0000-000000000004", page=1)
+    assert "Клинический материал" in text
+    assert not any(button.callback_data.startswith("editor:batchconfirm:")
+                   for row in keyboard.inline_keyboard for button in row)
+
+
+def test_group_confirmation_requires_matching_preview_and_preserves_retry_key(monkeypatch):
+    preview = {"group": "general", "snapshot": "a" * 64, "blocked": [],
+               "ready": [{"versionId": "00000000-0000-0000-0000-000000000002",
+                          "title": "Тестовый акт", "effectiveFrom": "2026-01-01",
+                          "effectiveTo": None}]}
+    client = SimpleNamespace(
+        get_group_preview=AsyncMock(return_value=preview), aclose=AsyncMock(),
+        approve_group=AsyncMock(side_effect=[
+            LegalCoreApiError(503, "TIMEOUT", "unknown outcome"), {"approvedCount": 1},
+        ]),
+    )
+    monkeypatch.setattr(runtime, "LegalLibraryClient", lambda: client)
+    update = SimpleNamespace(effective_user=SimpleNamespace(id=12345),
+                             effective_message=SimpleNamespace(reply_text=AsyncMock()))
+    context = SimpleNamespace(user_data={})
+
+    async def scenario():
+        await runtime._show_group_approval(update, context, group="general")
+        pending = context.user_data[runtime._EDITOR_GROUP_PENDING_KEY]
+        key = pending["id"]
+        await runtime._confirm_group_approval(update, context, batch_id=str(UUID(int=1)))
+        client.approve_group.assert_not_awaited()
+        await runtime._confirm_group_approval(update, context, batch_id=key)
+        assert context.user_data[runtime._EDITOR_GROUP_PENDING_KEY]["id"] == key
+        await runtime._confirm_group_approval(update, context, batch_id=key)
+        assert runtime._EDITOR_GROUP_PENDING_KEY not in context.user_data
+        first, second = client.approve_group.await_args_list
+        assert first == second
+        assert first.args[-1] == UUID(key)
+        assert first.args[2]["fragmentsVerified"] is True
+
+    asyncio.run(scenario())
+
+
+def test_group_preview_reports_previously_approved_without_offering_confirmation():
+    text, keyboard = runtime.render_group_approval_preview(
+        {"group": "general", "ready": [], "blocked": [], "alreadyApproved": 3},
+        batch_id=str(UUID(int=1)), page=1,
+    )
+    assert "Ранее утверждено: 3" in text
+    assert not any(
+        button.callback_data.startswith("editor:batchconfirm:")
+        for row in keyboard.inline_keyboard for button in row
+    )
+
+
+def test_group_preview_fits_telegram_utf16_limit_without_losing_declaration():
+    text, keyboard = runtime.render_group_approval_preview(
+        {
+            "group": "general", "alreadyApproved": 200,
+            "ready": [{"title": "😀" * 2000, "effectiveFrom": "2026-01-01",
+                       "effectiveTo": "2030-01-01"} for _ in range(10)],
+            "blocked": [{"title": "😀" * 2000, "reasonCode": "METADATA_REQUIRED"}
+                        for _ in range(200)],
+        }, batch_id=str(UUID(int=1)), page=1,
+    )
+    assert len(text.encode("utf-16-le")) // 2 <= 4096
+    assert "Подтверждаю проверку всех перечисленных документов" in text
+    assert all(len(button.callback_data.encode()) <= 64
+               for row in keyboard.inline_keyboard for button in row)
 
 
 def test_editor_review_material_client_checks_integrity_and_editor_credentials(monkeypatch) -> None:
