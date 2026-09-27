@@ -301,6 +301,7 @@ async def approve_legal_version_in_session(
     record_rejected_attempt: bool = True,
     idempotency_key: UUID | None = None,
     request_sha256: str | None = None,
+    approval_batch_id: UUID | None = None,
 ) -> LegalVersion:
     """Approve inside a caller-owned transaction while holding the version lock.
 
@@ -366,7 +367,10 @@ async def approve_legal_version_in_session(
             decision="APPROVED",
             expected_sha256=attestation.expected_sha256,
             reason_code="HUMAN_LEGAL_REVIEW_PASSED",
-            checks_json=_checks(attestation),
+            checks_json={
+                **_checks(attestation),
+                **({"batchId": str(approval_batch_id)} if approval_batch_id else {}),
+            },
             policy_version=APPROVAL_POLICY_VERSION,
             regression_result_sha256=regression_result_sha256,
             regression_checks_json=regression_checks,
