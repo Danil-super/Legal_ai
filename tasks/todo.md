@@ -32,7 +32,7 @@ Every code task follows red → green tests; only synthetic fixtures enter git.
 
 ### P2. Persist preparations without altering receipts
 
-- [ ] Acceptance: additive model and Alembic migration, immutable revisions with
+- [x] Acceptance: additive model and Alembic migration, immutable revisions with
   material locking and checksum-bound retry; original receipt import unchanged.
   Runtime grants exclude update/delete of preparation records.
 - Verify: disposable PostgreSQL migration and focused persistence tests;
@@ -41,10 +41,12 @@ Every code task follows red → green tests; only synthetic fixtures enter git.
   `src/legal_core/runtime_db_role.py`, `src/legal_core/material_preparation.py`,
   `tests/test_material_preparation_persistence.py`.
 - Dependencies: P1; size M.
+- Evidence: 467 Core/PostgreSQL tests passed, one MinIO-only test skipped;
+  separate disposable database upgrade/down/upgrade passed; Ruff/mypy passed.
 
 ### P3. Import the private preparation package safely
 
-- [ ] Acceptance: explicit bounded CLI input, all originals accounted for, repeat
+- [x] Acceptance: explicit bounded CLI input, all originals accounted for, repeat
   run creates no duplicates, paths/checksums verified, missing metadata retained;
   no LegalVersion or approval created by this input path.
 - Verify: `.venv/bin/python -m pytest services/legal_core/tests/test_preparation_import.py`;
@@ -53,6 +55,9 @@ Every code task follows red → green tests; only synthetic fixtures enter git.
 - Files (3): `src/legal_core/preparation_import.py`, `tests/test_preparation_import.py`,
   `docs/legal-review/package-preparation-2026-09-27.md` (repository-root path).
 - Dependencies: P2; size M.
+- Evidence: 7 input/atomic-import tests passed; actual 58-file preparation package
+  validated locally (50 legal originals / 54 intended parts and 8 references).
+  All extracted texts remain PARTIAL until completeness is independently checked.
 
 ### P4. Expose preparation cards read-only
 
