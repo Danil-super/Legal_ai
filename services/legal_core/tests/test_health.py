@@ -1,6 +1,11 @@
-from collections.abc import Awaitable, Callable
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from typing import Any
 
 from fastapi.testclient import TestClient
+from legal_core import main
 from legal_core.main import create_app
 
 ReadinessProbe = Callable[[], Awaitable[dict[str, bool]]]
@@ -70,3 +75,87 @@ def test_openapi_is_generated_but_not_exposed_without_authentication() -> None:
         response = client.get("/openapi.json")
 
     assert response.status_code == 404
+
+
+def test_runtime_readiness_executes_a_database_query_under_the_application_role() -> None:
+    executed: list[str] = []
+
+    class Session:
+        async def execute(self, statement: object) -> None:
+            executed.append(str(statement))
+
+    @asynccontextmanager
+    async def sessions() -> AsyncIterator[Session]:
+        yield Session()
+
+    assert asyncio.run(main._probe_postgres(sessions))  # type: ignore[arg-type]
+    assert executed == ["SELECT 1"]
+
+
+def test_runtime_readiness_requires_a_redis_pong(monkeypatch) -> None:
+    writes: list[bytes] = []
+
+    class Reader:
+        async def readuntil(self, delimiter: bytes) -> bytes:
+            assert delimiter == b"\r\n"
+            return b"+PONG\r\n"
+
+    class Writer:
+        def write(self, value: bytes) -> None:
+            writes.append(value)
+
+        async def drain(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+        async def wait_closed(self) -> None:
+            return None
+
+    async def connection(host: str, port: int) -> tuple[Reader, Writer]:
+        assert (host, port) == ("redis", 6379)
+        return Reader(), Writer()
+
+    monkeypatch.setattr(main.asyncio, "open_connection", connection)
+
+    assert asyncio.run(main._probe_redis())
+    assert writes == [b"*1\r\n$4\r\nPING\r\n"]
+
+
+def test_runtime_readiness_requires_authenticated_object_storage_access(monkeypatch) -> None:
+    calls = 0
+
+    class Storage:
+        async def probe(self) -> bool:
+            nonlocal calls
+            calls += 1
+            return True
+
+    monkeypatch.setattr(main, "minio_store_from_environment", lambda: Storage())
+
+    assert asyncio.run(main._probe_object_storage())
+    assert calls == 1
+
+
+def test_runtime_readiness_reports_individual_runtime_dependency_results(monkeypatch) -> None:
+    async def postgres(session_factory: object) -> bool:
+        assert session_factory is sentinel
+        return True
+
+    async def redis() -> bool:
+        return False
+
+    async def storage() -> bool:
+        return True
+
+    sentinel: Any = SimpleNamespace()
+    monkeypatch.setattr(main, "_probe_postgres", postgres)
+    monkeypatch.setattr(main, "_probe_redis", redis)
+    monkeypatch.setattr(main, "_probe_object_storage", storage)
+
+    assert asyncio.run(main.probe_dependencies(sentinel)) == {
+        "postgres": True,
+        "redis": False,
+        "object_storage": True,
+    }

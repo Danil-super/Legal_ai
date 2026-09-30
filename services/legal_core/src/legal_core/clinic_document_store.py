@@ -263,6 +263,16 @@ class MinioRawClinicDocumentStore:
             raise RuntimeError(f"raw clinic document upload failed: HTTP {response.status_code}")
         return object_key
 
+    async def probe(self) -> bool:
+        """Verify that the configured credential can address the application bucket.
+
+        A missing bucket is still a reachable, authorized state: the first bounded upload will
+        create it. A denied or malformed signed request must keep the service unready.
+        """
+
+        response = await self._request("HEAD", self._bucket_uri())
+        return response.status_code in {200, 404}
+
 
 def minio_store_from_environment() -> MinioRawClinicDocumentStore:
     return MinioRawClinicDocumentStore(MinioSettings.from_environment())

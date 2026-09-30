@@ -12,6 +12,8 @@ from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.middleware.base import RequestResponseEndpoint
 
@@ -23,7 +25,7 @@ from legal_core.analysis_jobs import create_analysis_jobs_router
 from legal_core.case_api import ApiError, create_case_router
 from legal_core.case_retention import purge_expired_case_content
 from legal_core.clinic_document_library import create_clinic_document_library_router
-from legal_core.clinic_document_store import RawClinicDocumentStore
+from legal_core.clinic_document_store import RawClinicDocumentStore, minio_store_from_environment
 from legal_core.clinic_documents_api import create_clinic_documents_router
 from legal_core.database import create_engine, create_session_factory
 from legal_core.draft_retention import purge_expired_intake_drafts
@@ -50,37 +52,69 @@ class ReadinessResponse(BaseModel):
     checks: ReadinessChecks
 
 
-async def _tcp_reachable(host: str, port: int, timeout_seconds: float = 1.0) -> bool:
-    try:
-        _, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port), timeout=timeout_seconds
-        )
-    except (OSError, TimeoutError):
-        return False
+async def _probe_postgres(session_factory: async_sessionmaker[AsyncSession]) -> bool:
+    """Verify the application role can execute a minimal query, not merely open TCP."""
 
-    writer.close()
-    await writer.wait_closed()
+    try:
+        async with asyncio.timeout(2):
+            async with session_factory() as session:
+                await session.execute(text("SELECT 1"))
+    except (SQLAlchemyError, OSError, TimeoutError):
+        return False
     return True
 
 
-async def probe_dependencies() -> ReadinessChecks:
-    """Check local dependency reachability without reading or exposing data."""
+async def _probe_redis() -> bool:
+    """Require an actual Redis PONG before reporting ready."""
 
-    endpoints = {
-        "postgres": (
-            os.getenv("POSTGRES_HOST", "postgres"),
-            int(os.getenv("POSTGRES_PORT", "5432")),
-        ),
-        "redis": (os.getenv("REDIS_HOST", "redis"), int(os.getenv("REDIS_PORT", "6379"))),
-        "object_storage": (
-            os.getenv("MINIO_HOST", "minio"),
-            int(os.getenv("MINIO_PORT", "9000")),
-        ),
-    }
-    results = await asyncio.gather(
-        *(_tcp_reachable(host, port) for host, port in endpoints.values())
+    writer: asyncio.StreamWriter | None = None
+    try:
+        async with asyncio.timeout(2):
+            reader, writer = await asyncio.open_connection(
+                os.getenv("REDIS_HOST", "redis"),
+                int(os.getenv("REDIS_PORT", "6379")),
+            )
+            writer.write(b"*1\r\n$4\r\nPING\r\n")
+            await writer.drain()
+            return await reader.readuntil(b"\r\n") == b"+PONG\r\n"
+    except (
+        OSError,
+        TimeoutError,
+        ValueError,
+        asyncio.LimitOverrunError,
+        asyncio.IncompleteReadError,
+    ):
+        return False
+    finally:
+        if writer is not None:
+            writer.close()
+            with suppress(OSError):
+                await writer.wait_closed()
+
+
+async def _probe_object_storage() -> bool:
+    """Check a signed bucket request so credentials, not only MinIO's port, are valid."""
+
+    try:
+        async with asyncio.timeout(2):
+            return await minio_store_from_environment().probe()
+    except (RuntimeError, ValueError, TimeoutError):
+        return False
+
+
+async def probe_dependencies(session_factory: async_sessionmaker[AsyncSession]) -> ReadinessChecks:
+    """Check executable runtime capabilities without exposing dependency data."""
+
+    postgres, redis, object_storage = await asyncio.gather(
+        _probe_postgres(session_factory),
+        _probe_redis(),
+        _probe_object_storage(),
     )
-    return dict(zip(endpoints, results, strict=True))
+    return {
+        "postgres": postgres,
+        "redis": redis,
+        "object_storage": object_storage,
+    }
 
 
 async def _retention_purge_loop(session_factory: async_sessionmaker[AsyncSession]) -> None:
@@ -99,7 +133,7 @@ async def _retention_purge_loop(session_factory: async_sessionmaker[AsyncSession
 
 
 def create_app(
-    readiness_probe: ReadinessProbe = probe_dependencies,
+    readiness_probe: ReadinessProbe | None = None,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     managed_engine: AsyncEngine | None = None,
     enable_draft_retention: bool = True,
@@ -108,6 +142,11 @@ def create_app(
 ) -> FastAPI:
     engine = managed_engine or create_engine()
     sessions = session_factory or create_session_factory(engine)
+
+    async def runtime_readiness_probe() -> ReadinessChecks:
+        return await probe_dependencies(sessions)
+
+    active_readiness_probe = readiness_probe or runtime_readiness_probe
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -190,7 +229,7 @@ def create_app(
         tags=["health"],
     )
     async def ready(response: Response) -> ReadinessResponse:
-        checks = await readiness_probe()
+        checks = await active_readiness_probe()
         is_ready = bool(checks) and all(checks.values())
         if not is_ready:
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
