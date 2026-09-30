@@ -205,6 +205,8 @@ Telegram egress.
 
 ### R4. Complete the agreed case intake and recovery paths
 
+- [x] Record the approved v2 ordinary-language intake, deterministic sufficiency and
+  isolated anonymised-material contract in `SPEC-guided-case-intake-v2.md` and ADR-0049.
 - [ ] Add clinic actions already taken, exact-date amendment/reopen and visible Back controls.
 - [ ] Add a separately reviewed, bounded anonymised case-material flow with migration,
   retention, tenant and parser tests; do not send raw materials to external models.
