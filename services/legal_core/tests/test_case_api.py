@@ -75,7 +75,10 @@ def seed_admin(
     return clinic_id, membership_id
 
 
-def application_client() -> TestClient:
+def application_client(
+    case_material_store: object | None = None,
+    reference_evaluation_store: object | None = None,
+) -> TestClient:
     engine = create_async_engine(database_url())
     factory = async_sessionmaker(engine, expire_on_commit=False)
     # Retention scheduling is tested directly.  Keeping the periodic background task out of
@@ -86,6 +89,8 @@ def application_client() -> TestClient:
             managed_engine=engine,
             enable_draft_retention=False,
             enable_analysis_worker=False,
+            case_material_store=case_material_store,  # type: ignore[arg-type]
+            reference_evaluation_store=reference_evaluation_store,  # type: ignore[arg-type]
         )
     )
 

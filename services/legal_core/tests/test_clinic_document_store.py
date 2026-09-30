@@ -9,7 +9,9 @@ import pytest
 from legal_core.clinic_document_store import (
     MinioRawClinicDocumentStore,
     MinioSettings,
+    case_material_object_key,
     clinic_document_object_key,
+    reference_evaluation_object_key,
 )
 from legal_core.clinic_document_parser import TEXT_MIME, sha256_bytes
 
@@ -41,6 +43,60 @@ def test_object_key_is_content_addressed_and_rejects_invalid_hash() -> None:
             document_id=DOCUMENT_ID,
             raw_sha256="not-a-hash",
         )
+
+
+def test_case_material_key_is_private_and_content_addressed() -> None:
+    digest = "a" * 64
+    assert case_material_object_key(
+        clinic_id=CLINIC_ID,
+        material_id=DOCUMENT_ID,
+        raw_sha256=digest,
+    ) == f"case-material/{CLINIC_ID}/{DOCUMENT_ID}/{digest}"
+
+
+def test_reference_evaluation_key_is_private_and_never_uses_a_corpus_prefix() -> None:
+    digest = "a" * 64
+    assert reference_evaluation_object_key(
+        clinic_id=CLINIC_ID,
+        version_id=DOCUMENT_ID,
+        raw_sha256=digest,
+    ) == f"evaluation-case/{CLINIC_ID}/{DOCUMENT_ID}/{digest}"
+
+
+def test_case_material_download_is_signed_bounded_and_refuses_invalid_key() -> None:
+    async def scenario() -> None:
+        content = b"synthetic anonymised material"
+        digest = sha256_bytes(content)
+        object_key = case_material_object_key(
+            clinic_id=CLINIC_ID, material_id=DOCUMENT_ID, raw_sha256=digest
+        )
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            assert request.method == "GET"
+            assert request.url.path == f"/clinic-documents/{object_key}"
+            return httpx.Response(200, content=content, request=request)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            store = MinioRawClinicDocumentStore(_settings(), client=client)
+            downloaded = await store.get_case_material(
+                object_key=object_key, max_bytes=len(content)
+            )
+            assert downloaded == content
+            with pytest.raises(ValueError, match="object key"):
+                await store.get_case_material(
+                    object_key="clinic/not-a-case-material", max_bytes=100
+                )
+            with pytest.raises(ValueError, match="maximum size"):
+                await store.get_case_material(object_key=object_key, max_bytes=0)
+
+        assert len(requests) == 1
+        assert requests[0].headers["authorization"].startswith(
+            "AWS4-HMAC-SHA256 Credential=clinic-app/"
+        )
+
+    asyncio.run(scenario())
 
 
 def test_store_creates_bucket_once_and_signs_each_request() -> None:

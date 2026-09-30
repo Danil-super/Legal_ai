@@ -70,6 +70,10 @@ def test_v2_actions_use_closed_tokens_and_anonymised_text_validation() -> None:
         "date": None,
         "precision": "UNKNOWN",
     }
+    assert parse_answer("eventDate", "01.09.2026") == {
+        "date": "2026-09-01",
+        "precision": "EXACT",
+    }
 
     try:
         parse_answer("eventSummary", "Пациент Иван Иванов сообщил о проблеме после лечения.")

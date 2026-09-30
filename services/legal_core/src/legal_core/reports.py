@@ -81,6 +81,13 @@ def _serialized_facts(facts: Mapping[FactKey, object]) -> tuple[dict[str, object
 
 
 def _summary_parts(facts: Mapping[FactKey, object]) -> tuple[list[str], str]:
+    if facts.get(FactKey.INTAKE_VERSION) == "GUIDED_V2":
+        areas = facts.get(FactKey.SITUATION_AREAS, [])
+        event_summary = facts.get(FactKey.EVENT_SUMMARY, "Описание ещё не заполнено.")
+        return (
+            [str(value) for value in areas] if isinstance(areas, list) else [],
+            event_summary if isinstance(event_summary, str) else "Описание ещё не заполнено.",
+        )
     incident_types = facts.get(FactKey.INCIDENT_TYPES, [])
     if not isinstance(incident_types, list):
         incident_types = []

@@ -9,12 +9,13 @@ from collections.abc import Callable, Coroutine, Mapping
 from datetime import UTC, datetime
 from enum import IntEnum
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, TypeAlias, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx2
+from legal_core.pseudonymization import pseudonymize_text
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 from telegram.ext import (
@@ -30,16 +31,39 @@ from telegram.ext import (
 )
 
 from telegram_gateway.case_wizard import (
+    V2_INTAKE_SCHEMA_VERSION,
     CaseDraft,
     DateFactValue,
     LegalCoreApiError,
     LegalCoreClient,
     SignalAnswer,
     facts_from_draft,
+    facts_from_v2_data,
     parse_date_answer,
     parse_ruble_amount_to_kopecks,
     telegram_summary_from_report,
 )
+from telegram_gateway.guided_case_intake_v2 import (
+    V2_EVENT,
+    V2_INCOMING,
+    V2_SITUATION,
+)
+from telegram_gateway.guided_case_intake_v2 import (
+    active_states as v2_active_states,
+)
+from telegram_gateway.guided_case_intake_v2 import (
+    choice_items as v2_choice_items,
+)
+from telegram_gateway.guided_case_intake_v2 import (
+    next_missing_state as v2_next_missing_state,
+)
+from telegram_gateway.guided_case_intake_v2 import (
+    parse_answer as parse_v2_answer,
+)
+from telegram_gateway.guided_case_intake_v2 import (
+    review_blocks as v2_review_blocks,
+)
+from telegram_gateway.quick_intake import contains_probable_person_name
 from telegram_gateway.ui import (
     HELP_MESSAGE,
     MAIN_MENU_CALLBACKS,
@@ -112,6 +136,17 @@ class WizardState(IntEnum):
     REPRESENTATIVE_AUTHORITY = 21
     LAWYER_DEADLINE = 22
     REGULATOR_THREAT = 23
+    INCOMING = 24
+    SITUATION = 25
+    SERVICES = 26
+    EVENT = 27
+    EVENT_DATE = 28
+    CHRONOLOGY = 29
+    CLINIC_ACTIONS = 30
+    HEALTH = 31
+    MATERIALS = 32
+    SUMMARY = 33
+    V2_CONFIRM = 34
 
 
 def load_token(environment: Mapping[str, str] | None = None) -> str:
@@ -329,6 +364,7 @@ def _clear_pending_inputs(context: ContextTypes.DEFAULT_TYPE | None) -> None:
         context.user_data.pop("clinic_document_upload", None)
         context.user_data.pop("clinic_document_effective_date_pending", None)
         context.user_data.pop("escalation_resolution_pending", None)
+        context.user_data.pop("reference_evaluation_pending", None)
 
 
 def _clear_pending_admin_grant(context: ContextTypes.DEFAULT_TYPE | None) -> None:
@@ -370,6 +406,8 @@ async def _route_input_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not isinstance(callback, str) or not callback.startswith("clinicdoc:"):
         data.pop("clinic_document_upload", None)
         data.pop("clinic_document_effective_date_pending", None)
+    if not isinstance(callback, str) or not callback.startswith("refeval:"):
+        data.pop("reference_evaluation_pending", None)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE | None) -> None:
@@ -674,6 +712,448 @@ DOCUMENTS_KEYBOARD = _keyboard(
     ]
 )
 
+_V2_MULTI_FIELDS = frozenset({"situationAreas", "clinicActions", "healthSignals"})
+_V2_TEXT_FIELDS = {
+    WizardState.SERVICES: "affectedServices",
+    WizardState.EVENT: "eventSummary",
+    WizardState.EVENT_DATE: "eventDate",
+}
+_V2_FILE_TYPES = {
+    ".txt": "text/plain",
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+_V2_MAX_UPLOAD_BYTES = 15_000_000
+
+
+def _v2_callback(value: str) -> str:
+    if len(value.encode()) > 64:
+        raise ValueError("Telegram v2 callback is too long")
+    return value
+
+
+def _v2_keyboard(
+    rows: list[list[tuple[str, str]]], *, with_back: bool = True
+) -> InlineKeyboardMarkup:
+    buttons = [
+        [
+            InlineKeyboardButton(label, callback_data=_v2_callback(callback))
+            for label, callback in row
+        ]
+        for row in rows
+    ]
+    if with_back:
+        buttons.append([InlineKeyboardButton("← Назад", callback_data="case:v2:back")])
+    buttons.extend(list(row) for row in back_keyboard().inline_keyboard)
+    return InlineKeyboardMarkup(buttons)
+
+
+def _v2_single_keyboard(field: str) -> InlineKeyboardMarkup:
+    return _v2_keyboard(
+        [
+            [(label, f"case:v2:single:{field}:{value}")]
+            for value, label in v2_choice_items(field)
+        ]
+    )
+
+
+def _v2_multi_keyboard(field: str, selected: list[str]) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            (
+                ("✅ " if value in selected else "") + label,
+                f"case:v2:multi:{field}:{value}",
+            )
+        ]
+        for value, label in v2_choice_items(field)
+    ]
+    rows.append([("Продолжить", f"case:v2:multi:{field}:DONE")])
+    return _v2_keyboard(rows)
+
+
+def _v2_state(value: str) -> WizardState:
+    try:
+        return WizardState[value]
+    except KeyError as exc:
+        raise ValueError("unknown v2 wizard state") from exc
+
+
+def _is_v2_draft(data: dict[str, Any]) -> bool:
+    return data.get("intakeVersion") == 2
+
+
+async def _prompt_v2_draft(
+    update: Update,
+    state: WizardState,
+    data: dict[str, Any],
+) -> None:
+    message = update.effective_message
+    if state is WizardState.INCOMING:
+        if message is not None:
+            await message.reply_text(
+                "1/7. Что поступило от пациента? Выберите самое близкое описание.",
+                reply_markup=_v2_single_keyboard("incomingKind"),
+            )
+    elif state is WizardState.SITUATION:
+        if message is not None:
+            selected = data.get("situationAreas")
+            await message.reply_text(
+                "2/7. С чем связана ситуация? Можно выбрать несколько вариантов, "
+                "затем «Продолжить».",
+                reply_markup=_v2_multi_keyboard(
+                    "situationAreas", selected if isinstance(selected, list) else []
+                ),
+            )
+    elif state is WizardState.SERVICES:
+        await _reply(
+            update,
+            "2/7. Какие услуги затронуты? Укажите от одной до пяти через точку с запятой. "
+            "Если точная услуга неизвестна, так и напишите.",
+            reply_markup=_v2_keyboard([]),
+        )
+    elif state is WizardState.EVENT:
+        await _reply(
+            update,
+            "3/7. Кратко опишите, что произошло, только фактами (10–1500 символов, без ФИО).",
+            reply_markup=_v2_keyboard([]),
+        )
+    elif state is WizardState.EVENT_DATE:
+        await _reply(
+            update,
+            "3/7. Когда это произошло? Укажите точную дату ГГГГ-ММ-ДД или ДД.ММ.ГГГГ. "
+            "Если даты пока нет, можно написать «неизвестно», но для анализа её "
+            "потребуется уточнить.",
+            reply_markup=_v2_keyboard([]),
+        )
+    elif state is WizardState.CHRONOLOGY:
+        if message is not None:
+            await message.reply_text(
+                "3/7. Это первое обращение по ситуации или конфликт уже продолжается?",
+                reply_markup=_v2_single_keyboard("conflictStage"),
+            )
+    elif state is WizardState.CLINIC_ACTIONS:
+        if message is not None:
+            selected = data.get("clinicActions")
+            await message.reply_text(
+                "4/7. Что клиника уже сделала? Выберите всё подходящее, затем «Продолжить».",
+                reply_markup=_v2_multi_keyboard(
+                    "clinicActions", selected if isinstance(selected, list) else []
+                ),
+            )
+    elif state is WizardState.HEALTH:
+        if message is not None:
+            selected = data.get("healthSignals")
+            await message.reply_text(
+                "5/7. Есть ли известные последствия для здоровья? «Недостаточно сведений» "
+                "не означает, что последствий не было.",
+                reply_markup=_v2_multi_keyboard(
+                    "healthSignals", selected if isinstance(selected, list) else []
+                ),
+            )
+    elif state is WizardState.MATERIALS:
+        attached = data.get("caseMaterialsStatus") == "ATTACHED"
+        prompt = (
+            "6/7. При необходимости отправьте один обезличенный .txt, .pdf или .docx до 15 МБ. "
+            "Удалите ФИО, контакты, номера карт, изображения и ненужные медицинские сведения. "
+            "Файл не станет нормой и не будет отправлен Hermes."
+        )
+        rows = [[("Продолжить без файла", "case:v2:material:skip")]]
+        if attached:
+            prompt = "6/7. Обезличенный материал добавлен. Можно добавить ещё один или продолжить."
+            rows = [[("Продолжить", "case:v2:material:done")]]
+        if message is not None:
+            await message.reply_text(prompt, reply_markup=_v2_keyboard(rows))
+    elif state is WizardState.SUMMARY:
+        if message is not None:
+            await message.reply_text(
+                "\n\n".join(v2_review_blocks(data, final=True)),
+                reply_markup=_v2_keyboard(
+                    [[("✅ Всё верно", "case:v2:summary:confirm")]]
+                ),
+            )
+    elif state is WizardState.V2_CONFIRM:
+        workflow_id = UUID(str(data["workflow_id"]))
+        if message is not None:
+            await message.reply_text(
+                "Фактическая карточка подтверждена. Сформировать внутренний отчёт?",
+                reply_markup=confirm_keyboard(workflow_id),
+            )
+
+
+async def _advance_v2_draft(
+    update: Update,
+    data: dict[str, Any],
+) -> WizardState:
+    state = _v2_state(v2_next_missing_state(data))
+    await _prompt_v2_draft(update, state, data)
+    return state
+
+
+async def choose_v2_single(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    callback = await _answer_callback(update)
+    if callback is None:
+        return _v2_state(str(_wizard_data(context).get(DRAFT_STATE_KEY, V2_INCOMING)))
+    parts = callback.split(":", 4)
+    if len(parts) != 5:
+        return _v2_state(str(_wizard_data(context).get(DRAFT_STATE_KEY, V2_INCOMING)))
+    _, version, action, field, value = parts
+    if (version, action) != ("v2", "single"):
+        return _v2_state(str(_wizard_data(context).get(DRAFT_STATE_KEY, V2_INCOMING)))
+    data = _wizard_data(context)
+    try:
+        data[field] = parse_v2_answer(field, value)
+    except ValueError:
+        await _reply(update, "Выберите вариант кнопкой под текущим вопросом.")
+        return _v2_state(str(data.get(DRAFT_STATE_KEY, V2_INCOMING)))
+    if field == "incomingKind":
+        # A correspondence/file can be supplied on the dedicated material step;
+        # do not record a fictional attachment just because the user has one.
+        data["incomingSourceStatus"] = "NOT_ATTACHED"
+    return await _advance_v2_draft(update, data)
+
+
+async def choose_v2_multi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    callback = await _answer_callback(update)
+    data = _wizard_data(context)
+    current = _v2_state(str(data.get(DRAFT_STATE_KEY, V2_SITUATION)))
+    if callback is None:
+        return current
+    parts = callback.split(":", 4)
+    if len(parts) != 5:
+        return current
+    _, version, action, field, value = parts
+    if (version, action) != ("v2", "multi") or field not in _V2_MULTI_FIELDS:
+        return current
+    selected = data.get(field)
+    values = list(selected) if isinstance(selected, list) else []
+    if value == "DONE":
+        try:
+            data[field] = parse_v2_answer(field, ",".join(values))
+        except ValueError:
+            await _reply(update, "Выберите хотя бы один вариант, затем нажмите «Продолжить».")
+            return current
+        if field == "situationAreas" and "TREATMENT" not in data[field]:
+            data.pop("affectedServices", None)
+        return await _advance_v2_draft(update, data)
+    if value in values:
+        values.remove(value)
+    else:
+        values.append(value)
+    try:
+        data[field] = parse_v2_answer(field, ",".join(values)) if values else []
+    except ValueError as exc:
+        await _reply(update, str(exc))
+        return current
+    await _prompt_v2_draft(update, current, data)
+    return current
+
+
+async def record_v2_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    data = _wizard_data(context)
+    state = _v2_state(str(data.get(DRAFT_STATE_KEY, V2_EVENT)))
+    field = _V2_TEXT_FIELDS.get(state)
+    if field is None:
+        return state
+    try:
+        data[field] = parse_v2_answer(field, _message_text(update))
+    except ValueError as exc:
+        await _reply(update, str(exc), reply_markup=_v2_keyboard([]))
+        return state
+    return await _advance_v2_draft(update, data)
+
+
+async def v2_material_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    callback = await _answer_callback(update)
+    if callback not in {"case:v2:material:skip", "case:v2:material:done"}:
+        return WizardState.MATERIALS
+    data = _wizard_data(context)
+    if callback.endswith("skip"):
+        data["caseMaterialsStatus"] = "NOT_ATTACHED"
+        return await _advance_v2_draft(update, data)
+    if data.get("caseMaterialsStatus") != "ATTACHED":
+        await _reply(
+            update,
+            "Сначала отправьте обезличенный файл либо выберите продолжение без файла.",
+        )
+        return WizardState.MATERIALS
+    return await _advance_v2_draft(update, data)
+
+
+async def confirm_v2_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _answer_callback(update) != "case:v2:summary:confirm":
+        return WizardState.SUMMARY
+    await _prompt_v2_draft(update, WizardState.V2_CONFIRM, _wizard_data(context))
+    return WizardState.V2_CONFIRM
+
+
+async def back_v2_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _answer_callback(update) != "case:v2:back":
+        return WizardState.INCOMING
+    data = _wizard_data(context)
+    current_name = str(data.get(DRAFT_STATE_KEY, V2_INCOMING))
+    states = v2_active_states(data)
+    try:
+        index = states.index(current_name)
+    except ValueError:
+        return WizardState.INCOMING
+    previous = _v2_state(states[max(index - 1, 0)])
+    await _prompt_v2_draft(update, previous, data)
+    return previous
+
+
+async def _save_v2_material_state(
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    actor_id: int,
+    draft_id: UUID,
+    revision: int,
+    data: dict[str, Any],
+    source_status: str,
+) -> int:
+    data["caseMaterialsStatus"] = "ATTACHED"
+    data["incomingSourceStatus"] = source_status
+    saved = await _legal_core(context).save_intake_draft(
+        draft_id,
+        actor_id,
+        expected_revision=revision,
+        wizard_state=WizardState.MATERIALS.name,
+        draft_data=_draft_payload(data),
+    )
+    saved_revision = saved.get("revision")
+    if not isinstance(saved_revision, int) or saved_revision <= revision:
+        raise ValueError("material state save response is invalid")
+    data[DRAFT_REVISION_KEY] = saved_revision
+    data[DRAFT_STATE_KEY] = WizardState.MATERIALS.name
+    return saved_revision
+
+
+async def _upload_v2_material(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    content: bytes,
+    source_filename: str,
+    content_type: str,
+    source_status: str,
+) -> int:
+    actor_id = _actor_id(update)
+    data = _wizard_data(context)
+    if actor_id is None or not _is_v2_draft(data):
+        return ConversationHandler.END
+    try:
+        draft_id = UUID(str(data[DRAFT_ID_KEY]))
+        uploaded = await _legal_core(context).upload_case_material(
+            draft_id,
+            actor_id,
+            content=content,
+            source_filename=source_filename,
+            content_type=content_type,
+        )
+        revision = uploaded.get("draftRevision")
+        material = uploaded.get("material")
+        if not isinstance(revision, int) or revision < 1 or not isinstance(material, dict):
+            raise ValueError("material upload response is invalid")
+        await _save_v2_material_state(
+            context,
+            actor_id=actor_id,
+            draft_id=draft_id,
+            revision=revision,
+            data=data,
+            source_status=source_status,
+        )
+    except LegalCoreApiError as exc:
+        logger.warning("v2 case material upload rejected: %s", exc.code)
+        message = (
+            "⚠️ Файл не добавлен: в нём обнаружены персональные данные или он не прошёл "
+            "проверку формата. Обезличьте его и попробуйте снова."
+            if exc.code == "CASE_MATERIAL_DIRECT_IDENTIFIER_NOT_ALLOWED"
+            else "⚠️ Файл не добавлен. Проверьте формат, размер и обезличивание, затем повторите."
+        )
+        await _reply(update, message, reply_markup=_v2_keyboard([]))
+        return WizardState.MATERIALS
+    except (KeyError, ValueError) as exc:
+        logger.warning("v2 case material upload response invalid: %s", type(exc).__name__)
+        await _reply(update, "⚠️ Не удалось безопасно сохранить материал. Попробуйте позже.")
+        return WizardState.MATERIALS
+    await _reply(
+        update,
+        "✅ Обезличенный материал добавлен только к этой карточке. Он не является нормативным "
+        "источником и не передаётся модели.",
+    )
+    await _prompt_v2_draft(update, WizardState.MATERIALS, data)
+    return WizardState.MATERIALS
+
+
+async def receive_v2_material_document(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> int:
+    message = update.effective_message
+    document = None if message is None else message.document
+    if document is None or not document.file_name:
+        await _reply(update, "Не удалось определить файл. Поддерживаются .txt, .pdf и .docx.")
+        return WizardState.MATERIALS
+    if isinstance(document.file_size, int) and document.file_size > _V2_MAX_UPLOAD_BYTES:
+        await _reply(update, "Файл больше допустимого лимита 15 МБ.")
+        return WizardState.MATERIALS
+    source_filename = document.file_name.strip()
+    content_type = _V2_FILE_TYPES.get(PurePosixPath(source_filename).suffix.casefold())
+    if content_type is None:
+        await _reply(update, "Поддерживаются только обезличенные .txt, .pdf и .docx до 15 МБ.")
+        return WizardState.MATERIALS
+    declared_mime = (document.mime_type or "application/octet-stream").split(";", 1)[0]
+    if declared_mime not in {content_type, "application/octet-stream"}:
+        await _reply(update, "Расширение файла не совпадает с его MIME-типом.")
+        return WizardState.MATERIALS
+    await _reply(update, "Проверяю обезличивание и безопасно сохраняю файл…")
+    try:
+        telegram_file = await context.bot.get_file(document.file_id)
+        content = bytes(await telegram_file.download_as_bytearray())
+    except TelegramError:
+        await _reply(update, "⚠️ Не удалось получить файл из Telegram. Попробуйте ещё раз.")
+        return WizardState.MATERIALS
+    if not content or len(content) > _V2_MAX_UPLOAD_BYTES:
+        await _reply(update, "Файл пустой или превышает лимит 15 МБ.")
+        return WizardState.MATERIALS
+    return await _upload_v2_material(
+        update,
+        context,
+        content=content,
+        source_filename=source_filename,
+        content_type=content_type,
+        source_status="FILE_ATTACHED",
+    )
+
+
+async def receive_v2_material_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> int:
+    value = _message_text(update)
+    if contains_probable_person_name(value) or pseudonymize_text(value).changed:
+        await _reply(
+            update,
+            "В тексте обнаружены возможные персональные данные. Удалите их и отправьте "
+            "обезличенный текст ещё раз.",
+        )
+        return WizardState.MATERIALS
+    try:
+        safe_text = parse_v2_answer("eventSummary", value)
+    except ValueError as exc:
+        await _reply(update, str(exc))
+        return WizardState.MATERIALS
+    if not isinstance(safe_text, str):  # defensive boundary for future parser changes
+        await _reply(update, "Не удалось проверить текст материала.")
+        return WizardState.MATERIALS
+    return await _upload_v2_material(
+        update,
+        context,
+        content=safe_text.encode("utf-8"),
+        source_filename="telegram-message.txt",
+        content_type="text/plain",
+        source_status="TEXT_ATTACHED",
+    )
+
 
 def _signal_answer(callback: str, name: str) -> str | None:
     prefix = f"case:{name}:"
@@ -792,6 +1272,16 @@ async def _menu_legal_editor_status(client: LegalCoreClient, actor_id: int) -> b
     return isinstance(editor_status, dict) and editor_status.get("isLegalEditor") is True
 
 
+async def _menu_reference_evaluation_access(client: LegalCoreClient, actor_id: int) -> bool:
+    try:
+        access = await client.get_reference_evaluation_access(actor_id)
+    except (LegalCoreApiError, AttributeError):
+        return False
+    return isinstance(access, dict) and (
+        access.get("canContribute") is True or access.get("canReview") is True
+    )
+
+
 async def _main_menu_for_actor(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE | None,
@@ -805,11 +1295,20 @@ async def _main_menu_for_actor(
         client = _legal_core(context)
     except (LegalCoreApiError, AttributeError):
         return main_menu_keyboard()
-    role, is_legal_editor = await asyncio.gather(
+    role, is_legal_editor, has_reference_evaluation_access = await asyncio.gather(
         _menu_actor_role(client, actor_id),
         _menu_legal_editor_status(client, actor_id),
+        _menu_reference_evaluation_access(client, actor_id),
     )
-    return main_menu_keyboard(role, is_legal_editor=is_legal_editor)
+    keyboard = main_menu_keyboard(role, is_legal_editor=is_legal_editor)
+    if not has_reference_evaluation_access:
+        return keyboard
+    return InlineKeyboardMarkup(
+        [
+            *keyboard.inline_keyboard,
+            [InlineKeyboardButton("🗂 Эталонные кейсы", callback_data="refeval:open")],
+        ]
+    )
 
 
 def _actor_id(update: Update) -> int | None:
@@ -864,32 +1363,43 @@ async def case_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await _reply(update, "⚠️ Legal Core вернул некорректный ответ. Попробуйте позже.")
         return ConversationHandler.END
     try:
-        draft = await _legal_core(context).create_intake_draft(actor_id)
+        draft = await _legal_core(context).create_intake_draft(
+            actor_id, intake_schema_version=V2_INTAKE_SCHEMA_VERSION
+        )
         draft_id = UUID(str(draft["id"]))
         revision = draft.get("revision")
-        if draft.get("wizardState") != "INCIDENT" or not isinstance(revision, int) or revision < 1:
+        draft_data = draft.get("draftData")
+        if (
+            draft.get("wizardState") != V2_INCOMING
+            or not isinstance(revision, int)
+            or revision < 1
+            or not isinstance(draft_data, dict)
+            or draft_data.get("intakeVersion") != 2
+        ):
             raise ValueError("draft response is invalid")
     except (KeyError, ValueError, LegalCoreApiError) as exc:
         logger.warning("intake draft create failed: %s", type(exc).__name__)
         await _reply(update, "⚠️ Не удалось открыть черновик. Попробуйте ещё раз позже.")
         return ConversationHandler.END
-    _user_data(context)[WIZARD_DATA_KEY] = {
-        "workflow_id": str(draft_id),
-        DRAFT_ID_KEY: str(draft_id),
-        DRAFT_REVISION_KEY: revision,
-        DRAFT_STATE_KEY: WizardState.INCIDENT.name,
-    }
+    data = dict(draft_data)
+    data.update(
+        {
+            "workflow_id": str(draft_id),
+            DRAFT_ID_KEY: str(draft_id),
+            DRAFT_REVISION_KEY: revision,
+            DRAFT_STATE_KEY: WizardState.INCOMING.name,
+        }
+    )
+    _user_data(context)[WIZARD_DATA_KEY] = data
     await _reply(
         update,
         "📝 Новая карточка открыта. Кейс будет создан после вашей проверки.\n\n"
         "Указывайте только обезличенные сведения — без ФИО, телефона, адреса, "
-        "номера карты и файлов пациента.\n\nЧто произошло?",
+        "номера карты и неанонимизированных файлов пациента.",
         reply_markup=back_keyboard(),
     )
-    message = update.effective_message
-    if message is not None:
-        await message.reply_text("Выберите основной тип ситуации:", reply_markup=INCIDENT_KEYBOARD)
-    return WizardState.INCIDENT
+    await _prompt_v2_draft(update, WizardState.INCOMING, data)
+    return WizardState.INCOMING
 
 
 _DRAFT_INCIDENT_LABELS = {
@@ -1067,7 +1577,9 @@ async def show_intake_drafts(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def _prompt_resumed_draft(update: Update, state: WizardState, data: dict[str, Any]) -> None:
     message = update.effective_message
-    if state == WizardState.INCIDENT:
+    if _is_v2_draft(data):
+        await _prompt_v2_draft(update, state, data)
+    elif state == WizardState.INCIDENT:
         if message is not None:
             await message.reply_text(
                 "Выберите основной тип ситуации:", reply_markup=INCIDENT_KEYBOARD
@@ -1735,7 +2247,8 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if callback == "case:cancel":
         return await cancel_case(update, context)
     if callback is None or not callback.startswith("case:confirm:"):
-        return WizardState.CONFIRM
+        data = _wizard_data(context)
+        return WizardState.V2_CONFIRM if _is_v2_draft(data) else WizardState.CONFIRM
     actor_id = _actor_id(update)
     data = _wizard_data(context)
     if actor_id is None:
@@ -1745,9 +2258,18 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         workflow_id = UUID(callback.removeprefix("case:confirm:"))
         if workflow_id != UUID(str(data["workflow_id"])):
             raise ValueError("workflow callback does not match active conversation")
-        facts = facts_from_draft(_draft_from_data(data))
         client = _legal_core(context)
-        workflow = await client.submit_workflow(workflow_id, facts, actor_id)
+        if _is_v2_draft(data):
+            facts = facts_from_v2_data(_draft_payload(data))
+            workflow = await client.submit_workflow(
+                workflow_id,
+                facts,
+                actor_id,
+                intake_schema_version=V2_INTAKE_SCHEMA_VERSION,
+            )
+        else:
+            facts = facts_from_draft(_draft_from_data(data))
+            workflow = await client.submit_workflow(workflow_id, facts, actor_id)
         await _send_workflow_report(update, client, workflow, actor_id)
     except TelegramError as exc:
         logger.warning("case report delivery failed: %s", type(exc).__name__)
@@ -1756,7 +2278,7 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             "✅ Карточка сохранена, но Telegram не доставил отчёт. "
             "Нажмите «Сформировать отчёт» ещё раз — повторный кейс не создаётся.",
         )
-        return WizardState.CONFIRM
+        return WizardState.V2_CONFIRM if _is_v2_draft(data) else WizardState.CONFIRM
     except (KeyError, ValueError, LegalCoreApiError) as exc:
         if isinstance(exc, LegalCoreApiError) and exc.status_code == 403:
             _clear_wizard(context)
@@ -1994,6 +2516,90 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
                 ),
             ],
             states={
+                WizardState.INCOMING: [
+                    CallbackQueryHandler(
+                        _persisted(choose_v2_single),
+                        pattern=r"^case:v2:single:incomingKind:",
+                    ),
+                    CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
+                ],
+                WizardState.SITUATION: [
+                    CallbackQueryHandler(
+                        _persisted(choose_v2_multi),
+                        pattern=r"^case:v2:multi:situationAreas:",
+                    ),
+                    CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
+                ],
+                WizardState.SERVICES: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND,
+                        _persisted(record_v2_text),
+                    ),
+                    CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
+                ],
+                WizardState.EVENT: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND,
+                        _persisted(record_v2_text),
+                    ),
+                    CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
+                ],
+                WizardState.EVENT_DATE: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND,
+                        _persisted(record_v2_text),
+                    ),
+                    CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
+                ],
+                WizardState.CHRONOLOGY: [
+                    CallbackQueryHandler(
+                        _persisted(choose_v2_single),
+                        pattern=r"^case:v2:single:conflictStage:",
+                    ),
+                    CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
+                ],
+                WizardState.CLINIC_ACTIONS: [
+                    CallbackQueryHandler(
+                        _persisted(choose_v2_multi),
+                        pattern=r"^case:v2:multi:clinicActions:",
+                    ),
+                    CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
+                ],
+                WizardState.HEALTH: [
+                    CallbackQueryHandler(
+                        _persisted(choose_v2_multi),
+                        pattern=r"^case:v2:multi:healthSignals:",
+                    ),
+                    CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
+                ],
+                WizardState.MATERIALS: [
+                    CallbackQueryHandler(
+                        _persisted(v2_material_action), pattern=r"^case:v2:material:"
+                    ),
+                    MessageHandler(filters.Document.ALL, receive_v2_material_document),
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, receive_v2_material_text
+                    ),
+                    CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
+                ],
+                WizardState.SUMMARY: [
+                    CallbackQueryHandler(
+                        _persisted(confirm_v2_summary),
+                        pattern=r"^case:v2:summary:confirm$",
+                    ),
+                    CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
+                ],
+                WizardState.V2_CONFIRM: [
+                    CallbackQueryHandler(
+                        confirm_case,
+                        pattern=(
+                            r"^(case:cancel|case:confirm:"
+                            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+                            r"[0-9a-f]{4}-[0-9a-f]{12})$"
+                        ),
+                    ),
+                    CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
+                ],
                 WizardState.INCIDENT: [
                     CallbackQueryHandler(_persisted(choose_incident), pattern=r"^case:incident:")
                 ],
@@ -2108,6 +2714,8 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
             ],
             allow_reentry=True,
             conversation_timeout=15 * 60,
+            # The guided-intake extension locates this durable conversation by
+            # name; retain the established identity while v1 drafts exist.
             name="administrator-case-intake-v1",
         )
     )

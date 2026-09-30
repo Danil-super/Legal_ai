@@ -19,7 +19,7 @@ CLINIC_BASELINE = {
     "services/gateway/telegram/src/telegram_gateway/case_experience_runtime.py":
         "19f6371c3507b844c54fa8308a97cabfafe292cd",
     "services/legal_core/src/legal_core/main.py":
-        "7213eac73be642d1cc1c87d17f98e093c086d5fc",
+        "c14b7a37e8d65885cf009d947c8556d824c8f752",
     "docker-compose.yml": "83f8fa40abe8c98d9a5581dd446fa8f0245efd2b",
     "ops/deploy/docker-compose.production.yml": "5d265d66d0ba2b04def82618ae31bd3884a730ef",
 }

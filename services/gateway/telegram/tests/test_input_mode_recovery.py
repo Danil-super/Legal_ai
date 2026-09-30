@@ -80,6 +80,14 @@ def test_invalid_answer_does_not_write_a_draft_revision() -> None:
 
 def test_starting_case_disarms_old_inputs_that_would_consume_its_answers() -> None:
     context = context_with_draft(bot.WizardState.INCIDENT)
+    context.bot_data[bot.LEGAL_CORE_CLIENT_KEY].create_intake_draft = AsyncMock(
+        return_value={
+            "id": DRAFT_ID,
+            "wizardState": "INCOMING",
+            "revision": 1,
+            "draftData": {"intakeVersion": 2},
+        }
+    )
     context.user_data.update(
         {
             "escalation_discussion_id": DRAFT_ID,
@@ -89,7 +97,7 @@ def test_starting_case_disarms_old_inputs_that_would_consume_its_answers() -> No
         }
     )
     state = asyncio.run(bot.case_start(fake_update(callback="case:start"), context))
-    assert state == bot.WizardState.INCIDENT
+    assert state == bot.WizardState.INCOMING
     assert set(context.user_data) == {bot.WIZARD_DATA_KEY}
 
 

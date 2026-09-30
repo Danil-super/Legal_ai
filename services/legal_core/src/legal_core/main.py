@@ -23,13 +23,22 @@ from legal_core.analysis_diagnostics import create_analysis_diagnostics_router
 from legal_core.analysis_job_worker import WorkerSettings, run_analysis_worker
 from legal_core.analysis_jobs import create_analysis_jobs_router
 from legal_core.case_api import ApiError, create_case_router
+from legal_core.case_material_retention import purge_expired_case_materials
+from legal_core.case_materials_api import create_case_materials_router
 from legal_core.case_retention import purge_expired_case_content
 from legal_core.clinic_document_library import create_clinic_document_library_router
-from legal_core.clinic_document_store import RawClinicDocumentStore, minio_store_from_environment
+from legal_core.clinic_document_store import (
+    RawCaseMaterialStore,
+    RawClinicDocumentStore,
+    RawReferenceEvaluationStore,
+    minio_store_from_environment,
+)
 from legal_core.clinic_documents_api import create_clinic_documents_router
 from legal_core.database import create_engine, create_session_factory
 from legal_core.draft_retention import purge_expired_intake_drafts
 from legal_core.legal_api import create_legal_router
+from legal_core.reference_evaluation_api import create_reference_evaluation_router
+from legal_core.reference_evaluation_retention import purge_expired_reference_evaluations
 
 SERVICE_NAME = "legal-core"
 DRAFT_PURGE_INTERVAL_SECONDS = 60 * 60
@@ -122,6 +131,16 @@ async def _retention_purge_loop(session_factory: async_sessionmaker[AsyncSession
 
     while True:
         try:
+            await purge_expired_case_materials(session_factory, minio_store_from_environment())
+        except (RuntimeError, ValueError, SQLAlchemyError):
+            logging.getLogger(__name__).exception("Case material retention purge failed")
+        try:
+            await purge_expired_reference_evaluations(
+                session_factory, minio_store_from_environment()
+            )
+        except (RuntimeError, ValueError, SQLAlchemyError):
+            logging.getLogger(__name__).exception("Reference evaluation retention purge failed")
+        try:
             await purge_expired_intake_drafts(session_factory)
         except Exception:  # pragma: no cover - operator-visible process log is the recovery path.
             logging.getLogger(__name__).exception("Telegram draft retention purge failed")
@@ -138,6 +157,8 @@ def create_app(
     managed_engine: AsyncEngine | None = None,
     enable_draft_retention: bool = True,
     clinic_document_store: RawClinicDocumentStore | None = None,
+    case_material_store: RawCaseMaterialStore | None = None,
+    reference_evaluation_store: RawReferenceEvaluationStore | None = None,
     enable_analysis_worker: bool = True,
 ) -> FastAPI:
     engine = managed_engine or create_engine()
@@ -239,6 +260,10 @@ def create_app(
         )
 
     app.include_router(create_case_router(sessions))
+    app.include_router(create_case_materials_router(sessions, raw_store=case_material_store))
+    app.include_router(
+        create_reference_evaluation_router(sessions, raw_store=reference_evaluation_store)
+    )
     app.include_router(create_legal_router(sessions))
     app.include_router(
         create_clinic_documents_router(

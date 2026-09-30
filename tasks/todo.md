@@ -207,11 +207,24 @@ Telegram egress.
 
 - [x] Record the approved v2 ordinary-language intake, deterministic sufficiency and
   isolated anonymised-material contract in `SPEC-guided-case-intake-v2.md` and ADR-0049.
-- [ ] Add clinic actions already taken, exact-date amendment/reopen and visible Back controls.
-- [ ] Add a separately reviewed, bounded anonymised case-material flow with migration,
+- [x] Add clinic actions already taken, exact-date amendment/reopen and visible Back controls.
+- [x] Add a separately reviewed, bounded anonymised case-material flow with migration,
   retention, tenant and parser tests; do not send raw materials to external models.
 - Verify: Telegram/API end-to-end synthetic flow, back/retry/date tests and PostgreSQL tests.
 - Dependencies: R3; size L, split before implementation.
+
+## De-identified reference-evaluation workspace — owner-approved 2026-09-30
+
+- [x] Record the explicit scope in `SPEC-reference-evaluation-cases.md` and ADR-0050:
+  historical examples are de-identified, never legal evidence, retrieval input,
+  training data, Hermes context or patient response.
+- [x] Add tenant-scoped grants, immutable case versions, reviewer events, RLS,
+  storage-first retention, idempotency and PostgreSQL/authz/retention tests.
+- [x] Add the private Telegram flow: seven coverage groups, factual recap, one
+  bounded TXT/PDF/DOCX attachment, submission, distinct-reviewer decision and
+  author revision. Gateway client calls carry only Telegram identity.
+- [ ] After the verified production deployment, provision the separately resolved
+  memberships for the named owner and lawyer; this is not source-code configuration.
 
 ### R5. Finish legal readiness and answer-quality evidence
 

@@ -109,6 +109,10 @@ Retention uses a durable deletion queue: an object is removed before its metadat
 is irreversibly purged, and a failed storage deletion is retried without making the
 content visible after expiry. Tests use generated non-personal bytes only.
 
+At most ten materials may be attached to one active draft. The bounded count keeps
+the optional step usable and makes the attachment list safe to render in Telegram;
+it does not alter the 30/90-day retention periods.
+
 ## API and Telegram boundaries
 
 Legal Core owns the state machine, material ownership, retention and access checks.

@@ -70,8 +70,14 @@ class Core:
         self.posts.append(body)
         return {"body": body}
 
-    async def create_intake_draft(self, actor):
-        return {"id": str(DRAFT), "revision": 1, "wizardState": "INCIDENT"}
+    async def create_intake_draft(self, actor, *, intake_schema_version):
+        assert intake_schema_version == "dental-case-intake.v2"
+        return {
+            "id": str(DRAFT),
+            "revision": 1,
+            "wizardState": "INCOMING",
+            "draftData": {"intakeVersion": 2},
+        }
 
     async def get_intake_draft(self, draft, actor):
         return {
@@ -97,7 +103,9 @@ class Core:
         (
             [
                 "case:start",
-                "case:incident:QUALITY_COMPLAINT",
+                    "case:v2:single:incomingKind:MESSAGE_OR_REQUEST",
+                "case:v2:multi:situationAreas:TREATMENT",
+                "case:v2:multi:situationAreas:DONE",
                 f"case:escalation:{ESCALATION}",
                 "text:Установка винира",
             ],
@@ -123,7 +131,9 @@ class Core:
             [
                 "quick:start",
                 "case:start",
-                "case:incident:QUALITY_COMPLAINT",
+                "case:v2:single:incomingKind:MESSAGE_OR_REQUEST",
+                "case:v2:multi:situationAreas:TREATMENT",
+                "case:v2:multi:situationAreas:DONE",
                 "text:Установка винира",
             ],
             "wizard",
@@ -195,7 +205,10 @@ def test_switching_from_discussion_does_not_send_new_case_text_to_old_case(
                     assert core.posts == [], "new case facts were leaked into the old escalation"
                 if expected == "wizard":
                     assert core.saved, sent
-                    assert core.saved[-1]["draft_data"]["service_type"] == "Установка винира"
+                    saved_data = core.saved[-1]["draft_data"]
+                    assert saved_data.get("affectedServices") == ["Установка винира"] or (
+                        saved_data.get("service_type") == "Установка винира"
+                    )
                 elif expected == "quick":
                     assert "quick_intake_candidate" in app.user_data[ACTOR], sent
                 elif expected == "analysis":

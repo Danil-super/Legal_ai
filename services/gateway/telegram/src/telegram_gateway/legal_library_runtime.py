@@ -24,6 +24,7 @@ from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.editor_delivery import EditorFileDeliveryQueue
 from telegram_gateway.quick_intake_runtime import build_application_with_quick_intake
+from telegram_gateway.reference_evaluation_runtime import install_reference_evaluations
 from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
@@ -1783,6 +1784,7 @@ def build_application_with_legal_library(token: str) -> gateway_bot.TelegramAppl
     """Compose the complete production gateway with the lawyer-only source view."""
 
     application = build_application_with_quick_intake(token)
+    install_reference_evaluations(application)
     application.add_handler(CommandHandler("legal_base", show_legal_library), group=-4)
     application.add_handler(CommandHandler("review_queue", show_platform_review_queue), group=-4)
     application.add_handler(

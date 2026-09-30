@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, Query, Response, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, literal, select, tuple_
+from sqlalchemy import func, literal, select, tuple_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -54,6 +54,7 @@ from legal_core.models import (
     CaseEscalationMessage,
     CaseEscalationWorkflowEvent,
     CaseFact,
+    CaseMaterial,
     CaseReport,
     Clinic,
     ClinicUser,
@@ -1841,6 +1842,23 @@ def create_case_router(
         )
         session.add(case)
         await session.flush()
+
+        # The Telegram workflow identifier is the durable draft identifier. A
+        # submission moves private material metadata to the confirmed case without
+        # copying raw bytes or exposing them to report, retrieval, or model paths.
+        await session.execute(
+            update(CaseMaterial)
+            .where(
+                CaseMaterial.clinic_id == actor.clinic_id,
+                CaseMaterial.draft_id == workflow_id,
+                CaseMaterial.uploader_membership_id == actor.membership_id,
+            )
+            .values(
+                draft_id=None,
+                case_id=case.id,
+                expires_at=case.retention_due_at,
+            )
+        )
 
         fact_rows = [
             CaseFact(

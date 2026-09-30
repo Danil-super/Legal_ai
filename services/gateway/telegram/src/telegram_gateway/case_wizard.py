@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import httpx2
 
 INTAKE_SCHEMA_VERSION = "dental-case-intake.v1"
+V2_INTAKE_SCHEMA_VERSION = "dental-case-intake.v2"
 MAX_PDF_BYTES = 8 * 1024 * 1024
 DateFactValue: TypeAlias = dict[str, str | None]
 SignalAnswer: TypeAlias = bool | Literal["YES", "NO", "UNKNOWN"]
@@ -245,6 +246,53 @@ def facts_from_draft(draft: CaseDraft) -> list[dict[str, Any]]:
     return facts
 
 
+def facts_from_v2_data(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Map confirmed ordinary-language v2 data without inferring legal labels.
+
+    The Legal Core validates value types and performs the authoritative missing-fact
+    check.  This adapter intentionally does not manufacture legacy claim, harm,
+    deadline, or regulator facts from a user's plain-language description.
+    """
+
+    if data.get("intakeVersion") != 2:
+        raise ValueError("unsupported v2 draft")
+    required = (
+        "incomingKind",
+        "incomingSourceStatus",
+        "situationAreas",
+        "eventSummary",
+        "eventDate",
+        "conflictStage",
+        "clinicActions",
+        "healthSignals",
+        "caseMaterialsStatus",
+    )
+    if any(key not in data for key in required):
+        raise ValueError("v2 draft is incomplete")
+    facts = [
+        _fact("INTAKE_VERSION", "ENUM", {"value": "GUIDED_V2"}),
+        _fact("INCOMING_COMMUNICATION", "ENUM", {"value": data["incomingKind"]}),
+        _fact("INCOMING_SOURCE_STATUS", "ENUM", {"value": data["incomingSourceStatus"]}),
+        _fact("SITUATION_AREAS", "ENUM_SET", {"values": data["situationAreas"]}),
+        _fact("EVENT_SUMMARY", "TEXT", {"text": data["eventSummary"]}),
+        _fact("EVENT_DATE", "DATE", data["eventDate"]),
+        _fact("CONFLICT_STAGE", "ENUM", {"value": data["conflictStage"]}),
+        _fact("CLINIC_ACTIONS", "ENUM_SET", {"values": data["clinicActions"]}),
+        _fact(
+            "HEALTH_CONSEQUENCE_SIGNALS",
+            "ENUM_SET",
+            {"values": data["healthSignals"]},
+        ),
+        _fact("CASE_MATERIALS_STATUS", "ENUM", {"value": data["caseMaterialsStatus"]}),
+    ]
+    if "TREATMENT" in data["situationAreas"]:
+        affected_services = data.get("affectedServices")
+        if not isinstance(affected_services, list):
+            raise ValueError("treatment requires affected services")
+        facts.append(_fact("AFFECTED_SERVICES", "TEXT_LIST", {"items": affected_services}))
+    return facts
+
+
 def telegram_summary_from_report(report: dict[str, Any]) -> str:
     """Render the Telegram card only from a validated canonical report response."""
 
@@ -401,6 +449,215 @@ class LegalCoreClient:
             raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response")
         return payload
 
+    async def get_reference_evaluation_access(self, telegram_user_id: int) -> dict[str, Any]:
+        return await self._json_request(
+            "GET",
+            "/v1/reference-evaluations/access",
+            telegram_user_id=telegram_user_id,
+        )
+
+    async def list_reference_evaluations(
+        self,
+        telegram_user_id: int,
+        *,
+        before: UUID | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        if not 1 <= limit <= 50:
+            raise ValueError("reference evaluation list limit out of range")
+        query = f"?limit={limit}" + (f"&before={before}" if before else "")
+        return await self._json_request(
+            "GET",
+            f"/v1/reference-evaluations{query}",
+            telegram_user_id=telegram_user_id,
+        )
+
+    async def get_reference_evaluation(
+        self,
+        case_id: UUID,
+        telegram_user_id: int,
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "GET",
+            f"/v1/reference-evaluations/{case_id}",
+            telegram_user_id=telegram_user_id,
+        )
+
+    async def create_reference_evaluation(
+        self,
+        telegram_user_id: int,
+        *,
+        group_key: str,
+        as_of_date: str,
+        expected_route: str,
+        scenario_text: str,
+        idempotency_key: UUID,
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "POST",
+            "/v1/reference-evaluations",
+            telegram_user_id=telegram_user_id,
+            idempotency_key=idempotency_key,
+            payload={
+                "groupKey": group_key,
+                "asOfDate": as_of_date,
+                "expectedRoute": expected_route,
+                "scenarioText": scenario_text,
+            },
+        )
+
+    async def revise_reference_evaluation(
+        self,
+        case_id: UUID,
+        telegram_user_id: int,
+        *,
+        as_of_date: str,
+        expected_route: str,
+        scenario_text: str,
+        idempotency_key: UUID,
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "POST",
+            f"/v1/reference-evaluations/{case_id}/revisions",
+            telegram_user_id=telegram_user_id,
+            idempotency_key=idempotency_key,
+            payload={
+                "asOfDate": as_of_date,
+                "expectedRoute": expected_route,
+                "scenarioText": scenario_text,
+            },
+        )
+
+    async def submit_reference_evaluation(
+        self,
+        case_id: UUID,
+        telegram_user_id: int,
+        *,
+        idempotency_key: UUID,
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "POST",
+            f"/v1/reference-evaluations/{case_id}/submit",
+            telegram_user_id=telegram_user_id,
+            idempotency_key=idempotency_key,
+            payload={},
+        )
+
+    async def review_reference_evaluation(
+        self,
+        case_id: UUID,
+        telegram_user_id: int,
+        *,
+        decision: str,
+        note: str | None,
+        idempotency_key: UUID,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"decision": decision}
+        if note is not None:
+            payload["note"] = note
+        return await self._json_request(
+            "POST",
+            f"/v1/reference-evaluations/{case_id}/review",
+            telegram_user_id=telegram_user_id,
+            idempotency_key=idempotency_key,
+            payload=payload,
+        )
+
+    async def upload_reference_evaluation_material(
+        self,
+        case_id: UUID,
+        telegram_user_id: int,
+        *,
+        content: bytes,
+        source_filename: str,
+        content_type: str,
+        idempotency_key: UUID,
+    ) -> dict[str, Any]:
+        """Upload one de-identified evaluation attachment without retaining it in the gateway."""
+
+        if not content or len(content) > 15_000_000:
+            raise ValueError("reference evaluation material is outside the supported size")
+        if not source_filename or len(source_filename) > 255:
+            raise ValueError("reference evaluation material filename is invalid")
+        try:
+            response = await self._http.post(
+                f"/v1/reference-evaluations/{case_id}/material",
+                headers={
+                    **self._headers(telegram_user_id, idempotency_key),
+                    "X-Source-Filename": source_filename,
+                    "Content-Type": content_type,
+                },
+                content=content,
+            )
+        except httpx2.HTTPError as exc:
+            raise LegalCoreApiError(
+                503, "LEGAL_CORE_UNAVAILABLE", "Legal Core unavailable"
+            ) from exc
+        if response.status_code >= 400:
+            code = "REFERENCE_EVALUATION_MATERIAL_UPLOAD_REJECTED"
+            try:
+                payload = response.json()
+                if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+                    candidate = payload["error"].get("code")
+                    if isinstance(candidate, str):
+                        code = candidate
+            except ValueError:
+                pass
+            raise LegalCoreApiError(
+                response.status_code,
+                code,
+                "Reference evaluation material upload rejected",
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise LegalCoreApiError(
+                502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response")
+        return payload
+
+    async def download_reference_evaluation_material(
+        self,
+        case_id: UUID,
+        telegram_user_id: int,
+    ) -> tuple[bytes, str]:
+        try:
+            response = await self._http.get(
+                f"/v1/reference-evaluations/{case_id}/material",
+                headers=self._headers(telegram_user_id),
+            )
+        except httpx2.HTTPError as exc:
+            raise LegalCoreApiError(
+                503, "LEGAL_CORE_UNAVAILABLE", "Legal Core unavailable"
+            ) from exc
+        if response.status_code >= 400:
+            code = "REFERENCE_EVALUATION_MATERIAL_NOT_AVAILABLE"
+            try:
+                payload = response.json()
+                if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+                    candidate = payload["error"].get("code")
+                    if isinstance(candidate, str):
+                        code = candidate
+            except ValueError:
+                pass
+            raise LegalCoreApiError(
+                response.status_code,
+                code,
+                "Reference evaluation material unavailable",
+            )
+        content_type = response.headers.get("content-type", "").split(";", 1)[0]
+        if content_type not in {
+            "text/plain",
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }:
+            raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response")
+        if not response.content or len(response.content) > 15_000_000:
+            raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response")
+        return response.content, content_type
+
     async def list_clinic_members(self, telegram_user_id: int) -> dict[str, Any]:
         return await self._json_request(
             "GET", "/v1/clinic/members", telegram_user_id=telegram_user_id
@@ -489,13 +746,20 @@ class LegalCoreClient:
             payload=payload,
         )
 
-    async def create_intake_draft(self, telegram_user_id: int) -> dict[str, Any]:
+    async def create_intake_draft(
+        self,
+        telegram_user_id: int,
+        *,
+        intake_schema_version: str = INTAKE_SCHEMA_VERSION,
+    ) -> dict[str, Any]:
+        if intake_schema_version not in {INTAKE_SCHEMA_VERSION, V2_INTAKE_SCHEMA_VERSION}:
+            raise ValueError("unsupported intake schema version")
         return await self._json_request(
             "POST",
             "/v1/telegram-intake-drafts",
             telegram_user_id=telegram_user_id,
             idempotency_key=uuid4(),
-            payload={},
+            payload={"intakeSchemaVersion": intake_schema_version},
         )
 
     async def list_intake_drafts(self, telegram_user_id: int) -> dict[str, Any]:
@@ -547,17 +811,75 @@ class LegalCoreClient:
         workflow_id: UUID,
         facts: list[dict[str, Any]],
         telegram_user_id: int,
+        *,
+        intake_schema_version: str = INTAKE_SCHEMA_VERSION,
     ) -> dict[str, Any]:
+        if intake_schema_version not in {INTAKE_SCHEMA_VERSION, V2_INTAKE_SCHEMA_VERSION}:
+            raise ValueError("unsupported intake schema version")
         return await self._json_request(
             "POST",
             f"/v1/telegram-case-workflows/{workflow_id}/submissions",
             telegram_user_id=telegram_user_id,
             payload={
-                "intakeSchemaVersion": INTAKE_SCHEMA_VERSION,
+                "intakeSchemaVersion": intake_schema_version,
                 "locale": "ru-RU",
                 "facts": facts,
             },
         )
+
+    async def upload_case_material(
+        self,
+        draft_id: UUID,
+        telegram_user_id: int,
+        *,
+        content: bytes,
+        source_filename: str,
+        content_type: str,
+    ) -> dict[str, Any]:
+        """Upload a bounded Telegram document to the isolated Core endpoint.
+
+        This client deliberately does not persist file data locally and never logs
+        its content or filename. Legal Core repeats size/parser/tenant checks.
+        """
+
+        if not content or len(content) > 15_000_000:
+            raise ValueError("case material is outside the supported size")
+        if not source_filename or len(source_filename) > 255:
+            raise ValueError("case material filename is invalid")
+        try:
+            response = await self._http.post(
+                f"/v1/telegram-intake-drafts/{draft_id}/case-materials",
+                headers={
+                    **self._headers(telegram_user_id, uuid4()),
+                    "X-Source-Filename": source_filename,
+                    "Content-Type": content_type,
+                },
+                content=content,
+            )
+        except httpx2.HTTPError as exc:
+            raise LegalCoreApiError(
+                503, "LEGAL_CORE_UNAVAILABLE", "Legal Core unavailable"
+            ) from exc
+        if response.status_code >= 400:
+            code = "CASE_MATERIAL_UPLOAD_REJECTED"
+            try:
+                payload = response.json()
+                if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+                    candidate = payload["error"].get("code")
+                    if isinstance(candidate, str):
+                        code = candidate
+            except ValueError:
+                pass
+            raise LegalCoreApiError(response.status_code, code, "Case material upload rejected")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise LegalCoreApiError(
+                502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response")
+        return payload
 
     async def get_workflow(
         self, workflow_id: UUID, telegram_user_id: int

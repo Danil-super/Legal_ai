@@ -51,6 +51,11 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
             "idempotency_records",
             "telegram_case_workflows",
             "telegram_intake_drafts",
+            "case_materials",
+            "reference_evaluation_access_grants",
+            "reference_evaluation_cases",
+            "reference_evaluation_case_versions",
+            "reference_evaluation_review_events",
             "legal_sources",
             "legal_documents",
             "legal_versions",
@@ -75,6 +80,9 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                     "WHERE relrowsecurity AND relname IN "
                     "('cases','case_facts','case_reports','audit_events','idempotency_records',"
                     "'telegram_case_workflows','telegram_intake_drafts','subscription_entitlements',"
+                    "'case_materials','reference_evaluation_access_grants',"
+                    "'reference_evaluation_cases','reference_evaluation_case_versions',"
+                    "'reference_evaluation_review_events',"
                     "'subscription_entitlement_events','case_risk_assessments','case_escalations',"
                     "'case_escalation_messages','case_escalation_workflow_events','analysis_jobs',"
                     "'case_analysis_runs','case_analysis_claims','case_retention_events')"
@@ -90,7 +98,8 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                     "'subscription_entitlement_events','risk_policy_versions','risk_policy_events',"
                     "'case_risk_assessments','case_escalations','case_analysis_runs',"
                     "'case_analysis_claims','case_escalation_messages','legal_update_review_items',"
-                    "'legal_update_runs','case_escalation_workflow_events')"
+                    "'legal_update_runs','case_escalation_workflow_events',"
+                    "'reference_evaluation_review_events')"
                 )
             ).scalars()
             legal_guard_triggers = set(
@@ -100,7 +109,8 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                         "WHERE NOT tgisinternal AND tgname IN "
                         "('legal_approval_events_validate_insert',"
                         "'legal_fragments_append_only','legal_sources_protect_identity',"
-                        "'legal_versions_protect_content')"
+                        "'legal_versions_protect_content',"
+                        "'reference_evaluation_review_events_guard')"
                     )
                 ).scalars()
             )
@@ -111,7 +121,13 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                         "('legal_canonical_jsonb','legal_regression_result_sha256',"
                         "'legal_approval_event_is_current',"
                         "'purge_expired_telegram_intake_drafts',"
-                        "'purge_expired_case_content')"
+                        "'purge_expired_case_content',"
+                        "'claim_expired_case_materials',"
+                        "'finalize_expired_case_material_deletion',"
+                        "'release_expired_case_material_deletion',"
+                        "'claim_expired_reference_evaluation_versions',"
+                        "'finalize_expired_reference_evaluation_version',"
+                        "'release_expired_reference_evaluation_version')"
                     )
                 ).scalars()
             )
@@ -123,6 +139,11 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 "idempotency_records",
                 "telegram_case_workflows",
                 "telegram_intake_drafts",
+                "case_materials",
+                "reference_evaluation_access_grants",
+                "reference_evaluation_cases",
+                "reference_evaluation_case_versions",
+                "reference_evaluation_review_events",
                 "subscription_entitlements",
                 "subscription_entitlement_events",
                 "case_risk_assessments",
@@ -154,12 +175,14 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 "case_analysis_claims",
                 "legal_update_review_items",
                 "legal_update_runs",
+                "reference_evaluation_review_events",
             }
             assert legal_guard_triggers == {
                 "legal_approval_events_validate_insert",
                 "legal_fragments_append_only",
                 "legal_sources_protect_identity",
                 "legal_versions_protect_content",
+                "reference_evaluation_review_events_guard",
             }
             assert legal_guard_functions == {
                 "legal_canonical_jsonb",
@@ -167,6 +190,12 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 "legal_approval_event_is_current",
                 "purge_expired_telegram_intake_drafts",
                 "purge_expired_case_content",
+                "claim_expired_case_materials",
+                "finalize_expired_case_material_deletion",
+                "release_expired_case_material_deletion",
+                "claim_expired_reference_evaluation_versions",
+                "finalize_expired_reference_evaluation_version",
+                "release_expired_reference_evaluation_version",
             }
 
         with engine.connect() as connection:

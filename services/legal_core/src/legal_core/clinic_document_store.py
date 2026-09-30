@@ -17,6 +17,14 @@ import httpx
 _BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
 _HOST_RE = re.compile(r"^[A-Za-z0-9.-]+$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_CASE_MATERIAL_OBJECT_KEY_RE = re.compile(
+    r"^case-material/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{64}$"
+)
+_REFERENCE_EVALUATION_OBJECT_KEY_RE = re.compile(
+    r"^evaluation-case/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{64}$"
+)
 
 
 class RawClinicDocumentStore(Protocol):
@@ -29,6 +37,38 @@ class RawClinicDocumentStore(Protocol):
         content: bytes,
         content_type: str,
     ) -> str: ...
+
+
+class RawCaseMaterialStore(Protocol):
+    async def put_case_material(
+        self,
+        *,
+        clinic_id: UUID,
+        material_id: UUID,
+        raw_sha256: str,
+        content: bytes,
+        content_type: str,
+    ) -> str: ...
+
+    async def delete_case_material(self, *, object_key: str) -> None: ...
+
+    async def get_case_material(self, *, object_key: str, max_bytes: int) -> bytes: ...
+
+
+class RawReferenceEvaluationStore(Protocol):
+    async def put_reference_evaluation(
+        self,
+        *,
+        clinic_id: UUID,
+        version_id: UUID,
+        raw_sha256: str,
+        content: bytes,
+        content_type: str,
+    ) -> str: ...
+
+    async def delete_reference_evaluation(self, *, object_key: str) -> None: ...
+
+    async def get_reference_evaluation(self, *, object_key: str, max_bytes: int) -> bytes: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +133,36 @@ def clinic_document_object_key(
     if _SHA256_RE.fullmatch(raw_sha256) is None:
         raise ValueError("raw_sha256 must be a lowercase SHA-256 hex digest")
     return f"clinic/{clinic_id}/{document_id}/{raw_sha256}"
+
+
+def case_material_object_key(
+    *,
+    clinic_id: UUID,
+    material_id: UUID,
+    raw_sha256: str,
+) -> str:
+    """Build an opaque private object key for one short-lived case material.
+
+    Case materials must never share the clinic-document library prefix: their
+    retention and authorisation rules are deliberately different.
+    """
+
+    if _SHA256_RE.fullmatch(raw_sha256) is None:
+        raise ValueError("raw_sha256 must be a lowercase SHA-256 hex digest")
+    return f"case-material/{clinic_id}/{material_id}/{raw_sha256}"
+
+
+def reference_evaluation_object_key(
+    *,
+    clinic_id: UUID,
+    version_id: UUID,
+    raw_sha256: str,
+) -> str:
+    """Build a private key outside the corpus and ordinary case-material prefixes."""
+
+    if _SHA256_RE.fullmatch(raw_sha256) is None:
+        raise ValueError("raw_sha256 must be a lowercase SHA-256 hex digest")
+    return f"evaluation-case/{clinic_id}/{version_id}/{raw_sha256}"
 
 
 def _sha256_hex(value: bytes) -> str:
@@ -262,6 +332,124 @@ class MinioRawClinicDocumentStore:
         if response.status_code != 200:
             raise RuntimeError(f"raw clinic document upload failed: HTTP {response.status_code}")
         return object_key
+
+    async def put_case_material(
+        self,
+        *,
+        clinic_id: UUID,
+        material_id: UUID,
+        raw_sha256: str,
+        content: bytes,
+        content_type: str,
+    ) -> str:
+        """Store a bounded case attachment below an isolated private prefix."""
+
+        if not content:
+            raise ValueError("raw case material content must not be empty")
+        if _sha256_hex(content) != raw_sha256:
+            raise ValueError("raw case material SHA-256 does not match the content")
+        if not content_type or len(content_type) > 200:
+            raise ValueError("raw case material content type is invalid")
+        object_key = case_material_object_key(
+            clinic_id=clinic_id,
+            material_id=material_id,
+            raw_sha256=raw_sha256,
+        )
+        await self._ensure_bucket()
+        canonical_uri = self._bucket_uri() + "/" + quote(object_key, safe="/-_.~")
+        response = await self._request(
+            "PUT",
+            canonical_uri,
+            content=content,
+            content_type=content_type,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"raw case material upload failed: HTTP {response.status_code}")
+        return object_key
+
+    async def delete_case_material(self, *, object_key: str) -> None:
+        """Idempotently remove only a server-shaped case-material object."""
+
+        if not _CASE_MATERIAL_OBJECT_KEY_RE.fullmatch(object_key):
+            raise ValueError("raw case material object key is invalid")
+        canonical_uri = self._bucket_uri() + "/" + quote(object_key, safe="/-_.~")
+        response = await self._request("DELETE", canonical_uri)
+        if response.status_code not in {204, 404}:
+            raise RuntimeError(f"raw case material deletion failed: HTTP {response.status_code}")
+
+    async def get_case_material(self, *, object_key: str, max_bytes: int) -> bytes:
+        """Read one authorised private object with a strict post-read size cap."""
+
+        if not _CASE_MATERIAL_OBJECT_KEY_RE.fullmatch(object_key):
+            raise ValueError("raw case material object key is invalid")
+        if not 1 <= max_bytes <= 15_000_000:
+            raise ValueError("raw case material maximum size is invalid")
+        canonical_uri = self._bucket_uri() + "/" + quote(object_key, safe="/-_.~")
+        response = await self._request("GET", canonical_uri)
+        if response.status_code != 200:
+            raise RuntimeError(f"raw case material download failed: HTTP {response.status_code}")
+        if not response.content or len(response.content) > max_bytes:
+            raise RuntimeError("raw case material download size is invalid")
+        return response.content
+
+    async def put_reference_evaluation(
+        self,
+        *,
+        clinic_id: UUID,
+        version_id: UUID,
+        raw_sha256: str,
+        content: bytes,
+        content_type: str,
+    ) -> str:
+        if not content:
+            raise ValueError("raw reference evaluation content must not be empty")
+        if _sha256_hex(content) != raw_sha256:
+            raise ValueError("raw reference evaluation SHA-256 does not match the content")
+        if not content_type or len(content_type) > 200:
+            raise ValueError("raw reference evaluation content type is invalid")
+        object_key = reference_evaluation_object_key(
+            clinic_id=clinic_id,
+            version_id=version_id,
+            raw_sha256=raw_sha256,
+        )
+        await self._ensure_bucket()
+        canonical_uri = self._bucket_uri() + "/" + quote(object_key, safe="/-_.~")
+        response = await self._request(
+            "PUT",
+            canonical_uri,
+            content=content,
+            content_type=content_type,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"raw reference evaluation upload failed: HTTP {response.status_code}"
+            )
+        return object_key
+
+    async def delete_reference_evaluation(self, *, object_key: str) -> None:
+        if _REFERENCE_EVALUATION_OBJECT_KEY_RE.fullmatch(object_key) is None:
+            raise ValueError("raw reference evaluation object key is invalid")
+        canonical_uri = self._bucket_uri() + "/" + quote(object_key, safe="/-_.~")
+        response = await self._request("DELETE", canonical_uri)
+        if response.status_code not in {204, 404}:
+            raise RuntimeError(
+                f"raw reference evaluation deletion failed: HTTP {response.status_code}"
+            )
+
+    async def get_reference_evaluation(self, *, object_key: str, max_bytes: int) -> bytes:
+        if _REFERENCE_EVALUATION_OBJECT_KEY_RE.fullmatch(object_key) is None:
+            raise ValueError("raw reference evaluation object key is invalid")
+        if not 1 <= max_bytes <= 15_000_000:
+            raise ValueError("raw reference evaluation maximum size is invalid")
+        canonical_uri = self._bucket_uri() + "/" + quote(object_key, safe="/-_.~")
+        response = await self._request("GET", canonical_uri)
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"raw reference evaluation download failed: HTTP {response.status_code}"
+            )
+        if not response.content or len(response.content) > max_bytes:
+            raise RuntimeError("raw reference evaluation download size is invalid")
+        return response.content
 
     async def probe(self) -> bool:
         """Verify that the configured credential can address the application bucket.

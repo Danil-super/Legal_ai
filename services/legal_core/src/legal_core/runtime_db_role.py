@@ -116,7 +116,11 @@ def provision_runtime_role() -> str:
         )
         # New preparation ledgers are append-only even after broad legacy grants.
         # Check existence because provisioning also runs before migrations.
-        for ledger in ("legal_material_preparations", "legal_reference_review_events"):
+        for ledger in (
+            "legal_material_preparations",
+            "legal_reference_review_events",
+            "reference_evaluation_review_events",
+        ):
             cursor.execute("SELECT to_regclass(%s)", (f"public.{ledger}",))
             found = cursor.fetchone()
             if found is not None and found[0] is not None:

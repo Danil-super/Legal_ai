@@ -621,6 +621,7 @@ class TelegramIntakeDraft(Base):
         CheckConstraint("status IN ('DRAFT', 'ARCHIVED', 'SUBMITTED')"),
         CheckConstraint("revision > 0"),
         CheckConstraint("jsonb_typeof(draft_json) = 'object'"),
+        UniqueConstraint("clinic_id", "id"),
         Index(
             "ix_telegram_intake_drafts_actor_active",
             "clinic_id",
@@ -643,6 +644,221 @@ class TelegramIntakeDraft(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
     purge_after: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CaseMaterial(Base):
+    """Short-lived, opaque raw material owned by one draft or confirmed case."""
+
+    __tablename__ = "case_materials"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["clinic_id", "draft_id"],
+            ["telegram_intake_drafts.clinic_id", "telegram_intake_drafts.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "case_id"],
+            ["cases.clinic_id", "cases.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "uploader_membership_id"],
+            ["clinic_users.clinic_id", "clinic_users.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("num_nonnulls(draft_id, case_id) = 1"),
+        CheckConstraint("char_length(raw_sha256) = 64"),
+        CheckConstraint("raw_size_bytes > 0"),
+        CheckConstraint("deletion_attempts >= 0"),
+        UniqueConstraint("clinic_id", "id"),
+        UniqueConstraint("raw_object_key"),
+        UniqueConstraint("clinic_id", "draft_id", "raw_sha256"),
+        Index("ix_case_materials_draft", "clinic_id", "draft_id", "id"),
+        Index("ix_case_materials_case", "clinic_id", "case_id", "id"),
+        Index("ix_case_materials_expiry", "expires_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    draft_id: Mapped[UUID | None] = mapped_column(UUID_PK)
+    case_id: Mapped[UUID | None] = mapped_column(UUID_PK)
+    uploader_membership_id: Mapped[UUID] = mapped_column(UUID_PK)
+    display_name: Mapped[str] = mapped_column(String(120))
+    mime_type: Mapped[str] = mapped_column(String(100))
+    raw_size_bytes: Mapped[int] = mapped_column(BigInteger)
+    raw_sha256: Mapped[str] = mapped_column(String(64))
+    raw_object_key: Mapped[str] = mapped_column(String(512))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    deletion_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deletion_lease_token: Mapped[UUID | None] = mapped_column(UUID_PK)
+    deletion_attempts: Mapped[int] = mapped_column(Integer, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
+class ReferenceEvaluationAccessGrant(Base):
+    """Explicit workspace permission; clinic roles never imply this grant."""
+
+    __tablename__ = "reference_evaluation_access_grants"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["clinic_id", "membership_id"],
+            ["clinic_users.clinic_id", "clinic_users.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("permission IN ('CONTRIBUTOR', 'REVIEWER')"),
+        UniqueConstraint("clinic_id", "membership_id", "permission"),
+        UniqueConstraint("clinic_id", "id"),
+        Index("ix_reference_evaluation_access_membership", "clinic_id", "membership_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    membership_id: Mapped[UUID] = mapped_column(UUID_PK)
+    permission: Mapped[str] = mapped_column(String(20))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
+class ReferenceEvaluationCase(Base):
+    """One private historical scenario with a reviewable current version."""
+
+    __tablename__ = "reference_evaluation_cases"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["clinic_id", "created_by_membership_id"],
+            ["clinic_users.clinic_id", "clinic_users.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "status IN ('DRAFT', 'READY_FOR_REVIEW', 'CHANGES_REQUIRED', "
+            "'APPROVED_FOR_EVALUATION', 'REJECTED', 'RETIRED')"
+        ),
+        CheckConstraint(
+            "group_key IN ('clinical', 'labour', 'courts', 'privacy', 'licensing', "
+            "'healthcare', 'general')"
+        ),
+        CheckConstraint("current_version > 0"),
+        UniqueConstraint("clinic_id", "id"),
+        UniqueConstraint("case_no"),
+        Index("ix_reference_evaluation_cases_tenant", "clinic_id", "updated_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    case_no: Mapped[int] = mapped_column(BigInteger, Identity(), unique=True)
+    created_by_membership_id: Mapped[UUID] = mapped_column(UUID_PK)
+    group_key: Mapped[str] = mapped_column(String(30))
+    status: Mapped[str] = mapped_column(String(30), server_default="DRAFT")
+    current_version: Mapped[int] = mapped_column(Integer, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
+class ReferenceEvaluationCaseVersion(Base):
+    """Immutable de-identified source package; raw content is optional and private."""
+
+    __tablename__ = "reference_evaluation_case_versions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["clinic_id", "reference_case_id"],
+            ["reference_evaluation_cases.clinic_id", "reference_evaluation_cases.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "created_by_membership_id"],
+            ["clinic_users.clinic_id", "clinic_users.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("version > 0"),
+        CheckConstraint("expected_route IN ('ABSTAIN', 'HUMAN_ESCALATION', 'INTERNAL_DRAFT')"),
+        CheckConstraint("char_length(scenario_sha256) = 64"),
+        CheckConstraint(
+            "(raw_object_key IS NULL AND raw_mime_type IS NULL AND raw_size_bytes IS NULL "
+            "AND raw_sha256 IS NULL) OR "
+            "(raw_object_key IS NOT NULL AND raw_mime_type IS NOT NULL "
+            "AND raw_size_bytes > 0 AND char_length(raw_sha256) = 64)"
+        ),
+        CheckConstraint("deletion_attempts >= 0"),
+        UniqueConstraint("clinic_id", "id"),
+        UniqueConstraint("clinic_id", "reference_case_id", "version"),
+        UniqueConstraint("raw_object_key"),
+        Index("ix_reference_evaluation_versions_expiry", "content_expires_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    reference_case_id: Mapped[UUID] = mapped_column(UUID_PK)
+    version: Mapped[int] = mapped_column(Integer)
+    created_by_membership_id: Mapped[UUID] = mapped_column(UUID_PK)
+    as_of_date: Mapped[date] = mapped_column(Date)
+    expected_route: Mapped[str] = mapped_column(String(30))
+    scenario_text: Mapped[str | None] = mapped_column(Text)
+    scenario_sha256: Mapped[str] = mapped_column(String(64))
+    raw_mime_type: Mapped[str | None] = mapped_column(String(100))
+    raw_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    raw_sha256: Mapped[str | None] = mapped_column(String(64))
+    raw_object_key: Mapped[str | None] = mapped_column(String(512))
+    content_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    content_purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deletion_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deletion_lease_token: Mapped[UUID | None] = mapped_column(UUID_PK)
+    deletion_attempts: Mapped[int] = mapped_column(Integer, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
+class ReferenceEvaluationReviewEvent(Base):
+    """Append-only human decision for a single immutable reference-case version."""
+
+    __tablename__ = "reference_evaluation_review_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["clinic_id", "reference_case_id"],
+            ["reference_evaluation_cases.clinic_id", "reference_evaluation_cases.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "reference_version_id"],
+            [
+                "reference_evaluation_case_versions.clinic_id",
+                "reference_evaluation_case_versions.id",
+            ],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "reviewer_membership_id"],
+            ["clinic_users.clinic_id", "clinic_users.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "decision IN ('APPROVE_FOR_EVALUATION', 'CHANGES_REQUIRED', 'REJECT', 'RETIRE')"
+        ),
+        UniqueConstraint("clinic_id", "reference_case_id", "reference_version_id", "decision"),
+        UniqueConstraint("clinic_id", "id"),
+        Index(
+            "ix_reference_evaluation_review_case",
+            "clinic_id",
+            "reference_case_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
+    reference_case_id: Mapped[UUID] = mapped_column(UUID_PK)
+    reference_version_id: Mapped[UUID] = mapped_column(UUID_PK)
+    reviewer_membership_id: Mapped[UUID] = mapped_column(UUID_PK)
+    decision: Mapped[str] = mapped_column(String(30))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 
 class LegalSource(Base):

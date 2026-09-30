@@ -18,6 +18,8 @@ from telegram_gateway.bot import (
     case_start,
     choose_hospitalization,
     choose_lawyer,
+    choose_v2_multi,
+    choose_v2_single,
     confirm_case,
     grant_access,
     grant_pilot,
@@ -35,6 +37,7 @@ from telegram_gateway.case_wizard import (
     LegalCoreApiError,
     LegalCoreClient,
     facts_from_draft,
+    facts_from_v2_data,
     parse_date_answer,
     parse_iso_date,
     parse_ruble_amount_to_kopecks,
@@ -80,10 +83,19 @@ class FakeLegalCore:
         del telegram_user_id, idempotency_key
         raise AssertionError("case must not be created before confirmation")
 
-    async def create_intake_draft(self, telegram_user_id: int) -> dict[str, Any]:
+    async def create_intake_draft(
+        self, telegram_user_id: int, *, intake_schema_version: str = "dental-case-intake.v1"
+    ) -> dict[str, Any]:
         del telegram_user_id
         if isinstance(self.response, Exception):
             raise self.response
+        if intake_schema_version == "dental-case-intake.v2":
+            return {
+                "id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
+                "wizardState": "INCOMING",
+                "revision": 1,
+                "draftData": {"intakeVersion": 2},
+            }
         return {
             "id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
             "wizardState": "INCIDENT",
@@ -154,8 +166,8 @@ class FakeReportPipeline:
             },
         }
 
-    async def submit_workflow(self, *args: object) -> dict[str, Any]:
-        del args
+    async def submit_workflow(self, *args: object, **kwargs: object) -> dict[str, Any]:
+        del args, kwargs
         self.steps.append("submit")
         return self.workflow_response()
 
@@ -192,6 +204,29 @@ def test_parse_date_answer_preserves_explicit_unknown_without_making_up_a_date()
         "precision": "EXACT",
     }
     assert parse_date_answer("завтра", today="2026-08-22") is None
+
+
+def test_v2_mapping_never_infers_legacy_claim_or_harm_facts() -> None:
+    facts = facts_from_v2_data(
+        {
+            "intakeVersion": 2,
+            "incomingKind": "COMPLAINT",
+            "incomingSourceStatus": "NOT_ATTACHED",
+            "situationAreas": ["TREATMENT"],
+            "affectedServices": ["терапевтическое лечение"],
+            "eventSummary": "Клиент сообщил о дискомфорте после лечения.",
+            "eventDate": {"date": "2026-09-01", "precision": "EXACT"},
+            "conflictStage": "ONGOING",
+            "clinicActions": ["INVITED_FOR_EXAMINATION"],
+            "healthSignals": ["UNKNOWN"],
+            "caseMaterialsStatus": "NOT_ATTACHED",
+        }
+    )
+
+    keys = {item["factKey"] for item in facts}
+    assert "INTAKE_VERSION" in keys
+    assert "AFFECTED_SERVICES" in keys
+    assert keys.isdisjoint({"FORMAL_CLAIM", "HARM_CLAIMED", "RESPONSE_DEADLINE"})
 
 
 def test_ruble_amount_is_finite_and_converted_to_integer_kopecks() -> None:
@@ -691,7 +726,7 @@ def test_case_start_explains_inactive_subscription_without_leaking_tenant_detail
     assert context.user_data == {}
 
 
-def test_case_start_checks_access_without_creating_case_and_opens_incident_question() -> None:
+def test_case_start_checks_access_without_creating_case_and_opens_plain_language_question() -> None:
     message = FakeMessage()
     query = FakeQuery("case:start")
     update = SimpleNamespace(
@@ -708,11 +743,100 @@ def test_case_start_checks_access_without_creating_case_and_opens_incident_quest
 
     result = asyncio.run(case_start(update, context))
 
-    assert result == WizardState.INCIDENT
+    assert result == WizardState.INCOMING
     assert "case_id" not in context.user_data["case_wizard"]
     assert UUID(context.user_data["case_wizard"]["workflow_id"])
     assert "без ФИО" in message.text_replies[0]
     assert message.text_reply_markups[0].inline_keyboard[-1][0].callback_data == "menu"
+    assert "Что поступило от пациента" in message.text_replies[1]
+
+
+def test_v2_choice_flow_persists_plain_language_values_without_legal_qualification() -> None:
+    message = FakeMessage()
+    context = SimpleNamespace(
+        bot_data={LEGAL_CORE_CLIENT_KEY: FakeLegalCore({"role": "CLINIC_ADMIN"})},
+        user_data={
+            "case_wizard": {
+                "workflow_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
+                "draft_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
+                "draft_revision": 1,
+                "draft_state": "INCOMING",
+                "intakeVersion": 2,
+            }
+        },
+    )
+    incoming = SimpleNamespace(
+        callback_query=FakeQuery("case:v2:single:incomingKind:COMPLAINT"),
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+
+    result = asyncio.run(_persist_transition(choose_v2_single, incoming, context))
+
+    assert result == WizardState.SITUATION
+    data = context.user_data["case_wizard"]
+    assert data["incomingKind"] == "COMPLAINT"
+    assert data["incomingSourceStatus"] == "NOT_ATTACHED"
+    assert "formal_claim" not in data
+    assert "harm_claimed" not in data
+
+    select_treatment = SimpleNamespace(
+        callback_query=FakeQuery("case:v2:multi:situationAreas:TREATMENT"),
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+    assert (
+        asyncio.run(_persist_transition(choose_v2_multi, select_treatment, context))
+        == WizardState.SITUATION
+    )
+    complete = SimpleNamespace(
+        callback_query=FakeQuery("case:v2:multi:situationAreas:DONE"),
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+    assert (
+        asyncio.run(_persist_transition(choose_v2_multi, complete, context))
+        == WizardState.SERVICES
+    )
+
+
+def test_v2_confirmation_submits_plain_language_facts_without_legacy_qualification() -> None:
+    message = FakeMessage()
+    query = FakeQuery("case:confirm:9d0dd02f-cfd9-498a-85e4-c30b53abca88")
+    pipeline = FakeReportPipeline()
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+    context = SimpleNamespace(
+        bot_data={LEGAL_CORE_CLIENT_KEY: pipeline},
+        user_data={
+            "case_wizard": {
+                "workflow_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
+                "draft_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
+                "draft_revision": 2,
+                "draft_state": "V2_CONFIRM",
+                "intakeVersion": 2,
+                "incomingKind": "COMPLAINT",
+                "incomingSourceStatus": "NOT_ATTACHED",
+                "situationAreas": ["TREATMENT"],
+                "affectedServices": ["Лечение кариеса"],
+                "eventSummary": "После лечения появилась чувствительность зуба.",
+                "eventDate": {"date": "2026-07-01", "precision": "EXACT"},
+                "conflictStage": "FIRST",
+                "clinicActions": ["INVITED_FOR_EXAMINATION"],
+                "healthSignals": ["NO_KNOWN_INFORMATION"],
+                "caseMaterialsStatus": "NOT_ATTACHED",
+            }
+        },
+    )
+
+    result = asyncio.run(confirm_case(update, context))
+
+    assert result == ConversationHandler.END
+    assert pipeline.steps == ["submit", "pdf", "archive"]
+    assert context.user_data == {}
 
 
 def test_lawyer_unknown_is_preserved_and_does_not_become_a_negative_answer() -> None:

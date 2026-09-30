@@ -9,7 +9,10 @@ to prove that the user is not asked to make a legal qualification.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
+from contextlib import suppress
+from datetime import date
 from typing import Any
 
 from legal_core.pseudonymization import pseudonymize_text
@@ -101,6 +104,15 @@ _TEXT_FIELDS = {
 }
 
 
+def choice_items(field: str) -> tuple[tuple[str, str], ...]:
+    """Return UI labels for a closed v2 field without exposing mutable storage."""
+
+    try:
+        return tuple(_CHOICES[field].items())
+    except KeyError as exc:
+        raise ValueError("unknown choice field") from exc
+
+
 def _tokens(raw: str, *, field: str) -> list[str]:
     choices = _CHOICES[field]
     values = [part.strip().upper() for part in raw.split(",") if part.strip()]
@@ -154,6 +166,10 @@ def parse_answer(field: str, raw: str) -> object:
         return _services(raw)
     if field == "eventDate":
         value = raw.strip()
+        if re.fullmatch(r"[0-9]{2}\.[0-9]{2}\.[0-9]{4}", value):
+            day, month, year = value.split(".")
+            with suppress(ValueError):
+                value = date(int(year), int(month), int(day)).isoformat()
         parsed = parse_date_answer(value)
         if parsed is None:
             raise ValueError("Укажите дату ГГГГ-ММ-ДД, ДД.ММ.ГГГГ или «неизвестно».")
