@@ -264,19 +264,20 @@ def _record_telegram_api_failure(application: object) -> int:
     return failures
 
 
-def _withdraw_readiness_and_restart(application: TelegramApplication, *, failures: int) -> None:
-    """Let Docker recover polling only after repeated failed Bot API calls.
+def _mark_telegram_transport_unready(*, failures: int) -> None:
+    """Expose a repeated transport outage without interrupting PTB's retry loop.
 
     The gateway must not keep reporting ready when its only Telegram transport is unavailable.
+    `Updater.start_polling` already owns an indefinite retry loop for failed polling requests;
+    stopping the application here discarded that recovery path and added a container restart.
     A direct fallback would expose traffic outside the configured tunnel and is deliberately absent.
     """
 
     READY_FILE.unlink(missing_ok=True)
     logger.error(
-        "Telegram Bot API unavailable after %s consecutive failures; restarting gateway",
+        "Telegram Bot API unavailable after %s consecutive failures; continuing polling retries",
         failures,
     )
-    application.stop_running()
 
 
 async def _record_update_heartbeat(
@@ -302,10 +303,14 @@ async def _polling_watchdog(context: ContextTypes.DEFAULT_TYPE) -> None:
     except TelegramError:
         failures = _record_telegram_api_failure(application)
         logger.warning("could not inspect Telegram polling backlog")
-        if failures >= TELEGRAM_API_FAILURE_LIMIT:
-            _withdraw_readiness_and_restart(application, failures=failures)
+        if failures == TELEGRAM_API_FAILURE_LIMIT:
+            _mark_telegram_transport_unready(failures=failures)
         return
     _record_telegram_api_success(application)
+    try:
+        READY_FILE.touch(mode=0o600)
+    except OSError:
+        logger.error("could not restore Telegram polling readiness marker")
     pending_update_count = webhook.pending_update_count
     heartbeat_at = _last_update_heartbeat()
     if heartbeat_at is None:
@@ -2464,8 +2469,8 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         application = getattr(context, "application", None)
         if application is not None:
             failures = _record_telegram_api_failure(application)
-            if failures >= TELEGRAM_API_FAILURE_LIMIT:
-                _withdraw_readiness_and_restart(application, failures=failures)
+            if failures == TELEGRAM_API_FAILURE_LIMIT:
+                _mark_telegram_transport_unready(failures=failures)
     if query is None:
         return
     try:

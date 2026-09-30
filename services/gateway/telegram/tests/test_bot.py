@@ -453,7 +453,7 @@ def test_callback_failure_is_reported_to_the_user() -> None:
     ]
 
 
-def test_repeated_telegram_network_errors_withdraw_readiness_and_restart(
+def test_repeated_telegram_network_errors_mark_gateway_unready_without_restart(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -475,7 +475,7 @@ def test_repeated_telegram_network_errors_withdraw_readiness_and_restart(
     for _ in range(TELEGRAM_API_FAILURE_LIMIT):
         asyncio.run(on_error(SimpleNamespace(callback_query=None), context))
 
-    assert application.stop_calls == 1
+    assert application.stop_calls == 0
     assert not ready_file.exists()
     assert application.bot_data[TELEGRAM_API_FAILURES_KEY] == TELEGRAM_API_FAILURE_LIMIT
 
@@ -485,7 +485,6 @@ def test_successful_watchdog_probe_resets_telegram_failure_counter(
     tmp_path: Path,
 ) -> None:
     ready_file = tmp_path / "ready"
-    ready_file.touch()
     heartbeat_file = tmp_path / "heartbeat"
     heartbeat_file.touch()
     monkeypatch.setattr("telegram_gateway.bot.READY_FILE", ready_file)
