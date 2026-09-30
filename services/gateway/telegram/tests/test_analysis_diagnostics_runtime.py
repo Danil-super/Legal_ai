@@ -12,6 +12,7 @@ from telegram import Update
 from telegram.error import BadRequest, TimedOut
 from telegram.ext import ExtBot
 from telegram_gateway import analysis_diagnostics_runtime as runtime
+from telegram_gateway.update_processor import ActorSerialUpdateProcessor
 
 
 def payload():
@@ -110,7 +111,7 @@ def test_progress_menu_and_other_users_work_while_core_waits(monkeypatch):
         fetch = AsyncMock(side_effect=slow_core)
         monkeypatch.setattr(runtime, "_fetch_diagnostics_text", fetch)
         async with running_application(monkeypatch) as (app, calls, errors):
-            assert app.update_processor.max_concurrent_updates == 1
+            assert isinstance(app.update_processor, ActorSerialUpdateProcessor)
             await asyncio.wait_for(app.process_update(update_for(app, 1)), 0.5)
             await asyncio.wait_for(entered.wait(), 0.5)
             progress = next(data for method, data in calls

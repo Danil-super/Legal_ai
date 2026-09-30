@@ -23,6 +23,7 @@ from telegram_gateway.intake_experience import (
     valid_value,
     value_label,
 )
+from telegram_gateway.update_processor import ActorSerialUpdateProcessor
 from test_dialog_isolation import ACTOR, DRAFT, ESCALATION, Core
 
 DESCRIPTION = (
@@ -222,7 +223,7 @@ async def harness():
 def test_production_flow_persists_all_confirmed_fields_then_skips_repetition():
     async def scenario():
         async with harness() as (app, core, sent, dispatch):
-            assert app.update_processor.max_concurrent_updates == 1
+            assert isinstance(app.update_processor, ActorSerialUpdateProcessor)
             await dispatch("quick:start")
             await dispatch("text:" + DESCRIPTION)
             assert core.saved == []

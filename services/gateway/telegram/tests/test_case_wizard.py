@@ -40,6 +40,7 @@ from telegram_gateway.case_wizard import (
     parse_ruble_amount_to_kopecks,
     telegram_summary_from_report,
 )
+from telegram_gateway.update_processor import ActorSerialUpdateProcessor
 
 
 class FakeMessage:
@@ -748,11 +749,11 @@ def test_lawyer_deadline_does_not_overwrite_an_earlier_claim_deadline() -> None:
     }
 
 
-def test_application_serializes_conversation_updates_and_registers_wizard() -> None:
+def test_application_serializes_each_actor_conversation_and_registers_wizard() -> None:
     application = build_application("123456:unit_test_token_value_1234567890")
     handlers = [handler for group in application.handlers.values() for handler in group]
 
-    assert application.update_processor.max_concurrent_updates == 1
+    assert isinstance(application.update_processor, ActorSerialUpdateProcessor)
     assert any(isinstance(handler, ConversationHandler) for handler in handlers)
     assert isinstance(application.handlers[0][0], ConversationHandler)
 

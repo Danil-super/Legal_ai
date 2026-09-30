@@ -50,6 +50,7 @@ from telegram_gateway.ui import (
     admin_panel_keyboard,
     main_menu_keyboard,
 )
+from telegram_gateway.update_processor import ActorSerialUpdateProcessor
 
 
 class FakeMessage:
@@ -569,6 +570,7 @@ def test_application_registers_callback_handler_and_required_update_types() -> N
     application = build_application("123456:unit_test_token_value_1234567890")
     handlers: list[Any] = [handler for group in application.handlers.values() for handler in group]
 
+    assert isinstance(application.update_processor, ActorSerialUpdateProcessor)
     assert any(isinstance(handler, CallbackQueryHandler) for handler in handlers)
     assert any(
         isinstance(handler, CallbackQueryHandler)
@@ -596,6 +598,52 @@ def test_application_reserves_connection_capacity_for_polling_and_bot_actions() 
     assert bot_api_request._client._transport._pool._max_connections == (  # type: ignore[attr-defined]
         TELEGRAM_BOT_API_POOL_SIZE
     )
+
+
+def test_updates_from_one_actor_remain_ordered_without_blocking_other_actors() -> None:
+    async def scenario() -> list[str]:
+        processor = ActorSerialUpdateProcessor(max_concurrent_updates=2)
+        order: list[str] = []
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+
+        async def first() -> None:
+            order.append("first")
+            first_started.set()
+            await release_first.wait()
+
+        async def second() -> None:
+            order.append("second")
+
+        async def other_actor() -> None:
+            order.append("other")
+
+        first_task = asyncio.create_task(
+            processor.process_update(
+                SimpleNamespace(effective_user=SimpleNamespace(id=101)),
+                first(),
+            )
+        )
+        await first_started.wait()
+        second_task = asyncio.create_task(
+            processor.process_update(
+                SimpleNamespace(effective_user=SimpleNamespace(id=101)),
+                second(),
+            )
+        )
+        other_task = asyncio.create_task(
+            processor.process_update(
+                SimpleNamespace(effective_user=SimpleNamespace(id=202)), other_actor()
+            )
+        )
+        await other_task
+        assert order == ["first", "other"]
+
+        release_first.set()
+        await asyncio.gather(first_task, second_task)
+        return order
+
+    assert asyncio.run(scenario()) == ["first", "other", "second"]
 
 
 def test_polling_startup_does_not_repeat_rate_limited_profile_mutations(

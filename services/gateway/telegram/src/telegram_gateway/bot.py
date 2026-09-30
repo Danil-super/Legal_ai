@@ -51,6 +51,7 @@ from telegram_gateway.ui import (
     clinic_team_keyboard,
     main_menu_keyboard,
 )
+from telegram_gateway.update_processor import ActorSerialUpdateProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,8 @@ TELEGRAM_API_FAILURE_LIMIT = 3
 TELEGRAM_BOT_API_POOL_SIZE = 8
 TELEGRAM_POLLING_POOL_SIZE = 2
 TELEGRAM_POOL_TIMEOUT_SECONDS = 10.0
+TELEGRAM_MAX_CONCURRENT_ACTORS = 8
+TELEGRAM_QUEUED_UPDATE_LIMIT = 64
 CASE_INTAKE_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN"})
 CALLBACK_ERROR_MESSAGE = "⚠️ Не удалось выполнить действие. Откройте /menu и попробуйте ещё раз."
 _DRAFT_DELETE_CALLBACK_RE = re.compile(
@@ -1949,7 +1952,12 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
     builder = (
         Application.builder()
         .token(token)
-        .concurrent_updates(False)
+        .concurrent_updates(
+            ActorSerialUpdateProcessor(
+                TELEGRAM_MAX_CONCURRENT_ACTORS,
+                queued_update_limit=TELEGRAM_QUEUED_UPDATE_LIMIT,
+            )
+        )
         .connection_pool_size(TELEGRAM_BOT_API_POOL_SIZE)
         .pool_timeout(TELEGRAM_POOL_TIMEOUT_SECONDS)
         .get_updates_connection_pool_size(TELEGRAM_POLLING_POOL_SIZE)
