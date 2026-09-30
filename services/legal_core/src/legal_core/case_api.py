@@ -136,7 +136,7 @@ def _case_response(case: Case) -> CaseResponse:
 
 
 def _draft_summary(draft: TelegramIntakeDraft) -> TelegramIntakeDraftSummary:
-    incident_type = draft.draft_json.get("incident_type")
+    incident_type = draft.draft_json.get("incident_type", draft.draft_json.get("incomingKind"))
     return TelegramIntakeDraftSummary(
         id=draft.id,
         wizardState=cast(TelegramDraftWizardState, draft.wizard_state),
@@ -1111,12 +1111,13 @@ def create_case_router(
             )
 
         now = datetime.now(UTC)
+        is_v2 = payload.intake_schema_version == "dental-case-intake.v2"
         draft = TelegramIntakeDraft(
             clinic_id=actor.clinic_id,
             actor_membership_id=actor.membership_id,
             status="DRAFT",
-            wizard_state="INCIDENT",
-            draft_json={},
+            wizard_state="INCOMING" if is_v2 else "INCIDENT",
+            draft_json={"intakeVersion": 2} if is_v2 else {},
             revision=1,
             created_at=now,
             updated_at=now,

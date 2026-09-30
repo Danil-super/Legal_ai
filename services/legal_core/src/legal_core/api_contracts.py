@@ -64,7 +64,7 @@ _ENUM_FACT_KEYS = frozenset(
 _DOCUMENT_STATUSES = frozenset({"AVAILABLE", "MISSING", "UNKNOWN", "REQUESTED", "NOT_APPLICABLE"})
 _DOCUMENT_KEYS = frozenset({"CONTRACT", "MEDICAL_RECORD", "INFORMED_CONSENT", "GUARANTEE"})
 _SIGNAL_STATES = frozenset({"YES", "NO", "UNKNOWN"})
-_DRAFT_DATA_KEYS = frozenset(
+_V1_DRAFT_DATA_KEYS = frozenset(
     {
         "incident_type",
         "service_type",
@@ -86,6 +86,38 @@ _DRAFT_DATA_KEYS = frozenset(
         "authority_document_date",
         "regulator_threat",
         "documents_status",
+    }
+)
+_V2_DRAFT_DATA_KEYS = frozenset(
+    {
+        "intakeVersion",
+        "incomingKind",
+        "incomingSourceStatus",
+        "situationAreas",
+        "affectedServices",
+        "eventSummary",
+        "eventDate",
+        "conflictStage",
+        "clinicActions",
+        "clinicActionsNote",
+        "healthSignals",
+        "caseMaterialsStatus",
+    }
+)
+_DRAFT_DATA_KEYS = _V1_DRAFT_DATA_KEYS | _V2_DRAFT_DATA_KEYS
+_V2_DRAFT_STATES = frozenset(
+    {
+        "INCOMING",
+        "SITUATION",
+        "SERVICES",
+        "EVENT",
+        "EVENT_DATE",
+        "CHRONOLOGY",
+        "CLINIC_ACTIONS",
+        "HEALTH",
+        "MATERIALS",
+        "SUMMARY",
+        "V2_CONFIRM",
     }
 )
 TelegramDraftWizardState = Literal[
@@ -112,6 +144,17 @@ TelegramDraftWizardState = Literal[
     "REGULATOR_THREAT",
     "DOCUMENTS",
     "CONFIRM",
+    "INCOMING",
+    "SITUATION",
+    "SERVICES",
+    "EVENT",
+    "EVENT_DATE",
+    "CHRONOLOGY",
+    "CLINIC_ACTIONS",
+    "HEALTH",
+    "MATERIALS",
+    "SUMMARY",
+    "V2_CONFIRM",
 ]
 
 
@@ -234,14 +277,30 @@ class TelegramIntakeDraftUpdateRequest(ContractModel):
     def validate_draft_data(cls, value: dict[str, Any]) -> dict[str, Any]:
         if not set(value) <= _DRAFT_DATA_KEYS:
             raise ValueError("draftData contains unsupported fields")
+        is_v2 = value.get("intakeVersion") == 2
+        allowed = _V2_DRAFT_DATA_KEYS if is_v2 else _V1_DRAFT_DATA_KEYS
+        if not set(value) <= allowed:
+            raise ValueError("draftData mixes incompatible intake versions")
+        if "intakeVersion" in value and not is_v2:
+            raise ValueError("draftData intakeVersion is invalid")
         encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
         if len(encoded.encode()) > 16_384:
             raise ValueError("draftData exceeds 16384 bytes")
         return value
 
+    @model_validator(mode="after")
+    def validate_versioned_state(self) -> "TelegramIntakeDraftUpdateRequest":
+        is_v2 = self.draft_data.get("intakeVersion") == 2
+        state_is_v2 = self.wizard_state in _V2_DRAFT_STATES
+        if is_v2 != state_is_v2:
+            raise ValueError("wizardState and draftData belong to different intake versions")
+        return self
+
 
 class TelegramIntakeDraftCreateRequest(ContractModel):
-    pass
+    intake_schema_version: Literal["dental-case-intake.v1", "dental-case-intake.v2"] = Field(
+        default="dental-case-intake.v1", alias="intakeSchemaVersion"
+    )
 
 
 class TelegramIntakeDraftArchiveRequest(ContractModel):
