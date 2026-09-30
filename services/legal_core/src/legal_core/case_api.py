@@ -546,6 +546,8 @@ def _domain_value(fact: CaseFact) -> object:
     value = fact.value_json
     if fact.value_type == "TEXT":
         return value.get("text")
+    if fact.value_type == "TEXT_LIST":
+        return value.get("items")
     if fact.value_type == "BOOLEAN":
         return value.get("state", value.get("boolean"))
     if fact.value_type == "ENUM":
@@ -562,6 +564,8 @@ def _domain_facts(rows: list[CaseFact]) -> dict[FactKey, object]:
 def _input_value(value_type: str, value: dict[str, Any]) -> object:
     if value_type == "TEXT":
         return value.get("text")
+    if value_type == "TEXT_LIST":
+        return value.get("items")
     if value_type == "BOOLEAN":
         return value.get("state", value.get("boolean"))
     if value_type == "ENUM":

@@ -21,6 +21,19 @@ _ALWAYS_REQUIRED: tuple[tuple[FactKey, str], ...] = (
     (FactKey.CLINIC_DOCUMENTS, "documents"),
 )
 
+_V2_ALWAYS_REQUIRED: tuple[tuple[FactKey, str], ...] = (
+    (FactKey.INTAKE_VERSION, "intake_version"),
+    (FactKey.INCOMING_COMMUNICATION, "incoming_communication"),
+    (FactKey.INCOMING_SOURCE_STATUS, "incoming_source_status"),
+    (FactKey.SITUATION_AREAS, "situation_areas"),
+    (FactKey.EVENT_SUMMARY, "event_summary"),
+    (FactKey.EVENT_DATE, "event_date"),
+    (FactKey.CONFLICT_STAGE, "conflict_stage"),
+    (FactKey.CLINIC_ACTIONS, "clinic_actions"),
+    (FactKey.HEALTH_CONSEQUENCE_SIGNALS, "health_consequence_signals"),
+    (FactKey.CASE_MATERIALS_STATUS, "case_materials_status"),
+)
+
 
 def _missing(fact_key: FactKey, question_id: str, reason_code: str) -> MissingFact:
     return MissingFact(
@@ -39,8 +52,39 @@ def _contains(value: object, expected: str) -> bool:
     return isinstance(value, (list, tuple, set)) and expected in value
 
 
+def _v2_missing_facts_for(facts: Mapping[FactKey, object]) -> list[MissingFact]:
+    missing = [
+        _missing(key, question_id, f"{key.value}_REQUIRED")
+        for key, question_id in _V2_ALWAYS_REQUIRED
+        if _is_absent(facts, key)
+    ]
+    areas = facts.get(FactKey.SITUATION_AREAS)
+    if _contains(areas, "TREATMENT") and _is_absent(facts, FactKey.AFFECTED_SERVICES):
+        missing.append(
+            _missing(
+                FactKey.AFFECTED_SERVICES,
+                "affected_services",
+                "TREATMENT_REQUIRES_AFFECTED_SERVICES",
+            )
+        )
+    event_date = facts.get(FactKey.EVENT_DATE)
+    if isinstance(event_date, Mapping) and event_date.get("precision") != "EXACT":
+        missing = [item for item in missing if item.fact_key is not FactKey.EVENT_DATE]
+        missing.append(
+            _missing(
+                FactKey.EVENT_DATE,
+                "event_date",
+                "EVENT_DATE_REQUIRES_EXACT_DATE_FOR_TIME_DEPENDENT_ANALYSIS",
+            )
+        )
+    return missing
+
+
 def missing_facts_for(facts: Mapping[FactKey, object]) -> list[MissingFact]:
     """Return required questions in stable conversational order."""
+
+    if facts.get(FactKey.INTAKE_VERSION) == "GUIDED_V2":
+        return _v2_missing_facts_for(facts)
 
     missing = [
         _missing(key, question_id, f"{key.value}_REQUIRED")

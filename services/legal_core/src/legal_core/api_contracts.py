@@ -11,9 +11,17 @@ from legal_core.contracts import CaseStatus, ContractModel, FactKey, MissingFact
 from legal_core.material_preparation import MaterialGroup, MaterialKind, PreparedPart
 from legal_core.review_material_groups import ReviewGroup
 
-_TEXT_FACT_KEYS = frozenset({FactKey.SERVICE_TYPE, FactKey.PROBLEM_SUMMARY, FactKey.AUTHORITY_KIND})
+_TEXT_FACT_KEYS = frozenset(
+    {
+        FactKey.SERVICE_TYPE,
+        FactKey.PROBLEM_SUMMARY,
+        FactKey.AUTHORITY_KIND,
+        FactKey.EVENT_SUMMARY,
+    }
+)
 _DATE_FACT_KEYS = frozenset(
     {
+        FactKey.EVENT_DATE,
         FactKey.SERVICE_DATE,
         FactKey.INCIDENT_DATE,
         FactKey.CLAIM_DATE,
@@ -33,8 +41,26 @@ _BOOLEAN_FACT_KEYS = frozenset(
         FactKey.REGULATOR_THREAT,
     }
 )
-_ENUM_SET_FACT_KEYS = frozenset({FactKey.INCIDENT_TYPES, FactKey.PATIENT_DEMAND})
-_ENUM_FACT_KEYS = frozenset({FactKey.PRIMARY_INCIDENT_TYPE})
+_ENUM_SET_FACT_KEYS = frozenset(
+    {
+        FactKey.SITUATION_AREAS,
+        FactKey.CLINIC_ACTIONS,
+        FactKey.HEALTH_CONSEQUENCE_SIGNALS,
+        FactKey.INCIDENT_TYPES,
+        FactKey.PATIENT_DEMAND,
+    }
+)
+_TEXT_LIST_FACT_KEYS = frozenset({FactKey.AFFECTED_SERVICES})
+_ENUM_FACT_KEYS = frozenset(
+    {
+        FactKey.INTAKE_VERSION,
+        FactKey.INCOMING_COMMUNICATION,
+        FactKey.INCOMING_SOURCE_STATUS,
+        FactKey.CONFLICT_STAGE,
+        FactKey.CASE_MATERIALS_STATUS,
+        FactKey.PRIMARY_INCIDENT_TYPE,
+    }
+)
 _DOCUMENT_STATUSES = frozenset({"AVAILABLE", "MISSING", "UNKNOWN", "REQUESTED", "NOT_APPLICABLE"})
 _DOCUMENT_KEYS = frozenset({"CONTRACT", "MEDICAL_RECORD", "INFORMED_CONSENT", "GUARANTEE"})
 _SIGNAL_STATES = frozenset({"YES", "NO", "UNKNOWN"})
@@ -114,7 +140,9 @@ def _unique_fact_keys(facts: list["FactInput"]) -> list["FactInput"]:
 
 
 class CreateCaseRequest(ContractModel):
-    intake_schema_version: Literal["dental-case-intake.v1"] = Field(alias="intakeSchemaVersion")
+    intake_schema_version: Literal["dental-case-intake.v1", "dental-case-intake.v2"] = Field(
+        alias="intakeSchemaVersion"
+    )
     channel: Literal["TELEGRAM"]
 
 
@@ -562,6 +590,7 @@ class FactInput(ContractModel):
     fact_key: FactKey = Field(alias="factKey")
     value_type: Literal[
         "TEXT",
+        "TEXT_LIST",
         "BOOLEAN",
         "DATE",
         "MONEY",
@@ -630,6 +659,19 @@ class FactInput(ContractModel):
                 _nonempty_token(value, self.fact_key)
             if len(values) != len(set(values)):
                 raise ValueError(f"{self.fact_key.value} enum tokens must be unique")
+        elif self.fact_key in _TEXT_LIST_FACT_KEYS:
+            expected_type = "TEXT_LIST"
+            _exact_keys(self.value, {"items"}, self.fact_key)
+            items = self.value["items"]
+            if not isinstance(items, list) or not 1 <= len(items) <= 5:
+                raise ValueError(f"{self.fact_key.value} requires one to five text items")
+            if any(
+                not isinstance(item, str) or not 2 <= len(item.strip()) <= 120
+                for item in items
+            ):
+                raise ValueError(f"{self.fact_key.value} contains an invalid text item")
+            if len(items) != len(set(items)):
+                raise ValueError(f"{self.fact_key.value} text items must be unique")
         elif self.fact_key in _ENUM_FACT_KEYS:
             expected_type = "ENUM"
             _exact_keys(self.value, {"value"}, self.fact_key)
@@ -665,7 +707,9 @@ class FactInput(ContractModel):
 
 class AddFactsRequest(ContractModel):
     question_id: str = Field(alias="questionId", min_length=1, max_length=80)
-    intake_schema_version: Literal["dental-case-intake.v1"] = Field(alias="intakeSchemaVersion")
+    intake_schema_version: Literal["dental-case-intake.v1", "dental-case-intake.v2"] = Field(
+        alias="intakeSchemaVersion"
+    )
     facts: list[FactInput] = Field(min_length=1, max_length=20)
 
     @field_validator("facts")
@@ -699,7 +743,9 @@ class ReportResponse(ContractModel):
 
 
 class TelegramWorkflowSubmissionRequest(ContractModel):
-    intake_schema_version: Literal["dental-case-intake.v1"] = Field(alias="intakeSchemaVersion")
+    intake_schema_version: Literal["dental-case-intake.v1", "dental-case-intake.v2"] = Field(
+        alias="intakeSchemaVersion"
+    )
     locale: Literal["ru-RU"] = "ru-RU"
     facts: list[FactInput] = Field(min_length=1, max_length=20)
 
