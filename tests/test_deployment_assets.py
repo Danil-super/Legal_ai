@@ -44,6 +44,7 @@ def analysis_compose_fixture() -> dict:
     image = "dental-legal-hermes:5fc308a70719a83cccdbba4c0e39c23f5a8239d5"
     research_key, review_key, agent_key = "r" * 32, "v" * 32, "a" * 32
     return {"services": {
+        "minio": {"image": "dental-legal-minio:" + "a" * 40},
         "legal-core": {"environment": {
             "AGENT_INTERNAL_KEY": agent_key,
             "AGENT_ORCHESTRATOR_URL": "http://agent-orchestrator:8010",
@@ -226,7 +227,8 @@ def test_minio_ci_and_runtime_build_the_same_pinned_security_release() -> None:
 def test_production_deploy_reuses_a_prebuilt_checked_minio_security_image() -> None:
     script = (DEPLOY / "deploy-commit.sh").read_text(encoding="utf-8")
 
-    assert 'readonly minio_image="dental-legal-minio:' in script
+    assert 're.fullmatch(r"dental-legal-minio:[0-9a-f]{40}", image)' in script
+    assert "readonly minio_image" in script
     assert 'docker image inspect "$minio_image"' in script
     assert 'build "${build_services[@]}"' in script
     assert "up --no-build --detach --remove-orphans --wait --wait-timeout 180" in script

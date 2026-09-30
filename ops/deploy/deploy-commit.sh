@@ -89,7 +89,23 @@ if [[ "$analysis_enabled" == 1 ]]; then
   fi
 fi
 
-readonly minio_image="dental-legal-minio:9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a"
+minio_image="$(
+  docker compose "${compose_args[@]}" config --format json 2>/dev/null \
+    | python3 -c '
+import json
+import re
+import sys
+
+image = json.load(sys.stdin).get("services", {}).get("minio", {}).get("image", "")
+if not isinstance(image, str) or not re.fullmatch(r"dental-legal-minio:[0-9a-f]{40}", image):
+    raise SystemExit(1)
+print(image)
+'
+)" || {
+  echo "The resolved MinIO image is not the expected pinned security release." >&2
+  exit 1
+}
+readonly minio_image
 # This image is a security boundary, so ordinary application deployments may
 # reuse it only after confirming that the exact pinned release is local.  It is
 # intentionally built as a separate, planned maintenance action when its
