@@ -36,6 +36,9 @@ from legal_core.api_contracts import (
     LegalLibraryDocumentResponse,
     LegalLibraryResponse,
     LegalMaterialPreparationDetail,
+    LegalReferenceReviewPreview,
+    LegalReferenceReviewRequest,
+    LegalReferenceReviewResponse,
 )
 from legal_core.case_api import (
     ApiError,
@@ -61,6 +64,11 @@ from legal_core.models import (
     LegalSource,
     LegalVersion,
     User,
+)
+from legal_core.reference_review import (
+    confirm_reference_review,
+    reference_review_preview,
+    reference_reviewable_count,
 )
 from legal_core.review_material_groups import GROUP_TITLES, ReviewGroup, material_group_expression
 
@@ -246,20 +254,17 @@ def create_legal_router(
         # Legal versions are immutable audit records.  A changed fragment selection creates a
         # newer version of the same document; the review workspace must not present those
         # technical revisions as separate documents to an editor.
-        current_queue_versions = (
-            select(
-                LegalVersion.id.label("version_id"),
-                LegalVersion.approval_state.label("approval_state"),
-                LegalVersion.effective_to.label("effective_to"),
-                func.row_number()
-                .over(
-                    partition_by=LegalVersion.document_id,
-                    order_by=LegalVersion.version_no.desc(),
-                )
-                .label("document_rank"),
+        current_queue_versions = select(
+            LegalVersion.id.label("version_id"),
+            LegalVersion.approval_state.label("approval_state"),
+            LegalVersion.effective_to.label("effective_to"),
+            func.row_number()
+            .over(
+                partition_by=LegalVersion.document_id,
+                order_by=LegalVersion.version_no.desc(),
             )
-            .subquery()
-        )
+            .label("document_rank"),
+        ).subquery()
         queue_filter = (
             current_queue_versions.c.document_rank == 1,
             current_queue_versions.c.approval_state == "REVIEW_REQUIRED",
@@ -332,31 +337,98 @@ def create_legal_router(
         if group == "other":
             group = "general"
         items = editor_group_items()
-        count_rows = (await session.execute(
-            select(items.c.group_key, func.count()).group_by(items.c.group_key)
-        )).all()
+        count_rows = (
+            await session.execute(
+                select(items.c.group_key, func.count()).group_by(items.c.group_key)
+            )
+        ).all()
         counts = {key: count for key, count in count_rows}
-        rows = [] if group is None else (await session.execute(
-            select(items).where(items.c.group_key == group)
-            .order_by(items.c.title, items.c.version_id, items.c.material_id)
-            .offset((page - 1) * EDITOR_PAGE_SIZE).limit(EDITOR_PAGE_SIZE)
-        )).mappings().all()
+        rows = (
+            []
+            if group is None
+            else (
+                await session.execute(
+                    select(items)
+                    .where(items.c.group_key == group)
+                    .order_by(items.c.title, items.c.version_id, items.c.material_id)
+                    .offset((page - 1) * EDITOR_PAGE_SIZE)
+                    .limit(EDITOR_PAGE_SIZE)
+                )
+            )
+            .mappings()
+            .all()
+        )
         return LegalEditorGroupPage(
-            page=page, totalItems=counts.get(group, 0) if group else sum(counts.values()),
+            page=page,
+            totalItems=counts.get(group, 0) if group else sum(counts.values()),
             selectedGroup=group,
-            groups=[LegalEditorReviewMaterialGroup(
-                key=cast(ReviewGroup, key), title=title, totalItems=counts.get(key, 0)
-            ) for key, title in EDITOR_GROUP_TITLES.items()],
-            items=[LegalEditorGroupItem(
-                materialId=row["material_id"], versionId=row["version_id"], title=row["title"],
-                kind=row["kind"], reviewState=row["review_state"], groupKey=row["group_key"],
-                preparationId=row["preparation_id"], preparationKind=row["preparation_kind"],
-            ) for row in rows],
+            referenceReviewableCount=(await reference_reviewable_count(session, group))
+            if group is not None
+            else 0,
+            groups=[
+                LegalEditorReviewMaterialGroup(
+                    key=cast(ReviewGroup, key), title=title, totalItems=counts.get(key, 0)
+                )
+                for key, title in EDITOR_GROUP_TITLES.items()
+            ],
+            items=[
+                LegalEditorGroupItem(
+                    materialId=row["material_id"],
+                    versionId=row["version_id"],
+                    title=row["title"],
+                    kind=row["kind"],
+                    reviewState=row["review_state"],
+                    groupKey=row["group_key"],
+                    preparationId=row["preparation_id"],
+                    preparationKind=row["preparation_kind"],
+                )
+                for row in rows
+            ],
+        )
+
+    @router.get(
+        "/editor/groups/{group}/reference-review-preview",
+        response_model=LegalReferenceReviewPreview,
+    )
+    async def preview_editor_reference_review(
+        group: ReviewGroup,
+        telegram_user_id: TelegramUserId,
+        session: Session,
+        gateway_key: EditorGatewayKey = None,
+    ) -> LegalReferenceReviewPreview:
+        await require_platform_legal_editor(
+            session, telegram_user_id=telegram_user_id, gateway_key=gateway_key
+        )
+        return await reference_review_preview(session, group)
+
+    @router.post(
+        "/editor/groups/{group}/reference-review-events",
+        response_model=LegalReferenceReviewResponse,
+    )
+    async def confirm_editor_reference_review(
+        group: ReviewGroup,
+        payload: LegalReferenceReviewRequest,
+        telegram_user_id: TelegramUserId,
+        idempotency_key: EditorIdempotencyKey,
+        session: Session,
+        gateway_key: EditorGatewayKey = None,
+    ) -> LegalReferenceReviewResponse:
+        editor = await require_platform_legal_editor(
+            session, telegram_user_id=telegram_user_id, gateway_key=gateway_key
+        )
+        return await confirm_reference_review(
+            session,
+            group=group,
+            payload=payload,
+            editor=editor,
+            idempotency_key=idempotency_key,
         )
 
     @router.get("/editor/groups/{group}/approval-preview", response_model=LegalGroupPreview)
     async def preview_editor_group(
-        group: ReviewGroup, telegram_user_id: TelegramUserId, session: Session,
+        group: ReviewGroup,
+        telegram_user_id: TelegramUserId,
+        session: Session,
         gateway_key: EditorGatewayKey = None,
     ) -> LegalGroupPreview:
         await require_platform_legal_editor(
@@ -368,15 +440,19 @@ def create_legal_router(
         "/editor/groups/{group}/approval-events", response_model=LegalGroupApprovalResponse
     )
     async def approve_editor_group(
-        group: ReviewGroup, payload: LegalGroupApprovalRequest, telegram_user_id: TelegramUserId,
-        idempotency_key: EditorIdempotencyKey, session: Session,
+        group: ReviewGroup,
+        payload: LegalGroupApprovalRequest,
+        telegram_user_id: TelegramUserId,
+        idempotency_key: EditorIdempotencyKey,
+        session: Session,
         gateway_key: EditorGatewayKey = None,
     ) -> LegalGroupApprovalResponse:
         editor = await require_platform_legal_editor(
             session, telegram_user_id=telegram_user_id, gateway_key=gateway_key
         )
-        return await approve_group(session, group=group, payload=payload, editor=editor,
-                                   idempotency_key=idempotency_key)
+        return await approve_group(
+            session, group=group, payload=payload, editor=editor, idempotency_key=idempotency_key
+        )
 
     @router.get("/review-materials", response_model=LegalEditorReviewMaterialPage)
     async def list_editor_review_materials(
@@ -392,9 +468,11 @@ def create_legal_router(
             session, telegram_user_id=telegram_user_id, gateway_key=gateway_key
         )
         grouping = material_group_expression()
-        count_rows = (await session.execute(
-            select(grouping, func.count()).select_from(LegalReviewMaterial).group_by(grouping)
-        )).all()
+        count_rows = (
+            await session.execute(
+                select(grouping, func.count()).select_from(LegalReviewMaterial).group_by(grouping)
+            )
+        ).all()
         counts = {key: count for key, count in count_rows}
         total_items = counts.get(group, 0) if group else sum(counts.values())
         query = select(LegalReviewMaterial).options(defer(LegalReviewMaterial.raw_bytes))
@@ -403,8 +481,7 @@ def create_legal_router(
         materials = list(
             (
                 await session.scalars(
-                    query
-                    .order_by(
+                    query.order_by(
                         LegalReviewMaterial.received_at.desc(), LegalReviewMaterial.id.desc()
                     )
                     .offset((page - 1) * EDITOR_PAGE_SIZE)
@@ -412,26 +489,34 @@ def create_legal_router(
                 )
             ).all()
         )
-        group_rows = (await session.execute(
-            select(LegalReviewMaterial.id, grouping).where(
-                LegalReviewMaterial.id.in_([material.id for material in materials])
+        group_rows = (
+            await session.execute(
+                select(LegalReviewMaterial.id, grouping).where(
+                    LegalReviewMaterial.id.in_([material.id for material in materials])
+                )
             )
-        )).all()
+        ).all()
         item_groups = {material_id: key for material_id, key in group_rows}
-        versions = (await session.execute(
-            select(LegalVersion.raw_sha256, LegalVersion.id)
-            .where(LegalVersion.raw_sha256.in_([material.raw_sha256 for material in materials]))
-            .order_by(LegalVersion.version_no)
-        )).all()
+        versions = (
+            await session.execute(
+                select(LegalVersion.raw_sha256, LegalVersion.id)
+                .where(LegalVersion.raw_sha256.in_([material.raw_sha256 for material in materials]))
+                .order_by(LegalVersion.version_no)
+            )
+        ).all()
         version_by_hash = {raw_hash: version_id for raw_hash, version_id in versions}
         return LegalEditorReviewMaterialPage(
             page=page,
             pageSize=10,
             totalItems=total_items,
             selectedGroup=group,
-            groups=[LegalEditorReviewMaterialGroup(
-                key=cast(ReviewGroup, key), title=title, totalItems=counts.get(key, 0)
-            ) for key, title in GROUP_TITLES.items() if counts.get(key, 0)],
+            groups=[
+                LegalEditorReviewMaterialGroup(
+                    key=cast(ReviewGroup, key), title=title, totalItems=counts.get(key, 0)
+                )
+                for key, title in GROUP_TITLES.items()
+                if counts.get(key, 0)
+            ],
             items=[
                 LegalEditorReviewMaterialSummary(
                     materialId=material.id,
@@ -454,35 +539,54 @@ def create_legal_router(
             ],
         )
 
-    @router.get("/review-materials/{material_id}/preparation",
-                response_model=LegalMaterialPreparationDetail)
+    @router.get(
+        "/review-materials/{material_id}/preparation", response_model=LegalMaterialPreparationDetail
+    )
     async def editor_material_preparation(
-        material_id: UUID, telegram_user_id: TelegramUserId, session: Session,
+        material_id: UUID,
+        telegram_user_id: TelegramUserId,
+        session: Session,
         gateway_key: EditorGatewayKey = None,
     ) -> LegalMaterialPreparationDetail:
         await require_platform_legal_editor(
-            session, telegram_user_id=telegram_user_id, gateway_key=gateway_key,
+            session,
+            telegram_user_id=telegram_user_id,
+            gateway_key=gateway_key,
         )
-        preparation = await session.scalar(select(LegalMaterialPreparation).options(
-            defer(LegalMaterialPreparation.normalized_text)
-        ).where(LegalMaterialPreparation.material_id == material_id)
-          .order_by(LegalMaterialPreparation.revision.desc()).limit(1))
+        preparation = await session.scalar(
+            select(LegalMaterialPreparation)
+            .options(defer(LegalMaterialPreparation.normalized_text))
+            .where(LegalMaterialPreparation.material_id == material_id)
+            .order_by(LegalMaterialPreparation.revision.desc())
+            .limit(1)
+        )
         if preparation is None:
-            raise ApiError(status_code=404, code="MATERIAL_PREPARATION_NOT_FOUND",
-                           message="Material preparation not found")
+            raise ApiError(
+                status_code=404,
+                code="MATERIAL_PREPARATION_NOT_FOUND",
+                message="Material preparation not found",
+            )
         metadata = preparation.metadata_json
         parts = [PreparedPart.model_validate(part) for part in metadata["parts"]]
         missing = [f"{part.part_key}:{field}" for part in parts for field in part.missing_fields()]
         if preparation.kind == "NORMATIVE" and not parts:
             missing.append("intended_parts")
         return LegalMaterialPreparationDetail(
-            materialId=material_id, preparationId=preparation.id, revision=preparation.revision,
-            title=preparation.title, kind=cast(MaterialKind, preparation.kind),
-            groupKey=cast(MaterialGroup, preparation.group_key), rawSha256=preparation.raw_sha256,
+            materialId=material_id,
+            preparationId=preparation.id,
+            revision=preparation.revision,
+            title=preparation.title,
+            kind=cast(MaterialKind, preparation.kind),
+            groupKey=cast(MaterialGroup, preparation.group_key),
+            rawSha256=preparation.raw_sha256,
             preparationSha256=preparation.preparation_sha256,
-            referenceYear=metadata["reference_year"], sourceUrl=metadata["source_url"],
-            sourceLocator=metadata["source_locator"], extractionScope=metadata["extraction_scope"],
-            limitations=metadata["limitations"], missingFields=missing, parts=parts,
+            referenceYear=metadata["reference_year"],
+            sourceUrl=metadata["source_url"],
+            sourceLocator=metadata["source_locator"],
+            extractionScope=metadata["extraction_scope"],
+            limitations=metadata["limitations"],
+            missingFields=missing,
+            parts=parts,
         )
 
     @router.get("/review-materials/{material_id}/artifact")
@@ -739,7 +843,8 @@ def create_legal_router(
         async for fragment in fragments:
             if hashlib.sha256(fragment.fragment_text.encode()).hexdigest() != fragment.text_sha256:
                 raise ApiError(
-                    status_code=422, code="LEGAL_EXCERPTS_INTEGRITY_ERROR",
+                    status_code=422,
+                    code="LEGAL_EXCERPTS_INTEGRITY_ERROR",
                     message="Excerpt checksum mismatch",
                 )
             manifest_hash.update(
@@ -756,12 +861,14 @@ def create_legal_router(
             )
             if len(content) > EDITOR_ARTIFACT_MAX_BYTES:
                 raise ApiError(
-                    status_code=422, code="LEGAL_EXCERPTS_TOO_LARGE",
+                    status_code=422,
+                    code="LEGAL_EXCERPTS_TOO_LARGE",
                     message="Excerpt export is too large",
                 )
         if manifest_hash.hexdigest() != version.fragments_sha256:
             raise ApiError(
-                status_code=422, code="LEGAL_EXCERPTS_INTEGRITY_ERROR",
+                status_code=422,
+                code="LEGAL_EXCERPTS_INTEGRITY_ERROR",
                 message="Selection checksum mismatch",
             )
         exported = bytes(content)

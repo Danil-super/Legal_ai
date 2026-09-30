@@ -756,6 +756,36 @@ class LegalMaterialPreparation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 
+class LegalReferenceReviewEvent(Base):
+    """Append-only review of a reference; this is never a legal approval."""
+
+    __tablename__ = "legal_reference_review_events"
+    __table_args__ = (
+        UniqueConstraint("preparation_id"),
+        UniqueConstraint("actor_user_id", "idempotency_key"),
+        CheckConstraint("raw_sha256 ~ '^[0-9a-f]{64}$'"),
+        CheckConstraint("request_sha256 ~ '^[0-9a-f]{64}$'"),
+        Index("ix_legal_reference_review_events_batch", "batch_id", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    preparation_id: Mapped[UUID] = mapped_column(
+        UUID_PK, ForeignKey("legal_material_preparations.id", ondelete="RESTRICT")
+    )
+    actor_user_id: Mapped[UUID] = mapped_column(
+        UUID_PK, ForeignKey("users.id", ondelete="RESTRICT")
+    )
+    raw_sha256: Mapped[str] = mapped_column(String(64))
+    group_key: Mapped[str] = mapped_column(String(30))
+    batch_id: Mapped[UUID] = mapped_column(UUID_PK)
+    idempotency_key: Mapped[UUID] = mapped_column(UUID_PK)
+    request_sha256: Mapped[str] = mapped_column(String(64))
+    checks_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
 class LegalDocument(Base):
     __tablename__ = "legal_documents"
 

@@ -11,9 +11,7 @@ from legal_core.contracts import CaseStatus, ContractModel, FactKey, MissingFact
 from legal_core.material_preparation import MaterialGroup, MaterialKind, PreparedPart
 from legal_core.review_material_groups import ReviewGroup
 
-_TEXT_FACT_KEYS = frozenset(
-    {FactKey.SERVICE_TYPE, FactKey.PROBLEM_SUMMARY, FactKey.AUTHORITY_KIND}
-)
+_TEXT_FACT_KEYS = frozenset({FactKey.SERVICE_TYPE, FactKey.PROBLEM_SUMMARY, FactKey.AUTHORITY_KIND})
 _DATE_FACT_KEYS = frozenset(
     {
         FactKey.SERVICE_DATE,
@@ -37,12 +35,8 @@ _BOOLEAN_FACT_KEYS = frozenset(
 )
 _ENUM_SET_FACT_KEYS = frozenset({FactKey.INCIDENT_TYPES, FactKey.PATIENT_DEMAND})
 _ENUM_FACT_KEYS = frozenset({FactKey.PRIMARY_INCIDENT_TYPE})
-_DOCUMENT_STATUSES = frozenset(
-    {"AVAILABLE", "MISSING", "UNKNOWN", "REQUESTED", "NOT_APPLICABLE"}
-)
-_DOCUMENT_KEYS = frozenset(
-    {"CONTRACT", "MEDICAL_RECORD", "INFORMED_CONSENT", "GUARANTEE"}
-)
+_DOCUMENT_STATUSES = frozenset({"AVAILABLE", "MISSING", "UNKNOWN", "REQUESTED", "NOT_APPLICABLE"})
+_DOCUMENT_KEYS = frozenset({"CONTRACT", "MEDICAL_RECORD", "INFORMED_CONSENT", "GUARANTEE"})
 _SIGNAL_STATES = frozenset({"YES", "NO", "UNKNOWN"})
 _DRAFT_DATA_KEYS = frozenset(
     {
@@ -245,9 +239,7 @@ class TelegramIntakeDraftResponse(TelegramIntakeDraftSummary):
 
 class PlatformSubscriptionGrantRequest(ContractModel):
     telegram_user_id: int = Field(alias="telegramUserId", gt=0, le=9_223_372_036_854_775_807)
-    plan_code: Literal["MVP_MANUAL", "FREE_PILOT"] = Field(
-        default="MVP_MANUAL", alias="planCode"
-    )
+    plan_code: Literal["MVP_MANUAL", "FREE_PILOT"] = Field(default="MVP_MANUAL", alias="planCode")
     pilot_days: int | None = Field(default=None, alias="pilotDays", ge=1, le=90)
 
     @model_validator(mode="after")
@@ -322,9 +314,7 @@ class PlatformLegalReviewQueueItem(ContractModel):
     document_title: str = Field(alias="documentTitle", min_length=1, max_length=2_000)
     issuer: str = Field(min_length=1, max_length=240)
     official_number: str | None = Field(default=None, alias="officialNumber", max_length=80)
-    approval_state: Literal["REVIEW_REQUIRED", "APPROVED", "BLOCKED"] = Field(
-        alias="approvalState"
-    )
+    approval_state: Literal["REVIEW_REQUIRED", "APPROVED", "BLOCKED"] = Field(alias="approvalState")
     effective_from: date = Field(alias="effectiveFrom")
     effective_to: date | None = Field(default=None, alias="effectiveTo")
     source_url: str = Field(alias="sourceUrl", min_length=8, max_length=2_000)
@@ -349,12 +339,10 @@ class LegalEditorCandidateSummary(ContractModel):
     version_id: UUID = Field(alias="versionId")
     document_title: str = Field(alias="documentTitle", min_length=1, max_length=2_000)
     official_number: str | None = Field(default=None, alias="officialNumber", max_length=80)
-    approval_state: Literal["REVIEW_REQUIRED", "APPROVED", "BLOCKED"] = Field(
-        alias="approvalState"
+    approval_state: Literal["REVIEW_REQUIRED", "APPROVED", "BLOCKED"] = Field(alias="approvalState")
+    artifact_kind: Literal["NORMALIZED_EXCERPT", "OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"] = (
+        Field(alias="artifactKind")
     )
-    artifact_kind: Literal[
-        "NORMALIZED_EXCERPT", "OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"
-    ] = Field(alias="artifactKind")
     approval_eligible: bool = Field(alias="approvalEligible")
     approval_preflight_checked: bool = Field(default=True, alias="approvalPreflightChecked")
 
@@ -435,6 +423,7 @@ class LegalEditorGroupPage(ContractModel):
     page_size: Literal[10] = Field(default=10, alias="pageSize")
     total_items: int = Field(alias="totalItems", ge=0)
     selected_group: ReviewGroup | None = Field(default=None, alias="selectedGroup")
+    reference_reviewable_count: int = Field(default=0, alias="referenceReviewableCount", ge=0)
     groups: list[LegalEditorReviewMaterialGroup] = Field(max_length=7)
     items: list[LegalEditorGroupItem] = Field(default_factory=list, max_length=10)
 
@@ -446,12 +435,10 @@ class LegalEditorVersionDetail(ContractModel):
     issuer: str = Field(min_length=1, max_length=240)
     official_number: str | None = Field(default=None, alias="officialNumber", max_length=80)
     source_url: str = Field(alias="sourceUrl", min_length=8, max_length=2_000)
-    approval_state: Literal["REVIEW_REQUIRED", "APPROVED", "BLOCKED"] = Field(
-        alias="approvalState"
+    approval_state: Literal["REVIEW_REQUIRED", "APPROVED", "BLOCKED"] = Field(alias="approvalState")
+    artifact_kind: Literal["NORMALIZED_EXCERPT", "OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"] = (
+        Field(alias="artifactKind")
     )
-    artifact_kind: Literal[
-        "NORMALIZED_EXCERPT", "OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"
-    ] = Field(alias="artifactKind")
     raw_mime_type: str = Field(alias="rawMimeType", min_length=1, max_length=100)
     raw_size_bytes: int = Field(alias="rawSizeBytes", ge=0)
     artifact_page_count: int | None = Field(default=None, alias="artifactPageCount", ge=1)
@@ -538,6 +525,39 @@ class LegalGroupApprovalResponse(ContractModel):
     version_ids: list[UUID] = Field(alias="versionIds", min_length=1, max_length=200)
 
 
+class LegalReferenceReviewCandidate(ContractModel):
+    preparation_id: UUID = Field(alias="preparationId")
+    title: str = Field(max_length=2_000)
+    kind: Literal["CLINICAL_REFERENCE", "REFERENCE_FORM"]
+
+
+class LegalReferenceReviewPreview(ContractModel):
+    group: ReviewGroup
+    snapshot: str = Field(pattern=r"^[0-9a-f]{64}$")
+    ready: list[LegalReferenceReviewCandidate] = Field(max_length=200)
+    already_reviewed: int = Field(alias="alreadyReviewed", ge=0)
+
+
+class LegalReferenceReviewRequest(ContractModel):
+    expected_snapshot: str = Field(alias="expectedSnapshot", pattern=r"^[0-9a-f]{64}$")
+    preparation_ids: list[UUID] = Field(alias="preparationIds", min_length=1, max_length=200)
+    original_reviewed: Literal[True] = Field(alias="originalReviewed")
+    reference_only_understood: Literal[True] = Field(alias="referenceOnlyUnderstood")
+
+    @field_validator("preparation_ids")
+    @classmethod
+    def unique_preparation_ids(cls, value: list[UUID]) -> list[UUID]:
+        if len(value) != len(set(value)):
+            raise ValueError("preparationIds must not contain duplicates")
+        return value
+
+
+class LegalReferenceReviewResponse(ContractModel):
+    batch_id: UUID = Field(alias="batchId")
+    reviewed_count: int = Field(alias="reviewedCount", ge=1, le=200)
+    preparation_ids: list[UUID] = Field(alias="preparationIds", min_length=1, max_length=200)
+
+
 class FactInput(ContractModel):
     fact_key: FactKey = Field(alias="factKey")
     value_type: Literal[
@@ -587,9 +607,7 @@ class FactInput(ContractModel):
                 try:
                     date.fromisoformat(date_value)
                 except ValueError as exc:
-                    raise ValueError(
-                        f"{self.fact_key.value} requires a valid ISO date"
-                    ) from exc
+                    raise ValueError(f"{self.fact_key.value} requires a valid ISO date") from exc
             else:
                 raise ValueError(f"{self.fact_key.value} has an invalid date precision")
         elif self.fact_key in _BOOLEAN_FACT_KEYS:
@@ -681,9 +699,7 @@ class ReportResponse(ContractModel):
 
 
 class TelegramWorkflowSubmissionRequest(ContractModel):
-    intake_schema_version: Literal["dental-case-intake.v1"] = Field(
-        alias="intakeSchemaVersion"
-    )
+    intake_schema_version: Literal["dental-case-intake.v1"] = Field(alias="intakeSchemaVersion")
     locale: Literal["ru-RU"] = "ru-RU"
     facts: list[FactInput] = Field(min_length=1, max_length=20)
 

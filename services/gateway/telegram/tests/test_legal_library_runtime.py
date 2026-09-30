@@ -117,9 +117,7 @@ def test_editor_detail_requires_all_four_explicit_attestations_before_confirm() 
     }
     assert "editor:confirm:00000000-0000-0000-0000-000000000002" not in pending_callbacks
 
-    state["attestations"] = dict.fromkeys(
-        ("source", "artifact", "dates", "fragments"), True
-    )
+    state["attestations"] = dict.fromkeys(("source", "artifact", "dates", "fragments"), True)
     _, approved_keyboard = render_editor_version_detail(detail, state)
     approved_callbacks = {
         button.callback_data
@@ -271,9 +269,11 @@ def test_editor_attachment_is_complete_and_has_return_buttons(monkeypatch, excer
     monkeypatch.setattr(runtime, "LegalLibraryClient", lambda: client)
     monkeypatch.setattr(runtime.gateway_bot, "_actor_id", lambda _: 12345)
     message = SimpleNamespace(reply_document=AsyncMock())
-    asyncio.run(runtime._send_editor_artifact(
-        SimpleNamespace(effective_message=message), version_id=version_id, excerpts=excerpts
-    ))
+    asyncio.run(
+        runtime._send_editor_artifact(
+            SimpleNamespace(effective_message=message), version_id=version_id, excerpts=excerpts
+        )
+    )
     sent = message.reply_document.call_args.kwargs
     assert sent["document"].input_file_content == content
     assert (
@@ -292,10 +292,16 @@ def test_excerpts_client_checks_integrity_and_editor_credentials(monkeypatch) ->
         assert request.url.path == f"/v1/legal/review-queue/{version_id}/excerpts"
         assert request.headers["X-Telegram-User-Id"] == "12345"
         assert request.headers["X-Legal-Editor-Gateway-Key"]
-        return httpx2.Response(200, content=content, headers={
-            "Content-Type": "text/plain; charset=utf-8",
-            "X-Legal-Artifact-Sha256": "f" * 64 if tamper else hashlib.sha256(content).hexdigest(),
-        })
+        return httpx2.Response(
+            200,
+            content=content,
+            headers={
+                "Content-Type": "text/plain; charset=utf-8",
+                "X-Legal-Artifact-Sha256": "f" * 64
+                if tamper
+                else hashlib.sha256(content).hexdigest(),
+            },
+        )
 
     async def scenario():
         nonlocal tamper
@@ -304,7 +310,8 @@ def test_excerpts_client_checks_integrity_and_editor_credentials(monkeypatch) ->
         ) as http:
             client = runtime.LegalLibraryClient(client=http)
             assert await client.download_editor_excerpts(12345, version_id) == (
-                content, "text/plain"
+                content,
+                "text/plain",
             )
             tamper = True
             with pytest.raises(LegalCoreApiError, match="Invalid artifact"):
@@ -377,7 +384,10 @@ def test_editor_review_materials_are_openable_but_not_mislabeled_as_approved() -
 
 def test_material_groups_keep_counts_filter_pagination_and_back_navigation() -> None:
     payload = {
-        "page": 1, "pageSize": 10, "totalItems": 21, "items": [],
+        "page": 1,
+        "pageSize": 10,
+        "totalItems": 21,
+        "items": [],
         "selectedGroup": "labour",
         "groups": [
             {"key": "labour", "title": "Труд и квалификация", "totalItems": 21},
@@ -395,10 +405,18 @@ def test_material_groups_keep_counts_filter_pagination_and_back_navigation() -> 
 def test_editor_directory_contains_only_seven_groups_and_back() -> None:
     keys = ("clinical", "labour", "courts", "privacy", "licensing", "healthcare", "general")
     payload = {
-        "page": 1, "pageSize": 10, "totalItems": 64, "selectedGroup": None,
+        "page": 1,
+        "pageSize": 10,
+        "totalItems": 64,
+        "selectedGroup": None,
         "groups": [{"key": key, "title": key, "totalItems": 8} for key in keys],
-        "items": [{"materialId": "00000000-0000-0000-0000-000000000003",
-                   "title": "This file must not appear at group level", "rawSha256": "a" * 64}],
+        "items": [
+            {
+                "materialId": "00000000-0000-0000-0000-000000000003",
+                "title": "This file must not appear at group level",
+                "rawSha256": "a" * 64,
+            }
+        ],
     }
     text, keyboard = render_editor_review_materials(payload)
     callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
@@ -410,27 +428,50 @@ def test_editor_directory_contains_only_seven_groups_and_back() -> None:
 
 def test_group_displays_prepared_version_alongside_unprepared_material() -> None:
     version_id = "00000000-0000-0000-0000-000000000002"
-    text, keyboard = render_editor_review_materials({
-        "page": 1, "pageSize": 10, "totalItems": 1, "selectedGroup": "healthcare",
-        "groups": [{"key": "healthcare", "title": "Медицинские документы", "totalItems": 1}],
-        "items": [{"materialId": None, "versionId": version_id, "title": "Подготовленный акт",
-                   "reviewState": "REVIEW_REQUIRED"}],
-    })
+    text, keyboard = render_editor_review_materials(
+        {
+            "page": 1,
+            "pageSize": 10,
+            "totalItems": 1,
+            "selectedGroup": "healthcare",
+            "groups": [{"key": "healthcare", "title": "Медицинские документы", "totalItems": 1}],
+            "items": [
+                {
+                    "materialId": None,
+                    "versionId": version_id,
+                    "title": "Подготовленный акт",
+                    "reviewState": "REVIEW_REQUIRED",
+                }
+            ],
+        }
+    )
     callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
-    assert "Подготовленный акт" in text
+    assert "Подготовленный акт" not in text
+    assert "Медицинские документы" not in text
     assert f"editor:detail:{version_id}:1" in callbacks
     assert "editor:materials:1" in callbacks
 
 
 def test_group_preview_lists_exact_ready_subset_and_explicit_declaration() -> None:
     batch = "00000000-0000-0000-0000-000000000004"
-    text, keyboard = runtime.render_group_approval_preview({
-        "group": "healthcare", "snapshot": "a" * 64, "alreadyApproved": 0,
-        "ready": [{"versionId": "00000000-0000-0000-0000-000000000002",
-                   "title": "Готовый документ", "effectiveFrom": "2026-01-01",
-                   "effectiveTo": None}],
-        "blocked": [{"title": "Неподготовленный документ", "reasonCode": "METADATA_REQUIRED"}],
-    }, batch_id=batch, page=1)
+    text, keyboard = runtime.render_group_approval_preview(
+        {
+            "group": "healthcare",
+            "snapshot": "a" * 64,
+            "alreadyApproved": 0,
+            "ready": [
+                {
+                    "versionId": "00000000-0000-0000-0000-000000000002",
+                    "title": "Готовый документ",
+                    "effectiveFrom": "2026-01-01",
+                    "effectiveTo": None,
+                }
+            ],
+            "blocked": [{"title": "Неподготовленный документ", "reasonCode": "METADATA_REQUIRED"}],
+        },
+        batch_id=batch,
+        page=1,
+    )
     assert "Готовый документ" in text
     assert "2026-01-01" in text
     assert "Неподготовленный документ" in text
@@ -441,30 +482,59 @@ def test_group_preview_lists_exact_ready_subset_and_explicit_declaration() -> No
 
 
 def test_group_preview_never_offers_approval_for_only_unprepared_files() -> None:
-    text, keyboard = runtime.render_group_approval_preview({
-        "group": "clinical", "snapshot": "a" * 64, "alreadyApproved": 0, "ready": [],
-        "blocked": [{"title": "Клинический материал",
-                     "reasonCode": "CLINICAL_REFERENCE_NOT_LEGAL_VERSION"}],
-    }, batch_id="00000000-0000-0000-0000-000000000004", page=1)
+    text, keyboard = runtime.render_group_approval_preview(
+        {
+            "group": "clinical",
+            "snapshot": "a" * 64,
+            "alreadyApproved": 0,
+            "ready": [],
+            "blocked": [
+                {
+                    "title": "Клинический материал",
+                    "reasonCode": "CLINICAL_REFERENCE_NOT_LEGAL_VERSION",
+                }
+            ],
+        },
+        batch_id="00000000-0000-0000-0000-000000000004",
+        page=1,
+    )
     assert "Клинический материал" in text
-    assert not any(button.callback_data.startswith("editor:batchconfirm:")
-                   for row in keyboard.inline_keyboard for button in row)
+    assert not any(
+        button.callback_data.startswith("editor:batchconfirm:")
+        for row in keyboard.inline_keyboard
+        for button in row
+    )
 
 
 def test_group_confirmation_requires_matching_preview_and_preserves_retry_key(monkeypatch):
-    preview = {"group": "general", "snapshot": "a" * 64, "blocked": [],
-               "ready": [{"versionId": "00000000-0000-0000-0000-000000000002",
-                          "title": "Тестовый акт", "effectiveFrom": "2026-01-01",
-                          "effectiveTo": None}]}
+    preview = {
+        "group": "general",
+        "snapshot": "a" * 64,
+        "blocked": [],
+        "ready": [
+            {
+                "versionId": "00000000-0000-0000-0000-000000000002",
+                "title": "Тестовый акт",
+                "effectiveFrom": "2026-01-01",
+                "effectiveTo": None,
+            }
+        ],
+    }
     client = SimpleNamespace(
-        get_group_preview=AsyncMock(return_value=preview), aclose=AsyncMock(),
-        approve_group=AsyncMock(side_effect=[
-            LegalCoreApiError(503, "TIMEOUT", "unknown outcome"), {"approvedCount": 1},
-        ]),
+        get_group_preview=AsyncMock(return_value=preview),
+        aclose=AsyncMock(),
+        approve_group=AsyncMock(
+            side_effect=[
+                LegalCoreApiError(503, "TIMEOUT", "unknown outcome"),
+                {"approvedCount": 1},
+            ]
+        ),
     )
     monkeypatch.setattr(runtime, "LegalLibraryClient", lambda: client)
-    update = SimpleNamespace(effective_user=SimpleNamespace(id=12345),
-                             effective_message=SimpleNamespace(reply_text=AsyncMock()))
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=12345),
+        effective_message=SimpleNamespace(reply_text=AsyncMock()),
+    )
     context = SimpleNamespace(user_data={})
 
     async def scenario():
@@ -488,29 +558,40 @@ def test_group_confirmation_requires_matching_preview_and_preserves_retry_key(mo
 def test_group_preview_reports_previously_approved_without_offering_confirmation():
     text, keyboard = runtime.render_group_approval_preview(
         {"group": "general", "ready": [], "blocked": [], "alreadyApproved": 3},
-        batch_id=str(UUID(int=1)), page=1,
+        batch_id=str(UUID(int=1)),
+        page=1,
     )
     assert "Ранее утверждено: 3" in text
     assert not any(
         button.callback_data.startswith("editor:batchconfirm:")
-        for row in keyboard.inline_keyboard for button in row
+        for row in keyboard.inline_keyboard
+        for button in row
     )
 
 
 def test_group_preview_fits_telegram_utf16_limit_without_losing_declaration():
     text, keyboard = runtime.render_group_approval_preview(
         {
-            "group": "general", "alreadyApproved": 200,
-            "ready": [{"title": "😀" * 2000, "effectiveFrom": "2026-01-01",
-                       "effectiveTo": "2030-01-01"} for _ in range(10)],
-            "blocked": [{"title": "😀" * 2000, "reasonCode": "METADATA_REQUIRED"}
-                        for _ in range(200)],
-        }, batch_id=str(UUID(int=1)), page=1,
+            "group": "general",
+            "alreadyApproved": 200,
+            "ready": [
+                {"title": "😀" * 2000, "effectiveFrom": "2026-01-01", "effectiveTo": "2030-01-01"}
+                for _ in range(10)
+            ],
+            "blocked": [
+                {"title": "😀" * 2000, "reasonCode": "METADATA_REQUIRED"} for _ in range(200)
+            ],
+        },
+        batch_id=str(UUID(int=1)),
+        page=1,
     )
     assert len(text.encode("utf-16-le")) // 2 <= 4096
     assert "Подтверждаю проверку всех перечисленных документов" in text
-    assert all(len(button.callback_data.encode()) <= 64
-               for row in keyboard.inline_keyboard for button in row)
+    assert all(
+        len(button.callback_data.encode()) <= 64
+        for row in keyboard.inline_keyboard
+        for button in row
+    )
 
 
 def test_editor_review_material_client_checks_integrity_and_editor_credentials(monkeypatch) -> None:
@@ -551,25 +632,37 @@ def test_return_from_pdf_keeps_attestations_for_the_same_immutable_version(monke
     pending["attestations"]["source"] = True
     context = SimpleNamespace(user_data={runtime._EDITOR_PENDING_KEY: pending})
     monkeypatch.setattr(runtime.gateway_bot, "_actor_id", lambda _: 12345)
-    monkeypatch.setattr(runtime.gateway_bot, "_answer_callback", AsyncMock(
-        return_value=f"editor:detail:{version_id}:1"
-    ))
+    monkeypatch.setattr(
+        runtime.gateway_bot,
+        "_answer_callback",
+        AsyncMock(return_value=f"editor:detail:{version_id}:1"),
+    )
     monkeypatch.setattr(runtime, "_editor_reply", AsyncMock())
-    monkeypatch.setattr(runtime, "LegalLibraryClient", lambda: SimpleNamespace(
-        get_editor_version=AsyncMock(return_value=detail), aclose=AsyncMock()
-    ))
+    monkeypatch.setattr(
+        runtime,
+        "LegalLibraryClient",
+        lambda: SimpleNamespace(
+            get_editor_version=AsyncMock(return_value=detail), aclose=AsyncMock()
+        ),
+    )
     with pytest.raises(ApplicationHandlerStop):
         asyncio.run(runtime.legal_editor_callback(SimpleNamespace(), context))
     assert context.user_data[runtime._EDITOR_PENDING_KEY]["attestations"]["source"] is True
 
 
 def test_queue_does_not_mislabel_deferred_integrity_checks_as_unavailable() -> None:
-    rendered, _ = render_platform_review_queue({"items": [{
-        "versionId": "00000000-0000-0000-0000-000000000002",
-        "approvalState": "REVIEW_REQUIRED",
-        "approvalEligible": False,
-        "approvalPreflightChecked": False,
-    }]})
+    rendered, _ = render_platform_review_queue(
+        {
+            "items": [
+                {
+                    "versionId": "00000000-0000-0000-0000-000000000002",
+                    "approvalState": "REVIEW_REQUIRED",
+                    "approvalEligible": False,
+                    "approvalPreflightChecked": False,
+                }
+            ]
+        }
+    )
     assert "проверка доступности — при открытии карточки" in rendered
     assert "старая/недоступная" not in rendered
 
@@ -578,9 +671,11 @@ def test_queue_does_not_mislabel_deferred_integrity_checks_as_unavailable() -> N
 def test_editor_file_callback_returns_before_download_completes(monkeypatch, resource) -> None:
     version_id = "00000000-0000-0000-0000-000000000002"
     monkeypatch.setattr(runtime.gateway_bot, "_actor_id", lambda _: 12345)
-    monkeypatch.setattr(runtime.gateway_bot, "_answer_callback", AsyncMock(
-        return_value=f"editor:{resource}:{version_id}"
-    ))
+    monkeypatch.setattr(
+        runtime.gateway_bot,
+        "_answer_callback",
+        AsyncMock(return_value=f"editor:{resource}:{version_id}"),
+    )
     monkeypatch.setattr(runtime.gateway_bot, "_reply", AsyncMock())
 
     async def scenario():
@@ -592,9 +687,7 @@ def test_editor_file_callback_returns_before_download_completes(monkeypatch, res
             await finished.wait()
 
         monkeypatch.setattr(runtime, "_send_editor_artifact", send)
-        application = SimpleNamespace(
-            running=True, bot_data={}, create_task=asyncio.create_task
-        )
+        application = SimpleNamespace(running=True, bot_data={}, create_task=asyncio.create_task)
         context = SimpleNamespace(application=application, user_data={"unrelated": "keep"})
         with pytest.raises(ApplicationHandlerStop):
             await asyncio.wait_for(
@@ -606,5 +699,115 @@ def test_editor_file_callback_returns_before_download_completes(monkeypatch, res
         assert context.user_data == {"unrelated": "keep"}
         finished.set()
         await application.bot_data[runtime._EDITOR_DELIVERY_KEY].drain()
+
+    asyncio.run(scenario())
+
+
+def test_clinical_group_has_reference_confirmation_without_repeating_titles() -> None:
+    material_id = "00000000-0000-0000-0000-000000000003"
+    text, keyboard = render_editor_review_materials(
+        {
+            "page": 1,
+            "pageSize": 10,
+            "totalItems": 1,
+            "referenceReviewableCount": 1,
+            "selectedGroup": "clinical",
+            "groups": [
+                {
+                    "key": "clinical",
+                    "title": "Клинические справочные материалы",
+                    "totalItems": 1,
+                }
+            ],
+            "items": [
+                {
+                    "materialId": material_id,
+                    "versionId": None,
+                    "title": "Кариес зубов",
+                    "kind": "CLINICAL_REFERENCE",
+                    "reviewState": "METADATA_REQUIRED",
+                    "preparationId": material_id,
+                }
+            ],
+        }
+    )
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    callbacks = [button.callback_data for button in buttons]
+    assert "Клинические справочные материалы" not in text
+    assert "Кариес зубов" not in text
+    assert "editor:refbatch:clinical" in callbacks
+    assert "editor:batch:clinical" not in callbacks
+    assert any(button.text == "📄 Открыть: Кариес зубов" for button in buttons)
+
+
+def test_mixed_group_shows_distinct_norm_and_reference_actions() -> None:
+    _, keyboard = render_editor_review_materials(
+        {
+            "page": 1,
+            "pageSize": 10,
+            "totalItems": 2,
+            "referenceReviewableCount": 1,
+            "selectedGroup": "healthcare",
+            "groups": [{"key": "healthcare", "title": "Медицинская деятельность", "totalItems": 2}],
+            "items": [
+                {
+                    "materialId": "00000000-0000-0000-0000-000000000003",
+                    "versionId": None,
+                    "title": "Форма 043",
+                    "kind": "LEGAL_COPY",
+                    "reviewState": "METADATA_REQUIRED",
+                    "preparationId": "00000000-0000-0000-0000-000000000003",
+                }
+            ],
+        }
+    )
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert "editor:refbatch:healthcare" in callbacks
+    assert "editor:batch:healthcare" in callbacks
+
+
+def test_reference_preview_and_confirmation_reuse_one_retry_key(monkeypatch) -> None:
+    preparation_id = "00000000-0000-0000-0000-000000000003"
+    preview = {
+        "group": "clinical",
+        "snapshot": "a" * 64,
+        "alreadyReviewed": 0,
+        "ready": [
+            {
+                "preparationId": preparation_id,
+                "title": "Кариес зубов",
+                "kind": "CLINICAL_REFERENCE",
+            }
+        ],
+    }
+    client = SimpleNamespace(
+        get_reference_review_preview=AsyncMock(return_value=preview),
+        confirm_reference_review=AsyncMock(
+            side_effect=[
+                LegalCoreApiError(503, "TIMEOUT", "unknown outcome"),
+                {"reviewedCount": 1},
+            ]
+        ),
+        aclose=AsyncMock(),
+    )
+    monkeypatch.setattr(runtime, "LegalLibraryClient", lambda: client)
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=12345),
+        effective_message=SimpleNamespace(reply_text=AsyncMock()),
+    )
+    context = SimpleNamespace(user_data={})
+
+    async def scenario() -> None:
+        await runtime._show_reference_review(update, context, group="clinical")
+        pending = context.user_data[runtime._EDITOR_REFERENCE_PENDING_KEY]
+        key = pending["id"]
+        await runtime._confirm_reference_review(update, context, batch_id=key)
+        assert context.user_data[runtime._EDITOR_REFERENCE_PENDING_KEY]["id"] == key
+        await runtime._confirm_reference_review(update, context, batch_id=key)
+        assert runtime._EDITOR_REFERENCE_PENDING_KEY not in context.user_data
+        first, second = client.confirm_reference_review.await_args_list
+        assert first == second
+        assert first.args[-1] == UUID(key)
+        assert first.args[2]["referenceOnlyUnderstood"] is True
 
     asyncio.run(scenario())

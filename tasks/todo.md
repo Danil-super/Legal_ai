@@ -81,7 +81,7 @@ Every code task follows red → green tests; only synthetic fixtures enter git.
 
 ### P5. Persist separate reference-review events
 
-- [ ] Acceptance: separate append-only actor/time/preparation/hash/batch ledger,
+- [x] Acceptance: separate append-only actor/time/preparation/hash/batch ledger,
   uniqueness and retry constraints; no LegalVersion/source changes; actor resolved
   by existing server-side LEGAL_EDITOR authorization.
 - Verify: `.venv/bin/python -m pytest services/legal_core/tests/test_reference_review_persistence.py` on disposable PostgreSQL.
@@ -92,7 +92,7 @@ Every code task follows red → green tests; only synthetic fixtures enter git.
 
 ### P6. Confirm an exact reference group through the API
 
-- [ ] Acceptance: preview exact ready/blocked/already-reviewed originals; explicit
+- [x] Acceptance: preview exact ready/blocked/already-reviewed originals; explicit
   attestation and stable idempotency key; stale/concurrent changes never cause
   partial review; clinical PDFs and form remain excluded from legal retrieval.
 - Verify: `.venv/bin/python -m pytest services/legal_core/tests/test_reference_review_api.py`;
@@ -104,7 +104,7 @@ Every code task follows red → green tests; only synthetic fixtures enter git.
 
 ### P7. Present reference confirmation and preparation cards in Telegram
 
-- [ ] Acceptance: same seven roots, clear titles and original downloads, back/cancel
+- [x] Acceptance: same seven roots, clear titles and original downloads, back/cancel
   throughout, distinct norm/reference buttons with exact counts; stable retry key
   after timeout; absent publication/cover dates displayed honestly.
 - Verify: `.venv/bin/python -m pytest services/gateway/telegram/tests/test_legal_library_runtime.py`;
@@ -115,9 +115,10 @@ Every code task follows red → green tests; only synthetic fixtures enter git.
 
 ### Checkpoint B: reference review works without normative promotion
 
-- [ ] End-to-end synthetic group review is durable, idempotent and auditable;
+- [x] End-to-end synthetic group review is durable, idempotent and auditable;
   old legal-approval flows still work and reference material is not legal evidence.
-- [ ] API and gateway regression suites pass; review results before next slice.
+- [x] API and gateway regression suites pass; review results before next slice.
+- Evidence: disposable PostgreSQL migration/API/concurrency suite passed (3); Telegram suite passed (30); full suite passed (992, 97 dependency-gated skips), Ruff and mypy passed (2026-09-30).
 
 ### P8. Prepare complete normative candidates and document parts
 

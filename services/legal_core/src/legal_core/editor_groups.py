@@ -18,11 +18,19 @@ EDITOR_GROUP_TITLES = {key: title for key, title in GROUP_TITLES.items() if key 
 
 def current_preparations() -> Subquery:
     ranked = select(
-        LegalMaterialPreparation.id, LegalMaterialPreparation.material_id,
-        LegalMaterialPreparation.title, LegalMaterialPreparation.kind,
-        LegalMaterialPreparation.group_key, LegalMaterialPreparation.preparation_sha256,
-        func.row_number().over(partition_by=LegalMaterialPreparation.material_id,
-                               order_by=LegalMaterialPreparation.revision.desc()).label("rank"),
+        LegalMaterialPreparation.id,
+        LegalMaterialPreparation.material_id,
+        LegalMaterialPreparation.title,
+        LegalMaterialPreparation.kind,
+        LegalMaterialPreparation.group_key,
+        LegalMaterialPreparation.raw_sha256,
+        LegalMaterialPreparation.preparation_sha256,
+        func.row_number()
+        .over(
+            partition_by=LegalMaterialPreparation.material_id,
+            order_by=LegalMaterialPreparation.revision.desc(),
+        )
+        .label("rank"),
     ).subquery()
     return select(ranked).where(ranked.c.rank == 1).subquery("current_preparations")
 
@@ -60,26 +68,33 @@ def editor_group_items() -> Subquery:
         else_=version_group,
     )
     preparations = current_preparations()
-    originals = select(
-        LegalReviewMaterial.id.label("material_id"),
-        cast(null(), Uuid).label("version_id"),
-        func.coalesce(preparations.c.title, LegalReviewMaterial.title).label("title"),
-        LegalReviewMaterial.kind,
-        LegalReviewMaterial.review_state.label("review_state"),
-        func.coalesce(preparations.c.group_key,
-                      case((material_group == "other", "general"), else_=material_group)
-                      ).label("group_key"),
-        LegalReviewMaterial.raw_sha256,
-        preparations.c.id.label("preparation_id"),
-        preparations.c.kind.label("preparation_kind"),
-        preparations.c.preparation_sha256,
-    ).outerjoin(preparations, preparations.c.material_id == LegalReviewMaterial.id).where(
-        or_(
-            preparations.c.id.is_not(None),
-            LegalReviewMaterial.kind == "CLINICAL_REFERENCE",
-            ~exists(
-                select(versions.c.id).where(versions.c.raw_sha256 == LegalReviewMaterial.raw_sha256)
-            ),
+    originals = (
+        select(
+            LegalReviewMaterial.id.label("material_id"),
+            cast(null(), Uuid).label("version_id"),
+            func.coalesce(preparations.c.title, LegalReviewMaterial.title).label("title"),
+            LegalReviewMaterial.kind,
+            LegalReviewMaterial.review_state.label("review_state"),
+            func.coalesce(
+                preparations.c.group_key,
+                case((material_group == "other", "general"), else_=material_group),
+            ).label("group_key"),
+            LegalReviewMaterial.raw_sha256,
+            preparations.c.id.label("preparation_id"),
+            preparations.c.kind.label("preparation_kind"),
+            preparations.c.preparation_sha256,
+        )
+        .outerjoin(preparations, preparations.c.material_id == LegalReviewMaterial.id)
+        .where(
+            or_(
+                preparations.c.id.is_not(None),
+                LegalReviewMaterial.kind == "CLINICAL_REFERENCE",
+                ~exists(
+                    select(versions.c.id).where(
+                        versions.c.raw_sha256 == LegalReviewMaterial.raw_sha256
+                    )
+                ),
+            )
         )
     )
     prepared = select(
