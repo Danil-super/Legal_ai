@@ -23,8 +23,8 @@ class _Store:
     def __init__(self) -> None:
         self.deleted_keys: list[str] = []
 
-    async def delete_case_material(self, *, stored_object_key: str) -> None:
-        self.deleted_keys.append(stored_object_key)
+    async def delete_case_material(self, *, stored_location: str) -> None:
+        self.deleted_keys.append(stored_location)
 
 
 def test_expired_material_is_deleted_before_the_expired_draft() -> None:

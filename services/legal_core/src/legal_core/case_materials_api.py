@@ -400,9 +400,8 @@ def create_case_materials_router(
             # The object is content-addressed by its newly allocated UUID.  It is
             # safe to delete best-effort if metadata cannot be committed.
             with suppress(RuntimeError, ValueError):
-                await get_raw_store().delete_case_material(
-                    stored_object_key=material.raw_object_key
-                )
+                stored_location = material.raw_object_key
+                await get_raw_store().delete_case_material(stored_location=stored_location)
             raise ApiError(
                 status_code=status.HTTP_409_CONFLICT,
                 code="CASE_MATERIAL_WRITE_CONFLICT",
@@ -443,8 +442,9 @@ def create_case_materials_router(
             session, actor=actor, draft_id=draft_id, material_id=material_id
         )
         try:
+            stored_location = material.raw_object_key
             raw = await get_raw_store().get_case_material(
-                stored_object_key=material.raw_object_key, max_bytes=material.raw_size_bytes
+                stored_location=stored_location, max_bytes=material.raw_size_bytes
             )
         except (RuntimeError, ValueError) as exc:
             raise ApiError(
@@ -503,7 +503,8 @@ def create_case_materials_router(
         _require_live_material(material)
         deleted_response = _material_response(material)
         try:
-            await get_raw_store().delete_case_material(stored_object_key=material.raw_object_key)
+            stored_location = material.raw_object_key
+            await get_raw_store().delete_case_material(stored_location=stored_location)
         except (RuntimeError, ValueError) as exc:
             raise ApiError(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -573,8 +574,9 @@ def create_case_materials_router(
             session, actor=actor, case_id=case_id, material_id=material_id
         )
         try:
+            stored_location = material.raw_object_key
             raw = await get_raw_store().get_case_material(
-                stored_object_key=material.raw_object_key, max_bytes=material.raw_size_bytes
+                stored_location=stored_location, max_bytes=material.raw_size_bytes
             )
         except (RuntimeError, ValueError) as exc:
             raise ApiError(

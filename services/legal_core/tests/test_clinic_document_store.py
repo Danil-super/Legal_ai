@@ -81,15 +81,15 @@ def test_case_material_download_is_signed_bounded_and_refuses_invalid_key() -> N
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             store = MinioRawClinicDocumentStore(_settings(), client=client)
             downloaded = await store.get_case_material(
-                stored_object_key=object_key, max_bytes=len(content)
+                stored_location=object_key, max_bytes=len(content)
             )
             assert downloaded == content
             with pytest.raises(ValueError, match="object key"):
                 await store.get_case_material(
-                    stored_object_key="clinic/not-a-case-material", max_bytes=100
+                    stored_location="clinic/not-a-case-material", max_bytes=100
                 )
             with pytest.raises(ValueError, match="maximum size"):
-                await store.get_case_material(stored_object_key=object_key, max_bytes=0)
+                await store.get_case_material(stored_location=object_key, max_bytes=0)
 
         assert len(requests) == 1
         assert requests[0].headers["authorization"].startswith(
