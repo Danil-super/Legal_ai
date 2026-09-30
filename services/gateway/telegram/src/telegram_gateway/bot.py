@@ -1,6 +1,7 @@
 # ruff: noqa: RUF001
 """Safety-scoped Telegram polling gateway."""
 
+import asyncio
 import logging
 import os
 import re
@@ -774,6 +775,23 @@ def _legal_core(context: ContextTypes.DEFAULT_TYPE) -> LegalCoreClient:
     return cast(LegalCoreClient, client)
 
 
+async def _menu_actor_role(client: LegalCoreClient, actor_id: int) -> str | None:
+    try:
+        actor = await client.get_actor(actor_id)
+    except (LegalCoreApiError, AttributeError):
+        return None
+    role = actor.get("role") if isinstance(actor, dict) else None
+    return role if isinstance(role, str) else None
+
+
+async def _menu_legal_editor_status(client: LegalCoreClient, actor_id: int) -> bool:
+    try:
+        editor_status = await client.get_legal_editor_status(actor_id)
+    except (LegalCoreApiError, AttributeError):
+        return False
+    return isinstance(editor_status, dict) and editor_status.get("isLegalEditor") is True
+
+
 async def _main_menu_for_actor(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE | None,
@@ -785,22 +803,13 @@ async def _main_menu_for_actor(
         return main_menu_keyboard()
     try:
         client = _legal_core(context)
-        actor = await client.get_actor(actor_id)
     except (LegalCoreApiError, AttributeError):
-        actor = {}
-    role = actor.get("role") if isinstance(actor, dict) else None
-    try:
-        client = _legal_core(context)
-        editor_status = await client.get_legal_editor_status(actor_id)
-    except (LegalCoreApiError, AttributeError):
-        editor_status = {}
-    is_legal_editor = (
-        isinstance(editor_status, dict) and editor_status.get("isLegalEditor") is True
+        return main_menu_keyboard()
+    role, is_legal_editor = await asyncio.gather(
+        _menu_actor_role(client, actor_id),
+        _menu_legal_editor_status(client, actor_id),
     )
-    return main_menu_keyboard(
-        role if isinstance(role, str) else None,
-        is_legal_editor=is_legal_editor,
-    )
+    return main_menu_keyboard(role, is_legal_editor=is_legal_editor)
 
 
 def _actor_id(update: Update) -> int | None:

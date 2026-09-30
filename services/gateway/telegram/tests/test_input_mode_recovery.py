@@ -130,6 +130,39 @@ def test_menu_is_available_even_when_core_client_is_not_initialized() -> None:
     assert keyboard.inline_keyboard
 
 
+def test_main_menu_loads_independent_actor_capabilities_in_parallel() -> None:
+    async def scenario() -> None:
+        actor_started = asyncio.Event()
+        editor_started = asyncio.Event()
+        release = asyncio.Event()
+
+        class SlowCore:
+            async def get_actor(self, actor_id: int) -> dict[str, str]:
+                assert actor_id == ACTOR_ID
+                actor_started.set()
+                await release.wait()
+                return {"role": "CLINIC_OWNER"}
+
+            async def get_legal_editor_status(self, actor_id: int) -> dict[str, bool]:
+                assert actor_id == ACTOR_ID
+                editor_started.set()
+                await release.wait()
+                return {"isLegalEditor": True}
+
+        context = SimpleNamespace(
+            bot_data={bot.LEGAL_CORE_CLIENT_KEY: SlowCore()},
+            user_data={},
+        )
+        pending = asyncio.create_task(bot._main_menu_for_actor(fake_update(), context))
+        await asyncio.wait_for(asyncio.gather(actor_started.wait(), editor_started.wait()), 0.1)
+        release.set()
+        keyboard = await pending
+        callbacks = {button.callback_data for row in keyboard.inline_keyboard for button in row}
+        assert {"editor:open", "case:escalations"} <= callbacks
+
+    asyncio.run(scenario())
+
+
 def test_delivery_failure_keeps_confirmation_retryable_without_archiving_draft(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
