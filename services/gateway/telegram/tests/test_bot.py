@@ -7,16 +7,21 @@ from uuid import UUID
 
 import pytest
 from telegram import InlineKeyboardMarkup
-from telegram.error import BadRequest
+from telegram.error import BadRequest, NetworkError
 from telegram.ext import CallbackQueryHandler, CommandHandler
 from telegram_gateway.bot import (
     ADMIN_GRANT_ACCESS_KEY,
     ALLOWED_UPDATES,
     CALLBACK_ERROR_MESSAGE,
     POLLING_STALL_SECONDS,
+    TELEGRAM_API_FAILURE_LIMIT,
+    TELEGRAM_API_FAILURES_KEY,
+    TELEGRAM_BOT_API_POOL_SIZE,
+    TELEGRAM_POLLING_POOL_SIZE,
     _answer_callback,
     _keyboard,
     _polling_is_stalled,
+    _polling_watchdog,
     _reply,
     admin_panel,
     build_application,
@@ -447,6 +452,68 @@ def test_callback_failure_is_reported_to_the_user() -> None:
     ]
 
 
+def test_repeated_telegram_network_errors_withdraw_readiness_and_restart(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    ready_file = tmp_path / "ready"
+    ready_file.touch()
+    monkeypatch.setattr("telegram_gateway.bot.READY_FILE", ready_file)
+
+    class RestartingApplication:
+        def __init__(self) -> None:
+            self.bot_data: dict[str, object] = {}
+            self.stop_calls = 0
+
+        def stop_running(self) -> None:
+            self.stop_calls += 1
+
+    application = RestartingApplication()
+    context = SimpleNamespace(error=NetworkError("proxy unavailable"), application=application)
+
+    for _ in range(TELEGRAM_API_FAILURE_LIMIT):
+        asyncio.run(on_error(SimpleNamespace(callback_query=None), context))
+
+    assert application.stop_calls == 1
+    assert not ready_file.exists()
+    assert application.bot_data[TELEGRAM_API_FAILURES_KEY] == TELEGRAM_API_FAILURE_LIMIT
+
+
+def test_successful_watchdog_probe_resets_telegram_failure_counter(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    ready_file = tmp_path / "ready"
+    ready_file.touch()
+    heartbeat_file = tmp_path / "heartbeat"
+    heartbeat_file.touch()
+    monkeypatch.setattr("telegram_gateway.bot.READY_FILE", ready_file)
+    monkeypatch.setattr("telegram_gateway.bot.POLLING_HEARTBEAT_FILE", heartbeat_file)
+
+    class HealthyBot:
+        async def get_webhook_info(self) -> object:
+            return SimpleNamespace(pending_update_count=0)
+
+    class HealthyApplication:
+        bot = HealthyBot()
+
+        def __init__(self) -> None:
+            self.bot_data: dict[str, object] = {
+                TELEGRAM_API_FAILURES_KEY: TELEGRAM_API_FAILURE_LIMIT - 1
+            }
+            self.stop_calls = 0
+
+        def stop_running(self) -> None:
+            self.stop_calls += 1
+
+    application = HealthyApplication()
+    asyncio.run(_polling_watchdog(SimpleNamespace(application=application)))
+
+    assert application.stop_calls == 0
+    assert ready_file.exists()
+    assert TELEGRAM_API_FAILURES_KEY not in application.bot_data
+
+
 def test_identity_button_displays_the_current_users_telegram_id() -> None:
     query = FakeCallbackQuery("account:id")
     update = SimpleNamespace(
@@ -517,6 +584,18 @@ def test_application_registers_callback_handler_and_required_update_types() -> N
         for handler in handlers
     )
     assert ALLOWED_UPDATES == ["message", "callback_query"]
+
+
+def test_application_reserves_connection_capacity_for_polling_and_bot_actions() -> None:
+    application = build_application("123456:unit_test_token_value_1234567890")
+    get_updates_request, bot_api_request = application.bot._request
+
+    assert get_updates_request._client._transport._pool._max_connections == (  # type: ignore[attr-defined]
+        TELEGRAM_POLLING_POOL_SIZE
+    )
+    assert bot_api_request._client._transport._pool._max_connections == (  # type: ignore[attr-defined]
+        TELEGRAM_BOT_API_POOL_SIZE
+    )
 
 
 def test_polling_startup_does_not_repeat_rate_limited_profile_mutations(

@@ -15,7 +15,7 @@ from uuid import UUID
 
 import httpx2
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
-from telegram.error import BadRequest, TelegramError
+from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 from telegram.ext import (
     Application,
     ApplicationHandlerStop,
@@ -70,6 +70,11 @@ TEAM_MEMBER_ROLE_KEY = "team_member_role"
 LEGAL_CORE_TIMEOUT_SECONDS = 15.0
 POLLING_WATCHDOG_INTERVAL_SECONDS = 30
 POLLING_STALL_SECONDS = 120
+TELEGRAM_API_FAILURES_KEY = "telegram_api_consecutive_failures"
+TELEGRAM_API_FAILURE_LIMIT = 3
+TELEGRAM_BOT_API_POOL_SIZE = 8
+TELEGRAM_POLLING_POOL_SIZE = 2
+TELEGRAM_POOL_TIMEOUT_SECONDS = 10.0
 CASE_INTAKE_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN"})
 CALLBACK_ERROR_MESSAGE = "⚠️ Не удалось выполнить действие. Откройте /menu и попробуйте ещё раз."
 _DRAFT_DELETE_CALLBACK_RE = re.compile(
@@ -196,6 +201,45 @@ def _last_update_heartbeat() -> datetime | None:
     return datetime.fromtimestamp(modified_at, UTC)
 
 
+def _telegram_api_failure_count(application: object) -> int:
+    """Return only a bounded, process-local liveness counter, never user data."""
+
+    bot_data = getattr(application, "bot_data", None)
+    if not isinstance(bot_data, dict):
+        return 0
+    value = bot_data.get(TELEGRAM_API_FAILURES_KEY, 0)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def _record_telegram_api_success(application: object) -> None:
+    bot_data = getattr(application, "bot_data", None)
+    if isinstance(bot_data, dict):
+        bot_data.pop(TELEGRAM_API_FAILURES_KEY, None)
+
+
+def _record_telegram_api_failure(application: object) -> int:
+    bot_data = getattr(application, "bot_data", None)
+    failures = _telegram_api_failure_count(application) + 1
+    if isinstance(bot_data, dict):
+        bot_data[TELEGRAM_API_FAILURES_KEY] = failures
+    return failures
+
+
+def _withdraw_readiness_and_restart(application: TelegramApplication, *, failures: int) -> None:
+    """Let Docker recover polling only after repeated failed Bot API calls.
+
+    The gateway must not keep reporting ready when its only Telegram transport is unavailable.
+    A direct fallback would expose traffic outside the configured tunnel and is deliberately absent.
+    """
+
+    READY_FILE.unlink(missing_ok=True)
+    logger.error(
+        "Telegram Bot API unavailable after %s consecutive failures; restarting gateway",
+        failures,
+    )
+    application.stop_running()
+
+
 async def _record_update_heartbeat(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -217,8 +261,12 @@ async def _polling_watchdog(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         webhook = await application.bot.get_webhook_info()
     except TelegramError:
+        failures = _record_telegram_api_failure(application)
         logger.warning("could not inspect Telegram polling backlog")
+        if failures >= TELEGRAM_API_FAILURE_LIMIT:
+            _withdraw_readiness_and_restart(application, failures=failures)
         return
+    _record_telegram_api_success(application)
     pending_update_count = webhook.pending_update_count
     heartbeat_at = _last_update_heartbeat()
     if heartbeat_at is None:
@@ -1847,6 +1895,8 @@ async def on_startup(application: TelegramApplication) -> None:
             ),
             legal_editor_gateway_key=load_legal_editor_gateway_key(),
         )
+    # post_init runs only after python-telegram-bot completed Bot.initialize/getMe.
+    _record_telegram_api_success(application)
     READY_FILE.touch(mode=0o600)
     POLLING_HEARTBEAT_FILE.touch(mode=0o600)
     if application.job_queue is None:
@@ -1876,6 +1926,12 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         type(context.error).__name__,
         query is not None,
     )
+    if isinstance(context.error, (NetworkError, TimedOut)):
+        application = getattr(context, "application", None)
+        if application is not None:
+            failures = _record_telegram_api_failure(application)
+            if failures >= TELEGRAM_API_FAILURE_LIMIT:
+                _withdraw_readiness_and_restart(application, failures=failures)
     if query is None:
         return
     try:
@@ -1894,6 +1950,10 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
         Application.builder()
         .token(token)
         .concurrent_updates(False)
+        .connection_pool_size(TELEGRAM_BOT_API_POOL_SIZE)
+        .pool_timeout(TELEGRAM_POOL_TIMEOUT_SECONDS)
+        .get_updates_connection_pool_size(TELEGRAM_POLLING_POOL_SIZE)
+        .get_updates_pool_timeout(TELEGRAM_POOL_TIMEOUT_SECONDS)
         .post_init(on_startup)
         .post_shutdown(on_shutdown)
     )
