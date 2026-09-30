@@ -89,11 +89,32 @@ if [[ "$analysis_enabled" == 1 ]]; then
   fi
 fi
 
+readonly minio_image="dental-legal-minio:9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a"
+# This image is a security boundary, so ordinary application deployments may
+# reuse it only after confirming that the exact pinned release is local.  It is
+# intentionally built as a separate, planned maintenance action when its
+# upstream revision changes; `up --build` would otherwise recompile MinIO on
+# every small bot change and can exhaust a constrained VPS.
+if ! docker image inspect "$minio_image" >/dev/null 2>&1; then
+  echo "The required pinned MinIO security image is missing. Build the reviewed release before deployment." >&2
+  exit 1
+fi
+
+build_services=(legal-core legal-watcher legal-watch-importer telegram-gateway)
+if [[ "$analysis_enabled" == 1 ]]; then
+  build_services+=(agent-orchestrator)
+fi
+
+if ! docker compose "${compose_args[@]}" build "${build_services[@]}"; then
+  echo "Application image build failed; the running stack was not replaced." >&2
+  exit 1
+fi
+
 # Legal Core alone can be healthy while Telegram fails authentication or cannot poll.
 # Compose checks every enabled service, including the gateway's readiness marker;
 # the Core healthcheck runs inside the container and honors any host port mapping.
 if ! docker compose "${compose_args[@]}" \
-  up --build --detach --remove-orphans --wait --wait-timeout 180; then
+  up --no-build --detach --remove-orphans --wait --wait-timeout 180; then
   logger --tag dental-legal-ai-deploy "${operation} failed readiness for ${revision}"
   echo "The application stack did not become ready; the last successful revision was preserved for manual rollback." >&2
   exit 1

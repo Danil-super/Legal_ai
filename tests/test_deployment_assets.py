@@ -107,6 +107,7 @@ def test_deploy_records_success_only_when_the_selected_stack_is_ready(
         'if [[ "$*" == *"config --format json"* ]]; then\n'
         '  printf "%s" "$COMPOSE_JSON"; exit 0\n'
         'fi\n'
+        'if [[ "$*" == *" build "* ]]; then exit 0; fi\n'
         'for arg in "$@"; do\n'
         '  if [[ "$arg" == config ]]; then\n'
         '    echo SENTINEL_SECRET >&2; exit "$CONFIG_EXIT"\n'
@@ -158,9 +159,11 @@ def test_deploy_records_success_only_when_the_selected_stack_is_ready(
     assert "config --quiet" in commands[0]
     assert ("--profile analysis" in commands[0]) == (flag == "DEPLOY_ANALYSIS_ENABLED=1")
     if config_exit or image_exit:
-        assert not any("up --build" in command for command in commands)
+        assert not any("--no-build" in command for command in commands)
     else:
-        assert "--wait --wait-timeout 180" in commands[-1]
+        assert any(" build " in f" {command} " for command in commands)
+        assert "up --build" not in commands[-1]
+        assert "--no-build --detach --remove-orphans --wait --wait-timeout 180" in commands[-1]
 
 
 @pytest.mark.parametrize("fault", ["missing_key", "reused_key", "bad_url", "wrong_gateway", "json"])
@@ -218,6 +221,16 @@ def test_minio_ci_and_runtime_build_the_same_pinned_security_release() -> None:
     assert "FROM minio/minio" not in dockerfile
     assert "quay.io/minio/minio@" not in compose + workflow
     assert "minio/minio:RELEASE.2025-04-22T22-12-26Z" not in compose + workflow
+
+
+def test_production_deploy_reuses_a_prebuilt_checked_minio_security_image() -> None:
+    script = (DEPLOY / "deploy-commit.sh").read_text(encoding="utf-8")
+
+    assert 'readonly minio_image="dental-legal-minio:' in script
+    assert 'docker image inspect "$minio_image"' in script
+    assert 'build "${build_services[@]}"' in script
+    assert "up --no-build --detach --remove-orphans --wait --wait-timeout 180" in script
+    assert "\n  up --build " not in script
 
 
 def test_alembic_accepts_reserved_characters_in_generated_passwords() -> None:

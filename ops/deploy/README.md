@@ -43,6 +43,12 @@ the GitHub `production` environment variable `DEPLOY_ENABLED` is `true`. It star
 Compose profile with conservative memory limits for the 2 GiB VPS and then requires
 `http://127.0.0.1:8000/health/ready`.
 
+The deployment script builds only application images and starts Compose with `--no-build`. It
+first verifies that the exact pinned MinIO security image is already local. When the MinIO
+revision changes, build that image in a planned maintenance window before enabling the related
+application deployment; this prevents every ordinary bot change from recompiling MinIO on the
+2 GiB host.
+
 `Rollback production` is a manual GitHub Actions workflow. It accepts a full commit SHA that is
 still reachable from `main`. Do not roll back across a non-backward-compatible Alembic migration;
 restore from a tested backup instead.
