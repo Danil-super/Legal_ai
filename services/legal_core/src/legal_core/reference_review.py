@@ -158,7 +158,6 @@ async def confirm_reference_review(
             LegalReferenceReviewEvent.actor_user_id == editor.id,
             LegalReferenceReviewEvent.idempotency_key == idempotency_key,
         )
-        .with_for_update()
     )
     requested_ids = sorted(payload.preparation_ids)
     if root is not None:
@@ -183,13 +182,23 @@ async def confirm_reference_review(
             preparationIds=existing_ids,
         )
 
+    # Both ledgers are immutable, and the runtime role has no row-update privilege on them.
+    # Transaction-scoped advisory locks provide the serialization that FOR UPDATE would otherwise
+    # provide, without granting a mutable capability to the service role.
+    for preparation_id in requested_ids:
+        await session.execute(
+            select(
+                func.pg_advisory_xact_lock(
+                    func.hashtextextended(f"reference-preparation:{preparation_id}", 736661)
+                )
+            )
+        )
     locked = list(
         (
             await session.scalars(
                 select(LegalMaterialPreparation)
                 .where(LegalMaterialPreparation.id.in_(requested_ids))
                 .order_by(LegalMaterialPreparation.id)
-                .with_for_update()
             )
         ).all()
     )

@@ -34,6 +34,36 @@ def test_runtime_database_identity_is_not_privileged() -> None:
                 assert identity["rolreplication"] is False
                 assert identity["rolbypassrls"] is False
 
+                reference_review_access = (
+                    await connection.execute(
+                        text(
+                            "SELECT "
+                            "has_table_privilege(current_user, "
+                            "'public.legal_reference_review_events', 'SELECT') AS can_select, "
+                            "has_table_privilege(current_user, "
+                            "'public.legal_reference_review_events', 'INSERT') AS can_insert, "
+                            "has_table_privilege(current_user, "
+                            "'public.legal_reference_review_events', 'UPDATE') AS can_update, "
+                            "has_table_privilege(current_user, "
+                            "'public.legal_reference_review_events', 'DELETE') AS can_delete, "
+                            "has_function_privilege('public', "
+                            "'public.guard_legal_reference_review_event()', 'EXECUTE') "
+                            "AS public_can_execute_guard, "
+                            "has_function_privilege(current_user, "
+                            "'public.guard_legal_reference_review_event()', 'EXECUTE') "
+                            "AS runtime_can_execute_guard"
+                        )
+                    )
+                ).mappings().one()
+                assert reference_review_access == {
+                    "can_select": True,
+                    "can_insert": True,
+                    "can_update": False,
+                    "can_delete": False,
+                    "public_can_execute_guard": False,
+                    "runtime_can_execute_guard": True,
+                }
+
                 with pytest.raises(DBAPIError, match="permission denied"):
                     await connection.execute(
                         text("CREATE TABLE runtime_role_must_not_create (id int)")
