@@ -200,6 +200,47 @@ external integration starts; the pilot does not loosen the evidence or tenant ga
 | Неясные российские compliance-требования | High | Блокировать реальный пилот до профильного review |
 | Источник изменил формат/недоступен | Medium | Raw preservation, parser failures → REVIEW_REQUIRED, retry/backoff |
 
+## Owner-approved audit remediation — 2026-09-30
+
+The owner requested remediation after the full bot audit and explicitly approved the
+required internal analysis authorization and Redis-backed rate/concurrency limits.
+The work remains split into independently deployable vertical slices; it does not
+authorize automatic legal approval, direct Telegram egress, patient-data collection,
+or a production launch with real case data.
+
+1. **Transport recovery first.** Keep Telegram behind the internal proxy only. Use a
+   validated multi-outbound VLESS `urltest` pool, probe actual proxy egress without
+   writing a bot token to logs, and make the gateway withdraw readiness/restart after
+   bounded consecutive Bot API failures. A direct fallback is forbidden.
+2. **Protect the analysis boundary.** Require the existing internal service key for
+   analysis-context and analysis-submission paths, update the orchestrator client,
+   preserve the tenant actor check, and add negative authorization tests. This is
+   documented as an ADR because it changes a protected internal API contract.
+3. **Stop global UI stalls.** Keep per-conversation ordering but acknowledge callbacks
+   immediately and move document parsing and other long work to bounded durable paths.
+   Share lifecycle-managed HTTP clients, use short interactive deadlines, and enforce
+   a Redis-backed per-user/clinic limiter. No global concurrent-update switch that
+   would break Telegram conversation semantics.
+4. **Complete the owner-approved intake.** Add the "what the clinic already did" fact,
+   a case-scoped anonymised evidence path with explicit privacy limits, exact-date
+   recovery, and visible Back controls. Schema additions require migration, retention,
+   tenant and no-raw-PII tests.
+5. **Make legal readiness demonstrable.** Finish P8–P11, add reviewed coverage mappings
+   for supported groups, and introduce lawyer-reviewed synthetic gold cases as a release
+   gate. The evaluator must abstain outside reviewed coverage; reference reviews remain
+   separate from legal approval.
+
+### Audit remediation checkpoints
+
+- Transport: a live failover pool passes repeated `getMe` probes through the proxy;
+  a simulated failure removes gateway readiness and is restarted without direct egress.
+- Authorization: a Telegram user ID without the internal key receives `403`; the
+  orchestrator path with the key remains successful.
+- Responsiveness: a deliberately blocked heavy action does not hold unrelated menu/
+  status actions; limits return an explicit retry response rather than queuing forever.
+- Legal quality: every supported group has lawyer-reviewed synthetic acceptance cases;
+  unprepared or inapplicable corpus material still produces abstention.
+
 ## Active vertical slice: administrator intake and evidence foundation
 
 The approved implementation order is:

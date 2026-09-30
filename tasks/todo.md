@@ -169,6 +169,56 @@ Every code task follows red → green tests; only synthetic fixtures enter git.
   operator instructions in existing `docs/` conventions; no CI redesign.
 - Dependencies: P10; size M.
 
+## Audit remediation — owner-approved 2026-09-30
+
+The owner requested implementation of all findings. These tasks extend the existing
+corpus plan; they never turn supplied files into approved law and never enable direct
+Telegram egress.
+
+### R1. Make Telegram transport fail closed and recoverable
+
+- [ ] Replace syntax-only VPN/gateway health with a token-safe actual proxy-egress probe;
+  configure a checked multi-outbound pool and retain a root-only rollback copy.
+- [ ] Track successful Bot API connectivity in the gateway; after bounded failure remove
+  readiness and stop cleanly for supervisor recovery. No direct fallback.
+- Verify: unit timeout/recovery tests, Compose validation, isolated failover probe and
+  read-only production `getMe` checks.
+- Dependencies: none; size M.
+
+### R2. Authenticate internal analysis routes
+
+- [ ] Require the existing internal key before loading a case analysis context or accepting
+  model claims/reviews; update orchestrator client and contract documentation.
+- [ ] Add an ADR and tests for missing/wrong key, valid key, tenant actor scope and direct
+  result-injection refusal.
+- Verify: focused API/worker tests plus disposable PostgreSQL integration.
+- Dependencies: R1; size M.
+
+### R3. Bound interactive work and preserve Telegram responsiveness
+
+- [ ] Acknowledge callbacks promptly; use lifecycle-managed short-lived interactive clients.
+- [ ] Move document processing and other long paths to bounded durable work, preserving
+  per-conversation ordering/idempotency; apply an approved Redis-backed per-user/clinic limit.
+- Verify: controlled blocked-Core/upload test with unrelated menu/status updates and limiter
+  retry tests; no raw message/document content in logs.
+- Dependencies: R2; size L, split before implementation.
+
+### R4. Complete the agreed case intake and recovery paths
+
+- [ ] Add clinic actions already taken, exact-date amendment/reopen and visible Back controls.
+- [ ] Add a separately reviewed, bounded anonymised case-material flow with migration,
+  retention, tenant and parser tests; do not send raw materials to external models.
+- Verify: Telegram/API end-to-end synthetic flow, back/retry/date tests and PostgreSQL tests.
+- Dependencies: R3; size L, split before implementation.
+
+### R5. Finish legal readiness and answer-quality evidence
+
+- [ ] Complete P8–P11 before using the 50 normative preparations for retrieval.
+- [ ] Add reviewed taxonomy-to-query coverage and lawyer-reviewed synthetic gold cases for
+  every supported group, including abstention and effective-date boundaries.
+- Verify: corpus integration, golden evaluation gate and all existing quality/security gates.
+- Dependencies: R4, P8–P11; size L, split before implementation.
+
 ## Attorney package review, 2026-09-25
 
 - [x] Grouped editor inbox with counts, filters, pagination and preserved originals.
