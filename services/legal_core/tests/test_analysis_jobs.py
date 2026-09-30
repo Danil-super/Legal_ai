@@ -78,6 +78,45 @@ def test_notification_discovery_requires_internal_key(monkeypatch):
         )
 
 
+def test_analysis_context_and_submission_require_internal_key_before_case_access():
+    actor_id = 9_300_130_000 + uuid4().int % 1_000_000_000
+    case_id = seed_confirmed_case(actor_id)
+    payload = {
+        "asOfDate": "2026-08-31",
+        "expectedFactSnapshotSha256": "a" * 64,
+        "expectedEvidenceTraceSha256": "b" * 64,
+        "expectedClinicDocumentContextTraceSha256": "c" * 64,
+        "expectedRiskPolicyVersion": "dental-risk.v1",
+        "claims": [],
+        "semanticReviews": [],
+    }
+    context_path = f"/v1/cases/{case_id}/analysis-context"
+    submission_path = f"/v1/cases/{case_id}/analysis-submissions"
+    valid_headers = {
+        **actor_headers(actor_id, uuid4()),
+        "X-Agent-Internal-Key": "synthetic-internal-key-" + "x" * 32,
+    }
+
+    with application_client() as client:
+        for headers in (
+            actor_headers(actor_id),
+            {**actor_headers(actor_id), "X-Agent-Internal-Key": "wrong"},
+        ):
+            assert client.get(context_path, headers=headers).status_code == 403
+        for headers in (
+            actor_headers(actor_id, uuid4()),
+            {
+                **actor_headers(actor_id, uuid4()),
+                "X-Agent-Internal-Key": "wrong",
+            },
+        ):
+            assert client.post(submission_path, headers=headers, json=payload).status_code == 403
+
+        # The accepted key reaches ordinary case validation, rather than being rejected as auth.
+        assert client.get(context_path, headers=valid_headers).status_code != 403
+        assert client.post(submission_path, headers=valid_headers, json=payload).status_code != 403
+
+
 @pytest.mark.parametrize("inaccessible_reason", ["unsupported_role", "ambiguous_membership"])
 def test_inaccessible_notifications_do_not_starve_accessible_jobs(inaccessible_reason):
     actor_id = 9300140100 if inaccessible_reason == "unsupported_role" else 9300140101
@@ -270,6 +309,7 @@ def test_stale_worker_submission_rejected_before_evidence_or_model_output_is_use
     job_id = uuid4()
     headers = {
         **actor_headers(9300130005, job_id),
+        "X-Agent-Internal-Key": "synthetic-internal-key-" + "x" * 32,
         "X-Analysis-Job-Id": str(job_id),
         "X-Analysis-Job-Token": str(uuid4()),
     }

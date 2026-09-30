@@ -186,7 +186,10 @@ def test_human_approved_copy_reaches_report_through_actual_services_and_worker(
             orchestrator = create_orchestrator(
                 settings=settings,
                 dependencies=ServiceDependencies(
-                    legal_core=LegalCoreClient(LegalCoreEndpoint("http://core"), client=core_http),
+                    legal_core=LegalCoreClient(
+                        LegalCoreEndpoint("http://core", internal_key=INTERNAL_KEY),
+                        client=core_http,
+                    ),
                     reasoning=LegalReasoningOrchestrator(
                         researcher=HermesClient(
                             HermesEndpoint("http://researcher", "synthetic", "researcher"),
@@ -284,7 +287,11 @@ def test_human_approved_copy_reaches_report_through_actual_services_and_worker(
                         str(version_id)
                     }
                 context = await core_http.get(
-                    f"/v1/cases/{case_id}/analysis-context", headers=actor_headers(owner_id)
+                    f"/v1/cases/{case_id}/analysis-context",
+                    headers={
+                        **actor_headers(owner_id),
+                        "X-Agent-Internal-Key": INTERNAL_KEY,
+                    },
                 )
                 assert context.status_code == 200, context.text
                 assert context.json()["evidence"][0]["versionId"] == str(version_id)

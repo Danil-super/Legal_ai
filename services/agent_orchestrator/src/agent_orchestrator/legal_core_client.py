@@ -34,6 +34,7 @@ class LegalCoreProtocolError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class LegalCoreEndpoint:
     base_url: str
+    internal_key: str
     timeout_seconds: float = 20.0
 
     def __post_init__(self) -> None:
@@ -49,6 +50,8 @@ class LegalCoreEndpoint:
             raise ValueError("Legal Core base_url must be a credential-free absolute http(s) URL")
         if not 1 <= self.timeout_seconds <= 120:
             raise ValueError("Legal Core timeout must be between 1 and 120 seconds")
+        if len(self.internal_key) < 32:
+            raise ValueError("Legal Core internal key must contain at least 32 characters")
 
 
 class LegalCoreClient:
@@ -74,7 +77,10 @@ class LegalCoreClient:
     ) -> dict[str, Any]:
         if (job_id is None) != (job_token is None):
             raise ValueError("analysis job id and lease token must be provided together")
-        headers = {"X-Telegram-User-Id": str(telegram_user_id)}
+        headers = {
+            "X-Telegram-User-Id": str(telegram_user_id),
+            "X-Agent-Internal-Key": self.endpoint.internal_key,
+        }
         if idempotency_key is not None:
             headers["Idempotency-Key"] = str(idempotency_key)
         if job_id is not None and job_token is not None:

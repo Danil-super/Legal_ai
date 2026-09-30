@@ -17,7 +17,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_expired_case_blocks_cached_analysis_pdf_and_workflow_without_breaking_valid_replay():
+def test_expired_case_blocks_cached_analysis_pdf_and_workflow_without_breaking_valid_replay(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("AGENT_INTERNAL_KEY", "synthetic-internal-key-" + "x" * 32)
     actor_id = 81_000_000_000 + uuid4().int % 1_000_000_000
     clinic_id, membership_id = seed_admin(actor_id)
     workflow_id, submission_key = uuid4(), uuid4()
@@ -65,7 +68,10 @@ def test_expired_case_blocks_cached_analysis_pdf_and_workflow_without_breaking_v
                         response=json.dumps(cached),
                     ),
                 )
-            headers = actor_headers(actor_id, submission_key)
+            headers = {
+                **actor_headers(actor_id, submission_key),
+                "X-Agent-Internal-Key": "synthetic-internal-key-" + "x" * 32,
+            }
             valid = client.post(analysis_path, headers=headers, json=payload)
             assert valid.status_code == 200, valid.json()
             assert valid.json() == cached

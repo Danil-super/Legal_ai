@@ -83,7 +83,12 @@ class ServiceDependencies:
 
 
 def build_dependencies(settings: ServiceSettings) -> ServiceDependencies:
-    legal_core = LegalCoreClient(LegalCoreEndpoint(base_url=settings.legal_core_url))
+    legal_core = LegalCoreClient(
+        LegalCoreEndpoint(
+            base_url=settings.legal_core_url,
+            internal_key=settings.internal_key,
+        )
+    )
     researcher = HermesClient(
         HermesEndpoint(
             base_url=settings.hermes_researcher_url,

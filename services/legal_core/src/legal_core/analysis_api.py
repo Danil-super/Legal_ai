@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import os
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, Response, status
@@ -78,6 +80,11 @@ from legal_core.verifier import (
 )
 from legal_core.verifier_persistence import build_verifier_run_payload, record_verifier_run
 
+AgentInternalKeyHeader = Annotated[
+    str | None,
+    Header(alias="X-Agent-Internal-Key", max_length=512),
+]
+
 
 @dataclass(frozen=True, slots=True)
 class AnalysisState:
@@ -91,6 +98,14 @@ class AnalysisState:
     evidence_trace_sha256: str
     clinic_document_context_trace_sha256: str
     risk_policy: ApprovedRiskPolicy
+
+
+def _require_agent_internal_key(key: AgentInternalKeyHeader = None) -> None:
+    """Require the service credential before exposing any analysis boundary."""
+
+    expected = os.getenv("AGENT_INTERNAL_KEY", "")
+    if len(expected) < 32 or key is None or not hmac.compare_digest(expected, key):
+        raise ApiError(status_code=403, code="INTERNAL_ACCESS_REQUIRED", message="Forbidden")
 
 
 def _exact_date(value: object) -> date | None:
@@ -383,7 +398,11 @@ def create_analysis_router(
         async with session_factory() as session:
             yield session
 
-    @router.get("/{case_id}/analysis-context", response_model=AnalysisContextResponse)
+    @router.get(
+        "/{case_id}/analysis-context",
+        response_model=AnalysisContextResponse,
+        dependencies=[Depends(_require_agent_internal_key)],
+    )
     async def get_analysis_context(
         case_id: UUID,
         telegram_user_id: TelegramUserId,
@@ -396,6 +415,7 @@ def create_analysis_router(
         "/{case_id}/analysis-submissions",
         response_model=AnalysisSubmissionResponse,
         status_code=status.HTTP_201_CREATED,
+        dependencies=[Depends(_require_agent_internal_key)],
     )
     async def submit_analysis(
         case_id: UUID,
