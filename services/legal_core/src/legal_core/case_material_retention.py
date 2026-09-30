@@ -95,7 +95,7 @@ async def purge_expired_case_materials(
     deleted_count = 0
     for material in await _claim_expired_materials(session_factory):
         try:
-            await raw_store.delete_case_material(object_key=material.raw_object_key)
+            await raw_store.delete_case_material(stored_object_key=material.raw_object_key)
         except (RuntimeError, ValueError):
             logger.warning("expired case material storage deletion failed; retry is scheduled")
             await _finish_claim(session_factory, material, deleted=False)

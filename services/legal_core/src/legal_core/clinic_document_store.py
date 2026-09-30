@@ -50,9 +50,9 @@ class RawCaseMaterialStore(Protocol):
         content_type: str,
     ) -> str: ...
 
-    async def delete_case_material(self, *, object_key: str) -> None: ...
+    async def delete_case_material(self, *, stored_object_key: str) -> None: ...
 
-    async def get_case_material(self, *, object_key: str, max_bytes: int) -> bytes: ...
+    async def get_case_material(self, *, stored_object_key: str, max_bytes: int) -> bytes: ...
 
 
 class RawReferenceEvaluationStore(Protocol):
@@ -367,24 +367,24 @@ class MinioRawClinicDocumentStore:
             raise RuntimeError(f"raw case material upload failed: HTTP {response.status_code}")
         return object_key
 
-    async def delete_case_material(self, *, object_key: str) -> None:
+    async def delete_case_material(self, *, stored_object_key: str) -> None:
         """Idempotently remove only a server-shaped case-material object."""
 
-        if not _CASE_MATERIAL_OBJECT_KEY_RE.fullmatch(object_key):
+        if not _CASE_MATERIAL_OBJECT_KEY_RE.fullmatch(stored_object_key):
             raise ValueError("raw case material object key is invalid")
-        canonical_uri = self._bucket_uri() + "/" + quote(object_key, safe="/-_.~")
+        canonical_uri = self._bucket_uri() + "/" + quote(stored_object_key, safe="/-_.~")
         response = await self._request("DELETE", canonical_uri)
         if response.status_code not in {204, 404}:
             raise RuntimeError(f"raw case material deletion failed: HTTP {response.status_code}")
 
-    async def get_case_material(self, *, object_key: str, max_bytes: int) -> bytes:
+    async def get_case_material(self, *, stored_object_key: str, max_bytes: int) -> bytes:
         """Read one authorised private object with a strict post-read size cap."""
 
-        if not _CASE_MATERIAL_OBJECT_KEY_RE.fullmatch(object_key):
+        if not _CASE_MATERIAL_OBJECT_KEY_RE.fullmatch(stored_object_key):
             raise ValueError("raw case material object key is invalid")
         if not 1 <= max_bytes <= 15_000_000:
             raise ValueError("raw case material maximum size is invalid")
-        canonical_uri = self._bucket_uri() + "/" + quote(object_key, safe="/-_.~")
+        canonical_uri = self._bucket_uri() + "/" + quote(stored_object_key, safe="/-_.~")
         response = await self._request("GET", canonical_uri)
         if response.status_code != 200:
             raise RuntimeError(f"raw case material download failed: HTTP {response.status_code}")

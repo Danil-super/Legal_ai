@@ -33,14 +33,14 @@ class FakeCaseMaterialStore:
         self.objects[key] = (content, content_type)
         return key
 
-    async def get_case_material(self, *, object_key: str, max_bytes: int) -> bytes:
-        content, _ = self.objects[object_key]
+    async def get_case_material(self, *, stored_object_key: str, max_bytes: int) -> bytes:
+        content, _ = self.objects[stored_object_key]
         assert len(content) <= max_bytes
         return content
 
-    async def delete_case_material(self, *, object_key: str) -> None:
-        self.deleted.append(object_key)
-        self.objects.pop(object_key, None)
+    async def delete_case_material(self, *, stored_object_key: str) -> None:
+        self.deleted.append(stored_object_key)
+        self.objects.pop(stored_object_key, None)
 
 
 def _new_draft(client: object, actor: int, *, version: int = 2) -> dict[str, object]:
