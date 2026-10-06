@@ -21,7 +21,7 @@ CLINIC_BASELINE = {
     "services/legal_core/src/legal_core/main.py":
         "c14b7a37e8d65885cf009d947c8556d824c8f752",
     "docker-compose.yml": "83f8fa40abe8c98d9a5581dd446fa8f0245efd2b",
-    "ops/deploy/docker-compose.production.yml": "7c2d4fd098b52f236096f06566204c6b51dfc29f",
+    "ops/deploy/docker-compose.production.yml": "9d07d50c67787a0da7a13fcfc49907d550298b83",
 }
 
 

@@ -426,7 +426,7 @@ def test_legal_watch_services_pass_required_arguments_to_their_modules() -> None
     assert "legal watch import run failed; retrying after delay" in importer
 
 
-def test_production_defaults_to_direct_egress_without_a_vpn_sidecar() -> None:
+def test_production_defaults_to_direct_egress_with_legal_watch_in_standby() -> None:
     base_compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     production_compose = (
         ROOT / "ops" / "deploy" / "docker-compose.production.yml"
@@ -440,11 +440,14 @@ def test_production_defaults_to_direct_egress_without_a_vpn_sidecar() -> None:
     watcher = production_compose.split("  legal-watcher:\n", maxsplit=1)[1].split(
         "\n  legal-watch-importer:", maxsplit=1
     )[0]
+    importer = production_compose.split("  legal-watch-importer:\n", maxsplit=1)[1]
 
     assert "TELEGRAM_PROXY_URL: ${TELEGRAM_PROXY_URL:-}" in gateway
     assert "telegram-vpn-proxy:" not in gateway
     assert "networks: !override [backend]" not in gateway
     assert "LEGAL_WATCH_PROXY_URL: ${LEGAL_WATCH_PROXY_URL:-}" in watcher
+    assert "profiles: !override [official-watch]" in watcher
+    assert "profiles: !override [official-watch]" in importer
     assert "telegram-vpn-proxy:" not in production_compose
     assert "/etc/dental-legal-ai/telegram-vpn" not in production_compose
     assert "networks: [edge]" in base_watcher

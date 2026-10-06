@@ -24,15 +24,16 @@ services:
       AGENT_ORCHESTRATOR_URL: ""
       AGENT_INTERNAL_KEY: ""
 
-  # The watcher can reach only the official publication portal through `edge`.
-  # Its paired importer has a read-only inbox and only the private backend network.
-  # Both paths create REVIEW_REQUIRED candidates; neither can approve legal text.
+  # The official portal times out from the VPS over direct TLS. Keep this optional
+  # maintenance pair out of the normal bot deployment until a source-specific
+  # egress route has been independently checked. Both paths only create
+  # REVIEW_REQUIRED candidates; neither can approve legal text.
   legal-watcher:
-    profiles: !reset []
+    profiles: !override [official-watch]
     mem_limit: 128m
     environment:
       LEGAL_WATCH_PROXY_URL: ${LEGAL_WATCH_PROXY_URL:-}
 
   legal-watch-importer:
-    profiles: !reset []
+    profiles: !override [official-watch]
     mem_limit: 128m

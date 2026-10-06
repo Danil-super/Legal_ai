@@ -116,7 +116,10 @@ if ! docker image inspect "$minio_image" >/dev/null 2>&1; then
   exit 1
 fi
 
-build_services=(legal-core legal-watcher legal-watch-importer telegram-gateway)
+# The official-publication watch pair is an opt-in maintenance profile. Do not
+# build it during an ordinary bot rollout: it is not part of the active stack
+# and its source route must be verified before an operator starts it.
+build_services=(legal-core telegram-gateway)
 if [[ "$analysis_enabled" == 1 ]]; then
   build_services+=(agent-orchestrator)
 fi
