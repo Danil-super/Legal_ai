@@ -55,6 +55,17 @@ chmod 0600 /home/$deploy_user/.ssh/authorized_keys
 install -d -m 0750 /etc/dental-legal-ai
 install -m 0600 "$github_deploy_key_path" "$github_deploy_key"
 install -m 0644 "$support_dir/github_known_hosts" "$github_known_hosts"
+# This network permits GitHub SSH only through GitHub's documented HTTPS port.
+# Keep the configuration root-owned: all repository fetches run as root.
+install -d -m 0700 /root/.ssh
+cat >/root/.ssh/config <<'EOF'
+Host github.com
+  Hostname ssh.github.com
+  Port 443
+  User git
+  HostKeyAlias github.com
+EOF
+chmod 0600 /root/.ssh/config
 
 if [[ ! -d "$repository_dir/.git" ]]; then
   install -d -m 0755 "$(dirname "$repository_dir")"
