@@ -13,9 +13,11 @@ This directory configures the base (non-AI) deployment on `89.23.108.254`.
   remains verified before every fetch.
 - `/etc/dental-legal-ai/app.env` is root-owned and contains all runtime secrets. It is never
   copied to GitHub, CI artifacts or logs.
-- The Telegram VLESS configuration is stored only in the root-owned
-  `/etc/dental-legal-ai/telegram-vpn/config.json` (mode `0600`). It is never committed or placed
-  in `app.env`; the gateway reaches Telegram exclusively through this internal proxy.
+- Telegram and the official-publication watcher use direct TLS egress by default. The gateway
+  joins the Compose `edge` network only in addition to its private backend connection; no service
+  or port is published to the Internet. A VPN is not a production prerequisite.
+- An old VLESS profile, if retained on a host, stays root-owned and inactive; it is not read by
+  the normal deployment and must never be committed or copied to GitHub.
 - The `deploy` SSH account has no shell access: its key is forced to the deployment gateway.
 - The server's ED25519 host key is pinned in `known_hosts.production`; a host key change blocks
   the workflow until manually reviewed.

@@ -23,7 +23,7 @@ docker compose version
 
 Для нового VPS используйте `bootstrap-server.sh` из [основной инструкции](README.md).
 Нужны Docker Compose с поддержкой `!override`/`!reset` (не ниже 2.24.4), Python 3,
-исправный Telegram proxy и заполненные базовые параметры `app.env`.
+прямой доступ к Telegram Bot API и заполненные базовые параметры `app.env`.
 
 ## 2. Подготовить модель и правовую базу
 
