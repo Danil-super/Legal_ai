@@ -110,7 +110,7 @@ def load_watch_manifest(path: Path) -> WatchManifest:
 def publication_source_from_environment(
     environment: Mapping[str, str] | None = None,
 ) -> PravoPublicationClient:
-    """Bind the network-facing watcher to its explicitly allowlisted internal proxy."""
+    """Bind the watcher to its configured proxy or direct HTTPS egress."""
 
     source = os.environ if environment is None else environment
     return PravoPublicationClient(proxy_url=source.get("LEGAL_WATCH_PROXY_URL", ""))

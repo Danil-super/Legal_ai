@@ -13,9 +13,13 @@ This directory configures the base (non-AI) deployment on `89.23.108.254`.
   remains verified before every fetch.
 - `/etc/dental-legal-ai/app.env` is root-owned and contains all runtime secrets. It is never
   copied to GitHub, CI artifacts or logs.
-- Telegram and the official-publication watcher use direct TLS egress by default. The gateway
-  joins the Compose `edge` network only in addition to its private backend connection; no service
-  or port is published to the Internet. A VPN is not a production prerequisite.
+- Telegram uses direct TLS egress by default. The gateway joins the Compose `edge` network only
+  in addition to its private backend connection; no service or port is published to the Internet.
+  A VPN is not a production prerequisite for the bot.
+- The official-publication watcher and its importer are an `official-watch` maintenance profile,
+  not part of the routine deployment. They may be started only after their source route has been
+  independently verified. They can stage only `REVIEW_REQUIRED` candidates and never approve a
+  legal version.
 - An old VLESS profile, if retained on a host, stays root-owned and inactive; it is not read by
   the normal deployment and must never be committed or copied to GitHub.
 - The `deploy` SSH account has no shell access: its key is forced to the deployment gateway.
@@ -47,8 +51,10 @@ the GitHub `production` environment variable `DEPLOY_ENABLED` is `true`. It star
 Compose profile with conservative memory limits for the 2 GiB VPS and then requires
 `http://127.0.0.1:8000/health/ready`.
 
-The deployment script builds only application images and starts Compose with `--no-build`. It
-first verifies that the exact pinned MinIO security image is already local. When the MinIO
+The deployment script builds only images needed by the default application profile and starts
+Compose with `--no-build`. It first verifies that the exact pinned MinIO security image is already
+local. Build the `official-watch` profile separately in a reviewed maintenance operation after
+its egress is verified. When the MinIO
 revision changes, build that image in a planned maintenance window before enabling the related
 application deployment; this prevents every ordinary bot change from recompiling MinIO on the
 2 GiB host.

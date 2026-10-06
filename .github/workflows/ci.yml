@@ -87,7 +87,7 @@ jobs:
           -f ops/deploy/docker-compose.production.yml
           config --quiet
 
-      - name: Verify direct production egress and legal watcher isolation
+      - name: Verify direct Telegram egress and legal watcher standby
         id: production_legal_watcher
         continue-on-error: true
         env:
@@ -102,13 +102,21 @@ jobs:
             -f ops/deploy/docker-compose.production.yml \
             config --format json | jq -e '
               .services as $services |
+              (($services | has("legal-watcher") | not) and
+               ($services | has("legal-watch-importer") | not))'
+          docker compose \
+            -f docker-compose.yml \
+            -f ops/deploy/docker-compose.production.yml \
+            --profile official-watch \
+            config --format json | jq -e '
+              .services as $services |
               (($services["telegram-gateway"].environment.TELEGRAM_PROXY_URL == "") and
                ($services["telegram-gateway"].networks | keys == ["backend", "edge"]) and
                ($services["telegram-gateway"].depends_on | has("telegram-vpn-proxy") | not) and
                ($services["legal-watcher"].environment.LEGAL_WATCH_PROXY_URL == "") and
-               ($services["legal-watcher"] | has("profiles") | not) and
+               ($services["legal-watcher"].profiles == ["official-watch"]) and
                ($services["legal-watcher"].networks | keys == ["edge"]) and
-               ($services["legal-watch-importer"] | has("profiles") | not) and
+               ($services["legal-watch-importer"].profiles == ["official-watch"]) and
                ($services["legal-watch-importer"].networks | keys == ["backend"]) and
                ($services["legal-watch-importer"].read_only == true) and
                ($services | has("telegram-vpn-proxy") | not) and
@@ -157,7 +165,7 @@ jobs:
             -f docker-compose.yml \
             -f ops/deploy/docker-compose.production.yml \
             -f ops/hermes/docker-compose.hermes.yml \
-            --profile analysis config --format json | jq -e '
+            --profile analysis --profile official-watch config --format json | jq -e '
               .services as $s |
               ($s["telegram-gateway"].environment.AGENT_ORCHESTRATOR_URL == "http://agent-orchestrator:8010") and
               ($s["legal-core"].environment.AGENT_ORCHESTRATOR_URL == "http://agent-orchestrator:8010") and
@@ -166,8 +174,8 @@ jobs:
               ($s["telegram-gateway"].depends_on["agent-orchestrator"].condition == "service_healthy") and
               ($s["hermes-researcher"].pull_policy == "never") and
               ($s["hermes-reviewer"].pull_policy == "never") and
-              ($s["legal-watcher"] | has("profiles") | not) and
-              ($s["legal-watch-importer"] | has("profiles") | not)'
+              ($s["legal-watcher"].profiles == ["official-watch"]) and
+              ($s["legal-watch-importer"].profiles == ["official-watch"])'
 
       - name: Enforce quality gate
         if: always()
