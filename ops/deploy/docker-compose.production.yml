@@ -17,14 +17,12 @@ services:
   telegram-gateway:
     mem_limit: 192m
     environment:
-      TELEGRAM_PROXY_URL: http://telegram-vpn-proxy:8080
+      # Direct TLS egress is the normal production route.  The gateway code still
+      # supports an explicitly configured proxy if a future deployment needs one.
+      TELEGRAM_PROXY_URL: ${TELEGRAM_PROXY_URL:-}
       # The analysis overlay sets the internal URL only in the enabled deployment mode.
       AGENT_ORCHESTRATOR_URL: ""
       AGENT_INTERNAL_KEY: ""
-    depends_on:
-      telegram-vpn-proxy:
-        condition: service_healthy
-    networks: !override [backend]
 
   # The watcher can reach only the official publication portal through `edge`.
   # Its paired importer has a read-only inbox and only the private backend network.
@@ -33,32 +31,8 @@ services:
     profiles: !reset []
     mem_limit: 128m
     environment:
-      LEGAL_WATCH_PROXY_URL: http://telegram-vpn-proxy:8080
+      LEGAL_WATCH_PROXY_URL: ${LEGAL_WATCH_PROXY_URL:-}
 
   legal-watch-importer:
     profiles: !reset []
     mem_limit: 128m
-
-  telegram-vpn-proxy:
-    # Digest resolved from the official ghcr.io/sagernet/sing-box image on 2026-09-08.
-    image: ghcr.io/sagernet/sing-box@sha256:4bed9332a0013fef72c31200a84e8fc0ed91a5ab2fe373a69f0acbbbbfbef3c5
-    command: ["run", "-c", "/etc/sing-box/config.json"]
-    volumes:
-      - /etc/dental-legal-ai/telegram-vpn:/etc/sing-box:ro
-    healthcheck:
-      test: ["CMD", "sing-box", "check", "-c", "/etc/sing-box/config.json"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    init: true
-    read_only: true
-    tmpfs:
-      - /tmp:size=1m,mode=1777
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    networks: [backend, edge]
-    restart: unless-stopped
-    mem_limit: 96m

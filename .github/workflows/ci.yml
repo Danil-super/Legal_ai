@@ -87,7 +87,7 @@ jobs:
           -f ops/deploy/docker-compose.production.yml
           config --quiet
 
-      - name: Verify production legal watcher isolation
+      - name: Verify direct production egress and legal watcher isolation
         id: production_legal_watcher
         continue-on-error: true
         env:
@@ -102,11 +102,16 @@ jobs:
             -f ops/deploy/docker-compose.production.yml \
             config --format json | jq -e '
               .services as $services |
-              (($services["legal-watcher"] | has("profiles") | not) and
+              (($services["telegram-gateway"].environment.TELEGRAM_PROXY_URL == "") and
+               ($services["telegram-gateway"].networks | keys == ["backend", "edge"]) and
+               ($services["telegram-gateway"].depends_on | has("telegram-vpn-proxy") | not) and
+               ($services["legal-watcher"].environment.LEGAL_WATCH_PROXY_URL == "") and
+               ($services["legal-watcher"] | has("profiles") | not) and
                ($services["legal-watcher"].networks | keys == ["edge"]) and
                ($services["legal-watch-importer"] | has("profiles") | not) and
                ($services["legal-watch-importer"].networks | keys == ["backend"]) and
                ($services["legal-watch-importer"].read_only == true) and
+               ($services | has("telegram-vpn-proxy") | not) and
                ($services | has("agent-orchestrator") | not))'
 
       - name: Validate pinned Hermes overlay
@@ -156,7 +161,7 @@ jobs:
               .services as $s |
               ($s["telegram-gateway"].environment.AGENT_ORCHESTRATOR_URL == "http://agent-orchestrator:8010") and
               ($s["legal-core"].environment.AGENT_ORCHESTRATOR_URL == "http://agent-orchestrator:8010") and
-              ($s["telegram-gateway"].networks | keys == ["backend"]) and
+              ($s["telegram-gateway"].networks | keys == ["backend", "edge"]) and
               ($s["agent-orchestrator"].networks | keys == ["backend"]) and
               ($s["telegram-gateway"].depends_on["agent-orchestrator"].condition == "service_healthy") and
               ($s["hermes-researcher"].pull_policy == "never") and
