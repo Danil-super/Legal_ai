@@ -38,4 +38,4 @@ jobs:
           install -m 0600 ops/deploy/known_hosts.production "$HOME/.ssh/known_hosts"
           ssh -o BatchMode=yes -o IdentitiesOnly=no \
             -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
-            deploy@84.201.153.147 "rollback $DEPLOY_REVISION"
+            deploy@89.23.108.254 "rollback $DEPLOY_REVISION"

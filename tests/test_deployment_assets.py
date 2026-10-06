@@ -258,7 +258,7 @@ def test_alembic_accepts_reserved_characters_in_generated_passwords() -> None:
 def test_production_known_hosts_pins_the_vps_ed25519_key() -> None:
     known_hosts = DEPLOY / "known_hosts.production"
     result = run(
-        ["ssh-keygen", "-F", "84.201.153.147", "-f", str(known_hosts)],
+        ["ssh-keygen", "-F", "89.23.108.254", "-f", str(known_hosts)],
         capture_output=True,
         text=True,
         check=False,
@@ -282,6 +282,8 @@ def test_private_repository_fetch_uses_a_dedicated_read_only_deploy_key() -> Non
     assert 'GIT_SSH_COMMAND="$git_ssh_command" git -C "$repository_dir" fetch' in deploy_script
     assert 'install -m 0600 "$github_deploy_key_path" "$github_deploy_key"' in bootstrap_script
     assert 'GIT_SSH_COMMAND="$git_ssh_command" git clone "$repository_url"' in bootstrap_script
+    assert "Hostname ssh.github.com" in bootstrap_script
+    assert "Port 443" in bootstrap_script
 
     result = run(
         ["ssh-keygen", "-F", "github.com", "-f", str(github_known_hosts)],

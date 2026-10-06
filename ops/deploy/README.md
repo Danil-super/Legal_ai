@@ -1,6 +1,6 @@
 # Production deployment
 
-This directory configures the base (non-AI) deployment on `84.201.153.147`.
+This directory configures the base (non-AI) deployment on `89.23.108.254`.
 
 ## Trust boundaries
 
@@ -9,6 +9,8 @@ This directory configures the base (non-AI) deployment on `84.201.153.147`.
 - GitHub holds only the `production` environment secret `DEPLOY_SSH_PRIVATE_KEY`.
 - The VPS holds a separate root-owned, read-only GitHub deploy key. It can fetch this repository
   but cannot push or access other repositories.
+- The VPS reaches GitHub SSH through its documented port 443 endpoint. The pinned GitHub host key
+  remains verified before every fetch.
 - `/etc/dental-legal-ai/app.env` is root-owned and contains all runtime secrets. It is never
   copied to GitHub, CI artifacts or logs.
 - The Telegram VLESS configuration is stored only in the root-owned
