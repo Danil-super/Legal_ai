@@ -1,6 +1,6 @@
 # Production deployment
 
-This directory configures the base (non-AI) deployment on `84.201.153.147`.
+This directory configures the base (non-AI) deployment on `89.23.108.254`.
 
 ## Trust boundaries
 
