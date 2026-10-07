@@ -15,8 +15,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.database import create_engine, create_session_factory
+from legal_core.factual_safety_intake import SCREENING_VERSION
 from legal_core.models import RiskPolicyEvent, RiskPolicyVersion, User
 from legal_core.risk_engine import RiskPolicy
+from legal_core.synthetic_factual_safety import assert_factual_safety_regressions
 from legal_core.synthetic_risk_scenarios import assert_p0_synthetic_risk_regressions
 from legal_core.synthetic_risk_v3 import assert_v3_synthetic_risk_regressions
 
@@ -37,9 +39,15 @@ class RiskPolicyApproval(BaseModel):
     supersede_approved: bool = False
     guided_v2_explicit_signals_enabled: bool = Field(default=False, strict=True)
     direct_v1_supersession_reviewed: bool = Field(default=False, strict=True)
+    factual_safety_intake_enabled: bool = Field(default=False, strict=True)
+    factual_safety_intake_reviewed: bool = Field(default=False, strict=True)
 
     @model_validator(mode="after")
     def require_explicit_review(self) -> RiskPolicyApproval:
+        if self.factual_safety_intake_enabled != self.factual_safety_intake_reviewed or (
+            self.factual_safety_intake_enabled and not self.guided_v2_explicit_signals_enabled
+        ):
+            raise ValueError("factual screening requires its reviewed guided-v2 candidate")
         if self.version == 3 and not self.guided_v2_explicit_signals_enabled:
             raise ValueError("version 3 requires the explicit guided-v2 risk contract")
         if self.early_triage_enabled and self.version < 2:
@@ -67,12 +75,15 @@ class RiskPolicyApproval(BaseModel):
 
 def policy_payload(approval: RiskPolicyApproval) -> dict[str, object]:
     if approval.guided_v2_explicit_signals_enabled:
-        return {
+        payload: dict[str, object] = {
             "schemaVersion": "risk-policy.v3",
             "highDemandThresholdKopecks": approval.high_demand_threshold_kopecks,
             "earlyTriageEnabled": True,
             "guidedV2ExplicitSignalsEnabled": True,
         }
+        if approval.factual_safety_intake_enabled:
+            payload["factualSafetyIntakeVersion"] = SCREENING_VERSION
+        return payload
     if approval.early_triage_enabled:
         return {
             "schemaVersion": "risk-policy.v2",
@@ -106,8 +117,11 @@ async def approve_risk_policy(
             version=candidate_policy.version,
             high_demand_threshold_kopecks=candidate_policy.high_demand_threshold_kopecks,
             guided_v2_explicit_signals_enabled=True,
+            factual_safety_intake_enabled=approval.factual_safety_intake_enabled,
         )
         assert_v3_synthetic_risk_regressions(candidate_policy)
+        if approval.factual_safety_intake_enabled:
+            assert_factual_safety_regressions(candidate_policy)
 
     async with session_factory() as session, session.begin():
         reviewer = await session.scalar(
@@ -258,6 +272,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--supersede-approved", action="store_true")
     parser.add_argument("--guided-v2-explicit-signals-enabled", action="store_true")
     parser.add_argument("--direct-v1-supersession-reviewed", action="store_true")
+    parser.add_argument("--factual-safety-intake-enabled", action="store_true")
+    parser.add_argument("--factual-safety-intake-reviewed", action="store_true")
     return parser
 
 
@@ -274,6 +290,8 @@ async def _run_cli() -> None:
         supersede_approved=args.supersede_approved,
         guided_v2_explicit_signals_enabled=args.guided_v2_explicit_signals_enabled,
         direct_v1_supersession_reviewed=args.direct_v1_supersession_reviewed,
+        factual_safety_intake_enabled=args.factual_safety_intake_enabled,
+        factual_safety_intake_reviewed=args.factual_safety_intake_reviewed,
     )
     engine = create_engine()
     factory = create_session_factory(engine)
