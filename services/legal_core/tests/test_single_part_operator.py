@@ -4,6 +4,8 @@ import asyncio
 import hashlib
 import json
 import os
+import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -14,6 +16,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from legal_core.corpus_loader import CorpusFragment, corpus_fragments_sha256
 from legal_core.database import database_url
+from legal_core.material_preparation import MaterialPreparationInput, store_preparation
 from legal_core.models import (
     LegalDocument, LegalMaterialPreparation, LegalPreparedPartVersion,
     LegalReviewMaterial, LegalVersion, User,
@@ -185,6 +188,13 @@ def test_single_part_dry_run_rolls_back_and_commit_replays_exactly(tmp_path: Pat
                     status="ACTIVE", system_role="LEGAL_EDITOR",
                 )
                 session.add_all([material, actor])
+            cli = subprocess.run(
+                [sys.executable, "-m", "legal_core.single_part_operator", str(path)],
+                check=True, capture_output=True, text=True, timeout=15,
+            )
+            assert "dry-run rolled back" in cli.stdout
+            assert "no legal approval performed" in cli.stdout
+            assert "Синтетическая норма" not in cli.stdout + cli.stderr
             preview = await run_single_part_package(factory, path, commit=False)
             assert preview.committed is False
             async with factory() as session:
@@ -209,6 +219,14 @@ def test_single_part_dry_run_rolls_back_and_commit_replays_exactly(tmp_path: Pat
                 assert await session.scalar(select(func.count()).select_from(
                     LegalMaterialPreparation
                 ).where(LegalMaterialPreparation.material_id == material.id)) == 1
+            newer = MaterialPreparationInput.model_validate(
+                package.preparation.model_dump()
+                | {"completeness_locator": "Synthetic revised completeness evidence"}
+            )
+            async with factory() as session, session.begin():
+                await store_preparation(session, material.id, newer)
+            with pytest.raises(ValueError, match="newer preparation"):
+                await run_single_part_package(factory, path, commit=True)
         finally:
             await engine.dispose()
 

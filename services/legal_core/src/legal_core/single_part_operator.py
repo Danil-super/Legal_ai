@@ -16,6 +16,7 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import Field
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.contracts import ContractModel
@@ -26,6 +27,7 @@ from legal_core.corpus_loader import (
 )
 from legal_core.database import create_engine, create_session_factory
 from legal_core.material_preparation import Digest, MaterialPreparationInput, store_preparation
+from legal_core.models import LegalMaterialPreparation
 from legal_core.normative_preparation import bind_prepared_part, inspect_normative_rtf
 from legal_core.preparation_import import _read_regular
 
@@ -145,6 +147,13 @@ async def run_single_part_package(
         preparation = await store_preparation(
             session, package.request.material_id, package.preparation
         )
+        latest_revision = await session.scalar(
+            select(func.max(LegalMaterialPreparation.revision)).where(
+                LegalMaterialPreparation.material_id == package.request.material_id
+            )
+        )
+        if preparation.revision != latest_revision:
+            raise ValueError("newer preparation revision supersedes this operator manifest")
         version_id = await ingest_manifest_in_session(
             session, package.corpus, package.raw_bytes
         )
@@ -170,7 +179,7 @@ async def _run(path: Path, commit: bool) -> None:
     state = "committed" if result.committed else "dry-run rolled back"
     print(
         f"{state}: preparation={result.preparation_id} version={result.version_id} "
-        f"binding={result.binding_id}; REVIEW_REQUIRED only"
+        f"binding={result.binding_id}; no legal approval performed"
     )
 
 

@@ -31,7 +31,9 @@ hashes and source, then uses the existing loader and P9 binder. A small loader
 refactor permits its unchanged guarded ingestion logic to run in a caller-owned
 transaction. Preparation revision, source/document/version/fragments and P9
 association commit together or roll back together. Exact retries return the
-existing immutable IDs. The active `LEGAL_EDITOR` guard stays in P9; a revoked
+existing immutable IDs while that preparation is current; an older manifest
+cannot report success after a newer preparation revision. The active
+`LEGAL_EDITOR` guard stays in P9; a revoked
 editor makes the entire transaction fail. No status is changed to `APPROVED`.
 The manifest's `actor_user_id` is privileged operator provenance, **not** proof
 that this human reviewed the document or invoked the CLI. The final legal
