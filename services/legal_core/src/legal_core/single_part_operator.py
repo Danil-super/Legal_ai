@@ -75,6 +75,15 @@ def _json_file(root: Path, name: str) -> dict[str, object]:
 
 def read_single_part_package(path: Path) -> SinglePartPackage:
     """Read fixed package files once, enforce the parser and corpus contracts."""
+    return _read_part_package(path, require_single=True)
+
+
+def read_prepared_part_package(path: Path) -> SinglePartPackage:
+    """Validate one selected part; a batch must additionally account for all parts."""
+    return _read_part_package(path, require_single=False)
+
+
+def _read_part_package(path: Path, *, require_single: bool) -> SinglePartPackage:
     root = path.parent
     request = SinglePartRequest.model_validate(_json_file(root, path.name))
     corpus = CorpusManifest.model_validate(_json_file(root, request.corpus_manifest_path))
@@ -95,10 +104,14 @@ def read_single_part_package(path: Path) -> SinglePartPackage:
     validate_artifact_bytes(corpus, raw_bytes)
     prepared = request.preparation
     if prepared.kind != "NORMATIVE" or prepared.extraction_scope != "FULL_DOCUMENT" or (
-        len(prepared.parts) != 1 or prepared.limitations
+        not prepared.parts or prepared.limitations
     ):
-        raise ValueError("one-part pilot requires a complete normative preparation")
-    part = prepared.parts[0]
+        raise ValueError("part operation requires a complete normative preparation")
+    if require_single and len(prepared.parts) != 1:
+        raise ValueError("one-part pilot requires a single normative part")
+    part = next((part for part in prepared.parts if part.part_key == request.part_key), None)
+    if part is None:
+        raise ValueError("selected prepared part is missing")
     if request.raw_sha256 != prepared.raw_sha256 or (
         request.raw_sha256 != corpus.artifact_sha256
         or request.part_key != part.part_key
@@ -113,11 +126,12 @@ def read_single_part_package(path: Path) -> SinglePartPackage:
         or candidate.normalized_sha256 != prepared.normalized_sha256
         or candidate.source_url != prepared.source_url
         or candidate.source_locator != prepared.source_locator
-        or len(candidate.parts) != 1
     ):
         raise ValueError("preparation does not match the P8 original parser")
-    parsed = candidate.parts[0]
-    if not prepared_part_keys_match(prepared, candidate) or part.title != parsed.title or (
+    if not prepared_part_keys_match(prepared, candidate):
+        raise ValueError("part keys differ from the P8 original parser")
+    parsed = candidate.parts[prepared.parts.index(part)]
+    if (len(prepared.parts) == 1 and part.title != parsed.title) or (
         part.text_start != parsed.text_start or part.text_end != parsed.text_end
         or part.text_sha256 != parsed.text_sha256
         or (parsed.document_type is not None and part.document_type != parsed.document_type)
@@ -143,7 +157,7 @@ def read_single_part_package(path: Path) -> SinglePartPackage:
         part.version_date, part.effective_from, part.effective_to,
     ) or (
         corpus.source_external_id != request.source_url.rsplit("/", 2)[-2]
-        or corpus.normalized_text != prepared.normalized_text
+        or corpus.normalized_text != prepared.normalized_text[part.text_start:part.text_end]
         or corpus.normalized_sha256 != part.text_sha256
         or corpus.parser_version != prepared.parser_version
     ):
