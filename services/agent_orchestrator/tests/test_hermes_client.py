@@ -144,3 +144,17 @@ def test_caller_cancellation_is_not_misclassified_as_provider_unavailability() -
             assert not client.is_closed
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("finish", ["length", "error", "tool_calls", None])
+def test_nonstream_explicit_incomplete_finish_is_not_a_success(finish):
+    async def scenario():
+        async def handler(request):
+            return httpx.Response(200, json={"choices": [{
+                "message": {"content": "{}"}, "finish_reason": finish,
+            }]})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = HermesClient(HermesEndpoint("http://hermes:8642", "synthetic"), client=http)
+            with pytest.raises(HermesProtocolError):
+                await client.complete_json(system="fixed system", user="fixed fiction")
+    asyncio.run(scenario())
