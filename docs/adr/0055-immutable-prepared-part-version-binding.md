@@ -22,6 +22,19 @@ fragments. It rejects update/delete even for the owner; the runtime role receive
 only SELECT/INSERT after post-migration role provisioning. These records are global
 legal-corpus provenance, not tenant-owned clinic data.
 
+The SQL guard is an independent boundary: the runtime role can insert a
+preparation row without running Pydantic. Consequently it checks **every** part's
+ordered, non-overlapping full-text span and SHA-256, unique keys, no extraction
+limitations, nonblank completeness and heading locators, and the selected part's
+metadata evidence (including `effective_to` when present). It accepts only a
+`LEGAL_COPY` original and a `REVIEW_REQUIRED` version with retrieval timestamp.
+The original-kind and retrieval-timestamp checks duplicate existing storage
+constraints, deliberately making the association's requirements explicit. A
+version that has already been approved cannot acquire a new provenance edge;
+existing edges remain immutable. SQL cannot establish whether a locator truthfully
+describes the document or whether all legal dates are correct: the editor must
+verify those facts before the later approval event.
+
 The offline P8 inspector determines the intended code-part boundaries and heading
 source. P9 recomputes those candidates when binding and requires an evidenced
 preparation revision with contiguous text scopes. Each part has its own immutable

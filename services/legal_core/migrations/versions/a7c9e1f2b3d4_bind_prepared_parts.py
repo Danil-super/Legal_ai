@@ -54,9 +54,13 @@ def upgrade() -> None:
           document public.legal_documents%ROWTYPE;
           source public.legal_sources%ROWTYPE;
           item jsonb;
+          part_entry jsonb;
           field_name text;
           start_pos integer;
           end_pos integer;
+          scope_cursor integer := 0;
+          part_count integer := 0;
+          seen_keys text[] := ARRAY[]::text[];
         BEGIN
           IF TG_OP <> 'INSERT' THEN
             RAISE EXCEPTION 'prepared part/version associations are append-only';
@@ -73,23 +77,64 @@ def upgrade() -> None:
              original.raw_sha256 IS DISTINCT FROM NEW.raw_sha256 OR
              corpus.raw_sha256 IS DISTINCT FROM NEW.raw_sha256 OR
              original.raw_bytes IS DISTINCT FROM corpus.raw_bytes OR
+             original.kind <> 'LEGAL_COPY' OR
              original.raw_mime_type <> 'application/rtf' OR
              corpus.raw_mime_type <> original.raw_mime_type OR
+             corpus.approval_state <> 'REVIEW_REQUIRED' OR
              corpus.artifact_kind <> 'THIRD_PARTY_VERIFIED_COPY' OR
+             corpus.artifact_retrieved_at IS NULL OR
              corpus.normalization_scope <> 'FULL_DOCUMENT' OR
              corpus.parser_version IS DISTINCT FROM
                prepared.metadata_json->>'parser_version' OR
              prepared.kind <> 'NORMATIVE' OR
              prepared.metadata_json->>'extraction_scope' <> 'FULL_DOCUMENT' OR
+             coalesce(prepared.metadata_json->>'source_locator', '') !~ '[^[:space:]]' OR
+             coalesce(prepared.metadata_json->>'completeness_locator', '')
+               !~ '[^[:space:]]' OR
              prepared.metadata_json->>'source_url' IS DISTINCT FROM corpus.source_url OR
              EXISTS (SELECT 1 FROM public.legal_material_preparations newer
                      WHERE newer.material_id = prepared.material_id
                        AND newer.revision > prepared.revision) THEN
             RAISE EXCEPTION 'prepared part does not match exact normative original';
           END IF;
-          SELECT value INTO item FROM jsonb_array_elements(
-            coalesce(prepared.metadata_json->'parts', '[]'::jsonb)
-          ) WHERE value->>'part_key' = NEW.part_key;
+          IF jsonb_typeof(prepared.metadata_json->'parts') IS DISTINCT FROM 'array' OR
+             jsonb_typeof(prepared.metadata_json->'limitations') IS DISTINCT FROM 'array' OR
+             jsonb_array_length(prepared.metadata_json->'limitations') <> 0 OR
+             char_length(prepared.normalized_text) > 25000000 THEN
+            RAISE EXCEPTION 'normative preparation is not a complete document';
+          END IF;
+          FOR part_entry IN SELECT value FROM jsonb_array_elements(
+            prepared.metadata_json->'parts'
+          ) LOOP
+            part_count := part_count + 1;
+            IF part_count > 20 OR
+               coalesce(part_entry->>'part_key', '') !~ '^[a-z0-9][a-z0-9-]*$' OR
+               char_length(part_entry->>'part_key') > 120 OR
+               part_entry->>'part_key' = ANY(seen_keys) OR
+               jsonb_typeof(part_entry->'text_start') IS DISTINCT FROM 'number' OR
+               jsonb_typeof(part_entry->'text_end') IS DISTINCT FROM 'number' OR
+               coalesce(part_entry->>'text_start', '') !~ '^(0|[1-9][0-9]*)$' OR
+               coalesce(part_entry->>'text_end', '') !~ '^[1-9][0-9]*$' THEN
+              RAISE EXCEPTION 'normative preparation has an invalid part';
+            END IF;
+            seen_keys := array_append(seen_keys, part_entry->>'part_key');
+            start_pos := (part_entry->>'text_start')::integer;
+            end_pos := (part_entry->>'text_end')::integer;
+            IF start_pos IS DISTINCT FROM scope_cursor OR end_pos <= start_pos OR
+               end_pos > char_length(prepared.normalized_text) OR
+               part_entry->>'text_sha256' IS DISTINCT FROM encode(digest(
+                 convert_to(substring(prepared.normalized_text FROM start_pos + 1
+                            FOR end_pos - start_pos), 'UTF8'), 'sha256'), 'hex') THEN
+              RAISE EXCEPTION 'normative part scopes must cover the complete text';
+            END IF;
+            IF part_entry->>'part_key' = NEW.part_key THEN
+              item := part_entry;
+            END IF;
+            scope_cursor := end_pos;
+          END LOOP;
+          IF part_count = 0 OR scope_cursor <> char_length(prepared.normalized_text) THEN
+            RAISE EXCEPTION 'normative part scopes do not cover the complete text';
+          END IF;
           IF item IS NULL OR item->>'text_sha256' IS DISTINCT FROM NEW.part_text_sha256 OR
              NEW.part_text_sha256 IS DISTINCT FROM corpus.normalized_sha256 THEN
             RAISE EXCEPTION 'prepared part scope is missing or changed';
@@ -123,11 +168,15 @@ def upgrade() -> None:
             'title', 'canonical_key', 'document_type', 'issuer', 'official_number',
             'adoption_date', 'publication_date', 'version_date', 'effective_from'
           ] LOOP
-            IF nullif(item->>field_name, '') IS NULL OR
-               nullif(item->'evidence'->>field_name, '') IS NULL THEN
+            IF coalesce(item->>field_name, '') !~ '[^[:space:]]' OR
+               coalesce(item->'evidence'->>field_name, '') !~ '[^[:space:]]' THEN
               RAISE EXCEPTION 'canonical field lacks evidence';
             END IF;
           END LOOP;
+          IF item->>'effective_to' IS NOT NULL AND
+             coalesce(item->'evidence'->>'effective_to', '') !~ '[^[:space:]]' THEN
+            RAISE EXCEPTION 'effective-to date lacks evidence';
+          END IF;
           SELECT * INTO source FROM public.legal_sources
             WHERE id = corpus.source_id FOR SHARE;
           IF source.id IS NULL OR source.source_key <> 'garant' OR

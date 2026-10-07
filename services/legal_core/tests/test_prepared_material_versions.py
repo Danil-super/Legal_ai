@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from legal_core.corpus_loader import CorpusFragment, corpus_fragments_sha256, ingest_manifest
 from legal_core.database import database_url
+from legal_core.legal_approval import ApprovalAttestation, approve_legal_version
 from legal_core.material_preparation import MaterialPreparationInput
 from legal_core.material_preparation import store_preparation
 from legal_core.models import LegalPreparedPartVersion, LegalReviewMaterial, LegalVersion, User
@@ -106,6 +107,14 @@ def test_malformed_part_scope_cannot_be_stored(change: dict) -> None:
         })
 
 
+def test_whitespace_only_completeness_locator_is_not_evidence() -> None:
+    prepared = _prepared_input()
+    with pytest.raises(ValidationError, match="completeness"):
+        MaterialPreparationInput.model_validate(prepared.model_dump() | {
+            "completeness_locator": " \t\n",
+        })
+
+
 def _bundle_input() -> MaterialPreparationInput:
     run_key = uuid4().hex
     title = "Налоговый кодекс Российской Федерации (НК РФ)"
@@ -187,7 +196,7 @@ def _write_manifest(
         "publication_date": part.publication_date.isoformat(),
         "version_date": part.version_date.isoformat(),
         "effective_from": part.effective_from.isoformat(),
-        "effective_to": None,
+        "effective_to": part.effective_to.isoformat() if part.effective_to else None,
         "approval_state": "REVIEW_REQUIRED",
         "artifact_kind": "THIRD_PARTY_VERIFIED_COPY",
         "artifact_mime_type": "application/rtf",
@@ -205,6 +214,188 @@ def _write_manifest(
     path = tmp_path / f"manifest-part-{part_index + 1}.json"
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     return path
+
+
+async def _insert_unvalidated_preparation(
+    session, material_id, prepared: MaterialPreparationInput, metadata: dict,
+):
+    """Simulate a compromised runtime writer bypassing the Python contract."""
+    return (await session.execute(text("""
+        INSERT INTO legal_material_preparations
+          (material_id, raw_sha256, revision, preparation_sha256, title, kind,
+           group_key, metadata_json, normalized_text)
+        VALUES
+          (:material_id, :raw_sha256, 1,
+           legal_regression_result_sha256(CAST(:metadata AS jsonb)),
+           :title, 'NORMATIVE', :group_key, CAST(:metadata AS jsonb), :normalized_text)
+        RETURNING id
+    """), {
+        "material_id": material_id, "raw_sha256": prepared.raw_sha256,
+        "metadata": json.dumps(metadata, ensure_ascii=False),
+        "title": prepared.title, "group_key": prepared.group_key,
+        "normalized_text": prepared.normalized_text,
+    })).scalar_one()
+
+
+@pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1", reason="disposable PostgreSQL")
+@pytest.mark.parametrize("defect", [
+    "overlap_in_other_part", "gap_in_other_part", "bad_other_part_hash",
+    "empty_completeness", "limitations_on_full_document",
+])
+def test_direct_sql_cannot_bind_incomplete_preparation(tmp_path: Path, defect: str) -> None:
+    async def scenario() -> None:
+        engine = create_async_engine(database_url())
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        prepared = _bundle_input()
+        metadata = prepared.metadata()
+        if defect == "overlap_in_other_part":
+            metadata["parts"][1]["text_start"] = 0
+        elif defect == "gap_in_other_part":
+            metadata["parts"][1]["text_start"] += 1
+        elif defect == "bad_other_part_hash":
+            metadata["parts"][1]["text_sha256"] = "a" * 64
+        elif defect == "empty_completeness":
+            metadata["completeness_locator"] = " \t\n"
+        else:
+            metadata["limitations"] = ["Synthetic omitted section"]
+        try:
+            version_id = await ingest_manifest(factory, _write_manifest(tmp_path, prepared))
+            async with factory() as session, session.begin():
+                raw = _raw(prepared.title)
+                material = LegalReviewMaterial(
+                    package_key=f"test-p9-forged-{uuid4().hex}",
+                    original_filename="bundle.rtf", title=prepared.title,
+                    kind="LEGAL_COPY", source_name="Synthetic source",
+                    raw_mime_type="application/rtf", raw_bytes=raw,
+                    raw_size_bytes=len(raw), raw_sha256=prepared.raw_sha256,
+                    received_at=datetime.now(UTC),
+                )
+                actor = User(telegram_user_id=uuid4().int % 10**12 + 1,
+                             status="ACTIVE", system_role="LEGAL_EDITOR")
+                session.add_all([material, actor])
+                await session.flush()
+                preparation_id = await _insert_unvalidated_preparation(
+                    session, material.id, prepared, metadata,
+                )
+                material_id, actor_id = material.id, actor.id
+            async with factory() as session, session.begin():
+                with pytest.raises(DBAPIError):
+                    async with session.begin_nested():
+                        session.add(LegalPreparedPartVersion(
+                            material_id=material_id, preparation_id=preparation_id,
+                            raw_sha256=prepared.raw_sha256, part_key="part-1",
+                            part_text_sha256=prepared.parts[0].text_sha256,
+                            legal_version_id=version_id, created_by_user_id=actor_id,
+                        ))
+                        await session.flush()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1", reason="disposable PostgreSQL")
+def test_direct_sql_requires_effective_to_provenance(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        engine = create_async_engine(database_url())
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        basic = _prepared_input().model_dump(mode="json")
+        basic["parts"][0]["effective_to"] = "2030-01-01"
+        basic["parts"][0]["evidence"]["effective_to"] = "Synthetic sunset clause"
+        prepared = MaterialPreparationInput.model_validate(basic)
+        metadata = prepared.metadata()
+        del metadata["parts"][0]["evidence"]["effective_to"]
+        try:
+            version_id = await ingest_manifest(factory, _write_manifest(tmp_path, prepared))
+            async with factory() as session, session.begin():
+                raw = _raw(prepared.title)
+                material = LegalReviewMaterial(
+                    package_key=f"test-p9-sunset-{uuid4().hex}",
+                    original_filename="sunset.rtf", title=prepared.title,
+                    kind="LEGAL_COPY", source_name="Synthetic source",
+                    raw_mime_type="application/rtf", raw_bytes=raw,
+                    raw_size_bytes=len(raw), raw_sha256=prepared.raw_sha256,
+                    received_at=datetime.now(UTC),
+                )
+                actor = User(telegram_user_id=uuid4().int % 10**12 + 1,
+                             status="ACTIVE", system_role="LEGAL_EDITOR")
+                session.add_all([material, actor])
+                await session.flush()
+                preparation_id = await _insert_unvalidated_preparation(
+                    session, material.id, prepared, metadata,
+                )
+                material_id, actor_id = material.id, actor.id
+            async with factory() as session, session.begin():
+                with pytest.raises(DBAPIError):
+                    async with session.begin_nested():
+                        session.add(LegalPreparedPartVersion(
+                            material_id=material_id, preparation_id=preparation_id,
+                            raw_sha256=prepared.raw_sha256, part_key="part-1",
+                            part_text_sha256=prepared.parts[0].text_sha256,
+                            legal_version_id=version_id, created_by_user_id=actor_id,
+                        ))
+                        await session.flush()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1", reason="disposable PostgreSQL")
+def test_direct_sql_cannot_bind_an_already_approved_version(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        engine = create_async_engine(database_url())
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        prepared = _prepared_input()
+        try:
+            version_id = await ingest_manifest(factory, _write_manifest(tmp_path, prepared))
+            reviewer_telegram_id = uuid4().int % 10**12 + 1
+            async with factory() as session, session.begin():
+                raw = _raw(prepared.title)
+                material = LegalReviewMaterial(
+                    package_key=f"test-p9-boundary-{uuid4().hex}",
+                    original_filename="original.rtf", title=prepared.title,
+                    kind="LEGAL_COPY",
+                    source_name="Synthetic source", raw_mime_type="application/rtf",
+                    raw_bytes=raw, raw_size_bytes=len(raw),
+                    raw_sha256=prepared.raw_sha256, received_at=datetime.now(UTC),
+                )
+                actor = User(telegram_user_id=reviewer_telegram_id, status="ACTIVE",
+                             system_role="LEGAL_EDITOR")
+                session.add_all([material, actor])
+                await session.flush()
+                preparation = await store_preparation(session, material.id, prepared)
+                material_id, preparation_id, actor_id = material.id, preparation.id, actor.id
+            async with factory() as session:
+                version = await session.get(LegalVersion, version_id)
+                assert version is not None
+                attestation = ApprovalAttestation(
+                    reviewer_telegram_user_id=reviewer_telegram_id,
+                    version_id=version_id,
+                    expected_sha256=version.raw_sha256,
+                    expected_normalized_sha256=version.normalized_sha256,
+                    expected_fragments_sha256=version.fragments_sha256,
+                    expected_effective_from=version.effective_from,
+                    expected_effective_to=version.effective_to,
+                    source_is_official=False, official_text_compared=True,
+                    artifact_is_complete=True, effective_dates_verified=True,
+                    fragments_verified=True,
+                )
+            assert await approve_legal_version(factory, attestation) == version_id
+            async with factory() as session, session.begin():
+                with pytest.raises(DBAPIError):
+                    async with session.begin_nested():
+                        session.add(LegalPreparedPartVersion(
+                            material_id=material_id, preparation_id=preparation_id,
+                            raw_sha256=prepared.raw_sha256, part_key="part-1",
+                            part_text_sha256=prepared.parts[0].text_sha256,
+                            legal_version_id=version_id, created_by_user_id=actor_id,
+                        ))
+                        await session.flush()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1", reason="disposable PostgreSQL")

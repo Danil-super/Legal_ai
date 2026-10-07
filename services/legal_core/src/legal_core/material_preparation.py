@@ -101,6 +101,13 @@ class MaterialPreparationInput(ContractModel):
             raise ValueError("blank or invalid preparation field")
         return value.strip()
 
+    @field_validator("completeness_locator")
+    @classmethod
+    def nonblank_completeness_locator(cls, value: str | None) -> str | None:
+        if value is not None and (not value.strip() or "\x00" in value):
+            raise ValueError("blank or invalid completeness evidence")
+        return value
+
     @model_validator(mode="after")
     def consistent_scope(self) -> "MaterialPreparationInput":
         if (self.kind == "CLINICAL_REFERENCE") != (self.group_key == "clinical"):
