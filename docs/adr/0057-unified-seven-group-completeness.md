@@ -1,4 +1,4 @@
-# ADR-0056: Determine seven-group completeness from every prepared part
+# ADR-0057: Determine seven-group completeness from every prepared part
 
 - **Status:** Proposed implementation of the owner-approved grouped-review contract
 - **Date:** 2026-10-07
