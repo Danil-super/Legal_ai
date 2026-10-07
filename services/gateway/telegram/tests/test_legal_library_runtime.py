@@ -452,6 +452,29 @@ def test_group_displays_prepared_version_alongside_unprepared_material() -> None
     assert "editor:materials:1" in callbacks
 
 
+def test_same_title_original_and_unlinked_version_are_distinguished_on_buttons() -> None:
+    title = "Синтетический закон для тестирования"
+    text, keyboard = render_editor_review_materials({
+        "page": 1, "pageSize": 10, "totalItems": 2,
+        "selectedGroup": "healthcare", "referenceReviewableCount": 0,
+        "groups": [{"key": "healthcare", "title": "Медицина", "totalItems": 2}],
+        "items": [
+            {"materialId": "00000000-0000-0000-0000-000000000003",
+             "versionId": None, "title": title, "kind": "LEGAL_COPY",
+             "linkState": "ORIGINAL"},
+            {"materialId": None,
+             "versionId": "00000000-0000-0000-0000-000000000002",
+             "title": title, "kind": "LEGAL_COPY",
+             "linkState": "UNLINKED_VERSION"},
+        ],
+    })
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+    assert title not in text
+    assert any(label.startswith("📎 Исходный файл: ") and title in label for label in labels)
+    assert any(label.startswith("📄 Версия без связи: ") and title in label for label in labels)
+    assert all(len(label) <= 64 for label in labels)
+
+
 def test_bound_part_group_card_links_version_and_preserved_original_without_repeated_title():
     version_id = "00000000-0000-0000-0000-000000000002"
     material_id = "00000000-0000-0000-0000-000000000003"
@@ -780,7 +803,7 @@ def test_clinical_group_has_reference_confirmation_without_repeating_titles() ->
     assert "Кариес зубов" not in text
     assert "editor:refbatch:clinical" in callbacks
     assert "editor:batch:clinical" not in callbacks
-    assert any(button.text == "📄 Открыть: Кариес зубов" for button in buttons)
+    assert any(button.text == "📚 Справочный файл: Кариес зубов" for button in buttons)
 
 
 def test_mixed_group_shows_distinct_norm_and_reference_actions() -> None:

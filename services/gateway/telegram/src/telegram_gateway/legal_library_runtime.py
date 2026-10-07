@@ -738,10 +738,23 @@ def render_editor_review_materials(
             item_id = _editor_version_id(item.get("versionId") or item.get("materialId"))
         except ValueError:
             continue
+        if item.get("versionId"):
+            prefix = (
+                "📄 Версия без связи: "
+                if item.get("linkState") == "UNLINKED_VERSION"
+                else "📄 Нормативная версия: "
+            )
+        else:
+            prefix = (
+                "📚 Справочный файл: "
+                if item.get("kind") == "CLINICAL_REFERENCE"
+                or item.get("preparationKind") == "REFERENCE_FORM"
+                else "📎 Исходный файл: "
+            )
         buttons.append(
             [
                 InlineKeyboardButton(
-                    f"📄 Открыть: {_bounded(item.get('title'), limit=40)}"[:64],
+                    f"{prefix}{_bounded(item.get('title'), limit=64 - len(prefix))}",
                     callback_data=(
                         f"editor:detail:{item_id}:1"
                         if item.get("versionId")
