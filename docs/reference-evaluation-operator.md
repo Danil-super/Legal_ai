@@ -11,6 +11,10 @@ python -m legal_core.reference_evaluation_runner audit /absolute/path/cases.xlsx
 The XLSX source remains unchanged. The report lists every case's row hash and
 missing prerequisites without scenarios or candidate answers. An assistant-ready
 label and a workbook edition date never count as lawyer approval or case date.
+Output uses an absolute path in an owned private directory without symlink
+ancestors. The complete 0600 report is synced before exclusive publication;
+existing files are preserved and failed writes leave the final path available
+for retry. A process crash can leave a private temporary file for operator cleanup.
 
 After de-identification, contribute cases through the existing reference workspace
 and have a distinct authorized reviewer approve them there. The operator can

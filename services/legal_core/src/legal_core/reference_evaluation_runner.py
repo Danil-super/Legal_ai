@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import stat
 from collections import Counter
 from datetime import date
@@ -472,12 +473,63 @@ def compare_reference_report(
 
 
 def write_private_report(path: Path, report: ReferenceWorkbookAudit | ReferenceComparison) -> None:
-    parent = path.parent.stat()
-    if parent.st_uid != os.getuid() or parent.st_mode & 0o077:
+    """Publish a complete synced report exclusively within one pinned private directory."""
+    if not path.is_absolute() or os.path.realpath(path.parent) != str(path.parent):
         raise ValueError("PRIVATE_OUTPUT_DIRECTORY_REQUIRED")
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-        stream.write(report.model_dump_json(by_alias=True, indent=2) + "\n")
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        parent = os.fstat(directory)
+        if parent.st_uid != os.geteuid() or stat.S_IMODE(parent.st_mode) & 0o077:
+            raise ValueError("PRIVATE_OUTPUT_DIRECTORY_REQUIRED")
+        payload = (report.model_dump_json(by_alias=True, indent=2) + "\n").encode()
+        if len(payload) > _MAX_JSON_BYTES:
+            raise ValueError("PRIVATE_OUTPUT_SIZE_INVALID")
+        temporary = f".reference-evaluation-{secrets.token_hex(16)}.tmp"
+        temp_exists = False
+        published = False
+        file_info: os.stat_result | None = None
+        try:
+            descriptor = os.open(
+                temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600, dir_fd=directory,
+            )
+            temp_exists = True
+            try:
+                os.fchmod(descriptor, 0o600)
+                with os.fdopen(descriptor, "wb", closefd=False) as stream:
+                    remaining = memoryview(payload)
+                    while remaining:
+                        written = stream.write(remaining)
+                        if written is None or written <= 0:
+                            raise OSError("private report write made no progress")
+                        remaining = remaining[written:]
+                    stream.flush()
+                    os.fsync(descriptor)
+                file_info = os.fstat(descriptor)
+            finally:
+                os.close(descriptor)
+            os.link(
+                temporary, path.name, src_dir_fd=directory, dst_dir_fd=directory,
+                follow_symlinks=False,
+            )
+            published = True
+            os.unlink(temporary, dir_fd=directory)
+            temp_exists = False
+            os.fsync(directory)
+            published = False
+        finally:
+            if published and file_info is not None:
+                try:
+                    target = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    if (target.st_dev, target.st_ino) == (file_info.st_dev, file_info.st_ino):
+                        os.unlink(path.name, dir_fd=directory)
+            if temp_exists:
+                os.unlink(temporary, dir_fd=directory)
+    finally:
+        os.close(directory)
 
 
 def _read_private_json(path: Path) -> object:

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import stat
 import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -17,6 +18,7 @@ from legal_core.reference_evaluation_contracts import ReferenceEvaluationDetail
 from legal_core.reference_evaluation_runner import (
     ReferenceReviewManifest,
     ReferenceReviewReceipt,
+    ReferenceWorkbookAudit,
     audit_workbook,
     compare_reference_report,
     main,
@@ -399,3 +401,139 @@ def test_private_output_is_exclusive_mode_600_and_only_metadata(tmp_path: Path) 
     output.symlink_to(workbook)
     with pytest.raises(FileExistsError):
         write_private_report(output, audit_workbook(workbook))
+
+
+def _empty_private_audit() -> ReferenceWorkbookAudit:
+    return ReferenceWorkbookAudit(
+        workbookSha256="a" * 64, totalCases=0, eligibleCases=0, blockerCounts={}, cases=[]
+    )
+
+
+def test_partial_report_write_removes_output_and_permits_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tmp_path.chmod(0o700)
+    output = tmp_path / "report.json"
+    report = _empty_private_audit()
+    real_fdopen = os.fdopen
+
+    def broken_fdopen(fd, mode, **kwargs):
+        stream = real_fdopen(fd, mode, **kwargs)
+
+        class BrokenWrite:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return stream.__exit__(*args)
+
+            def write(self, payload):
+                stream.write(payload[:8])
+                raise OSError("synthetic partial write")
+
+        return BrokenWrite()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "fdopen", broken_fdopen)
+        with pytest.raises(OSError, match="partial write"):
+            write_private_report(output, report)
+    assert not output.exists()
+    assert list(tmp_path.iterdir()) == []
+    write_private_report(output, report)
+    assert output.read_text() == report.model_dump_json(by_alias=True, indent=2) + "\n"
+
+
+@pytest.mark.parametrize("directory_failure", [False, True])
+def test_report_fsync_failure_removes_output_and_permits_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory_failure: bool
+) -> None:
+    tmp_path.chmod(0o700)
+    output = tmp_path / "report.json"
+    real_fsync = os.fsync
+
+    def broken_fsync(fd):
+        is_directory = stat.S_ISDIR(os.fstat(fd).st_mode)
+        if is_directory == directory_failure:
+            raise OSError("synthetic fsync failure")
+        return real_fsync(fd)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "fsync", broken_fsync)
+        with pytest.raises(OSError, match="fsync failure"):
+            write_private_report(output, _empty_private_audit())
+    assert not output.exists()
+    assert list(tmp_path.iterdir()) == []
+    write_private_report(output, _empty_private_audit())
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+
+
+def test_report_rejects_symlink_parent(tmp_path: Path) -> None:
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    linked = tmp_path / "linked"
+    linked.symlink_to(private, target_is_directory=True)
+    with pytest.raises(ValueError, match="PRIVATE_OUTPUT_DIRECTORY_REQUIRED"):
+        write_private_report(linked / "report.json", _empty_private_audit())
+    assert list(private.iterdir()) == []
+
+
+def test_report_publish_uses_pinned_private_directory_when_path_is_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private, moved, replacement = (tmp_path / name for name in ("private", "moved", "other"))
+    private.mkdir(mode=0o700)
+    replacement.mkdir(mode=0o700)
+    real_open = os.open
+    replaced = False
+
+    def swap_parent_after_open(path, flags, *args, **kwargs):
+        nonlocal replaced
+        fd = real_open(path, flags, *args, **kwargs)
+        if flags & os.O_DIRECTORY and os.fspath(path) == str(private):
+            private.rename(moved)
+            private.symlink_to(replacement, target_is_directory=True)
+            replaced = True
+        return fd
+
+    monkeypatch.setattr(os, "open", swap_parent_after_open)
+    write_private_report(private / "report.json", _empty_private_audit())
+    assert replaced
+    assert (moved / "report.json").is_file()
+    assert list(replacement.iterdir()) == []
+
+
+@pytest.mark.parametrize("progress", [0, 7])
+def test_report_write_handles_short_or_nonprogressing_streams(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, progress: int
+) -> None:
+    tmp_path.chmod(0o700)
+    output = tmp_path / "report.json"
+    report = _empty_private_audit()
+    real_fdopen = os.fdopen
+
+    def short_fdopen(fd, mode, **kwargs):
+        stream = real_fdopen(fd, mode, **kwargs)
+
+        class ShortWrite:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return stream.__exit__(*args)
+
+            def write(self, payload):
+                return stream.write(payload[:progress])
+
+            def flush(self):
+                return stream.flush()
+
+        return ShortWrite()
+
+    monkeypatch.setattr(os, "fdopen", short_fdopen)
+    if progress == 0:
+        with pytest.raises(OSError, match="no progress"):
+            write_private_report(output, report)
+        assert list(tmp_path.iterdir()) == []
+    else:
+        write_private_report(output, report)
+        assert output.read_text() == report.model_dump_json(by_alias=True, indent=2) + "\n"

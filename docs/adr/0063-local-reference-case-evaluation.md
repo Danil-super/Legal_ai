@@ -35,9 +35,15 @@ included in reports. Direct-identifier scanning is an additional rejection
 check, never a substitute for privacy review.
 
 Reports contain only case identifiers, hashes, UUID/version metadata and fixed
-reason codes. JSON inputs require an owned regular 0600 file; reports use
-exclusive 0600 creation in an owned private directory. Existing output files
-and symlinks are never overwritten. CLI errors omit input values.
+reason codes. JSON inputs require an owned regular 0600 file. Reports require an
+absolute path through a non-symlink, owned private parent. The writer pins that
+directory by descriptor, completes and fsyncs an exclusive random 0600 temporary
+file, then publishes it with a same-directory no-replace hard link and fsyncs
+the directory. Existing output files and symlinks are never overwritten. Failed
+writes or syncs remove the writer's own temporary/published inode so the final
+path can be retried; a process crash can leave a private temporary file. CLI
+errors omit input values. This output-integrity change leaves PASS structural
+and `legalCorrectness=REQUIRES_LAWYER_OUTPUT_REVIEW`.
 
 No tables, migrations, API/MCP endpoints, grants, retrieval behavior, prompts,
 risk policies, legal approvals or production features change.
