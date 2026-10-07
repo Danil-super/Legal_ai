@@ -11,23 +11,28 @@ from telegram.ext import ConversationHandler
 from telegram_gateway.bot import (
     LEGAL_CORE_CLIENT_KEY,
     WizardState,
+    _dates_needing_clarification,
     _draft_from_data,
     _persist_transition,
     build_application,
     cancel_case,
     case_start,
+    choose_case_date_to_clarify,
     choose_hospitalization,
     choose_lawyer,
     choose_v2_multi,
     choose_v2_single,
     confirm_case,
+    confirm_v2_summary,
     grant_access,
     grant_pilot,
     prompt_admin_grant_access,
     prompt_admin_grant_pilot,
     record_admin_grant_access,
     record_admin_grant_pilot,
+    record_claim_date,
     record_lawyer_deadline,
+    record_v2_text,
     resume_intake_draft,
     resume_workflow,
     whoami,
@@ -154,6 +159,7 @@ class FakeLegalCore:
 class FakeReportPipeline:
     def __init__(self) -> None:
         self.steps: list[str] = []
+        self.saved_draft: dict[str, Any] | None = None
 
     def workflow_response(self) -> dict[str, Any]:
         return {
@@ -170,6 +176,28 @@ class FakeReportPipeline:
         del args, kwargs
         self.steps.append("submit")
         return self.workflow_response()
+
+    async def save_intake_draft(
+        self,
+        *args: object,
+        expected_revision: int,
+        wizard_state: str,
+        draft_data: dict[str, Any],
+        **kwargs: object,
+    ) -> dict[str, Any]:
+        del args, kwargs
+        self.steps.append("save")
+        self.saved_draft = {
+            "wizardState": wizard_state,
+            "revision": expected_revision + 1,
+            "draftData": dict(draft_data),
+        }
+        return {"revision": expected_revision + 1}
+
+    async def get_intake_draft(self, *args: object) -> dict[str, Any]:
+        del args
+        assert self.saved_draft is not None
+        return self.saved_draft
 
     async def get_workflow(self, *args: object) -> dict[str, Any]:
         del args
@@ -832,11 +860,174 @@ def test_v2_confirmation_submits_plain_language_facts_without_legacy_qualificati
         },
     )
 
-    result = asyncio.run(confirm_case(update, context))
+    result = asyncio.run(_persist_transition(confirm_case, update, context))
 
     assert result == ConversationHandler.END
     assert pipeline.steps == ["submit", "pdf", "archive"]
     assert context.user_data == {}
+
+
+def test_v2_confirmation_does_not_finalize_unknown_event_date() -> None:
+    message = FakeMessage()
+    workflow_id = "9d0dd02f-cfd9-498a-85e4-c30b53abca88"
+    pipeline = FakeReportPipeline()
+    update = SimpleNamespace(
+        callback_query=FakeQuery(f"case:confirm:{workflow_id}"),
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+    context = SimpleNamespace(
+        bot_data={LEGAL_CORE_CLIENT_KEY: pipeline},
+        user_data={"case_wizard": {
+            "workflow_id": workflow_id,
+            "draft_id": workflow_id,
+            "draft_revision": 2,
+            "draft_state": "V2_CONFIRM",
+            "intakeVersion": 2,
+            "eventDate": {"date": None, "precision": "UNKNOWN"},
+        }},
+    )
+
+    result = asyncio.run(_persist_transition(confirm_case, update, context))
+
+    assert result == WizardState.EVENT_DATE
+    assert pipeline.steps == ["save"]
+    assert context.user_data["case_wizard"]["draft_state"] == "EVENT_DATE"
+    assert any("дат" in text.casefold() for text in message.text_replies)
+    assert context.user_data["case_wizard"]["eventDate"]["precision"] == "UNKNOWN"
+
+
+def test_legacy_confirmation_keeps_all_unknown_dates_in_editable_draft() -> None:
+    message = FakeMessage()
+    workflow_id = "9d0dd02f-cfd9-498a-85e4-c30b53abca88"
+    pipeline = FakeReportPipeline()
+    update = SimpleNamespace(
+        callback_query=FakeQuery(f"case:confirm:{workflow_id}"),
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+    context = SimpleNamespace(
+        bot_data={LEGAL_CORE_CLIENT_KEY: pipeline},
+        user_data={"case_wizard": {
+            "workflow_id": workflow_id,
+            "draft_id": workflow_id,
+            "draft_revision": 2,
+            "draft_state": "CONFIRM",
+            "incident_type": "QUALITY_COMPLAINT",
+            "service_type": "Установка коронки",
+            "service_date": {"date": None, "precision": "UNKNOWN"},
+            "incident_date": {"date": None, "precision": "UNKNOWN"},
+            "claim_date": {"date": None, "precision": "UNKNOWN"},
+            "problem_summary": "Пациент сообщил об обезличенной проблемной ситуации.",
+            "patient_demand": "NO_SPECIFIC_DEMAND",
+            "formal_claim": False,
+            "harm_claimed": False,
+            "regulator_or_court": False,
+            "documents_status": "PARTIAL",
+        }},
+    )
+
+    result = asyncio.run(_persist_transition(confirm_case, update, context))
+
+    assert result == WizardState.CONFIRM
+    assert pipeline.steps == []
+    assert any("дат" in text.casefold() and "черновик" in text.casefold()
+               for text in message.text_replies)
+    assert context.user_data["case_wizard"]["claim_date"]["precision"] == "UNKNOWN"
+
+    update.callback_query = FakeQuery("case:clarify-date:claim_date")
+    assert asyncio.run(_persist_transition(choose_case_date_to_clarify, update, context)) == (
+        WizardState.CLAIM_DATE
+    )
+    context.user_data = {}
+    update.callback_query = FakeQuery(f"case:draft:{workflow_id}")
+    assert asyncio.run(resume_intake_draft(update, context)) == WizardState.CLAIM_DATE
+    message.text = "2026-07-02"
+    update.callback_query = None
+    assert asyncio.run(_persist_transition(record_claim_date, update, context)) == (
+        WizardState.CONFIRM
+    )
+    assert context.user_data["case_wizard"]["claim_date"] == {
+        "date": "2026-07-02",
+        "precision": "EXACT",
+    }
+    assert pipeline.steps == ["save", "save"]
+
+    update.callback_query = FakeQuery(f"case:confirm:{workflow_id}")
+    assert (
+        asyncio.run(_persist_transition(confirm_case, update, context))
+        == ConversationHandler.END
+    )
+    assert pipeline.steps == ["save", "save", "submit", "pdf", "archive"]
+
+
+def test_legacy_date_question_preserves_claim_priority_over_exact_incident_date() -> None:
+    data = {
+        "claim_date": {"date": "2026-09-01", "precision": "APPROXIMATE"},
+        "incident_date": {"date": "2026-08-20", "precision": "EXACT"},
+        "service_date": {"date": "2026-08-01", "precision": "EXACT"},
+    }
+
+    assert _dates_needing_clarification(data) == ("claim_date",)
+
+
+def test_stale_v2_summary_button_returns_to_exact_date_question() -> None:
+    message = FakeMessage()
+    pipeline = FakeReportPipeline()
+    update = SimpleNamespace(
+        callback_query=FakeQuery("case:v2:summary:confirm"),
+        effective_user=SimpleNamespace(id=7_000_000_001),
+        effective_message=message,
+    )
+    context = SimpleNamespace(
+        bot_data={LEGAL_CORE_CLIENT_KEY: pipeline},
+        user_data={"case_wizard": {
+            "workflow_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
+            "draft_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
+            "draft_revision": 2,
+            "draft_state": "SUMMARY",
+            "intakeVersion": 2,
+            "incomingKind": "COMPLAINT",
+            "incomingSourceStatus": "NOT_ATTACHED",
+            "situationAreas": ["TREATMENT"],
+            "affectedServices": ["Лечение кариеса"],
+            "eventSummary": "После лечения появилась чувствительность зуба.",
+            "eventDate": {"date": None, "precision": "UNKNOWN"},
+            "conflictStage": "FIRST",
+            "clinicActions": ["INVITED_FOR_EXAMINATION"],
+            "healthSignals": ["NO_KNOWN_INFORMATION"],
+            "caseMaterialsStatus": "NOT_ATTACHED",
+        }},
+    )
+
+    result = asyncio.run(_persist_transition(confirm_v2_summary, update, context))
+
+    assert result == WizardState.EVENT_DATE
+    assert pipeline.steps == ["save"]
+    assert context.user_data["case_wizard"]["draft_state"] == "EVENT_DATE"
+
+
+def test_unknown_v2_date_explains_how_to_save_the_draft() -> None:
+    message = FakeMessage()
+    message.text = "неизвестно"
+    update = SimpleNamespace(callback_query=None, effective_message=message)
+    context = SimpleNamespace(user_data={"case_wizard": {
+        "draft_state": "EVENT_DATE",
+        "intakeVersion": 2,
+        "incomingKind": "COMPLAINT",
+        "incomingSourceStatus": "NOT_ATTACHED",
+        "situationAreas": ["SERVICE"],
+        "eventSummary": "Пациент сообщил об обезличенной проблемной ситуации.",
+    }})
+
+    result = asyncio.run(record_v2_text(update, context))
+
+    assert result == WizardState.EVENT_DATE
+    assert context.user_data["case_wizard"]["eventDate"] == {
+        "date": None,
+        "precision": "UNKNOWN",
+    }
+    assert any("/cancel" in text for text in message.text_replies)
 
 
 def test_lawyer_unknown_is_preserved_and_does_not_become_a_negative_answer() -> None:
