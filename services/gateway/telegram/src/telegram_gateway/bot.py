@@ -90,7 +90,6 @@ WIZARD_DATA_KEY = "case_wizard"
 DRAFT_ID_KEY = "draft_id"
 DRAFT_REVISION_KEY = "draft_revision"
 DRAFT_STATE_KEY = "draft_state"
-DATE_CLARIFICATION_KEY = "case_date_clarification"
 ADMIN_GRANT_ACCESS_KEY = "admin_grant_access"
 ADMIN_GRANT_PILOT_KEY = "admin_grant_pilot"
 TEAM_MEMBER_ROLE_KEY = "team_member_role"
@@ -1220,6 +1219,14 @@ def _dates_needing_clarification(data: dict[str, Any]) -> tuple[str, ...]:
     return _LEGACY_ANALYSIS_DATE_FIELDS
 
 
+def _legacy_answers_complete(data: dict[str, Any]) -> bool:
+    try:
+        facts_from_draft(_draft_from_data(data))
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
 def _user_data(context: ContextTypes.DEFAULT_TYPE) -> dict[Any, Any]:
     data = context.user_data
     if data is None:
@@ -1237,9 +1244,7 @@ def _wizard_data(context: ContextTypes.DEFAULT_TYPE) -> dict[str, Any]:
 
 
 def _clear_wizard(context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_data = _user_data(context)
-    user_data.pop(WIZARD_DATA_KEY, None)
-    user_data.pop(DATE_CLARIFICATION_KEY, None)
+    _user_data(context).pop(WIZARD_DATA_KEY, None)
 
 
 def _draft_payload(data: dict[str, Any]) -> dict[str, Any]:
@@ -1792,8 +1797,8 @@ async def _record_date(
             f"Нужна существующая дата{qualifier}: ГГГГ-ММ-ДД, либо «неизвестно».",
         )
         return current
-    user_data = _user_data(context)
-    if user_data.get(DATE_CLARIFICATION_KEY) == field:
+    data = _wizard_data(context)
+    if field in _LEGACY_ANALYSIS_DATE_FIELDS and _legacy_answers_complete(data):
         if value["precision"] != "EXACT":
             await _reply(
                 update,
@@ -1801,16 +1806,15 @@ async def _record_date(
                 "Если её пока нет, /cancel сохранит черновик.",
             )
             return current
-        _wizard_data(context)[field] = value
-        user_data.pop(DATE_CLARIFICATION_KEY, None)
+        data[field] = value
         await _reply(
             update,
             f"Дата {_DATE_QUESTION_LABELS[field]}: {value['date']}. "
             "Остальные сведения не изменены. Сформировать внутренний отчёт?",
-            reply_markup=confirm_keyboard(UUID(str(_wizard_data(context)["workflow_id"]))),
+            reply_markup=confirm_keyboard(UUID(str(data["workflow_id"]))),
         )
         return WizardState.CONFIRM
-    _wizard_data(context)[field] = value
+    data[field] = value
     await _reply(update, prompt)
     return following
 
@@ -2320,7 +2324,6 @@ async def choose_case_date_to_clarify(
     field = "" if callback is None else callback.removeprefix("case:clarify-date:")
     if field not in _dates_needing_clarification(data) or field not in _DATE_QUESTION_LABELS:
         return WizardState.CONFIRM
-    _user_data(context)[DATE_CLARIFICATION_KEY] = field
     state = {
         "claim_date": WizardState.CLAIM_DATE,
         "incident_date": WizardState.INCIDENT_DATE,

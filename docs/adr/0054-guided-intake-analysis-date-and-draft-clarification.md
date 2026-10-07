@@ -26,8 +26,10 @@ failure became visible, leaving an immutable case that could not be corrected.
 - Telegram asks for the missing precise date before its workflow submission.
   A legacy operator can choose which of the three dates they can substantiate;
   an approximate higher-priority date must itself be clarified. Until then the
-  draft remains editable and can be saved. Stale v2 confirmation buttons also
-  return to the date question.
+  draft remains editable and can be saved. The return to confirmation is
+  derived from the complete persisted draft answers, so it survives gateway
+  restarts without an ephemeral conversation marker. Stale v2 confirmation
+  buttons also return to the date question.
 - The Legal Core remains authoritative and continues to fail closed on uncertain
   analysis dates. Existing finalized cases are not reopened or mutated.
 

@@ -159,6 +159,7 @@ class FakeLegalCore:
 class FakeReportPipeline:
     def __init__(self) -> None:
         self.steps: list[str] = []
+        self.saved_draft: dict[str, Any] | None = None
 
     def workflow_response(self) -> dict[str, Any]:
         return {
@@ -177,11 +178,26 @@ class FakeReportPipeline:
         return self.workflow_response()
 
     async def save_intake_draft(
-        self, *args: object, expected_revision: int, **kwargs: object
+        self,
+        *args: object,
+        expected_revision: int,
+        wizard_state: str,
+        draft_data: dict[str, Any],
+        **kwargs: object,
     ) -> dict[str, Any]:
         del args, kwargs
         self.steps.append("save")
+        self.saved_draft = {
+            "wizardState": wizard_state,
+            "revision": expected_revision + 1,
+            "draftData": dict(draft_data),
+        }
         return {"revision": expected_revision + 1}
+
+    async def get_intake_draft(self, *args: object) -> dict[str, Any]:
+        del args
+        assert self.saved_draft is not None
+        return self.saved_draft
 
     async def get_workflow(self, *args: object) -> dict[str, Any]:
         del args
@@ -923,6 +939,9 @@ def test_legacy_confirmation_keeps_all_unknown_dates_in_editable_draft() -> None
     assert asyncio.run(_persist_transition(choose_case_date_to_clarify, update, context)) == (
         WizardState.CLAIM_DATE
     )
+    context.user_data = {}
+    update.callback_query = FakeQuery(f"case:draft:{workflow_id}")
+    assert asyncio.run(resume_intake_draft(update, context)) == WizardState.CLAIM_DATE
     message.text = "2026-07-02"
     update.callback_query = None
     assert asyncio.run(_persist_transition(record_claim_date, update, context)) == (
