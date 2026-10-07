@@ -1,7 +1,8 @@
-"""Human approval -> real HTTP services -> durable worker -> immutable legal report.
+"""Human approval -> real HTTP services -> durable worker -> immutable report.
 
 Only the two external model HTTP responses are synthetic. Core, orchestrator, their clients,
 SQL approval/retrieval guards, queue/lease, verifier, report rendering and persistence are real.
+The guided v2 path currently records its exact fail-closed risk-policy blocker.
 """
 
 import asyncio
@@ -29,6 +30,7 @@ from legal_core.database import database_url, owner_database_url
 from legal_core.main import create_app
 from legal_core.risk_policy_approval import RiskPolicyApproval, approve_risk_policy
 from legal_core.runtime_db_role import provision_runtime_role
+from telegram_gateway.case_wizard import facts_from_v2_data
 from test_case_api import actor_headers, complete_fact_batch, seed_admin
 from test_legal_editor_workspace_api import _seed_user, _write_manifest
 
@@ -75,8 +77,9 @@ def isolated_database(monkeypatch):
         owner.dispose()
 
 
-def test_human_approved_copy_reaches_report_through_actual_services_and_worker(
-    isolated_database, tmp_path: Path
+@pytest.mark.parametrize("intake_mode", ["legacy", "guided-v2"])
+def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block(
+    isolated_database, tmp_path: Path, intake_mode: str
 ) -> None:
     owner_id = 71_000_000_000 + uuid4().int % 1_000_000_000
     editor_id = owner_id + 2_000_000_000
@@ -206,30 +209,64 @@ def test_human_approved_copy_reaches_report_through_actual_services_and_worker(
                 transport=httpx.ASGITransport(app=orchestrator), base_url="http://orchestrator"
             ) as worker_http:
                 worker_settings = WorkerSettings("http://orchestrator", INTERNAL_KEY)
-                created = await core_http.post(
-                    "/v1/cases",
-                    headers=actor_headers(owner_id, uuid4()),
-                    json={"intakeSchemaVersion": "dental-case-intake.v1", "channel": "TELEGRAM"},
-                )
-                assert created.status_code == 201, created.text
-                case_id = created.json()["id"]
-                batch = complete_fact_batch()
-                for fact in batch["facts"]:
-                    if fact["factKey"] in {"CLAIM_DATE", "INCIDENT_DATE", "SERVICE_DATE"}:
-                        fact["value"] = {"date": "2026-09-12", "precision": "EXACT"}
-                facts = await core_http.post(
-                    f"/v1/cases/{case_id}/facts",
-                    headers=actor_headers(owner_id, uuid4()),
-                    json=batch,
-                )
-                assert facts.status_code == 200 and facts.json()["missingFacts"] == [], facts.text
-                confirmed = await core_http.post(
-                    f"/v1/cases/{case_id}/intake-finalizations",
-                    headers=actor_headers(owner_id, uuid4()),
-                    json={},
-                )
-                assert confirmed.status_code == 200, confirmed.text
-                assert confirmed.json()["status"] == "ANALYSIS_BLOCKED"
+                if intake_mode == "guided-v2":
+                    workflow = await core_http.post(
+                        f"/v1/telegram-case-workflows/{uuid4()}/submissions",
+                        headers=actor_headers(owner_id),
+                        json={
+                            "intakeSchemaVersion": "dental-case-intake.v2",
+                            "locale": "ru-RU",
+                            "facts": facts_from_v2_data(
+                                {
+                                    "intakeVersion": 2,
+                                    "incomingKind": "COMPLAINT",
+                                    "incomingSourceStatus": "NOT_ATTACHED",
+                                    "situationAreas": ["TREATMENT"],
+                                    "affectedServices": ["терапевтическое лечение"],
+                                    "eventSummary": "После лечения пациент сообщил о дискомфорте.",
+                                    "eventDate": {"date": "2026-09-12", "precision": "EXACT"},
+                                    "conflictStage": "FIRST",
+                                    "clinicActions": ["INVITED_FOR_EXAMINATION"],
+                                    "healthSignals": ["NO_KNOWN_INFORMATION"],
+                                    "caseMaterialsStatus": "NOT_ATTACHED",
+                                }
+                            ),
+                        },
+                    )
+                    assert workflow.status_code == 201, workflow.text
+                    case_id = workflow.json()["case"]["id"]
+                    assert workflow.json()["case"]["status"] == "ANALYSIS_BLOCKED"
+                    initial_report_count = 1
+                else:
+                    created = await core_http.post(
+                        "/v1/cases",
+                        headers=actor_headers(owner_id, uuid4()),
+                        json={
+                            "intakeSchemaVersion": "dental-case-intake.v1",
+                            "channel": "TELEGRAM",
+                        },
+                    )
+                    assert created.status_code == 201, created.text
+                    case_id = created.json()["id"]
+                    batch = complete_fact_batch()
+                    for fact in batch["facts"]:
+                        if fact["factKey"] in {"CLAIM_DATE", "INCIDENT_DATE", "SERVICE_DATE"}:
+                            fact["value"] = {"date": "2026-09-12", "precision": "EXACT"}
+                    facts = await core_http.post(
+                        f"/v1/cases/{case_id}/facts",
+                        headers=actor_headers(owner_id, uuid4()),
+                        json=batch,
+                    )
+                    assert facts.status_code == 200, facts.text
+                    assert facts.json()["missingFacts"] == []
+                    confirmed = await core_http.post(
+                        f"/v1/cases/{case_id}/intake-finalizations",
+                        headers=actor_headers(owner_id, uuid4()),
+                        json={},
+                    )
+                    assert confirmed.status_code == 200, confirmed.text
+                    assert confirmed.json()["status"] == "ANALYSIS_BLOCKED"
+                    initial_report_count = 0
 
                 async def enqueue():
                     response = await core_http.post(
@@ -294,6 +331,7 @@ def test_human_approved_copy_reaches_report_through_actual_services_and_worker(
                     },
                 )
                 assert context.status_code == 200, context.text
+                assert context.json()["asOfDate"] == "2026-09-12"
                 assert context.json()["evidence"][0]["versionId"] == str(version_id)
                 for outside_date in ("2026-08-03", "2027-08-04"):
                     outside = await core_http.get(
@@ -311,16 +349,25 @@ def test_human_approved_copy_reaches_report_through_actual_services_and_worker(
                 )
                 assert completed.json()["state"] == "SUCCEEDED", (completed.text, model_calls)
                 result = completed.json()["result"]
-                assert result["analysisAllowed"] is True and result["riskLevel"] == "LOW"
                 assert result["escalationRequired"] is False
                 report = result["report"]
                 canonical = report["reportJson"]
-                assert canonical["legalBasis"]["status"] == "AVAILABLE"
-                source = canonical["legalBasis"]["sources"][0]
-                assert source["fragmentId"] == context.json()["evidence"][0]["fragmentId"]
-                assert source["rawSha256"] == version["rawSha256"]
-                assert canonical["analysis"]["verifierStatus"] == "PASSED"
-                assert canonical["recommendations"]["items"] == [ACTION]
+                if intake_mode == "guided-v2":
+                    assert result["analysisAllowed"] is False
+                    assert result["riskLevel"] == "UNAVAILABLE"
+                    assert canonical["summary"]["analysisAvailability"]["reasonCode"] == (
+                        "HARM_CLAIMED_UNKNOWN"
+                    )
+                    assert canonical["legalBasis"]["status"] == "NOT_AVAILABLE"
+                    assert canonical["recommendations"]["status"] == "NOT_AVAILABLE"
+                else:
+                    assert result["analysisAllowed"] is True and result["riskLevel"] == "LOW"
+                    assert canonical["legalBasis"]["status"] == "AVAILABLE"
+                    source = canonical["legalBasis"]["sources"][0]
+                    assert source["fragmentId"] == context.json()["evidence"][0]["fragmentId"]
+                    assert source["rawSha256"] == version["rawSha256"]
+                    assert canonical["analysis"]["verifierStatus"] == "PASSED"
+                    assert canonical["recommendations"]["items"] == [ACTION]
                 assert model_calls == ["researcher", "reviewer"]
                 pdf = await core_http.get(
                     f"/v1/reports/{report['id']}/pdf", headers=actor_headers(owner_id)
@@ -357,8 +404,21 @@ def test_human_approved_copy_reaches_report_through_actual_services_and_worker(
                             text("SELECT count(*) FROM case_reports WHERE case_id=:id"),
                             {"id": case_id},
                         )
-                        == 1
+                        == initial_report_count + 1
                     )
+                    risk = (
+                        await session.execute(
+                            text(
+                                "SELECT level, reason_codes_json FROM case_risk_assessments "
+                                "WHERE case_id=:id ORDER BY created_at DESC LIMIT 1"
+                            ),
+                            {"id": case_id},
+                        )
+                    ).one()
+                    if intake_mode == "guided-v2":
+                        assert risk == ("UNAVAILABLE", ["HARM_CLAIMED_UNKNOWN"])
+                    else:
+                        assert risk == ("LOW", ["NO_ESCALATION_TRIGGER"])
                     assert (
                         await session.scalar(
                             text(
