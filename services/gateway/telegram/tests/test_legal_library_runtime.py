@@ -452,6 +452,49 @@ def test_group_displays_prepared_version_alongside_unprepared_material() -> None
     assert "editor:materials:1" in callbacks
 
 
+def test_bound_part_group_card_links_version_and_preserved_original_without_repeated_title():
+    version_id = "00000000-0000-0000-0000-000000000002"
+    material_id = "00000000-0000-0000-0000-000000000003"
+    text, keyboard = render_editor_review_materials({
+        "page": 1, "pageSize": 10, "totalItems": 1, "selectedGroup": "general",
+        "referenceReviewableCount": 0,
+        "progress": {"normativeVersions": 1, "approvedNormativeVersions": 0,
+                     "referenceMaterials": 0, "reviewedReferenceMaterials": 0,
+                     "missingParts": 1, "unpreparedOriginals": 0,
+                     "unlinkedVersions": 0, "complete": False},
+        "groups": [{"key": "general", "title": "Кодексы", "totalItems": 1}],
+        "items": [{"materialId": material_id, "versionId": version_id,
+                   "title": "Налоговый кодекс — часть первая", "kind": "LEGAL_COPY",
+                   "reviewState": "REVIEW_REQUIRED", "linkState": "EXACT_ORIGINAL",
+                   "partKey": "part-1", "expectedParts": 2, "linkedParts": 1}],
+    })
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert f"editor:detail:{version_id}:1" in callbacks
+    assert f"editor:material:{material_id}" in callbacks
+    assert "Налоговый кодекс — часть первая" not in text
+    assert "Не связана 1 часть" in text  # noqa: RUF001
+
+
+def test_group_progress_does_not_label_reference_confirmation_as_legal_approval():
+    text, _ = render_editor_review_materials({
+        "page": 1, "pageSize": 10, "totalItems": 1, "selectedGroup": "clinical",
+        "referenceReviewableCount": 0,
+        "progress": {"normativeVersions": 0, "approvedNormativeVersions": 0,
+                     "referenceMaterials": 1, "reviewedReferenceMaterials": 1,
+                     "missingParts": 0, "unpreparedOriginals": 0,
+                     "unlinkedVersions": 0, "complete": True},
+        "groups": [{"key": "clinical", "title": "Клинические", "totalItems": 1}],
+        "items": [{"materialId": "00000000-0000-0000-0000-000000000003",
+                   "versionId": None, "title": "Синтетический справочник",
+                   "kind": "CLINICAL_REFERENCE", "reviewState": "METADATA_REQUIRED",
+                   "referenceReviewed": True}],
+    })
+    assert "Справочные: проверено 1/1" in text
+    assert "Нормы: утверждено 0/0" in text
+    assert "Группа проверена" in text
+    assert "юридическое основание" not in text
+
+
 def test_group_preview_lists_exact_ready_subset_and_explicit_declaration() -> None:
     batch = "00000000-0000-0000-0000-000000000004"
     text, keyboard = runtime.render_group_approval_preview(

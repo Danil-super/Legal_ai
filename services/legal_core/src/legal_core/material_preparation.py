@@ -35,6 +35,9 @@ class PreparedPart(ContractModel):
     version_date: date | None = None
     effective_from: date | None = None
     effective_to: date | None = None
+    text_start: int | None = Field(default=None, ge=0, strict=True)
+    text_end: int | None = Field(default=None, gt=0, strict=True)
+    text_sha256: Digest | None = None
     evidence: dict[str, EvidenceLocator] = Field(default_factory=dict, max_length=16)
 
     def missing_fields(self) -> list[str]:
@@ -58,6 +61,14 @@ class PreparedPart(ContractModel):
             self.effective_from is None or self.effective_to <= self.effective_from
         ):
             raise ValueError("invalid effective date interval")
+        scope = (self.text_start, self.text_end, self.text_sha256)
+        if any(item is not None for item in scope) and (
+            any(item is None for item in scope)
+            or self.text_end is None
+            or self.text_start is None
+            or self.text_end <= self.text_start
+        ):
+            raise ValueError("part text scope must be complete and nonempty")
         return self
 
 
@@ -90,6 +101,13 @@ class MaterialPreparationInput(ContractModel):
             raise ValueError("blank or invalid preparation field")
         return value.strip()
 
+    @field_validator("completeness_locator")
+    @classmethod
+    def nonblank_completeness_locator(cls, value: str | None) -> str | None:
+        if value is not None and (not value.strip() or "\x00" in value):
+            raise ValueError("blank or invalid completeness evidence")
+        return value
+
     @model_validator(mode="after")
     def consistent_scope(self) -> "MaterialPreparationInput":
         if (self.kind == "CLINICAL_REFERENCE") != (self.group_key == "clinical"):
@@ -121,6 +139,22 @@ class MaterialPreparationInput(ContractModel):
             self.limitations or not self.completeness_locator
         ):
             raise ValueError("full extraction requires completeness evidence")
+        scoped = [part for part in self.parts if part.text_start is not None]
+        if scoped:
+            if self.kind != "NORMATIVE" or self.extraction_scope != "FULL_DOCUMENT" or (
+                len(scoped) != len(self.parts)
+            ):
+                raise ValueError("all normative parts require complete extraction scopes")
+            cursor = 0
+            for part in self.parts:
+                if part.text_start != cursor or part.text_end is None:
+                    raise ValueError("part scopes must be ordered and contiguous")
+                section = self.normalized_text[cursor:part.text_end]
+                if not section or hashlib.sha256(section.encode()).hexdigest() != part.text_sha256:
+                    raise ValueError("part scoped text hash mismatch")
+                cursor = part.text_end
+            if cursor != len(self.normalized_text):
+                raise ValueError("part scopes must cover the full normalized text")
         return self
 
     def metadata(self) -> dict[str, object]:

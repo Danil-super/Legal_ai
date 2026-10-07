@@ -5,10 +5,11 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from legal_core.database import database_url
+from legal_core.database import database_url, owner_database_url
 from legal_core.models import LegalReviewMaterial
 from legal_core.review_materials import ingest_review_materials
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 pytestmark = pytest.mark.skipif(
@@ -28,6 +29,7 @@ def test_importing_the_same_package_twice_is_idempotent_and_never_approves_it(
 
     async def scenario() -> None:
         engine = create_async_engine(database_url())
+        owner_engine = create_async_engine(owner_database_url())
         factory = async_sessionmaker(engine, expire_on_commit=False)
         try:
             first = await ingest_review_materials(
@@ -62,7 +64,18 @@ def test_importing_the_same_package_twice_is_idempotent_and_never_approves_it(
                 material.received_at == datetime(2026, 9, 25, 12, tzinfo=UTC)
                 for material in materials
             )
+            # Database immutability is independent of the runtime role's grants.
+            async with owner_engine.connect() as connection:
+                for statement in (
+                    "UPDATE legal_review_materials SET title='Forged' WHERE id=:id",
+                    "UPDATE legal_review_materials SET kind='CLINICAL_REFERENCE' WHERE id=:id",
+                    "DELETE FROM legal_review_materials WHERE id=:id",
+                ):
+                    with pytest.raises(DBAPIError):
+                        async with connection.begin_nested():
+                            await connection.execute(text(statement), {"id": materials[1].id})
         finally:
             await engine.dispose()
+            await owner_engine.dispose()
 
     asyncio.run(scenario())

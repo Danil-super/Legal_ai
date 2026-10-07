@@ -23,6 +23,7 @@ from legal_core.api_contracts import (
     LegalEditorFragmentPage,
     LegalEditorGroupItem,
     LegalEditorGroupPage,
+    LegalEditorGroupProgress,
     LegalEditorReviewMaterialGroup,
     LegalEditorReviewMaterialPage,
     LegalEditorReviewMaterialSummary,
@@ -45,7 +46,7 @@ from legal_core.case_api import (
     TelegramUserId,
     resolve_actor,
 )
-from legal_core.editor_groups import EDITOR_GROUP_TITLES, editor_group_items
+from legal_core.editor_groups import EDITOR_GROUP_TITLES, editor_group_items, group_progress
 from legal_core.group_approval import approve_group, group_preview
 from legal_core.legal_approval import (
     ApprovalAttestation,
@@ -343,6 +344,15 @@ def create_legal_router(
             )
         ).all()
         counts = {key: count for key, count in count_rows}
+        progress = None
+        if group is not None:
+            progress_rows = (
+                await session.execute(select(items).where(items.c.group_key == group).limit(1001))
+            ).mappings().all()
+            if len(progress_rows) > 1000:
+                raise ApiError(status_code=422, code="LEGAL_GROUP_TOO_LARGE",
+                               message="Group exceeds limit")
+            progress = LegalEditorGroupProgress.model_validate(group_progress(progress_rows))
         rows = (
             []
             if group is None
@@ -365,6 +375,7 @@ def create_legal_router(
             referenceReviewableCount=(await reference_reviewable_count(session, group))
             if group is not None
             else 0,
+            progress=progress,
             groups=[
                 LegalEditorReviewMaterialGroup(
                     key=cast(ReviewGroup, key), title=title, totalItems=counts.get(key, 0)
@@ -381,6 +392,11 @@ def create_legal_router(
                     groupKey=row["group_key"],
                     preparationId=row["preparation_id"],
                     preparationKind=row["preparation_kind"],
+                    expectedParts=row["expected_parts"],
+                    linkedParts=row["linked_parts"],
+                    partKey=row["part_key"],
+                    linkState=row["link_state"],
+                    referenceReviewed=row["reference_reviewed"],
                 )
                 for row in rows
             ],
@@ -568,6 +584,13 @@ def create_legal_router(
             )
         metadata = preparation.metadata_json
         parts = [PreparedPart.model_validate(part) for part in metadata["parts"]]
+        group_items = editor_group_items()
+        linked_part_keys = list((await session.scalars(
+            select(group_items.c.part_key)
+            .where(group_items.c.preparation_id == preparation.id,
+                   group_items.c.version_id.is_not(None))
+            .order_by(group_items.c.part_key)
+        )).all())
         missing = [f"{part.part_key}:{field}" for part in parts for field in part.missing_fields()]
         if preparation.kind == "NORMATIVE" and not parts:
             missing.append("intended_parts")
@@ -587,6 +610,7 @@ def create_legal_router(
             limitations=metadata["limitations"],
             missingFields=missing,
             parts=parts,
+            linkedPartKeys=linked_part_keys,
         )
 
     @router.get("/review-materials/{material_id}/artifact")

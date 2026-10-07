@@ -972,6 +972,39 @@ class LegalMaterialPreparation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 
+class LegalPreparedPartVersion(Base):
+    """Append-only provenance edge; approval remains a separate human event."""
+
+    __tablename__ = "legal_prepared_part_versions"
+    __table_args__ = (
+        UniqueConstraint("preparation_id", "part_key"),
+        UniqueConstraint("preparation_id", "legal_version_id"),
+        CheckConstraint("raw_sha256 ~ '^[0-9a-f]{64}$'"),
+        CheckConstraint("part_text_sha256 ~ '^[0-9a-f]{64}$'"),
+        Index("ix_legal_prepared_part_versions_material", "material_id", "preparation_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    material_id: Mapped[UUID] = mapped_column(
+        UUID_PK, ForeignKey("legal_review_materials.id", ondelete="RESTRICT")
+    )
+    preparation_id: Mapped[UUID] = mapped_column(
+        UUID_PK, ForeignKey("legal_material_preparations.id", ondelete="RESTRICT")
+    )
+    raw_sha256: Mapped[str] = mapped_column(String(64))
+    part_key: Mapped[str] = mapped_column(String(120))
+    part_text_sha256: Mapped[str] = mapped_column(String(64))
+    legal_version_id: Mapped[UUID] = mapped_column(
+        UUID_PK, ForeignKey("legal_versions.id", ondelete="RESTRICT")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        UUID_PK, ForeignKey("users.id", ondelete="RESTRICT")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
+
+
 class LegalReferenceReviewEvent(Base):
     """Append-only review of a reference; this is never a legal approval."""
 

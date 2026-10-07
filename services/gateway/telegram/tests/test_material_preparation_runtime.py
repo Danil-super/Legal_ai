@@ -33,3 +33,21 @@ def test_prepared_item_opens_its_card_without_adding_another_root_group():
     callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
     assert f"editor:preparation:{material}" in callbacks
     assert runtime._EDITOR_CALLBACK_RE.fullmatch(f"editor:preparation:{material}")
+
+
+def test_code_bundle_preparation_names_every_part_and_exact_link_status():
+    material = str(uuid4())
+    text, keyboard = runtime.render_material_preparation({
+        "materialId": material, "title": "Синтетический кодекс",
+        "kind": "NORMATIVE", "groupKey": "general", "referenceYear": None,
+        "extractionScope": "FULL_DOCUMENT", "limitations": [],
+        "missingFields": [], "linkedPartKeys": ["part-1"],
+        "parts": [
+            {"part_key": "part-1", "title": "Синтетический кодекс — часть первая"},
+            {"part_key": "part-2", "title": "Синтетический кодекс — часть вторая"},
+        ],
+    })
+    assert "часть первая — связана с версией" in text  # noqa: RUF001
+    assert "часть вторая — ещё не связана" in text
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert f"editor:material:{material}" in callbacks

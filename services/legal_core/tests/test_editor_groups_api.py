@@ -1,10 +1,20 @@
+import asyncio
+import hashlib
 import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
 from legal_core import group_approval
 from legal_core.legal_approval import LegalApprovalRejected
+from legal_core.material_preparation import store_preparation
+from legal_core.models import LegalReviewMaterial, User
+from legal_core.normative_preparation import bind_prepared_part
+from legal_core.database import database_url
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from test_prepared_material_versions import _bundle_input, _raw, _write_manifest as _part_manifest
+from legal_core.corpus_loader import ingest_manifest
 from test_legal_editor_workspace_api import _client, _ingest, _seed_user, _write_manifest
 from test_legal_editor_workspace_api import _approval_event_count
 from test_review_material_api import _seed_material
@@ -41,6 +51,50 @@ def test_groups_combine_materials_and_versions_without_disclosing_raw_text(tmp_p
         assert any(item["versionId"] == str(version_id) for item in items)
         assert all("rawBytes" not in item and "normalizedText" not in item for item in items)
         assert client.get("/v1/legal/editor/groups/unknown", headers=headers).status_code == 422
+
+
+def test_matching_raw_checksum_without_part_binding_does_not_hide_original(tmp_path, monkeypatch):
+    key = "group-api-test-key-00000000000000001"
+    monkeypatch.setenv("LEGAL_EDITOR_GATEWAY_KEY", key)
+    actor = 9_110_000_000 + uuid4().int % 100_000_000
+    _seed_user(actor, system_role="LEGAL_EDITOR")
+    version_id = _ingest(_write_manifest(tmp_path))
+    raw = b"%PDF-1.7\nlegal-editor-workspace-api-test\n%%EOF\n"
+
+    async def seed_original():
+        engine = create_async_engine(database_url())
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with factory() as session, session.begin():
+                material = LegalReviewMaterial(
+                    package_key=f"p10-same-bytes-{uuid4().hex}", original_filename="synthetic.pdf",
+                    title="Synthetic general source", kind="LEGAL_COPY", source_name="Synthetic",
+                    raw_mime_type="application/pdf", raw_bytes=raw,
+                    raw_size_bytes=len(raw), raw_sha256=hashlib.sha256(raw).hexdigest(),
+                    received_at=datetime.now(UTC),
+                )
+                session.add(material)
+                await session.flush()
+                return material.id
+        finally:
+            await engine.dispose()
+
+    material_id = asyncio.run(seed_original())
+    headers = {"X-Telegram-User-Id": str(actor), "X-Legal-Editor-Gateway-Key": key}
+    with _client() as client:
+        first = client.get("/v1/legal/editor/groups/general", headers=headers).json()
+        items = first["items"]
+        for page in range(2, (first["totalItems"] + 9) // 10 + 1):
+            items.extend(client.get(
+                f"/v1/legal/editor/groups/general?page={page}", headers=headers
+            ).json()["items"])
+        assert any(item["materialId"] == str(material_id) and item["versionId"] is None
+                   for item in items)
+        assert any(item["versionId"] == str(version_id) and item["materialId"] is None
+                   for item in items)
+        assert first["progress"]["unpreparedOriginals"] >= 1
+        assert first["progress"]["unlinkedVersions"] >= 1
+        assert first["progress"]["complete"] is False
 
 
 def test_group_approval_is_explicit_atomic_and_retry_safe(tmp_path, monkeypatch):
@@ -273,3 +327,108 @@ def test_clinical_group_cannot_approve_a_legal_version_from_another_group(tmp_pa
             "/v1/legal/editor/groups/clinical/approval-events", headers=headers, json=request
         ).status_code == 409
     assert _approval_event_count(version) == 0
+
+
+def test_partially_bound_bundle_keeps_original_visible_and_blocks_group_completion(
+    tmp_path, monkeypatch
+):
+    key = "group-api-test-key-00000000000000001"
+    monkeypatch.setenv("LEGAL_EDITOR_GATEWAY_KEY", key)
+    actor = 9_900_000_000 + uuid4().int % 100_000_000
+    prepared = _bundle_input()
+
+    async def setup():
+        engine = create_async_engine(database_url())
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            first = await ingest_manifest(factory, _part_manifest(tmp_path, prepared, 0))
+            second = await ingest_manifest(factory, _part_manifest(tmp_path, prepared, 1))
+            async with factory() as session, session.begin():
+                raw = _raw(prepared.title)
+                material = LegalReviewMaterial(
+                    package_key=f"p10-bundle-{uuid4().hex}", original_filename="bundle.rtf",
+                    title=prepared.title, kind="LEGAL_COPY", source_name="Synthetic source",
+                    raw_mime_type="application/rtf", raw_bytes=raw,
+                    raw_size_bytes=len(raw), raw_sha256=prepared.raw_sha256,
+                    received_at=datetime.now(UTC),
+                )
+                editor = User(telegram_user_id=actor, status="ACTIVE", system_role="LEGAL_EDITOR")
+                session.add_all([material, editor])
+                await session.flush()
+                preparation = await store_preparation(session, material.id, prepared)
+                material_id, preparation_id, actor_id = material.id, preparation.id, editor.id
+            async with factory() as session, session.begin():
+                await bind_prepared_part(
+                    session, preparation_id=preparation_id, part_key="part-1",
+                    legal_version_id=first, actor_user_id=actor_id,
+                )
+            return material_id, preparation_id, actor_id, first, second
+        finally:
+            await engine.dispose()
+
+    material_id, preparation_id, actor_id, first, second = asyncio.run(setup())
+    headers = {"X-Telegram-User-Id": str(actor), "X-Legal-Editor-Gateway-Key": key}
+    with _client() as client:
+        page = client.get("/v1/legal/editor/groups/general", headers=headers)
+        assert page.status_code == 200
+        body = page.json()
+        items = body["items"]
+        for number in range(2, (body["totalItems"] + 9) // 10 + 1):
+            items.extend(client.get(
+                f"/v1/legal/editor/groups/general?page={number}", headers=headers
+            ).json()["items"])
+        original = next(item for item in items if item["materialId"] == str(material_id)
+                        and item["versionId"] is None)
+        linked = next(item for item in items if item["versionId"] == str(first))
+        assert original["expectedParts"] == 2
+        assert original["linkedParts"] == 1
+        assert linked["materialId"] == str(material_id)
+        assert linked["partKey"] == "part-1"
+        assert body["progress"]["missingParts"] >= 1
+        assert body["progress"]["complete"] is False
+        detail = client.get(
+            f"/v1/legal/review-materials/{material_id}/preparation", headers=headers
+        ).json()
+        assert {part["part_key"] for part in detail["parts"]} == {"part-1", "part-2"}
+        assert detail["linkedPartKeys"] == ["part-1"]
+        preview = client.get(
+            "/v1/legal/editor/groups/general/approval-preview", headers=headers
+        ).json()
+        assert any(item["title"] == prepared.title and item["reasonCode"] == "PARTS_UNBOUND"
+                   for item in preview["blocked"])
+
+    async def bind_second():
+        engine = create_async_engine(database_url())
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with factory() as session, session.begin():
+                await bind_prepared_part(
+                    session, preparation_id=preparation_id, part_key="part-2",
+                    legal_version_id=second, actor_user_id=actor_id,
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(bind_second())
+    with _client() as client:
+        body = client.get("/v1/legal/editor/groups/general", headers=headers).json()
+        renewed_preview = client.get(
+            "/v1/legal/editor/groups/general/approval-preview", headers=headers
+        ).json()
+        assert renewed_preview["snapshot"] != preview["snapshot"]
+        items = body["items"]
+        for number in range(2, (body["totalItems"] + 9) // 10 + 1):
+            items.extend(client.get(
+                f"/v1/legal/editor/groups/general?page={number}", headers=headers
+            ).json()["items"])
+        assert not any(item["materialId"] == str(material_id) and item["versionId"] is None
+                       for item in items)
+        assert {item["versionId"] for item in items if item["materialId"] == str(material_id)} == {
+            str(first), str(second)
+        }
+        assert client.get(
+            f"/v1/legal/review-materials/{material_id}/preparation", headers=headers
+        ).json()["linkedPartKeys"] == ["part-1", "part-2"]
+        assert client.get(
+            f"/v1/legal/review-materials/{material_id}/artifact", headers=headers
+        ).status_code == 200

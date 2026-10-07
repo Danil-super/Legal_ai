@@ -118,6 +118,7 @@ def provision_runtime_role() -> str:
         # Check existence because provisioning also runs before migrations.
         for ledger in (
             "legal_material_preparations",
+            "legal_prepared_part_versions",
             "legal_reference_review_events",
             "reference_evaluation_review_events",
         ):
@@ -127,6 +128,14 @@ def provision_runtime_role() -> str:
                 cursor.execute(sql.SQL("REVOKE UPDATE, DELETE ON TABLE {} FROM {}").format(
                     sql.Identifier(ledger), role,
                 ))
+        # Row locks used by preparation writers require UPDATE privilege in PostgreSQL.
+        # The immutable-receipt trigger blocks actual UPDATE; DELETE is unnecessary.
+        cursor.execute("SELECT to_regclass('public.legal_review_materials')")
+        receipt = cursor.fetchone()
+        if receipt is not None and receipt[0] is not None:
+            cursor.execute(sql.SQL(
+                "REVOKE DELETE ON TABLE public.legal_review_materials FROM {}"
+            ).format(role))
 
     return app_user
 

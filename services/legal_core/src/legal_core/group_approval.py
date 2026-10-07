@@ -77,8 +77,10 @@ async def group_preview(session: AsyncSession, group: ReviewGroup) -> LegalGroup
     for row in rows:
         fingerprint = dict(row)
         reason: str | None = "METADATA_REQUIRED"
-        if row["kind"] == "CLINICAL_REFERENCE":
+        if row["kind"] == "CLINICAL_REFERENCE" or row["preparation_kind"] == "REFERENCE_FORM":
             reason = "CLINICAL_REFERENCE_NOT_LEGAL_VERSION"
+        elif row["version_id"] is None and row["preparation_id"] is not None:
+            reason = "PARTS_UNBOUND" if row["expected_parts"] else "PARTS_NOT_PREPARED"
         elif row["version_id"] is not None:
             version = await session.get(LegalVersion, row["version_id"], populate_existing=True)
             if version is None:
