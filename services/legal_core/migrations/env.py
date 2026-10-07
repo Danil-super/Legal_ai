@@ -6,6 +6,7 @@ from logging.config import fileConfig
 from alembic import context
 from legal_core.analysis_jobs import AnalysisJob  # noqa: F401
 from legal_core.database import owner_database_url
+from legal_core.escalation_notifications import EscalationNotification  # noqa: F401
 from legal_core.models import Base
 from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
