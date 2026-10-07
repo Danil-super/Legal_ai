@@ -48,6 +48,7 @@ from legal_core.contracts import (
 )
 from legal_core.risk_engine import RiskAssessment, RiskLevel
 from legal_core.safe_patient_draft import build_safe_patient_draft
+from legal_core.verifier import VerificationDecision, VerificationResult
 
 if TYPE_CHECKING:
     from legal_core.clinic_document_retrieval import ApprovedClinicDocumentFragment
@@ -136,10 +137,36 @@ def build_intake_report(
     )
 
 
-def _source_cards(evidence: Sequence[ApprovedLegalFragment]) -> list[LegalSourceCard]:
-    unique: dict[UUID, ApprovedLegalFragment] = {}
-    for fragment in evidence:
-        unique.setdefault(fragment.fragment_id, fragment)
+def _source_cards(
+    evidence: Sequence[ApprovedLegalFragment],
+    verification: VerificationDecision,
+    *,
+    as_of_date: date,
+) -> list[LegalSourceCard]:
+    if not verification.analysis_allowed:
+        raise ValueError("READY report requires fully verified claims")
+    evidence_by_id = {fragment.fragment_id: fragment for fragment in evidence}
+    if len(evidence_by_id) != len(evidence):
+        raise ValueError("retrieved evidence fragment identifiers must be unique")
+    cited_ids: set[UUID] = set()
+    claim_ids: set[str] = set()
+    for claim in verification.claims:
+        if claim.result is not VerificationResult.VERIFIED or not claim.verified_fragment_ids:
+            raise ValueError("READY report requires cited verified claims")
+        if claim.claim_id in claim_ids or len(claim.verified_fragment_ids) != len(
+            set(claim.verified_fragment_ids)
+        ):
+            raise ValueError("verified claim identifiers and citations must be unique")
+        claim_ids.add(claim.claim_id)
+        cited_ids.update(claim.verified_fragment_ids)
+    if not cited_ids or not cited_ids.issubset(evidence_by_id):
+        raise ValueError("verified citation is missing from retrieved evidence")
+    for fragment_id in cited_ids:
+        fragment = evidence_by_id[fragment_id]
+        if fragment.effective_from > as_of_date or (
+            fragment.effective_to is not None and as_of_date >= fragment.effective_to
+        ):
+            raise ValueError("verified citation is not effective on the case date")
     return [
         LegalSourceCard(
             fragmentId=fragment.fragment_id,
@@ -152,7 +179,8 @@ def _source_cards(evidence: Sequence[ApprovedLegalFragment]) -> list[LegalSource
             textSha256=fragment.text_sha256,
             rawSha256=fragment.raw_sha256,
         )
-        for fragment in unique.values()
+        for fragment in evidence
+        if fragment.fragment_id in cited_ids
     ]
 
 
@@ -196,6 +224,7 @@ def build_analysis_report(
     risk: RiskAssessment,
     evidence_trace_sha256: str,
     evidence: Sequence[ApprovedLegalFragment],
+    verification: VerificationDecision,
     clinic_document_context_trace_sha256: str,
     clinic_document_context: Sequence[ApprovedClinicDocumentFragment],
     verified_action_items: Sequence[str],
@@ -207,6 +236,14 @@ def build_analysis_report(
         raise ValueError("an unavailable risk result cannot produce a READY analysis report")
     if not evidence:
         raise ValueError("a READY analysis report requires approved legal evidence")
+    verified_by_claim = {claim.claim_id: claim for claim in verification.claims}
+    for conclusion in verified_legal_conclusions:
+        verified = verified_by_claim.get(conclusion.claim_id)
+        if (
+            verified is None
+            or tuple(conclusion.evidence_fragment_ids) != verified.verified_fragment_ids
+        ):
+            raise ValueError("legal conclusion requires a matching verified claim and citations")
 
     serialized_facts, facts_sha256 = _serialized_facts(facts)
     incident_types, summary = _summary_parts(facts)
@@ -245,7 +282,10 @@ def build_analysis_report(
         missingFacts=list(missing_facts),
         recommendations=recommendation,
         draftResponse=draft_response,
-        legalBasis=LegalBasis(status="AVAILABLE", sources=_source_cards(evidence)),
+        legalBasis=LegalBasis(
+            status="AVAILABLE",
+            sources=_source_cards(evidence, verification, as_of_date=as_of_date),
+        ),
         legalConclusions=list(verified_legal_conclusions),
         clinicDocuments=clinic_basis,
         risk=RiskSummary(

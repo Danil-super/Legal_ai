@@ -11,6 +11,7 @@ from legal_core.contracts import CanonicalReport, CaseStatus, FactKey, LegalConc
 from legal_core.legal_conclusions import select_verified_legal_conclusions
 from legal_core.reports import build_analysis_report, build_intake_report, render_report_pdf
 from legal_core.risk_engine import RiskAssessment, RiskLevel
+from legal_core.verifier import VerificationDecision, VerificationResult, VerifiedClaim
 from telegram_gateway.legal_conclusion_display import legal_conclusion_lines
 
 FRAGMENT = UUID(int=1)
@@ -40,7 +41,15 @@ def _conclusion(**changes):
     return LegalConclusion(**data)
 
 
-def _report(level=RiskLevel.LOW, conclusions=None, evidence=None):
+def _report(level=RiskLevel.LOW, conclusions=None, evidence=None, verification=None):
+    conclusions = [_conclusion()] if conclusions is None else conclusions
+    cited_id = conclusions[0].evidence_fragment_ids[0]
+    if verification is None:
+        verification = VerificationDecision(claims=(
+            VerifiedClaim("action-1", VerificationResult.VERIFIED, None, (cited_id,)),
+            *(VerifiedClaim(item.claim_id, VerificationResult.VERIFIED, None,
+                             tuple(item.evidence_fragment_ids)) for item in conclusions),
+        ))
     return build_analysis_report(
         report_id=UUID(int=20), analysis_run_id=UUID(int=21), case_id=UUID(int=22),
         public_number="SYNTHETIC-22", case_status=(
@@ -53,9 +62,10 @@ def _report(level=RiskLevel.LOW, conclusions=None, evidence=None):
                             level is RiskLevel.LOW),
         evidence_trace_sha256="d" * 64,
         evidence=evidence if evidence is not None else [_fragment()],
+        verification=verification,
         clinic_document_context_trace_sha256="e" * 64, clinic_document_context=[],
         verified_action_items=["Синтетическое проверенное действие."],
-        verified_legal_conclusions=[_conclusion()] if conclusions is None else conclusions,
+        verified_legal_conclusions=conclusions,
     )
 
 
@@ -138,6 +148,31 @@ def test_report_roundtrip_keeps_conclusions_and_source_ids():
     assert CanonicalReport.model_validate(payload).legal_conclusions == [_conclusion()]
 
 
+@pytest.mark.parametrize("verification", [
+    VerificationDecision(claims=()),
+    VerificationDecision(claims=(
+        VerifiedClaim("action-1", VerificationResult.UNSUPPORTED, None, (FRAGMENT,)),
+    )),
+    VerificationDecision(claims=(
+        VerifiedClaim("action-1", VerificationResult.VERIFIED, None, ()),
+    )),
+    VerificationDecision(claims=(
+        VerifiedClaim("action-1", VerificationResult.VERIFIED, None, (UUID(int=999),)),
+    )),
+])
+def test_ready_report_fails_closed_without_valid_verified_citations(verification):
+    with pytest.raises(ValueError):
+        _report(verification=verification)
+
+
+def test_ready_report_rejects_conclusion_without_matching_verified_claim():
+    verification = VerificationDecision(claims=(
+        VerifiedClaim("action-1", VerificationResult.VERIFIED, None, (FRAGMENT,)),
+    ))
+    with pytest.raises(ValueError, match="matching verified claim"):
+        _report(verification=verification)
+
+
 @pytest.mark.parametrize("fault", ["unknown_source", "expired", "future", "duplicate_claim",
                                   "failed_verifier", "unavailable_risk", "duplicate_source"])
 def test_report_rejects_unpublishable_conclusions(fault):
@@ -207,7 +242,9 @@ def test_pdf_includes_escaped_conclusions_and_matching_source_numbers(monkeypatc
 
     monkeypatch.setattr(reports, "Paragraph", capture)
     text = "Синтетический <вывод> & уточнение."
-    report = _report(conclusions=[_conclusion(text=text)])
+    unused = _fragment(EXTRA_FRAGMENT)
+    unused.document_title = "Непроцитированный источник"
+    report = _report(conclusions=[_conclusion(text=text)], evidence=[unused, _fragment()])
     pdf = render_report_pdf(report)
     assert pdf.startswith(b"%PDF-")
     assert pdf == render_report_pdf(report)
@@ -215,6 +252,7 @@ def test_pdf_includes_escaped_conclusions_and_matching_source_numbers(monkeypatc
     assert f"1. {escape(text)}" in paragraphs
     assert "Основание: [1]." in paragraphs
     assert any(p.startswith("[1] Синтетический источник") for p in paragraphs)
+    assert not any("Непроцитированный источник" in p for p in paragraphs)
 
 
 def test_telegram_runtime_delivers_all_conclusions_and_sources_without_truncation():
@@ -224,6 +262,7 @@ def test_telegram_runtime_delivers_all_conclusions_and_sources_without_truncatio
                                evidenceFragmentIds=[EXTRA_FRAGMENT]) for i in range(3)]
     evidence = [_fragment(UUID(int=i)) for i in range(10, 17)] + [_fragment(EXTRA_FRAGMENT)]
     report = _report(conclusions=conclusions, evidence=evidence)
+    assert [source.fragment_id for source in report.legal_basis.sources] == [EXTRA_FRAGMENT]
     payload = {"analysisAllowed": True, "riskLevel": "LOW", "escalationRequired": False,
                "report": {"reportJson": report.model_dump(mode="json", by_alias=True)}}
     messages = telegram_analysis_messages(payload)
@@ -232,8 +271,8 @@ def test_telegram_runtime_delivers_all_conclusions_and_sources_without_truncatio
     assert all(len(m.encode("utf-16-le")) // 2 <= 4_000 for m in messages)
     for conclusion in conclusions:
         assert conclusion.text in text
-    assert "Основание: [8]." in text
-    assert "[8] Синтетический источник" in text
+    assert "Основание: [1]." in text
+    assert "[1] Синтетический источник" in text
     assert "Автоматическая отправка пациенту отключена." in text
 
 
