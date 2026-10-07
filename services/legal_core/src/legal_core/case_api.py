@@ -256,6 +256,15 @@ def _require_finalized_case(case: Case) -> None:
         )
 
 
+def _require_open_case_intake(case: Case) -> None:
+    if case.closed_at is not None:
+        raise ApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="CASE_ALREADY_FINALIZED",
+            message="Confirmed case facts are immutable; create a new case for corrections",
+        )
+
+
 async def _enforce_case_limits(
     session: AsyncSession,
     actor: ActorContext,
@@ -501,10 +510,13 @@ def _audit(
     )
 
 
-async def _tenant_case(session: AsyncSession, actor: ActorContext, case_id: UUID) -> Case:
-    case = await session.scalar(
-        select(Case).where(Case.id == case_id, Case.clinic_id == actor.clinic_id)
-    )
+async def _tenant_case(
+    session: AsyncSession, actor: ActorContext, case_id: UUID, *, for_update: bool = False
+) -> Case:
+    statement = select(Case).where(Case.id == case_id, Case.clinic_id == actor.clinic_id)
+    if for_update:
+        statement = statement.with_for_update()
+    case = await session.scalar(statement)
     if case is None:
         raise ApiError(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1517,7 +1529,7 @@ def create_case_router(
     ) -> IntakeResponse:
         actor = await resolve_actor(session, telegram_user_id)
         _require_case_intake_actor(actor)
-        case = await _tenant_case(session, actor, case_id)
+        case = await _tenant_case(session, actor, case_id, for_update=True)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         scope = f"cases:{case_id}:facts"
         replay = await _idempotency_replay(
@@ -1529,6 +1541,7 @@ def create_case_router(
         )
         if replay is not None:
             return IntakeResponse.model_validate(replay)
+        _require_open_case_intake(case)
 
         idempotency = _new_idempotency_record(
             actor=actor,
@@ -1596,7 +1609,7 @@ def create_case_router(
     ) -> CaseResponse:
         actor = await resolve_actor(session, telegram_user_id)
         _require_case_intake_actor(actor)
-        case = await _tenant_case(session, actor, case_id)
+        case = await _tenant_case(session, actor, case_id, for_update=True)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         scope = f"cases:{case_id}:finalize"
         replay = await _idempotency_replay(
@@ -1608,6 +1621,7 @@ def create_case_router(
         )
         if replay is not None:
             return CaseResponse.model_validate(replay)
+        _require_open_case_intake(case)
         facts = _domain_facts(await _current_fact_rows(session, case.id))
         missing = missing_facts_for(facts)
         if missing:

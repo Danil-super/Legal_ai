@@ -648,6 +648,81 @@ def test_case_intake_report_and_cross_tenant_boundary() -> None:
         assert pdf.content.startswith(b"%PDF-")
 
 
+def test_finalized_case_rejects_new_facts_and_a_second_confirmation() -> None:
+    admin = 7_050_000_001 + uuid4().int % 100_000_000
+    seed_admin(admin)
+    original_facts = complete_fact_batch()
+    changed_fact = {
+        "questionId": "synthetic_correction",
+        "intakeSchemaVersion": "dental-case-intake.v1",
+        "facts": [{
+            "factKey": "SERVICE_TYPE",
+            "valueType": "TEXT",
+            "value": {"text": "Другая синтетическая услуга"},
+            "sourceType": "USER_STATEMENT",
+        }],
+    }
+
+    with application_client() as client:
+        created = client.post(
+            "/v1/cases", headers=actor_headers(admin, uuid4()),
+            json={"intakeSchemaVersion": "dental-case-intake.v1", "channel": "TELEGRAM"},
+        )
+        assert created.status_code == 201
+        case_id = created.json()["id"]
+        recorded = client.post(
+            f"/v1/cases/{case_id}/facts", headers=actor_headers(admin, uuid4()),
+            json=original_facts,
+        )
+        assert recorded.status_code == 200
+        confirmation_key = uuid4()
+        finalized = client.post(
+            f"/v1/cases/{case_id}/intake-finalizations",
+            headers=actor_headers(admin, confirmation_key), json={},
+        )
+        assert finalized.status_code == 200
+        report = client.post(
+            f"/v1/cases/{case_id}/reports", headers=actor_headers(admin, uuid4()),
+            json={"locale": "ru-RU"},
+        )
+        assert report.status_code == 201
+
+        fact_change = client.post(
+            f"/v1/cases/{case_id}/facts", headers=actor_headers(admin, uuid4()),
+            json=changed_fact,
+        )
+        assert fact_change.status_code == 409
+        assert fact_change.json()["error"]["code"] == "CASE_ALREADY_FINALIZED"
+
+        second_confirmation = client.post(
+            f"/v1/cases/{case_id}/intake-finalizations",
+            headers=actor_headers(admin, uuid4()), json={},
+        )
+        assert second_confirmation.status_code == 409
+        assert second_confirmation.json()["error"]["code"] == "CASE_ALREADY_FINALIZED"
+
+        replay = client.post(
+            f"/v1/cases/{case_id}/intake-finalizations",
+            headers=actor_headers(admin, confirmation_key), json={},
+        )
+        assert replay.status_code == 200
+        assert replay.json() == finalized.json()
+        current = client.get(f"/v1/cases/{case_id}", headers=actor_headers(admin))
+        assert current.json()["status"] == "ANALYSIS_BLOCKED"
+
+    engine = create_engine(owner_database_url().set(drivername="postgresql+psycopg"))
+    try:
+        with engine.connect() as connection:
+            revisions = connection.execute(
+                text("SELECT revision, value_json FROM case_facts "
+                     "WHERE case_id = :case_id AND fact_key = 'SERVICE_TYPE'"),
+                {"case_id": UUID(case_id)},
+            ).all()
+        assert revisions == [(1, {"text": "Установка коронки"})]
+    finally:
+        engine.dispose()
+
+
 def test_active_case_limit_blocks_the_sixth_unfinished_case() -> None:
     administrator = 7_200_000_001 + uuid4().int % 100_000_000
     seed_admin(administrator)
