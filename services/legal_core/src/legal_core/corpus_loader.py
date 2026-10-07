@@ -208,6 +208,22 @@ class CorpusSelectionManifest(BaseModel):
         return self
 
 
+def validate_artifact_bytes(manifest: CorpusManifest, raw_bytes: bytes) -> None:
+    """Apply the loader's checksum, size and signature guards to pre-read bytes."""
+    actual_sha = hashlib.sha256(raw_bytes).hexdigest()
+    if actual_sha != manifest.artifact_sha256:
+        raise ValueError("artifact SHA-256 does not match the manifest")
+    if manifest.artifact_size_bytes is not None and len(raw_bytes) != manifest.artifact_size_bytes:
+        raise ValueError("artifact byte count does not match the manifest")
+    if manifest.artifact_kind in {"OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"}:
+        if manifest.artifact_mime_type == "application/pdf" and not raw_bytes.startswith(b"%PDF-"):
+            raise ValueError("legal PDF artifact has an invalid signature")
+        if manifest.artifact_mime_type == "application/rtf" and not is_safe_rtf(raw_bytes):
+            raise ValueError("legal RTF artifact has unsafe embedded object or invalid signature")
+        if not raw_bytes:
+            raise ValueError("legal raw artifact is empty")
+
+
 def load_artifact(manifest: CorpusManifest, manifest_path: Path) -> bytes:
     if manifest.artifact_text is not None:
         raw_bytes = manifest.artifact_text.encode()
@@ -229,19 +245,7 @@ def load_artifact(manifest: CorpusManifest, manifest_path: Path) -> bytes:
         ):
             raise ValueError("artifact byte count does not match the manifest")
         raw_bytes = artifact_path.read_bytes()
-
-    actual_sha = hashlib.sha256(raw_bytes).hexdigest()
-    if actual_sha != manifest.artifact_sha256:
-        raise ValueError("artifact SHA-256 does not match the manifest")
-    if manifest.artifact_size_bytes is not None and len(raw_bytes) != manifest.artifact_size_bytes:
-        raise ValueError("artifact byte count does not match the manifest")
-    if manifest.artifact_kind in {"OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"}:
-        if manifest.artifact_mime_type == "application/pdf" and not raw_bytes.startswith(b"%PDF-"):
-            raise ValueError("legal PDF artifact has an invalid signature")
-        if manifest.artifact_mime_type == "application/rtf" and not is_safe_rtf(raw_bytes):
-            raise ValueError("legal RTF artifact has unsafe embedded object or invalid signature")
-        if not raw_bytes:
-            raise ValueError("legal raw artifact is empty")
+    validate_artifact_bytes(manifest, raw_bytes)
     return raw_bytes
 
 
@@ -364,151 +368,159 @@ async def _document(session: AsyncSession, manifest: CorpusManifest) -> LegalDoc
     return document
 
 
+async def ingest_manifest_in_session(
+    session: AsyncSession, manifest: CorpusManifest, raw_bytes: bytes,
+) -> UUID:
+    """Ingest one guarded candidate inside the caller's transaction."""
+    validate_artifact_bytes(manifest, raw_bytes)
+    source = await _source(session, manifest)
+    document = await _document(session, manifest)
+    normalized_sha = normalized_text_sha256(manifest.normalized_content())
+    fragments_sha = corpus_fragments_sha256(manifest.fragments)
+    raw_matches = list(
+        await session.scalars(
+            select(LegalVersion)
+            .where(
+                LegalVersion.document_id == document.id,
+                LegalVersion.raw_sha256 == manifest.artifact_sha256,
+            )
+            .order_by(LegalVersion.version_no.desc())
+        )
+    )
+    existing = next(
+        (
+            version
+            for version in raw_matches
+            if version.normalized_sha256 == normalized_sha
+            and version.fragments_sha256 == fragments_sha
+        ),
+        None,
+    )
+    if existing is not None:
+        expected_version = (
+            source.id,
+            manifest.source_external_id,
+            manifest.source_url,
+            manifest.publication_date,
+            manifest.version_date,
+            manifest.effective_from,
+            manifest.effective_to,
+            manifest.artifact_kind,
+            manifest.artifact_mime_type,
+            raw_bytes,
+            manifest.normalized_content(),
+            manifest.parser_version,
+            len(raw_bytes),
+            normalized_sha,
+            fragments_sha,
+            manifest.normalization_scope,
+            manifest.artifact_retrieved_at,
+            manifest.artifact_page_count,
+        )
+        stored_version = (
+            existing.source_id,
+            existing.source_external_id,
+            existing.source_url,
+            existing.publication_date,
+            existing.version_date,
+            existing.effective_from,
+            existing.effective_to,
+            existing.artifact_kind,
+            existing.raw_mime_type,
+            existing.raw_bytes,
+            existing.normalized_text,
+            existing.parser_version,
+            existing.raw_size_bytes,
+            existing.normalized_sha256,
+            existing.fragments_sha256,
+            existing.normalization_scope,
+            existing.artifact_retrieved_at,
+            existing.artifact_page_count,
+        )
+        stored_fragments = list(
+            (
+                await session.scalars(
+                    select(LegalFragment)
+                    .where(LegalFragment.version_id == existing.id)
+                    .order_by(LegalFragment.ordinal)
+                )
+            ).all()
+        )
+        stored_fragment_models = [
+            CorpusFragment(
+                ordinal=fragment.ordinal,
+                article=fragment.article,
+                part=fragment.part,
+                point=fragment.point,
+                heading=fragment.heading,
+                structural_path=fragment.structural_path,
+                text=fragment.fragment_text,
+            )
+            for fragment in stored_fragments
+        ]
+        if (
+            stored_version != expected_version
+            or stored_fragment_models != manifest.fragments
+        ):
+            raise ValueError("existing legal version metadata conflicts with the manifest")
+        return existing.id
+    current_version = await session.scalar(
+        select(func.coalesce(func.max(LegalVersion.version_no), 0)).where(
+            LegalVersion.document_id == document.id
+        )
+    )
+    version = LegalVersion(
+        document_id=document.id,
+        source_id=source.id,
+        version_no=int(current_version or 0) + 1,
+        source_external_id=manifest.source_external_id,
+        source_url=manifest.source_url,
+        publication_date=manifest.publication_date,
+        version_date=manifest.version_date,
+        effective_from=manifest.effective_from,
+        effective_to=manifest.effective_to,
+        approval_state="REVIEW_REQUIRED",
+        artifact_kind=manifest.artifact_kind,
+        raw_sha256=manifest.artifact_sha256,
+        raw_mime_type=manifest.artifact_mime_type,
+        raw_bytes=raw_bytes,
+        normalized_text=manifest.normalized_content(),
+        parser_version=manifest.parser_version,
+        raw_size_bytes=len(raw_bytes),
+        normalized_sha256=normalized_sha,
+        fragments_sha256=fragments_sha,
+        normalization_scope=manifest.normalization_scope,
+        artifact_retrieved_at=manifest.artifact_retrieved_at,
+        artifact_page_count=manifest.artifact_page_count,
+        regression_passed=False,
+    )
+    session.add(version)
+    await session.flush()
+    session.add_all(
+        [
+            LegalFragment(
+                version_id=version.id,
+                ordinal=fragment.ordinal,
+                article=fragment.article,
+                part=fragment.part,
+                point=fragment.point,
+                heading=fragment.heading,
+                structural_path=fragment.structural_path,
+                fragment_text=fragment.text,
+                text_sha256=hashlib.sha256(fragment.text.encode()).hexdigest(),
+            )
+            for fragment in manifest.fragments
+        ]
+    )
+    await session.flush()
+    return version.id
+
+
 async def ingest_manifest(session_factory: async_sessionmaker[AsyncSession], path: Path) -> UUID:
     manifest = load_manifest(path)
     raw_bytes = load_artifact(manifest, path)
-    async with session_factory() as session:
-        async with session.begin():
-            source = await _source(session, manifest)
-            document = await _document(session, manifest)
-            normalized_sha = normalized_text_sha256(manifest.normalized_content())
-            fragments_sha = corpus_fragments_sha256(manifest.fragments)
-            raw_matches = list(
-                await session.scalars(
-                    select(LegalVersion)
-                    .where(
-                        LegalVersion.document_id == document.id,
-                        LegalVersion.raw_sha256 == manifest.artifact_sha256,
-                    )
-                    .order_by(LegalVersion.version_no.desc())
-                )
-            )
-            existing = next(
-                (
-                    version
-                    for version in raw_matches
-                    if version.normalized_sha256 == normalized_sha
-                    and version.fragments_sha256 == fragments_sha
-                ),
-                None,
-            )
-            if existing is not None:
-                expected_version = (
-                    source.id,
-                    manifest.source_external_id,
-                    manifest.source_url,
-                    manifest.publication_date,
-                    manifest.version_date,
-                    manifest.effective_from,
-                    manifest.effective_to,
-                    manifest.artifact_kind,
-                    manifest.artifact_mime_type,
-                    raw_bytes,
-                    manifest.normalized_content(),
-                    manifest.parser_version,
-                    len(raw_bytes),
-                    normalized_sha,
-                    fragments_sha,
-                    manifest.normalization_scope,
-                    manifest.artifact_retrieved_at,
-                    manifest.artifact_page_count,
-                )
-                stored_version = (
-                    existing.source_id,
-                    existing.source_external_id,
-                    existing.source_url,
-                    existing.publication_date,
-                    existing.version_date,
-                    existing.effective_from,
-                    existing.effective_to,
-                    existing.artifact_kind,
-                    existing.raw_mime_type,
-                    existing.raw_bytes,
-                    existing.normalized_text,
-                    existing.parser_version,
-                    existing.raw_size_bytes,
-                    existing.normalized_sha256,
-                    existing.fragments_sha256,
-                    existing.normalization_scope,
-                    existing.artifact_retrieved_at,
-                    existing.artifact_page_count,
-                )
-                stored_fragments = list(
-                    (
-                        await session.scalars(
-                            select(LegalFragment)
-                            .where(LegalFragment.version_id == existing.id)
-                            .order_by(LegalFragment.ordinal)
-                        )
-                    ).all()
-                )
-                stored_fragment_models = [
-                    CorpusFragment(
-                        ordinal=fragment.ordinal,
-                        article=fragment.article,
-                        part=fragment.part,
-                        point=fragment.point,
-                        heading=fragment.heading,
-                        structural_path=fragment.structural_path,
-                        text=fragment.fragment_text,
-                    )
-                    for fragment in stored_fragments
-                ]
-                if (
-                    stored_version != expected_version
-                    or stored_fragment_models != manifest.fragments
-                ):
-                    raise ValueError("existing legal version metadata conflicts with the manifest")
-                return existing.id
-            current_version = await session.scalar(
-                select(func.coalesce(func.max(LegalVersion.version_no), 0)).where(
-                    LegalVersion.document_id == document.id
-                )
-            )
-            version = LegalVersion(
-                document_id=document.id,
-                source_id=source.id,
-                version_no=int(current_version or 0) + 1,
-                source_external_id=manifest.source_external_id,
-                source_url=manifest.source_url,
-                publication_date=manifest.publication_date,
-                version_date=manifest.version_date,
-                effective_from=manifest.effective_from,
-                effective_to=manifest.effective_to,
-                approval_state="REVIEW_REQUIRED",
-                artifact_kind=manifest.artifact_kind,
-                raw_sha256=manifest.artifact_sha256,
-                raw_mime_type=manifest.artifact_mime_type,
-                raw_bytes=raw_bytes,
-                normalized_text=manifest.normalized_content(),
-                parser_version=manifest.parser_version,
-                raw_size_bytes=len(raw_bytes),
-                normalized_sha256=normalized_sha,
-                fragments_sha256=fragments_sha,
-                normalization_scope=manifest.normalization_scope,
-                artifact_retrieved_at=manifest.artifact_retrieved_at,
-                artifact_page_count=manifest.artifact_page_count,
-                regression_passed=False,
-            )
-            session.add(version)
-            await session.flush()
-            session.add_all(
-                [
-                    LegalFragment(
-                        version_id=version.id,
-                        ordinal=fragment.ordinal,
-                        article=fragment.article,
-                        part=fragment.part,
-                        point=fragment.point,
-                        heading=fragment.heading,
-                        structural_path=fragment.structural_path,
-                        fragment_text=fragment.text,
-                        text_sha256=hashlib.sha256(fragment.text.encode()).hexdigest(),
-                    )
-                    for fragment in manifest.fragments
-                ]
-            )
-        return version.id
+    async with session_factory() as session, session.begin():
+        return await ingest_manifest_in_session(session, manifest, raw_bytes)
 
 
 async def _run(path: Path) -> None:
