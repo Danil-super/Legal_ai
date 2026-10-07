@@ -339,3 +339,26 @@ def review_blocks(data: dict[str, Any], *, final: bool = False) -> list[str]:
         "Неуказанные сведения не считаются отсутствующими."
     )
     return blocks
+
+
+def review_pages(data: dict[str, Any], *, limit: int = 3900) -> list[str]:
+    """Retain the whole factual summary within Telegram's UTF-16 message bound."""
+    pages: list[str] = []
+    current: list[str] = []
+    units = 0
+    for block in review_blocks(data, final=True):
+        block_units = sum(2 if ord(character) > 0xFFFF else 1 for character in block)
+        if current and units + block_units + 2 > limit:
+            pages.append("".join(current))
+            current, units = [], 0
+        separator = "\n\n" if current else ""
+        for character in separator + block:
+            width = 2 if ord(character) > 0xFFFF else 1
+            if units + width > limit:
+                pages.append("".join(current))
+                current, units = [], 0
+            current.append(character)
+            units += width
+    if current:
+        pages.append("".join(current))
+    return pages

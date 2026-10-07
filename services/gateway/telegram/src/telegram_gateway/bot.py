@@ -68,9 +68,7 @@ from telegram_gateway.guided_case_intake_v2 import (
 from telegram_gateway.guided_case_intake_v2 import (
     parse_answer as parse_v2_answer,
 )
-from telegram_gateway.guided_case_intake_v2 import (
-    review_blocks as v2_review_blocks,
-)
+from telegram_gateway.guided_case_intake_v2 import review_pages as v2_review_pages
 from telegram_gateway.quick_intake import contains_probable_person_name
 from telegram_gateway.ui import (
     HELP_MESSAGE,
@@ -899,12 +897,12 @@ async def _prompt_v2_draft(
         )
     elif state is WizardState.SUMMARY:
         if message is not None:
-            await message.reply_text(
-                "\n\n".join(v2_review_blocks(data, final=True)),
-                reply_markup=_v2_keyboard(
-                    [[("✅ Всё верно", "case:v2:summary:confirm")]]
-                ),
-            )
+            pages = v2_review_pages(data)
+            for index, page in enumerate(pages):
+                rows = [[("✅ Всё верно", "case:v2:summary:confirm")]] if (
+                    index == len(pages) - 1
+                ) else []
+                await message.reply_text(page, reply_markup=_v2_keyboard(rows))
     elif state is WizardState.V2_CONFIRM:
         workflow_id = UUID(str(data["workflow_id"]))
         if message is not None:

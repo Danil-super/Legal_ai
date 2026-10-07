@@ -61,6 +61,15 @@ def screening_blocker(
     }
     if any(positive and data[field] == "NO" for field, positive in positives.items()):
         return "FACTUAL_SAFETY_SCREENING_CONFLICT"
+    # Retain independently confirmed negatives for equivalent reported events.
+    # Do not equate "no formal legal claim/harm" with "no written request/report".
+    for key, field in (
+        (FactKey.HOSPITALIZATION, "hospitalizationReported"),
+        (FactKey.REGULATOR_OR_COURT, "authorityOrCourtDocumentReceived"),
+        (FactKey.LAWYER_CONTACT, "representativeContact"),
+    ):
+        if facts.get(key) in (False, "NO") and (data[field] == "YES" or positives[field]):
+            return "FACTUAL_SAFETY_SCREENING_CONFLICT"
     if (
         isinstance(screening.amount, RequestedMoney)
         and FactKey.DEMAND_AMOUNT in facts

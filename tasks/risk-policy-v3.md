@@ -39,7 +39,7 @@ unless included in the exact human-reviewed payload.
   the present implementation does not mutate or unlock their immutable snapshots.
 - [ ] F8: Human LEGAL_EDITOR activation and lawyer benchmark correctness review.
 
-Verification on the isolated feature branch: 1202 unit tests pass, 150 PG tests
+Verification on the isolated feature branch: 1210 unit tests pass, 150 PG tests
 are skipped in the unit run; targeted disposable-PG factual+report tests: 9 pass.
 Ruff and strict Core mypy pass. External provider connectivity/real-law correctness
 are not claimed by these authored synthetic tests.

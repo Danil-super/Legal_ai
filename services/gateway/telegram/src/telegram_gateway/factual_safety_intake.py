@@ -117,17 +117,21 @@ def answer_screening(data: dict[str, Any], field: str, answer: str) -> None:
 
 
 def previous_screening_question(data: dict[str, Any]) -> bool:
-    screening = data.get("safetyScreening")
-    if not isinstance(screening, dict):
+    previous = data.get("safetyScreening")
+    if not isinstance(previous, dict):
         return False
+    # The durable adapter takes a shallow before-snapshot. Never mutate its nested value.
+    screening = dict(previous)
     if screening.get("moneyRequested") == "YES" and "amount" in screening:
         screening.pop("amount")
+        data["safetyScreening"] = screening
         return True
     for field in reversed(SCREENING_FIELDS):
         if field in screening:
             screening.pop(field)
             if field == "moneyRequested":
                 screening.pop("amount", None)
+            data["safetyScreening"] = screening
             return True
     return False
 

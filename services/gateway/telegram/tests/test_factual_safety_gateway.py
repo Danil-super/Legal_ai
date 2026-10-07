@@ -177,3 +177,54 @@ def test_unknown_or_plain_document_does_not_offer_urgent_shortcut():
     update, context, _, _ = runtime_context(data, "case:safety:known:confirm")
     assert asyncio.run(bot.choose_factual_safety(update, context)) == bot.WizardState.SAFETY
     assert "safetyScreening" not in data
+
+
+@pytest.mark.parametrize("with_amount", [False, True])
+def test_back_within_safety_persists_a_new_revision_instead_of_shallow_snapshot_mutation(
+    with_amount,
+):
+    data = completed_data()
+    if with_amount:
+        answer_screening(data, "moneyRequested", "YES")
+        answer_screening(data, "amount", "12000,50")
+    update, context, pipeline, _ = runtime_context(data, "case:v2:back")
+    before = dict(data["safetyScreening"])
+    previous_revision = data[bot.DRAFT_REVISION_KEY]
+    assert asyncio.run(bot._persist_transition(bot.back_v2_draft, update, context)) == (
+        bot.WizardState.SAFETY
+    )
+    assert pipeline.steps == ["save"]
+    assert data[bot.DRAFT_REVISION_KEY] == previous_revision + 1
+    assert data["safetyScreening"] != before
+    assert "amount" not in data["safetyScreening"]
+    assert ("moneyRequested" in data["safetyScreening"]) is with_amount
+    draft_id = data[bot.DRAFT_ID_KEY]
+    context.user_data.clear()
+    update.callback_query = FakeQuery(f"case:draft:{draft_id}")
+    assert asyncio.run(bot.resume_intake_draft(update, context)) == bot.WizardState.SAFETY
+    restored = context.user_data[bot.WIZARD_DATA_KEY]
+    assert restored[bot.DRAFT_REVISION_KEY] == previous_revision + 1
+    assert restored["safetyScreening"] == pipeline.saved_draft["draftData"]["safetyScreening"]
+    assert screening_question(restored)[0] == ("amount" if with_amount else "moneyRequested")
+
+
+@pytest.mark.parametrize("character", ["x", "🦷"])
+def test_maximum_valid_summary_is_paginated_without_telegram_size_failure(character):
+    class BoundedMessage(FakeMessage):
+        async def reply_text(self, text, **kwargs):
+            assert len(text.encode("utf-16-le")) // 2 <= 4096, (
+                "Telegram would reject this valid case summary"
+            )
+            await super().reply_text(text, **kwargs)
+
+    data = completed_data()
+    data["affectedServices"] = [f"Synthetic service {i} " + character * 475 for i in range(5)]
+    data["eventSummary"] = "Synthetic event " + character * 1484
+    update, _, _, _ = runtime_context(data, "case:v2:summary:confirm")
+    update.effective_message = BoundedMessage()
+    asyncio.run(bot._prompt_v2_draft(update, bot.WizardState.SUMMARY, data))
+    assert len(update.effective_message.text_replies) >= 2
+    assert all(
+        service in "".join(update.effective_message.text_replies)
+        for service in data["affectedServices"]
+    )

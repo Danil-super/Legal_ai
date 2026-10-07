@@ -37,3 +37,9 @@ external provider, storage table, personal-data category or patient auto-send.
 Tests cover exact JSON validation, monetary boundaries, all risk levels, unknowns,
 conflicts, candidate hashes, old-version noninterference, durable UI transitions,
 and the analysis worker/report path. Human review remains a deployment prerequisite.
+
+Review hardening: reopening a factual question uses copy-on-write so the durable
+gateway records a new revision even when the overall SAFETY state is unchanged.
+Equivalent legacy NO/new reported YES confirmations block full clearance while
+preserving urgent routing. Large valid summaries are paginated within Telegram's
+UTF-16 text bound without truncating the confirmed facts.

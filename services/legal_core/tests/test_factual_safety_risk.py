@@ -139,3 +139,23 @@ def test_different_independently_confirmed_monetary_amounts_require_correction()
     final = evaluate_risk(data, policy=policy(), evidence_verified=True)
     assert final.level is RiskLevel.UNAVAILABLE
     assert final.reason_codes == ("FACTUAL_SAFETY_SCREENING_CONFLICT",)
+
+
+@pytest.mark.parametrize(
+    ("legacy_key", "field"),
+    [
+        (FactKey.HOSPITALIZATION, "hospitalizationReported"),
+        (FactKey.REGULATOR_OR_COURT, "authorityOrCourtDocumentReceived"),
+        (FactKey.LAWYER_CONTACT, "representativeContact"),
+    ],
+)
+def test_prior_explicit_negative_and_new_positive_do_not_clear_a_confirmation_conflict(
+    legacy_key,
+    field,
+):
+    data = facts(**{field: "YES"})
+    data[legacy_key] = "NO"
+    assert evaluate_early_triage(data, policy=policy()) is not None
+    final = evaluate_risk(data, policy=policy(), evidence_verified=True)
+    assert final.level is RiskLevel.UNAVAILABLE
+    assert final.reason_codes == ("FACTUAL_SAFETY_SCREENING_CONFLICT",)
