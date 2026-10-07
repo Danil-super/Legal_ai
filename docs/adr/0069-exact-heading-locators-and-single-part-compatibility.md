@@ -33,7 +33,7 @@ idempotent and old revisions remain intact.
 
 The private generator also writes `candidate-scopes.json`, version
 `dental-preparation-scopes.candidates.v1`, before its import manifest. It records
-both persisted and parser part keys, raw/normalized checksums, source byte
+raw/normalized checksums, persisted and parser part identifiers, source byte
 locator, Unicode-codepoint text offsets, scoped hashes and explicit candidate
 blockers. The sidecar is not an importable approval artifact or completeness
 attestation. Importable cards stay `PARTIAL`, with no persisted verified part
