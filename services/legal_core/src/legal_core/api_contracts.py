@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import Field, field_validator, model_validator
 
 from legal_core.contracts import CaseStatus, ContractModel, FactKey, MissingFact
+from legal_core.factual_safety_intake import FactualSafetyScreening
 from legal_core.material_preparation import MaterialGroup, MaterialKind, PreparedPart
 from legal_core.review_material_groups import ReviewGroup
 
@@ -676,6 +677,7 @@ class FactInput(ContractModel):
         "ENUM",
         "ENUM_SET",
         "DOCUMENT_INVENTORY",
+        "JSON",
     ] = Field(alias="valueType")
     value: dict[str, Any]
     source_type: Literal["USER_STATEMENT"] = Field(alias="sourceType")
@@ -767,6 +769,9 @@ class FactInput(ContractModel):
                 raise ValueError("DEMAND_AMOUNT requires a positive integer number of kopecks")
             if self.value["currency"] != "RUB":
                 raise ValueError("DEMAND_AMOUNT currency must be RUB")
+        elif self.fact_key == FactKey.FACTUAL_SAFETY_SCREENING:
+            expected_type = "JSON"
+            FactualSafetyScreening.model_validate(self.value)
         elif self.fact_key == FactKey.CLINIC_DOCUMENTS:
             expected_type = "DOCUMENT_INVENTORY"
             if not 1 <= len(self.value) <= len(_DOCUMENT_KEYS):
