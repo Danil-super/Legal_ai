@@ -448,6 +448,13 @@ def test_binding_is_exact_immutable_idempotent_and_never_approves(tmp_path: Path
                 assert await session.scalar(text(
                     "SELECT count(*) FROM production_legal_fragments WHERE version_id=:id"
                 ), {"id": version_id}) == 0
+                for statement in (
+                    "UPDATE legal_review_materials SET title='Forged receipt' WHERE id=:id",
+                    "UPDATE legal_review_materials SET kind='CLINICAL_REFERENCE' WHERE id=:id",
+                ):
+                    with pytest.raises(DBAPIError):
+                        async with session.begin_nested():
+                            await session.execute(text(statement), {"id": material_id})
                 with pytest.raises(DBAPIError):
                     async with session.begin_nested():
                         await session.execute(text(

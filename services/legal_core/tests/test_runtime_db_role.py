@@ -64,6 +64,24 @@ def test_runtime_database_identity_is_not_privileged() -> None:
                     "runtime_can_execute_guard": True,
                 }
 
+                receipt_access = (
+                    await connection.execute(text(
+                        "SELECT "
+                        "has_table_privilege(current_user, 'public.legal_review_materials', "
+                        "'SELECT') AS can_select, "
+                        "has_table_privilege(current_user, 'public.legal_review_materials', "
+                        "'INSERT') AS can_insert, "
+                        "has_table_privilege(current_user, 'public.legal_review_materials', "
+                        "'UPDATE') AS can_update, "
+                        "has_table_privilege(current_user, 'public.legal_review_materials', "
+                        "'DELETE') AS can_delete"
+                    ))
+                ).mappings().one()
+                assert receipt_access == {
+                    "can_select": True, "can_insert": True,
+                    "can_update": True, "can_delete": False,
+                }
+
                 evaluation_review_access = (
                     await connection.execute(
                         text(

@@ -11,6 +11,21 @@ loader creates guarded, non-approved versions, but checksum-only matching can
 mistakenly make one prepared part look like a complete bundle. The editor also
 needs to see which original and preparation revision each version came from.
 
+The receipt's hash/size checks did not protect metadata such as its title or
+`kind`: changing those after binding would rewrite what the group-review screen
+appears to show. From this migration onward, a row-level guard rejects receipt
+UPDATE/DELETE even for the table owner. Runtime provisioning revokes DELETE but
+retains UPDATE privilege because [PostgreSQL SELECT](https://www.postgresql.org/docs/16/sql-select.html)
+requires it for the existing
+`SELECT ... FOR UPDATE/SHARE` locks that serialize preparations and reference
+review; the trigger still rejects every attempted UPDATE. A SECURITY DEFINER lock
+API was rejected as a larger privileged surface with no stronger write barrier.
+Legitimate package retries compare the stored receipt and reuse its ID without
+rewriting it. Corrections require a new receipt or append-only preparation
+revision; legal review decisions remain in
+their separate audit ledgers. Downgrading the migration would remove this guard,
+so production rollback must not silently re-enable mutation of audit receipts.
+
 ## Decision
 
 Add an append-only `legal_prepared_part_versions` edge from a specific preparation

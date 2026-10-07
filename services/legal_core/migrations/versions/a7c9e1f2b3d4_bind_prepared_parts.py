@@ -16,6 +16,19 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.execute("""
+        CREATE FUNCTION public.guard_legal_review_material_receipt() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'legal review material receipts are immutable';
+          RETURN NULL;
+        END;
+        $$;
+        REVOKE ALL ON FUNCTION public.guard_legal_review_material_receipt() FROM PUBLIC;
+        CREATE TRIGGER legal_review_materials_immutable
+          BEFORE UPDATE OR DELETE ON public.legal_review_materials
+          FOR EACH ROW EXECUTE FUNCTION public.guard_legal_review_material_receipt();
+    """)
     op.create_table(
         "legal_prepared_part_versions",
         sa.Column("id", sa.Uuid(), primary_key=True,
@@ -207,3 +220,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("legal_prepared_part_versions")
     op.execute("DROP FUNCTION public.guard_prepared_part_version()")
+    op.execute("DROP TRIGGER legal_review_materials_immutable ON public.legal_review_materials")
+    op.execute("DROP FUNCTION public.guard_legal_review_material_receipt()")
