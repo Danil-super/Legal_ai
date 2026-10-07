@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import os
+import secrets
 import stat
 import sys
 from collections import Counter
@@ -729,16 +730,58 @@ def _write_private_matrix(path: Path, matrix: PackageEvidenceMatrix) -> None:
         payload = (matrix.model_dump_json(indent=2) + "\n").encode()
         if len(payload) > 2_000_000:
             raise ValueError("matrix exceeds size limit")
-        fd = os.open(
-            path.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent_fd
-        )
+        temp_name = f".package-evidence-{secrets.token_hex(16)}.tmp"
+        temp_exists = False
+        linked = False
+        file_info: os.stat_result | None = None
         try:
-            with os.fdopen(fd, "wb", closefd=False) as stream:
-                stream.write(payload)
-                stream.flush()
-                os.fsync(fd)
+            fd = os.open(
+                temp_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=parent_fd,
+            )
+            temp_exists = True
+            try:
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "wb", closefd=False) as stream:
+                    remaining = memoryview(payload)
+                    while remaining:
+                        written = stream.write(remaining)
+                        if written is None or written <= 0:
+                            raise OSError("private matrix write made no progress")
+                        remaining = remaining[written:]
+                    stream.flush()
+                    os.fsync(fd)
+                file_info = os.fstat(fd)
+            finally:
+                os.close(fd)
+            os.link(
+                temp_name,
+                path.name,
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+            linked = True
+            os.unlink(temp_name, dir_fd=parent_fd)
+            temp_exists = False
+            os.fsync(parent_fd)
+            linked = False
         finally:
-            os.close(fd)
+            if linked and file_info is not None:
+                try:
+                    target_info = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    if (target_info.st_dev, target_info.st_ino) == (
+                        file_info.st_dev,
+                        file_info.st_ino,
+                    ):
+                        os.unlink(path.name, dir_fd=parent_fd)
+            if temp_exists:
+                os.unlink(temp_name, dir_fd=parent_fd)
     finally:
         os.close(parent_fd)
 

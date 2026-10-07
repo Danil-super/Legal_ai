@@ -35,8 +35,11 @@ The matrix exposes existing candidate public-law metadata and exact preparation
 locators for human verification, plus explicit blockers. It does not infer
 unknown fields, certify their provenance, compare old editions, or approve
 anything. Corpus versions and exact binding IDs remain separate from incoming
-originals. Output is an owned `0600` file in a private directory, created
-with exclusive/no-follow flags; CLI stdout stays empty and errors contain no
+originals. Output is an owned `0600` file in a private directory, written and
+synced under an exclusive random temporary name, published through a same-dir
+no-replace hard link, then directory-synced. Failed writes remove the temporary
+file and leave the final path free for retry; a process crash can leave a
+private temporary file. CLI stdout stays empty and errors contain no
 candidate values. Input and output schema are documented in
 `docs/legal-review/package-evidence-contract.v1.md`.
 
@@ -61,7 +64,8 @@ APPROVED status remains exclusively with the authenticated editor API.
 
 Synthetic tests check fixed counts, unsafe input rejection, exact DB inventory,
 partial preparation blockers, exact editor-visible IDs, excluded corpus rows,
-checksum tampering, private output mode and silent CLI behavior. PostgreSQL
+checksum tampering, private output mode, write/fsync failure rollback and
+silent CLI behavior. PostgreSQL
 integration uses disposable data and checks preparation counts before/after.
 No real documents enter tests.
 The matrix alone cannot prove that all 54 parts are correctly identified or

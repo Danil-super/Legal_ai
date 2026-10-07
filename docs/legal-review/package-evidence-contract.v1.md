@@ -65,9 +65,14 @@ review or database write is performed.
 Binding IDs on visible versions report only existing exact bindings; the matrix
 does not infer a match between any corpus version and the 58 originals.
 
-The output is a private file (mode `0600`) created exclusively in an already
-owned, private directory; it is never overwritten. CLI success is silent and
-failure text is generic so candidate data cannot spill to terminal logs.
+The output is a private file (mode `0600`) published exclusively in an already
+owned, private directory; it is never overwritten. The writer first completes
+and syncs an exclusive random temporary file in that directory, then publishes
+it through a no-replace hard link and syncs the directory. A failed write or
+sync before publication leaves the target absent, so it can be retried; a
+process crash may leave a private temporary file for operator cleanup. CLI
+success is silent and failure text is generic so candidate data cannot spill
+to terminal logs.
 Do not put the file in git, CI artifacts, chat, or ordinary logs. Operators
 must inspect candidate fields for patient data before sharing the file with an
 authorized lawyer.

@@ -219,11 +219,8 @@ def test_bound_part_requires_exact_original_and_version_hash(mismatch: str) -> N
         )
 
 
-def test_private_output_rejects_symlink_parent_and_existing_target(tmp_path: Path) -> None:
-    private = tmp_path / "private"
-    private.mkdir(mode=0o700)
-    private.chmod(0o700)
-    matrix = PackageEvidenceMatrix(
+def _private_matrix() -> PackageEvidenceMatrix:
+    return PackageEvidenceMatrix(
         schema_version="package-evidence.v1",
         package_key="synthetic-package",
         input_sha256="a" * 64,
@@ -233,6 +230,13 @@ def test_private_output_rejects_symlink_parent_and_existing_target(tmp_path: Pat
         omitted_review_required_versions=[],
         snapshot_sha256="b" * 64,
     )
+
+
+def test_private_output_rejects_symlink_parent_and_existing_target(tmp_path: Path) -> None:
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    private.chmod(0o700)
+    matrix = _private_matrix()
     target = private / "matrix.json"
     sentinel = private / "sentinel.json"
     sentinel.write_text("untouched", encoding="utf-8")
@@ -240,11 +244,96 @@ def test_private_output_rejects_symlink_parent_and_existing_target(tmp_path: Pat
     with pytest.raises(FileExistsError):
         _write_private_matrix(target, matrix)
     assert sentinel.read_text(encoding="utf-8") == "untouched"
+    assert set(private.iterdir()) == {target, sentinel}
     linked_parent = tmp_path / "linked"
     linked_parent.symlink_to(private, target_is_directory=True)
     with pytest.raises(ValueError, match="non-symlink directory"):
         _write_private_matrix(linked_parent / "other.json", matrix)
     assert not (private / "other.json").exists()
+
+
+def test_private_output_failed_write_leaves_no_target_and_can_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    target = private / "matrix.json"
+    matrix = _private_matrix()
+    real_fdopen = os.fdopen
+
+    def broken_fdopen(fd, mode, *, closefd=True):
+        stream = real_fdopen(fd, mode, closefd=closefd)
+
+        class BrokenWrite:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return stream.__exit__(*args)
+
+            def write(self, data):
+                stream.write(data[:8])
+                raise OSError("forced partial write")
+
+        return BrokenWrite()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "fdopen", broken_fdopen)
+        with pytest.raises(OSError, match="forced partial write"):
+            _write_private_matrix(target, matrix)
+    assert not target.exists()
+    assert list(private.iterdir()) == []
+    _write_private_matrix(target, matrix)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert target.read_text(encoding="utf-8") == matrix.model_dump_json(indent=2) + "\n"
+
+
+def test_private_output_failed_fsync_leaves_no_target_and_can_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    target = private / "matrix.json"
+    matrix = _private_matrix()
+    real_fsync = os.fsync
+
+    def broken_fsync(fd):
+        if stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("forced file fsync")
+        return real_fsync(fd)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "fsync", broken_fsync)
+        with pytest.raises(OSError, match="forced file fsync"):
+            _write_private_matrix(target, matrix)
+    assert not target.exists()
+    assert list(private.iterdir()) == []
+    _write_private_matrix(target, matrix)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_private_output_failed_directory_fsync_rolls_back_published_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    target = private / "matrix.json"
+    matrix = _private_matrix()
+    real_fsync = os.fsync
+
+    def broken_directory_fsync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError("forced directory fsync")
+        return real_fsync(fd)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "fsync", broken_directory_fsync)
+        with pytest.raises(OSError, match="forced directory fsync"):
+            _write_private_matrix(target, matrix)
+    assert not target.exists()
+    assert list(private.iterdir()) == []
+    _write_private_matrix(target, matrix)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
 def test_postgres_matrix_reads_exact_inventory_without_text_or_writes(tmp_path: Path) -> None:
