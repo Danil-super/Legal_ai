@@ -696,6 +696,13 @@ def _install_report_analysis_button() -> None:
 def build_application_with_analysis(token: str) -> gateway_bot.TelegramApplication:
     settings = load_analysis_settings()
     application = gateway_bot.build_application(token)
+    gateway_key = gateway_bot.load_legal_editor_gateway_key()
+    if gateway_key is not None:
+        from telegram_gateway.escalation_notifications_runtime import (
+            install_escalation_notifications,
+        )
+
+        install_escalation_notifications(application, gateway_key)
     if settings is not None:
         from telegram_gateway.analysis_jobs_runtime import install_analysis_jobs
 

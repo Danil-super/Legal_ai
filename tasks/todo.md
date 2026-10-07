@@ -1,5 +1,16 @@
 # Dental Legal AI task list
 
+## Immediate lawyer alerts — authorized 2026-10-07
+
+- [x] Record already-approved all-active-lawyers direction and minimal internal contract.
+- [x] Implement independent Telegram delivery, server eligibility recheck and retries.
+- [x] Add transactional tenant-bound outbox and fenced delivery migration.
+- [x] Verify disposable PostgreSQL, auth/RLS, recovery and full project gates.
+  Evidence: 35 focused PostgreSQL tests; 1081 full local tests with 136 optional
+  DB skips; 11 gateway notification tests; Ruff, mypy and Compose passed.
+  Full Core PostgreSQL run: 565 passed, one separately enabled MinIO smoke skipped.
+- [ ] Independent review and GitHub release; production synthetic delivery check.
+
 ## Complete package preparation: discovery, 2026-09-27
 
 - [x] Owner confirmed separate normative/reference confirmation within seven groups.

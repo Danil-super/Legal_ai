@@ -36,6 +36,7 @@ from legal_core.clinic_document_store import (
 from legal_core.clinic_documents_api import create_clinic_documents_router
 from legal_core.database import create_engine, create_session_factory
 from legal_core.draft_retention import purge_expired_intake_drafts
+from legal_core.escalation_notifications import create_escalation_notifications_router
 from legal_core.legal_api import create_legal_router
 from legal_core.reference_evaluation_api import create_reference_evaluation_router
 from legal_core.reference_evaluation_retention import purge_expired_reference_evaluations
@@ -274,6 +275,7 @@ def create_app(
     app.include_router(create_clinic_document_library_router(sessions))
     app.include_router(create_analysis_router(sessions))
     app.include_router(create_analysis_jobs_router(sessions))
+    app.include_router(create_escalation_notifications_router(sessions))
     app.include_router(create_analysis_diagnostics_router(sessions))
 
     return app
