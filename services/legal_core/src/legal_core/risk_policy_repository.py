@@ -37,6 +37,8 @@ class ApprovedRiskPolicyRepository:
 
         payload = row.policy_json
         guided = payload.get("schemaVersion") == "risk-policy.v3"
+        if row.version == 3 and not guided:
+            raise ValueError("version 3 requires the explicit guided-v2 risk contract")
         early = payload.get("schemaVersion") in {"risk-policy.v2", "risk-policy.v3"}
         expected = {"schemaVersion", "highDemandThresholdKopecks"}
         if early:

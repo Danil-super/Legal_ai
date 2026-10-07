@@ -207,6 +207,18 @@ def test_repository_rejects_v3_schema_on_a_historical_policy_version_or_tampered
         load_policy(v3_payload(), digest="0" * 64)
 
 
+@pytest.mark.parametrize("early_triage", [False, True])
+def test_repository_cannot_load_version_three_as_a_legacy_contract(early_triage: bool) -> None:
+    payload = {
+        "schemaVersion": "risk-policy.v2" if early_triage else "risk-policy.v1",
+        "highDemandThresholdKopecks": 5_000_000,
+    }
+    if early_triage:
+        payload["earlyTriageEnabled"] = True
+    with pytest.raises(ValueError, match="version 3 requires"):
+        load_policy(payload)
+
+
 def test_v3_missing_fact_reason_selects_the_existing_question_contract() -> None:
     from legal_core.risk_engine import risk_missing_facts
 
