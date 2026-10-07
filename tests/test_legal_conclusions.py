@@ -41,9 +41,9 @@ def _conclusion(**changes):
     return LegalConclusion(**data)
 
 
-def _report(level=RiskLevel.LOW, conclusions=None, evidence=None, verification=None):
+def _report(level=RiskLevel.LOW, conclusions=None, evidence=None, verification=None, actions=None):
     conclusions = [_conclusion()] if conclusions is None else conclusions
-    cited_id = conclusions[0].evidence_fragment_ids[0]
+    cited_id = conclusions[0].evidence_fragment_ids[0] if conclusions else FRAGMENT
     if verification is None:
         verification = VerificationDecision(claims=(
             VerifiedClaim("action-1", VerificationResult.VERIFIED, None, (cited_id,)),
@@ -64,7 +64,9 @@ def _report(level=RiskLevel.LOW, conclusions=None, evidence=None, verification=N
         evidence=evidence if evidence is not None else [_fragment()],
         verification=verification,
         clinic_document_context_trace_sha256="e" * 64, clinic_document_context=[],
-        verified_action_items=["Синтетическое проверенное действие."],
+        verified_action_items=(
+            ["Синтетическое проверенное действие."] if actions is None else actions
+        ),
         verified_legal_conclusions=conclusions,
     )
 
@@ -274,6 +276,35 @@ def test_telegram_runtime_delivers_all_conclusions_and_sources_without_truncatio
     assert "Основание: [1]." in text
     assert "[1] Синтетический источник" in text
     assert "Автоматическая отправка пациенту отключена." in text
+
+
+def test_telegram_action_only_report_keeps_all_seven_verified_sources_across_messages():
+    from telegram_gateway.analysis_runtime import telegram_analysis_messages
+
+    fragment_ids = [UUID(int=value) for value in range(10, 17)]
+    evidence = [_fragment(fragment_id) for fragment_id in fragment_ids]
+    for index, fragment in enumerate(evidence, start=1):
+        fragment.document_title = f"Синтетический источник {index}"
+    verification = VerificationDecision(claims=tuple(
+        VerifiedClaim(f"action-{index}", VerificationResult.VERIFIED, None, (fragment_id,))
+        for index, fragment_id in enumerate(fragment_ids, start=1)
+    ))
+    report = _report(
+        conclusions=[], evidence=evidence, verification=verification,
+        actions=["Синтетическое действие " + "а" * 450 for _ in fragment_ids],
+    )
+    payload = {"analysisAllowed": True, "riskLevel": "LOW", "escalationRequired": False,
+               "report": {"reportJson": report.model_dump(mode="json", by_alias=True)}}
+
+    messages = telegram_analysis_messages(payload)
+    combined = "".join(messages)
+
+    assert len(messages) > 1
+    assert all(len(message.encode("utf-16-le")) // 2 <= 4_000 for message in messages)
+    assert [source.fragment_id for source in report.legal_basis.sources] == fragment_ids
+    for index in range(1, 8):
+        assert f"[{index}] Синтетический источник {index}" in combined
+    assert "Автоматическая отправка пациенту отключена." in combined
 
 
 def test_telegram_runtime_does_not_publish_conclusions_for_blocked_analysis_or_handoff():

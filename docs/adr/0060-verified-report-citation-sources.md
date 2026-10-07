@@ -20,6 +20,11 @@ resolve to a unique retrieved fragment effective on the case date; absent, dupli
 or unverified citations fail closed. A published legal conclusion must match a verified claim
 and its exact verified citation set.
 
+Telegram renders every source card in that canonical READY list, including ACTION-only results;
+the former six-source display cap is removed. Existing UTF-16-aware message splitting handles
+long cards without silently losing the later source numbers. The separate de-identified lawyer
+handoff remains a deliberately brief summary, not the completed report.
+
 The complete retrieval trace hash remains unchanged for audit and freshness checks. This
 decision changes only the visible source cards of newly created completed reports. It does
 not alter approved-only or date-aware retrieval, risk policy, tenant scope, model prompts,
