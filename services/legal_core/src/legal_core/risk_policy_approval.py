@@ -40,6 +40,8 @@ class RiskPolicyApproval(BaseModel):
 
     @model_validator(mode="after")
     def require_explicit_review(self) -> RiskPolicyApproval:
+        if self.version == 3 and not self.guided_v2_explicit_signals_enabled:
+            raise ValueError("version 3 requires the explicit guided-v2 risk contract")
         if self.early_triage_enabled and self.version < 2:
             raise ValueError("early triage requires a new policy version >= 2")
         if self.guided_v2_explicit_signals_enabled and not (

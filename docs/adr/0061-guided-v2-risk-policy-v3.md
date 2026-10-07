@@ -33,6 +33,8 @@ matching prior approval event. Any mismatch rolls the transaction back. The
 existing database guards and unique active-policy invariant preserve immutable
 history. No new table or migration is needed. The CLI also runs both the existing
 synthetic compatibility gate and the new guided-v2 gate before touching the DB.
+The approval validator reserves version 3 for this exact contract: selecting
+version 3 with a legacy v1/v2 payload cannot bypass the direct predecessor gate.
 
 This supersedes the v1-to-v2 activation sequence in ADR 0024; its historical
 decisions and v1/v2 payloads/outcomes remain unchanged. Deploying this code does

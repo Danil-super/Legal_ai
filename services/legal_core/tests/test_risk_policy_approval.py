@@ -84,6 +84,19 @@ def test_v3_approval_rejects_unreviewed_or_different_transition(overrides) -> No
         _v3_approval(**overrides)
 
 
+@pytest.mark.parametrize("early_triage", [False, True])
+def test_version_three_cannot_bypass_its_direct_transition_with_a_legacy_payload(
+    early_triage: bool,
+) -> None:
+    with pytest.raises(ValidationError, match="version 3 requires"):
+        _approval(
+            version=3,
+            high_demand_threshold_kopecks=5_000_000,
+            early_triage_enabled=early_triage,
+            supersede_approved=True,
+        )
+
+
 def test_policy_approval_allows_a_reviewed_nonbaseline_threshold_before_database_access() -> None:
     class UnusedSessionFactory:
         def __call__(self):
