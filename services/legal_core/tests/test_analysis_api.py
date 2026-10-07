@@ -125,6 +125,41 @@ def test_exact_primary_date_does_not_require_lower_priority_dates() -> None:
     }) == date(2026, 9, 1)
 
 
+def test_guided_v2_analysis_uses_exact_event_date_not_legacy_fields() -> None:
+    facts = {
+        FactKey.INTAKE_VERSION: "GUIDED_V2",
+        FactKey.EVENT_DATE: {"precision": "EXACT", "date": "2026-09-01"},
+    }
+
+    assert _analysis_date(facts) == date(2026, 9, 1)
+
+
+def test_guided_v2_never_falls_back_to_legacy_date_when_event_is_approximate() -> None:
+    facts = {
+        FactKey.INTAKE_VERSION: "GUIDED_V2",
+        FactKey.EVENT_DATE: {"precision": "APPROXIMATE", "date": "2026-09-01"},
+        FactKey.CLAIM_DATE: {"precision": "EXACT", "date": "2026-09-02"},
+    }
+
+    with pytest.raises(ApiError) as raised:
+        _analysis_date(facts)
+    assert raised.value.code == "ANALYSIS_DATE_UNCERTAIN"
+    assert raised.value.details["factKey"] == "EVENT_DATE"
+
+
+def test_guided_v2_unknown_event_date_reports_only_the_guided_date() -> None:
+    facts = {
+        FactKey.INTAKE_VERSION: "GUIDED_V2",
+        FactKey.EVENT_DATE: {"precision": "UNKNOWN", "date": None},
+        FactKey.CLAIM_DATE: {"precision": "EXACT", "date": "2026-09-02"},
+    }
+
+    with pytest.raises(ApiError) as raised:
+        _analysis_date(facts)
+    assert raised.value.code == "ANALYSIS_DATE_UNCERTAIN"
+    assert raised.value.details["missingFactKeys"] == ["EVENT_DATE"]
+
+
 def test_completed_case_is_rejected_before_agent_reasoning_can_start() -> None:
     case = SimpleNamespace(
         closed_at=datetime(2026, 9, 8, tzinfo=UTC),

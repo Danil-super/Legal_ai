@@ -6,7 +6,7 @@ import logging
 import os
 import re
 from collections.abc import Callable, Coroutine, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import IntEnum
 from io import BytesIO
 from pathlib import Path, PurePosixPath
@@ -90,6 +90,7 @@ WIZARD_DATA_KEY = "case_wizard"
 DRAFT_ID_KEY = "draft_id"
 DRAFT_REVISION_KEY = "draft_revision"
 DRAFT_STATE_KEY = "draft_state"
+DATE_CLARIFICATION_KEY = "case_date_clarification"
 ADMIN_GRANT_ACCESS_KEY = "admin_grant_access"
 ADMIN_GRANT_PILOT_KEY = "admin_grant_pilot"
 TEAM_MEMBER_ROLE_KEY = "team_member_role"
@@ -826,8 +827,8 @@ async def _prompt_v2_draft(
         await _reply(
             update,
             "3/7. Когда это произошло? Укажите точную дату ГГГГ-ММ-ДД или ДД.ММ.ГГГГ. "
-            "Если даты пока нет, можно написать «неизвестно», но для анализа её "
-            "потребуется уточнить.",
+            "Если точная дата пока неизвестна, /cancel сохранит черновик: "
+            "для анализа дату потребуется уточнить.",
             reply_markup=_v2_keyboard([]),
         )
     elif state is WizardState.CHRONOLOGY:
@@ -987,7 +988,13 @@ async def v2_material_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def confirm_v2_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if await _answer_callback(update) != "case:v2:summary:confirm":
         return WizardState.SUMMARY
-    await _prompt_v2_draft(update, WizardState.V2_CONFIRM, _wizard_data(context))
+    data = _wizard_data(context)
+    missing = _v2_state(v2_next_missing_state(data))
+    if missing is not WizardState.SUMMARY:
+        await _reply(update, "Перед подтверждением уточните недостающие сведения.")
+        await _prompt_v2_draft(update, missing, data)
+        return missing
+    await _prompt_v2_draft(update, WizardState.V2_CONFIRM, data)
     return WizardState.V2_CONFIRM
 
 
@@ -1175,6 +1182,44 @@ def confirm_keyboard(workflow_id: UUID) -> InlineKeyboardMarkup:
     return _keyboard([[("✅ Сформировать отчёт", callback), ("❌ Отменить", "case:cancel")]])
 
 
+_LEGACY_ANALYSIS_DATE_FIELDS = ("claim_date", "incident_date", "service_date")
+_DATE_QUESTION_LABELS = {
+    "claim_date": "первого обращения пациента",
+    "incident_date": "проблемной ситуации",
+    "service_date": "оказания услуги",
+}
+
+
+def _date_precision(value: object) -> str | None:
+    raw: object
+    precision: object
+    if isinstance(value, str):
+        raw, precision = value, "EXACT"
+    elif isinstance(value, dict):
+        raw, precision = value.get("date"), value.get("precision")
+    else:
+        return None
+    if not isinstance(raw, str) or precision not in {"EXACT", "APPROXIMATE"}:
+        return None
+    try:
+        date.fromisoformat(raw)
+    except ValueError:
+        return None
+    return precision
+
+
+def _dates_needing_clarification(data: dict[str, Any]) -> tuple[str, ...]:
+    if _is_v2_draft(data):
+        return () if _date_precision(data.get("eventDate")) == "EXACT" else ("eventDate",)
+    for field in _LEGACY_ANALYSIS_DATE_FIELDS:
+        precision = _date_precision(data.get(field))
+        if precision == "EXACT":
+            return ()
+        if precision == "APPROXIMATE":
+            return (field,)
+    return _LEGACY_ANALYSIS_DATE_FIELDS
+
+
 def _user_data(context: ContextTypes.DEFAULT_TYPE) -> dict[Any, Any]:
     data = context.user_data
     if data is None:
@@ -1192,7 +1237,9 @@ def _wizard_data(context: ContextTypes.DEFAULT_TYPE) -> dict[str, Any]:
 
 
 def _clear_wizard(context: ContextTypes.DEFAULT_TYPE) -> None:
-    _user_data(context).pop(WIZARD_DATA_KEY, None)
+    user_data = _user_data(context)
+    user_data.pop(WIZARD_DATA_KEY, None)
+    user_data.pop(DATE_CLARIFICATION_KEY, None)
 
 
 def _draft_payload(data: dict[str, Any]) -> dict[str, Any]:
@@ -1745,6 +1792,24 @@ async def _record_date(
             f"Нужна существующая дата{qualifier}: ГГГГ-ММ-ДД, либо «неизвестно».",
         )
         return current
+    user_data = _user_data(context)
+    if user_data.get(DATE_CLARIFICATION_KEY) == field:
+        if value["precision"] != "EXACT":
+            await _reply(
+                update,
+                "Для подбора применимой редакции нужна точная дата. "
+                "Если её пока нет, /cancel сохранит черновик.",
+            )
+            return current
+        _wizard_data(context)[field] = value
+        user_data.pop(DATE_CLARIFICATION_KEY, None)
+        await _reply(
+            update,
+            f"Дата {_DATE_QUESTION_LABELS[field]}: {value['date']}. "
+            "Остальные сведения не изменены. Сформировать внутренний отчёт?",
+            reply_markup=confirm_keyboard(UUID(str(_wizard_data(context)["workflow_id"]))),
+        )
+        return WizardState.CONFIRM
     _wizard_data(context)[field] = value
     await _reply(update, prompt)
     return following
@@ -2247,6 +2312,28 @@ async def resume_workflow(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await _reply(update, "⚠️ Не удалось получить отчёт. Попробуйте ещё раз.")
 
 
+async def choose_case_date_to_clarify(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    callback = await _answer_callback(update)
+    data = _wizard_data(context)
+    field = "" if callback is None else callback.removeprefix("case:clarify-date:")
+    if field not in _dates_needing_clarification(data) or field not in _DATE_QUESTION_LABELS:
+        return WizardState.CONFIRM
+    _user_data(context)[DATE_CLARIFICATION_KEY] = field
+    state = {
+        "claim_date": WizardState.CLAIM_DATE,
+        "incident_date": WizardState.INCIDENT_DATE,
+        "service_date": WizardState.SERVICE_DATE,
+    }[field]
+    await _reply(
+        update,
+        f"Уточните точную дату {_DATE_QUESTION_LABELS[field]}: ГГГГ-ММ-ДД. "
+        "Если даты пока нет, /cancel сохранит черновик.",
+    )
+    return state
+
+
 async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     callback = await _answer_callback(update)
     if callback == "case:cancel":
@@ -2263,6 +2350,27 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         workflow_id = UUID(callback.removeprefix("case:confirm:"))
         if workflow_id != UUID(str(data["workflow_id"])):
             raise ValueError("workflow callback does not match active conversation")
+        date_questions = _dates_needing_clarification(data)
+        if date_questions:
+            if _is_v2_draft(data):
+                await _reply(
+                    update,
+                    "До подтверждения кейса нужна точная дата события. Черновик сохранён.",
+                )
+                await _prompt_v2_draft(update, WizardState.EVENT_DATE, data)
+                return WizardState.EVENT_DATE
+            rows = [
+                [(f"📅 Дата {_DATE_QUESTION_LABELS[field]}", f"case:clarify-date:{field}")]
+                for field in date_questions
+            ]
+            rows.append([("💾 Сохранить черновик", "case:cancel")])
+            await _reply(
+                update,
+                "Для анализа нужна точная дата. Выберите, какую можете уточнить. "
+                "До этого кейс не будет подтверждён; черновик сохранён.",
+                reply_markup=_keyboard(rows),
+            )
+            return WizardState.CONFIRM
         client = _legal_core(context)
         if _is_v2_draft(data):
             facts = facts_from_v2_data(_draft_payload(data))
@@ -2294,7 +2402,7 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             update,
             "⚠️ Отчёт пока не сформирован. Нажмите «Сформировать отчёт» ещё раз или /cancel.",
         )
-        return WizardState.CONFIRM
+        return WizardState.V2_CONFIRM if _is_v2_draft(data) else WizardState.CONFIRM
 
     try:
         await client.archive_intake_draft(
@@ -2596,7 +2704,7 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
                 ],
                 WizardState.V2_CONFIRM: [
                     CallbackQueryHandler(
-                        confirm_case,
+                        _persisted(confirm_case),
                         pattern=(
                             r"^(case:cancel|case:confirm:"
                             r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
@@ -2696,13 +2804,17 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
                 ],
                 WizardState.CONFIRM: [
                     CallbackQueryHandler(
-                        confirm_case,
+                        _persisted(confirm_case),
                         pattern=(
                             r"^(case:cancel|case:confirm:"
                             r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
                             r"[0-9a-f]{4}-[0-9a-f]{12})$"
                         ),
-                    )
+                    ),
+                    CallbackQueryHandler(
+                        _persisted(choose_case_date_to_clarify),
+                        pattern=r"^case:clarify-date:(claim_date|incident_date|service_date)$",
+                    ),
                 ],
                 ConversationHandler.TIMEOUT: [
                     MessageHandler(filters.ALL, timeout_case),

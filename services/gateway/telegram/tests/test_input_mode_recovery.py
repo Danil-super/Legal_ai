@@ -175,6 +175,10 @@ def test_delivery_failure_keeps_confirmation_retryable_without_archiving_draft(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = context_with_draft(bot.WizardState.CONFIRM)
+    context.user_data[bot.WIZARD_DATA_KEY]["service_date"] = {
+        "date": "2026-08-25",
+        "precision": "EXACT",
+    }
     client = context.bot_data[bot.LEGAL_CORE_CLIENT_KEY]
     client.submit_workflow = AsyncMock(return_value={})
     client.archive_intake_draft = AsyncMock()

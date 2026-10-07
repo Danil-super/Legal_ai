@@ -123,11 +123,12 @@ def _exact_date(value: object) -> date | None:
 
 
 def _analysis_date(facts: dict[FactKey, object]) -> date:
-    for key in (
-        FactKey.CLAIM_DATE,
-        FactKey.INCIDENT_DATE,
-        FactKey.SERVICE_DATE,
-    ):
+    candidate_keys = (
+        (FactKey.EVENT_DATE,)
+        if facts.get(FactKey.INTAKE_VERSION) == "GUIDED_V2"
+        else (FactKey.CLAIM_DATE, FactKey.INCIDENT_DATE, FactKey.SERVICE_DATE)
+    )
+    for key in candidate_keys:
         value = facts.get(key)
         resolved = _exact_date(value)
         if resolved is not None:
@@ -145,13 +146,7 @@ def _analysis_date(facts: dict[FactKey, object]) -> date:
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         code="ANALYSIS_DATE_UNCERTAIN",
         message="An exact case date is required to select the applicable legal version",
-        details={
-            "missingFactKeys": [
-                FactKey.CLAIM_DATE.value,
-                FactKey.INCIDENT_DATE.value,
-                FactKey.SERVICE_DATE.value,
-            ]
-        },
+        details={"missingFactKeys": [key.value for key in candidate_keys]},
     )
 
 

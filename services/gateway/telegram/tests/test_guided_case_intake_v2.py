@@ -1,6 +1,13 @@
 # ruff: noqa: RUF001
 """Synthetic, deterministic checks for the owner-approved v2 intake language."""
 
+from datetime import date
+
+from legal_core.analysis_api import _analysis_date
+from legal_core.api_contracts import FactInput
+from legal_core.case_api import _input_value
+from legal_core.intake import missing_facts_for
+from telegram_gateway.case_wizard import facts_from_v2_data
 from telegram_gateway.guided_case_intake_v2 import (
     V2_CONFIRM,
     V2_EVENT_DATE,
@@ -44,6 +51,17 @@ def test_unknown_event_date_remains_a_targeted_follow_up() -> None:
     data["eventDate"] = {"date": None, "precision": "UNKNOWN"}
 
     assert next_missing_state(data) == V2_EVENT_DATE
+
+
+def test_v2_wizard_facts_reach_legal_core_analysis_date_selection() -> None:
+    mapped = [FactInput.model_validate(item) for item in facts_from_v2_data(_base_data())]
+    domain_facts = {
+        item.fact_key: _input_value(item.value_type, item.value)
+        for item in mapped
+    }
+
+    assert missing_facts_for(domain_facts) == []
+    assert _analysis_date(domain_facts) == date(2026, 9, 1)
 
 
 def test_summary_uses_plain_language_and_preserves_unknown_not_negative() -> None:

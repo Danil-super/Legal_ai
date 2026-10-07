@@ -1036,6 +1036,57 @@ def test_workflow_uuid_cannot_be_reused_for_changed_facts() -> None:
     assert count_workflow_resources(admin)[1:] == (1, len(facts), 1)
 
 
+def test_guided_v2_workflow_reaches_analysis_after_exact_event_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from telegram_gateway.case_wizard import facts_from_v2_data
+
+    administrator = 7_250_000_001 + uuid4().int % 100_000_000
+    seed_admin(administrator)
+    internal_key = "synthetic-analysis-internal-key-1234567890"
+    monkeypatch.setenv("AGENT_INTERNAL_KEY", internal_key)
+    payload = {
+        "intakeSchemaVersion": "dental-case-intake.v2",
+        "locale": "ru-RU",
+        "facts": facts_from_v2_data({
+            "intakeVersion": 2,
+            "incomingKind": "COMPLAINT",
+            "incomingSourceStatus": "NOT_ATTACHED",
+            "situationAreas": ["TREATMENT"],
+            "affectedServices": ["терапевтическое лечение"],
+            "eventSummary": "После лечения пациент сообщил о дискомфорте.",
+            "eventDate": {"date": "2026-09-01", "precision": "EXACT"},
+            "conflictStage": "FIRST",
+            "clinicActions": ["INVITED_FOR_EXAMINATION"],
+            "healthSignals": ["NO_KNOWN_INFORMATION"],
+            "caseMaterialsStatus": "NOT_ATTACHED",
+        }),
+    }
+
+    with application_client() as client:
+        submitted = client.post(
+            f"/v1/telegram-case-workflows/{uuid4()}/submissions",
+            headers=actor_headers(administrator),
+            json=payload,
+        )
+        assert submitted.status_code == 201
+        case_id = submitted.json()["case"]["id"]
+        analysis = client.get(
+            f"/v1/cases/{case_id}/analysis-context",
+            headers={
+                **actor_headers(administrator),
+                "X-Agent-Internal-Key": internal_key,
+            },
+        )
+
+    # The disposable test database has no approved corpus; the date must not be the blocker.
+    assert analysis.status_code == 409
+    assert analysis.json()["error"]["code"] in {
+        "RISK_POLICY_NOT_READY",
+        "LEGAL_EVIDENCE_UNAVAILABLE",
+    }
+
+
 def test_telegram_workflow_rejects_semantically_invalid_facts_before_persistence() -> None:
     admin = 7_300_000_001 + uuid4().int % 100_000_000
     seed_admin(admin)
