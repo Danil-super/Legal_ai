@@ -1,6 +1,6 @@
 # ADR 0070: schema-bound checksum functions for backup recovery
 
-Status: implemented candidate; deployment requires independent review and CI.
+Status: independently reviewed candidate; deployment still requires CI.
 
 A real pre-import pg_dump failed standard single-transaction restore while loading
 `legal_material_preparations`: its checksum CHECK calls
@@ -34,5 +34,11 @@ approval or successful default restore of the old archive. Review that procedure
 check all table/schema aggregates and the unchanged archive SHA, then delete only
 the exactly created QA database. Offsite replication and MinIO recovery are separate
 unverified requirements.
+
+The 2026-10-07 controlled historical recovery passed in an application-denied QA
+database; its schema, all table counts and artifact/checksum aggregates were
+verified before exact-target cleanup. This does not change the old archive's
+default-restore failure or authorize a manual production migration. See
+[the verification record](../operations/backup-recovery-verification-2026-10-07.md).
 
 Reference: [PostgreSQL 16 pg_restore](https://www.postgresql.org/docs/16/app-pgrestore.html).
