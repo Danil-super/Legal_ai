@@ -24,7 +24,25 @@ Owner-authorised next implementation slice: SPEC-factual-safety-intake-v1.md.
 Its versioned factual envelope avoids asking the clinic to classify legal harm,
 formal claims or deadlines. The candidate risk capability and new internal
 reported-event triggers must be present in the exact LEGAL_EDITOR review payload.
-The current v3 implementation does not yet include this capability.
+The candidate now includes this explicit optional capability (ADR 0066), disabled
+unless included in the exact human-reviewed payload.
+
+- [x] F1: Exact JSON envelope and partial durable-draft validation; no invented NO.
+- [x] F2: Hash-covered factual candidate capability and separate human review flag.
+- [x] F3: Seven ordinary questions, exact RUB money, durable Back/resume and summary.
+- [x] F4: Known urgent reports can skip unanswered questions as explicit UNKNOWN;
+  both real confirmation endpoints route HIGH/CRITICAL before evidence/model work.
+- [x] F5: End-to-end LOW/MEDIUM through real Core/orchestrator/worker/verifier/report
+  and PDF using synthetic external model responses, plus PG draft/tenant tests.
+- [ ] F6: Independent review and release gates on rebased current main.
+- [ ] F7: Separate correction/new-draft workflow for already finalized cases;
+  the present implementation does not mutate or unlock their immutable snapshots.
+- [ ] F8: Human LEGAL_EDITOR activation and lawyer benchmark correctness review.
+
+Verification on the isolated feature branch: 1210 unit tests pass, 150 PG tests
+are skipped in the unit run; targeted disposable-PG factual+report tests: 9 pass.
+Ruff and strict Core mypy pass. External provider connectivity/real-law correctness
+are not claimed by these authored synthetic tests.
 
 Implementation outline:
 

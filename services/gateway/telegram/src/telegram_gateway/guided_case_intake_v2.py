@@ -18,6 +18,7 @@ from typing import Any
 from legal_core.pseudonymization import pseudonymize_text
 
 from telegram_gateway.case_wizard import parse_date_answer
+from telegram_gateway.factual_safety_intake import screening_complete, screening_summary
 from telegram_gateway.quick_intake import contains_probable_person_name
 
 V2_INCOMING = "INCOMING"
@@ -29,6 +30,7 @@ V2_CHRONOLOGY = "CHRONOLOGY"
 V2_CLINIC_ACTIONS = "CLINIC_ACTIONS"
 V2_HEALTH = "HEALTH"
 V2_MATERIALS = "MATERIALS"
+V2_SAFETY = "SAFETY"
 V2_SUMMARY = "SUMMARY"
 V2_CONFIRM = "V2_CONFIRM"
 
@@ -41,6 +43,7 @@ _BASE_STATES = (
     V2_CLINIC_ACTIONS,
     V2_HEALTH,
     V2_MATERIALS,
+    V2_SAFETY,
     V2_SUMMARY,
     V2_CONFIRM,
 )
@@ -256,6 +259,8 @@ def _input_complete(data: dict[str, Any], state: str) -> bool:
         return _valid_multi(data.get("healthSignals"), "healthSignals")
     if state == V2_MATERIALS:
         return _valid_enum(data.get("caseMaterialsStatus"), "caseMaterialsStatus")
+    if state == V2_SAFETY:
+        return screening_complete(data)
     return True
 
 
@@ -324,6 +329,7 @@ def review_blocks(data: dict[str, Any], *, final: bool = False) -> list[str]:
         "Материалы клиники: "
         + _label(data.get("caseMaterialsStatus"), "caseMaterialsStatus")
     )
+    blocks.extend(screening_summary(data))
     if data.get("eventDate") == {"date": None, "precision": "UNKNOWN"}:
         blocks.append(
             "Чтобы оценить ситуацию по датам, потребуется уточнить хотя бы ориентир времени."
@@ -333,3 +339,26 @@ def review_blocks(data: dict[str, Any], *, final: bool = False) -> list[str]:
         "Неуказанные сведения не считаются отсутствующими."
     )
     return blocks
+
+
+def review_pages(data: dict[str, Any], *, limit: int = 3900) -> list[str]:
+    """Retain the whole factual summary within Telegram's UTF-16 message bound."""
+    pages: list[str] = []
+    current: list[str] = []
+    units = 0
+    for block in review_blocks(data, final=True):
+        block_units = sum(2 if ord(character) > 0xFFFF else 1 for character in block)
+        if current and units + block_units + 2 > limit:
+            pages.append("".join(current))
+            current, units = [], 0
+        separator = "\n\n" if current else ""
+        for character in separator + block:
+            width = 2 if ord(character) > 0xFFFF else 1
+            if units + width > limit:
+                pages.append("".join(current))
+                current, units = [], 0
+            current.append(character)
+            units += width
+    if current:
+        pages.append("".join(current))
+    return pages

@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from legal_core.models import RiskPolicyVersion
+from legal_core.factual_safety_intake import SCREENING_VERSION
 from legal_core.risk_engine import RiskPolicy
 
 
@@ -37,6 +38,7 @@ class ApprovedRiskPolicyRepository:
 
         payload = row.policy_json
         guided = payload.get("schemaVersion") == "risk-policy.v3"
+        factual = guided and "factualSafetyIntakeVersion" in payload
         if row.version == 3 and not guided:
             raise ValueError("version 3 requires the explicit guided-v2 risk contract")
         early = payload.get("schemaVersion") in {"risk-policy.v2", "risk-policy.v3"}
@@ -45,6 +47,10 @@ class ApprovedRiskPolicyRepository:
             expected.add("earlyTriageEnabled")
         if guided:
             expected.add("guidedV2ExplicitSignalsEnabled")
+        if factual:
+            expected.add("factualSafetyIntakeVersion")
+            if payload["factualSafetyIntakeVersion"] != SCREENING_VERSION:
+                raise ValueError("approved factual screening capability has an unknown version")
         if set(payload) != expected:
             raise ValueError("approved risk policy has an unsupported v1 shape")
         if payload.get("schemaVersion") not in {
@@ -78,5 +84,6 @@ class ApprovedRiskPolicyRepository:
                 version=f"{row.policy_key}.v{row.version}",
                 high_demand_threshold_kopecks=threshold,
                 guided_v2_explicit_signals_enabled=guided,
+                factual_safety_intake_enabled=factual,
             ),
         )

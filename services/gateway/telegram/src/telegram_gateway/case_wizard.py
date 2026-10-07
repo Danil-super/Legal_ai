@@ -290,6 +290,11 @@ def facts_from_v2_data(data: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(affected_services, list):
             raise ValueError("treatment requires affected services")
         facts.append(_fact("AFFECTED_SERVICES", "TEXT_LIST", {"items": affected_services}))
+    if "safetyScreening" in data:
+        from legal_core.factual_safety_intake import FactualSafetyScreening
+
+        screening = FactualSafetyScreening.model_validate(data["safetyScreening"])
+        facts.append(_fact("FACTUAL_SAFETY_SCREENING", "JSON", screening.model_dump(by_alias=True)))
     return facts
 
 

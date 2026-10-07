@@ -17,3 +17,10 @@ def test_guided_unknown_health_asks_for_facts_in_plain_language():
 def test_unrecognized_codes_remain_bounded_without_interpreting_prose():
     assert risk_reason_label("FUTURE_REASON") == "FUTURE_REASON"
     assert len(risk_reason_label("X" * 100)) == 80
+
+
+def test_factual_unknowns_show_the_exact_ordinary_question():
+    assert "представитель" in risk_reason_label("FACTUAL_SAFETY_REPRESENTATIVECONTACT_UNKNOWN")
+    assert "сумм" in risk_reason_label("FACTUAL_SAFETY_AMOUNT_UNKNOWN")
+    assert "расходятся" in risk_reason_label("FACTUAL_SAFETY_SCREENING_CONFLICT")
+    assert "претензи" not in risk_reason_label("WRITTEN_REQUIREMENTS_REPORTED").casefold()

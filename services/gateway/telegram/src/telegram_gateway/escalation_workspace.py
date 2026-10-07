@@ -27,6 +27,9 @@ REASONS = {
     "DEMAND_AMOUNT_THRESHOLD_EXCEEDED": "Сумма требования превышает порог",
     "HIGH_DEMAND_AMOUNT": "Сумма требования достигла установленного порога",
     "HARM_REPORTED": "Заявлен вред здоровью",
+    "HEALTH_DETERIORATION_REPORTED": "Пациент сообщил об ухудшении или осложнении",
+    "WRITTEN_REQUIREMENTS_REPORTED": "Получены письменные требования пациента",
+    "AUTHORITY_OR_COURT_DOCUMENT_REPORTED": "Получен документ суда или органа",
     "LAWYER_OR_REPRESENTATIVE_CONTACT": "Обращение юриста или представителя",
     "OFFICIAL_REGULATOR_OR_COURT_SIGNAL": "Обращение в суд или контролирующий орган",
 }
@@ -41,6 +44,7 @@ FACT_LABELS = {
     "HOSPITALIZATION": "Госпитализация",
     "HARM_CLAIMED": "Заявленный вред",
     "RESPONSE_DEADLINE": "Срок ответа",
+    "FACTUAL_SAFETY_SCREENING": "Уточнения фактов",
 }
 
 

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
+from legal_core.factual_safety_intake import SCREENING_FIELDS, SCREENING_VERSION
 from telegram.error import TimedOut
 from telegram.ext import ApplicationHandlerStop, ConversationHandler
 from telegram_gateway import bot
@@ -216,6 +217,9 @@ def test_v2_delivery_failure_preserves_guided_confirmation_for_safe_retry(
         "clinicActions": ["INVITED_FOR_EXAMINATION"],
         "healthSignals": ["NO_KNOWN_INFORMATION"],
         "caseMaterialsStatus": "NOT_ATTACHED",
+        "safetyScreening": {"schemaVersion": SCREENING_VERSION,
+                            **dict.fromkeys(SCREENING_FIELDS, "NO"),
+                            "amount": "NOT_REQUESTED"},
     }
     client = context.bot_data[bot.LEGAL_CORE_CLIENT_KEY]
     client.submit_workflow = AsyncMock(return_value={})

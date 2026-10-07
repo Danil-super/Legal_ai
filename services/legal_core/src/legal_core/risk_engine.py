@@ -9,6 +9,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from legal_core.contracts import FactKey, MissingFact, MissingFactSeverity
+from legal_core.factual_safety_intake import FactualSafetyScreening
+from legal_core.factual_safety_risk import (
+    SCREENING_SIGNALS,
+    confirmed_screening,
+    screening_blocker,
+    screening_high_reasons,
+)
 
 
 class RiskLevel(StrEnum):
@@ -26,6 +33,7 @@ class RiskPolicy:
     version: str
     high_demand_threshold_kopecks: int
     guided_v2_explicit_signals_enabled: bool = False
+    factual_safety_intake_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not self.version or len(self.version) > 80:
@@ -34,6 +42,10 @@ class RiskPolicy:
             raise ValueError("high demand threshold must be positive")
         if type(self.guided_v2_explicit_signals_enabled) is not bool:
             raise ValueError("guided v2 risk capability must be an explicit boolean")
+        if type(self.factual_safety_intake_enabled) is not bool or (
+            self.factual_safety_intake_enabled and not self.guided_v2_explicit_signals_enabled
+        ):
+            raise ValueError("factual safety capability requires the explicit guided-v2 policy")
         if self.guided_v2_explicit_signals_enabled:
             _, _, version_number = self.version.rpartition(".v")
             if not version_number.isdigit() or int(version_number) < 3:
@@ -71,6 +83,15 @@ def risk_missing_facts(assessment: RiskAssessment) -> list[MissingFact]:
             "incoming_communication",
         ),
     }
+    questions.update({
+        f"FACTUAL_SAFETY_{field.upper()}_UNKNOWN": (
+            FactKey.FACTUAL_SAFETY_SCREENING, "factual_safety_" + field,
+        ) for field in (*SCREENING_SIGNALS, "amount")
+    })
+    questions.update({reason: (FactKey.FACTUAL_SAFETY_SCREENING, "factual_safety_screening")
+                      for reason in ("FACTUAL_SAFETY_SCREENING_UNKNOWN",
+                                     "FACTUAL_SAFETY_SCREENING_INVALID",
+                                     "FACTUAL_SAFETY_SCREENING_CONFLICT")})
     return (
         [
             MissingFact(
@@ -140,12 +161,19 @@ def _guided_enabled(facts: Mapping[FactKey, object], policy: RiskPolicy) -> bool
 def _v3_critical_reasons(facts: Mapping[FactKey, object], policy: RiskPolicy) -> tuple[str, ...]:
     guided = _guided_enabled(facts, policy)
     health = _guided_health_signals(facts) if guided else None
+    screening = (
+        confirmed_screening(facts) if guided and policy.factual_safety_intake_enabled else None
+    )
     reasons: list[str] = []
-    if (health is not None and "HOSPITALIZATION" in health) or _signal_state(
+    if (screening is not None and screening.hospitalization_reported == "YES") or (
+        health is not None and "HOSPITALIZATION" in health
+    ) or _signal_state(
         facts.get(FactKey.HOSPITALIZATION)
     ) == "YES":
         reasons.append("HOSPITALIZATION_REPORTED")
-    if guided and facts.get(FactKey.INCOMING_COMMUNICATION) == "AUTHORITY_OR_COURT_DOCUMENT":
+    if (screening is not None and screening.authority_or_court_document_received == "YES") or (
+        guided and facts.get(FactKey.INCOMING_COMMUNICATION) == "AUTHORITY_OR_COURT_DOCUMENT"
+    ):
         reasons.append("AUTHORITY_OR_COURT_DOCUMENT_REPORTED")
     elif _signal_state(facts.get(FactKey.REGULATOR_OR_COURT)) == "YES":
         reasons.append("OFFICIAL_REGULATOR_OR_COURT_SIGNAL")
@@ -272,6 +300,9 @@ def evaluate_early_triage(
     ]
     if _demand_is_at_or_above_threshold(facts, policy.high_demand_threshold_kopecks):
         reasons.append("HIGH_DEMAND_AMOUNT")
+    if _guided_enabled(facts, policy) and policy.factual_safety_intake_enabled:
+        reasons.extend(screening_high_reasons(confirmed_screening(facts)))
+        reasons = list(dict.fromkeys(reasons))
     return _assessment(RiskLevel.HIGH, tuple(reasons), policy, facts) if reasons else None
 
 
@@ -286,12 +317,32 @@ def evaluate_risk(
     if not evidence_verified:
         return _assessment(RiskLevel.UNAVAILABLE, ("EVIDENCE_NOT_VERIFIED",), policy, facts)
 
-    if _guided_enabled(facts, policy):
+    screening: FactualSafetyScreening | None = None
+    factual_enabled = _guided_enabled(facts, policy) and policy.factual_safety_intake_enabled
+    if factual_enabled:
+        incoming = facts.get(FactKey.INCOMING_COMMUNICATION)
+        if (
+            not isinstance(incoming, str)
+            or incoming not in _GUIDED_INCOMING
+            or incoming == "UNKNOWN"
+        ):
+            return _assessment(
+                RiskLevel.UNAVAILABLE, ("INCOMING_COMMUNICATION_UNKNOWN",), policy, facts
+            )
+        if _guided_health_signals(facts) is None:
+            return _assessment(
+                RiskLevel.UNAVAILABLE, ("HEALTH_CONSEQUENCE_SIGNALS_UNKNOWN",), policy, facts
+            )
+        screening = confirmed_screening(facts)
+        blocker = screening_blocker(facts, screening)
+        if blocker:
+            return _assessment(RiskLevel.UNAVAILABLE, (blocker,), policy, facts)
+    elif _guided_enabled(facts, policy):
         blocker = _v3_guided_blocker(facts)
         if blocker:
             return _assessment(RiskLevel.UNAVAILABLE, (blocker,), policy, facts)
 
-    unknown_signal = _unknown_required_signal(
+    unknown_signal = None if factual_enabled else _unknown_required_signal(
         facts,
         strict=policy.guided_v2_explicit_signals_enabled,
     )
@@ -325,6 +376,8 @@ def evaluate_risk(
         high_reasons.append("HARM_REPORTED")
     if _demand_is_at_or_above_threshold(facts, policy.high_demand_threshold_kopecks):
         high_reasons.append("HIGH_DEMAND_AMOUNT")
+    high_reasons.extend(screening_high_reasons(screening))
+    high_reasons = list(dict.fromkeys(high_reasons))
     if high_reasons:
         return _assessment(RiskLevel.HIGH, tuple(high_reasons), policy, facts)
 
@@ -339,6 +392,12 @@ def evaluate_risk(
         medium_reasons.append("REGULATOR_THREAT_REPORTED")
     if _has_missing_relevant_document(facts):
         medium_reasons.append("RELEVANT_DOCUMENT_MISSING")
+    if screening is not None:
+        if screening.money_requested == "YES":
+            medium_reasons.append("PATIENT_DEMAND_REQUIRES_REVIEW")
+        if screening.authority_referral_mentioned == "YES":
+            medium_reasons.append("REGULATOR_THREAT_REPORTED")
+        medium_reasons = list(dict.fromkeys(medium_reasons))
     if medium_reasons:
         return _assessment(RiskLevel.MEDIUM, tuple(medium_reasons), policy, facts)
 

@@ -28,6 +28,7 @@ from legal_core.analysis_job_worker import WorkerSettings, worker_once
 from legal_core.corpus_loader import ingest_manifest
 from legal_core.database import database_url, owner_database_url
 from legal_core.main import create_app
+from legal_core.factual_safety_intake import SCREENING_FIELDS, SCREENING_VERSION
 from legal_core.risk_policy_approval import RiskPolicyApproval, approve_risk_policy
 from legal_core.runtime_db_role import provision_runtime_role
 from telegram_gateway.case_wizard import facts_from_v2_data
@@ -77,7 +78,15 @@ def isolated_database(monkeypatch):
         owner.dispose()
 
 
-@pytest.mark.parametrize("intake_mode", ["legacy", "guided-v2"])
+@pytest.mark.parametrize(
+    "intake_mode",
+    [
+        "legacy",
+        "guided-v2",
+        "guided-v2-factual-low",
+        "guided-v2-factual-medium",
+    ],
+)
 def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block(
     isolated_database, tmp_path: Path, intake_mode: str
 ) -> None:
@@ -159,10 +168,28 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                 incident_triggers_reviewed=True,
                 monetary_threshold_reviewed=True,
                 escalation_rules_reviewed=True,
-                version=2,
-                early_triage_enabled=True,
+                version=1 if "factual" in intake_mode else 2,
+                early_triage_enabled="factual" not in intake_mode,
             ),
         )
+        if "factual" in intake_mode:
+            await approve_risk_policy(
+                sessions,
+                RiskPolicyApproval(
+                    reviewer_telegram_user_id=editor_id,
+                    version=3,
+                    high_demand_threshold_kopecks=5_000_000,
+                    incident_triggers_reviewed=True,
+                    monetary_threshold_reviewed=True,
+                    escalation_rules_reviewed=True,
+                    early_triage_enabled=True,
+                    supersede_approved=True,
+                    guided_v2_explicit_signals_enabled=True,
+                    direct_v1_supersession_reviewed=True,
+                    factual_safety_intake_enabled=True,
+                    factual_safety_intake_reviewed=True,
+                ),
+            )
         core = create_app(
             session_factory=sessions,
             managed_engine=engine,
@@ -209,28 +236,42 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                 transport=httpx.ASGITransport(app=orchestrator), base_url="http://orchestrator"
             ) as worker_http:
                 worker_settings = WorkerSettings("http://orchestrator", INTERNAL_KEY)
-                if intake_mode == "guided-v2":
+                if intake_mode.startswith("guided-v2"):
+                    guided_data = {
+                        "intakeVersion": 2,
+                        "incomingKind": "COMPLAINT",
+                        "incomingSourceStatus": "NOT_ATTACHED",
+                        "situationAreas": ["TREATMENT"],
+                        "affectedServices": ["терапевтическое лечение"],
+                        "eventSummary": "После лечения пациент сообщил о дискомфорте.",
+                        "eventDate": {"date": "2026-09-12", "precision": "EXACT"},
+                        "conflictStage": "FIRST",
+                        "clinicActions": ["INVITED_FOR_EXAMINATION"],
+                        "healthSignals": ["NO_KNOWN_INFORMATION"],
+                        "caseMaterialsStatus": "NOT_ATTACHED",
+                    }
+                    if "factual" in intake_mode:
+                        screening = {
+                            "schemaVersion": SCREENING_VERSION,
+                            **dict.fromkeys(SCREENING_FIELDS, "NO"),
+                            "amount": "NOT_REQUESTED",
+                        }
+                        if intake_mode.endswith("medium"):
+                            screening.update(
+                                moneyRequested="YES",
+                                amount={
+                                    "amountKopecks": 4_999_999,
+                                    "currency": "RUB",
+                                },
+                            )
+                        guided_data["safetyScreening"] = screening
                     workflow = await core_http.post(
                         f"/v1/telegram-case-workflows/{uuid4()}/submissions",
                         headers=actor_headers(owner_id),
                         json={
                             "intakeSchemaVersion": "dental-case-intake.v2",
                             "locale": "ru-RU",
-                            "facts": facts_from_v2_data(
-                                {
-                                    "intakeVersion": 2,
-                                    "incomingKind": "COMPLAINT",
-                                    "incomingSourceStatus": "NOT_ATTACHED",
-                                    "situationAreas": ["TREATMENT"],
-                                    "affectedServices": ["терапевтическое лечение"],
-                                    "eventSummary": "После лечения пациент сообщил о дискомфорте.",
-                                    "eventDate": {"date": "2026-09-12", "precision": "EXACT"},
-                                    "conflictStage": "FIRST",
-                                    "clinicActions": ["INVITED_FOR_EXAMINATION"],
-                                    "healthSignals": ["NO_KNOWN_INFORMATION"],
-                                    "caseMaterialsStatus": "NOT_ATTACHED",
-                                }
-                            ),
+                            "facts": facts_from_v2_data(guided_data),
                         },
                     )
                     assert workflow.status_code == 201, workflow.text
@@ -361,7 +402,10 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                     assert canonical["legalBasis"]["status"] == "NOT_AVAILABLE"
                     assert canonical["recommendations"]["status"] == "NOT_AVAILABLE"
                 else:
-                    assert result["analysisAllowed"] is True and result["riskLevel"] == "LOW"
+                    expected_level = "MEDIUM" if intake_mode.endswith("medium") else "LOW"
+                    assert (
+                        result["analysisAllowed"] is True and result["riskLevel"] == expected_level
+                    )
                     assert canonical["legalBasis"]["status"] == "AVAILABLE"
                     source = canonical["legalBasis"]["sources"][0]
                     assert source["fragmentId"] == context.json()["evidence"][0]["fragmentId"]
@@ -418,7 +462,11 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                     if intake_mode == "guided-v2":
                         assert risk == ("UNAVAILABLE", ["HARM_CLAIMED_UNKNOWN"])
                     else:
-                        assert risk == ("LOW", ["NO_ESCALATION_TRIGGER"])
+                        assert risk == (
+                            ("MEDIUM", ["PATIENT_DEMAND_REQUIRES_REVIEW"])
+                            if intake_mode.endswith("medium")
+                            else ("LOW", ["NO_ESCALATION_TRIGGER"])
+                        )
                     assert (
                         await session.scalar(
                             text(
