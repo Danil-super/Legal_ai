@@ -53,20 +53,12 @@ clinicDocumentReadiness — это НЕ перечень юридически о
 обязательным правом. Не повторяй такую формулировку пациенту как установленное правило; отдай
 предпочтение evidence и предложи внутреннюю проверку документа клиники.
 
-Верни ТОЛЬКО JSON-объект следующей формы:
-{
-  "claims": [
-    {
-      "claimId": "c1",
-      "kind": "LEGAL" | "ACTION",
-      "text": "краткий внутренний вывод",
-      "evidenceFragmentIds": ["uuid"],
-      "requiredFactKeys": ["FORMAL_CLAIM"]
-    }
-  ],
-  "internalRecommendations": ["..."],
-  "patientDraft": "..." | null
-}
+Верни ТОЛЬКО JSON-объект без markdown, комментариев и дополнительного текста.
+Структура, допустимые значения и ограничения заданы JSON Schema в конце инструкции.
+evidenceFragmentIds — точные строки fragmentId из evidence; копируй их без изменений.
+Выбирай ТОЛЬКО UUID из enum схемы. Не используй названия, structuralPath, порядковые
+номера, сокращения или условные обозначения вместо UUID и не придумывай новые UUID.
+requiredFactKeys — только значения enum FactKey из схемы, а не описания фактов.
 
 Каждый claim обязан ссылаться только на fragmentId из evidence. Если доказательств недостаточно,
 не придумывай claim: верни claims: []. Укажи в requiredFactKeys все факты, от которых зависит
@@ -79,16 +71,11 @@ _REVIEW_SYSTEM = """\
 Не оценивай полезность формулировки и не добавляй новые нормы. Документы клиники намеренно не
 передаются тебе: они не являются источником права и не могут подтвердить claim.
 
-Верни ТОЛЬКО JSON:
-{
-  "reviews": [
-    {
-      "claimId": "c1",
-      "verdict": "SUPPORTED" | "UNSUPPORTED" | "CONTRADICTED",
-      "reviewedFragmentIds": ["uuid"]
-    }
-  ]
-}
+Верни ТОЛЬКО JSON-объект без markdown, комментариев и дополнительного текста.
+Структура, допустимые claimId, UUID и verdict заданы JSON Schema в конце инструкции.
+claimId копируй из проверяемого claim без изменений. reviewedFragmentIds — точные
+строки UUID из evidenceFragmentIds ЭТОГО claim, не названия или structuralPath.
+Выбирай только значения enum схемы; схема не разрешает цитировать UUID другого claim.
 
 SUPPORTED разрешён только когда утверждение не шире и не категоричнее evidence. Если evidence
 не доказывает утверждение — UNSUPPORTED. Если утверждение противоречит evidence — CONTRADICTED.
@@ -112,6 +99,30 @@ def _endpoint_origin(url: str) -> tuple[str, str, int | None]:
     if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
         raise ValueError("Hermes endpoint must have an absolute http(s) origin")
     return parsed.scheme, parsed.hostname.casefold(), parsed.port
+
+
+def _research_prompt(projection: CaseProjection) -> str:
+    # The response schema is derived from the same strict contracts used below.
+    # Case-specific enums instruct the model; server-side scope validation remains mandatory.
+    schema = ClaimProposalBatch.model_json_schema(by_alias=True)
+    items = schema["$defs"]["ClaimProposal"]["properties"]["evidenceFragmentIds"]["items"]
+    items["enum"] = sorted({str(item.fragment_id) for item in projection.evidence})
+    return _RESEARCH_SYSTEM + "\nJSON Schema ответа:\n" + json.dumps(
+        schema, ensure_ascii=False, sort_keys=True,
+    )
+
+
+def _review_prompt(proposal: ClaimProposalBatch) -> str:
+    schema = SemanticReviewBatch.model_json_schema(by_alias=True)
+    properties = schema["$defs"]["SemanticReviewItem"]["properties"]
+    properties["claimId"]["enum"] = sorted({claim.claim_id for claim in proposal.claims})
+    properties["reviewedFragmentIds"]["items"]["enum"] = sorted({
+        str(fragment_id)
+        for claim in proposal.claims for fragment_id in claim.evidence_fragment_ids
+    })
+    return _REVIEW_SYSTEM + "\nJSON Schema ответа:\n" + json.dumps(
+        schema, ensure_ascii=False, sort_keys=True,
+    )
 
 
 class LegalReasoningOrchestrator:
@@ -141,7 +152,7 @@ class LegalReasoningOrchestrator:
             raise ValueError(message)
 
         research_raw = await self._researcher.complete_json(
-            system=_RESEARCH_SYSTEM,
+            system=_research_prompt(projection),
             user=research_input,
         )
         try:
@@ -187,7 +198,7 @@ class LegalReasoningOrchestrator:
             ],
         }
         review_raw = await self._reviewer.complete_json(
-            system=_REVIEW_SYSTEM,
+            system=_review_prompt(proposal),
             user=json.dumps(review_input, ensure_ascii=False, sort_keys=True),
         )
         try:

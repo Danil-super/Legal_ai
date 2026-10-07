@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import date
 from types import SimpleNamespace
 from typing import cast
@@ -7,11 +8,17 @@ from uuid import UUID
 import pytest
 from agent_orchestrator.contracts import (
     CaseProjection,
+    ClaimProposalBatch,
     ClinicDocumentContextItem,
     EvidenceItem,
 )
 from agent_orchestrator.hermes_client import HermesClient, HermesProtocolError
-from agent_orchestrator.reasoning import LegalReasoningOrchestrator
+from agent_orchestrator.reasoning import (
+    LegalReasoningOrchestrator,
+    _research_prompt,
+    _review_prompt,
+)
+from legal_core.contracts import FactKey
 from legal_core.verifier import SemanticVerdict
 
 
@@ -37,12 +44,14 @@ class FakeHermes:
         self.response = response
         self.calls = 0
         self.users: list[str] = []
+        self.systems: list[str] = []
 
     async def complete_json(self, *, system: str, user: str) -> dict[str, object]:
         assert system
         assert user
         self.calls += 1
         self.users.append(user)
+        self.systems.append(system)
         return self.response
 
 
@@ -130,6 +139,125 @@ def test_two_pass_reasoning_returns_domain_claims_and_reviews() -> None:
         assert result.patient_draft == "Здравствуйте. Предлагаем провести осмотр."
         assert researcher.calls == 1
         assert reviewer.calls == 1
+
+    asyncio.run(scenario())
+
+
+SCHEMA_MARKER = "\nJSON Schema ответа:\n"
+
+
+class CitationTemplateHermes(FakeHermes):
+    """Synthetic model copies a schema citation, or the old invalid template token."""
+
+    async def complete_json(self, *, system: str, user: str) -> dict[str, object]:
+        response = _claim_response()
+        if SCHEMA_MARKER in system:
+            schema = json.loads(system.split(SCHEMA_MARKER, maxsplit=1)[1])
+            citation = schema["$defs"]["ClaimProposal"]["properties"]["evidenceFragmentIds"][
+                "items"
+            ]["enum"][0]
+        else:
+            citation = "uuid"
+        response["claims"][0]["evidenceFragmentIds"] = [citation]
+        self.response = response
+        return await super().complete_json(system=system, user=user)
+
+
+def test_citation_template_model_receives_exact_uuid_choices_not_placeholder() -> None:
+    async def scenario() -> None:
+        researcher = CitationTemplateHermes(name="researcher", response={})
+        reviewer = FakeHermes(name="reviewer", response=_review_response())
+        reasoning = LegalReasoningOrchestrator(  # type: ignore[arg-type]
+            researcher=researcher, reviewer=reviewer,
+        )
+        result = await reasoning.reason(_projection())
+        assert result.claims[0].evidence_fragment_ids == (FRAGMENT_ID,)
+        assert reviewer.calls == 1
+        ClaimProposalBatch.model_validate(researcher.response)
+
+    asyncio.run(scenario())
+
+
+def test_reasoning_schemas_match_contracts_and_exact_case_citation_allowlists() -> None:
+    async def scenario() -> None:
+        researcher = FakeHermes(name="researcher", response=_claim_response())
+        reviewer = FakeHermes(name="reviewer", response=_review_response())
+        reasoning = LegalReasoningOrchestrator(  # type: ignore[arg-type]
+            researcher=researcher, reviewer=reviewer,
+        )
+        await reasoning.reason(_projection_with_clinic_context())
+        research = json.loads(researcher.systems[0].split(SCHEMA_MARKER, maxsplit=1)[1])
+        review = json.loads(reviewer.systems[0].split(SCHEMA_MARKER, maxsplit=1)[1])
+        claim = research["$defs"]["ClaimProposal"]["properties"]
+        semantic = review["$defs"]["SemanticReviewItem"]["properties"]
+        assert claim["evidenceFragmentIds"]["items"] == {
+            "format": "uuid", "type": "string", "enum": [str(FRAGMENT_ID)],
+        }
+        assert set(research["$defs"]["FactKey"]["enum"]) == {key.value for key in FactKey}
+        assert research["additionalProperties"] is False
+        assert research["$defs"]["ClaimProposal"]["additionalProperties"] is False
+        assert semantic["claimId"]["enum"] == ["c1"]
+        assert semantic["reviewedFragmentIds"]["items"]["enum"] == [str(FRAGMENT_ID)]
+        assert review["additionalProperties"] is False
+        assert str(CLINIC_FRAGMENT_ID) not in json.dumps(research)
+        assert '["uuid"]' not in researcher.systems[0] + reviewer.systems[0]
+        assert '"kind": "LEGAL" |' not in researcher.systems[0]
+        assert len(researcher.systems[0]) < 20_000
+        assert len(reviewer.systems[0]) < 20_000
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("citation", ["uuid", "not-a-uuid", "fixture/point/1", None])
+def test_malformed_model_citations_still_fail_closed_without_review(citation) -> None:
+    async def scenario() -> None:
+        response = _claim_response()
+        response["claims"][0]["evidenceFragmentIds"] = [citation]
+        researcher = FakeHermes(name="researcher", response=response)
+        reviewer = FakeHermes(name="reviewer", response=_review_response())
+        reasoning = LegalReasoningOrchestrator(  # type: ignore[arg-type]
+            researcher=researcher, reviewer=reviewer,
+        )
+        with pytest.raises(HermesProtocolError, match="claim contract"):
+            await reasoning.reason(_projection())
+        assert reviewer.calls == 0
+
+    asyncio.run(scenario())
+
+
+def test_case_specific_schemas_stay_inside_prompt_limit_at_contract_capacity() -> None:
+    projection = _projection()
+    projection = projection.model_copy(update={"evidence": [
+        projection.evidence[0].model_copy(update={"fragment_id": UUID(int=index + 1)})
+        for index in range(30)
+    ]})
+    claims = []
+    for index in range(30):
+        claim = _claim_response()["claims"][0]
+        claim["claimId"] = "c" * 78 + f"{index:02d}"
+        claim["evidenceFragmentIds"] = [
+            str(projection.evidence[(index + offset) % 30].fragment_id) for offset in range(10)
+        ]
+        claims.append(claim)
+    proposal = ClaimProposalBatch.model_validate({"claims": claims})
+    assert len(_research_prompt(projection)) < 20_000
+    assert len(_review_prompt(proposal)) < 20_000
+
+
+def test_reviewer_cannot_use_other_evidence_even_when_case_schema_has_that_uuid() -> None:
+    async def scenario() -> None:
+        projection = _projection()
+        projection = projection.model_copy(update={"evidence": [
+            *projection.evidence,
+            projection.evidence[0].model_copy(update={"fragment_id": OTHER_FRAGMENT_ID}),
+        ]})
+        researcher = FakeHermes(name="researcher", response=_claim_response())
+        reviewer = FakeHermes(name="reviewer", response=_review_response(OTHER_FRAGMENT_ID))
+        reasoning = LegalReasoningOrchestrator(  # type: ignore[arg-type]
+            researcher=researcher, reviewer=reviewer,
+        )
+        with pytest.raises(HermesProtocolError, match="not cited by the reviewed claim"):
+            await reasoning.reason(projection)
 
     asyncio.run(scenario())
 
