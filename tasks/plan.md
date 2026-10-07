@@ -1,5 +1,13 @@
 # Implementation Plan: Dental Legal AI MVP
 
+## Authorized immediate lawyer alerts — 2026-10-07
+
+Implement `SPEC-lawyer-notifications.md` in a separate branch: privacy-minimal
+Telegram delivery → transactional outbox and leased internal API → disposable
+PostgreSQL/authorization/retry proofs → independent review and release.
+Every active CLINIC_LAWYER in the same clinic is notified until assignment;
+the current subscription and actor-resolution constraints still apply.
+
 ## Overview
 
 Реализация следует ТЗ v0.1 и карте `CAPABILITY_MAP.md`. Работа идёт вертикальными срезами: каждый срез оставляет систему запускаемой и проверяемой. LLM/Telegram не подключаются, пока Legal Core, tenant isolation и детерминированные safety-контракты не доказаны тестами.
