@@ -225,3 +225,21 @@ def test_v3_missing_fact_reason_selects_the_existing_question_contract() -> None
         evidence_verified=True,
     )
     assert risk_missing_facts(conflict)[0].question_id == "health_consequence_signals"
+
+
+@pytest.mark.parametrize("invalid", ["INVALID", 1, {}, []])
+def test_v3_invalid_legacy_safety_state_cannot_clear_a_case(invalid: object) -> None:
+    facts = {
+        key: "NO"
+        for key in (
+            FactKey.HARM_CLAIMED,
+            FactKey.HOSPITALIZATION,
+            FactKey.LAWYER_CONTACT,
+            FactKey.FORMAL_CLAIM,
+            FactKey.REGULATOR_OR_COURT,
+            FactKey.REGULATOR_THREAT,
+        )
+    } | {FactKey.HARM_CLAIMED: invalid}
+    result = evaluate_risk(facts, policy=v3_policy(), evidence_verified=True)
+    assert result.level is RiskLevel.UNAVAILABLE
+    assert result.reason_codes == ("HARM_CLAIMED_UNKNOWN",)

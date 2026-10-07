@@ -195,13 +195,20 @@ def _signal_state(value: object) -> str | None:
     return None
 
 
-def _unknown_required_signal(facts: Mapping[FactKey, object]) -> FactKey | None:
+def _unknown_required_signal(
+    facts: Mapping[FactKey, object],
+    *,
+    strict: bool = False,
+) -> FactKey | None:
     for fact_key in _REQUIRED_SIGNALS:
-        if _signal_state(facts.get(fact_key)) == "UNKNOWN":
+        signal = _signal_state(facts.get(fact_key))
+        if signal == "UNKNOWN" or (strict and signal not in {"YES", "NO"}):
             return fact_key
     harm = _signal_state(facts.get(FactKey.HARM_CLAIMED))
-    if harm == "YES" and _signal_state(facts.get(FactKey.HOSPITALIZATION)) == "UNKNOWN":
-        return FactKey.HOSPITALIZATION
+    if harm == "YES":
+        hospitalization = _signal_state(facts.get(FactKey.HOSPITALIZATION))
+        if hospitalization == "UNKNOWN" or (strict and hospitalization not in {"YES", "NO"}):
+            return FactKey.HOSPITALIZATION
     return None
 
 
@@ -284,7 +291,10 @@ def evaluate_risk(
         if blocker:
             return _assessment(RiskLevel.UNAVAILABLE, (blocker,), policy, facts)
 
-    unknown_signal = _unknown_required_signal(facts)
+    unknown_signal = _unknown_required_signal(
+        facts,
+        strict=policy.guided_v2_explicit_signals_enabled,
+    )
     if unknown_signal is not None:
         return _assessment(
             RiskLevel.UNAVAILABLE,
