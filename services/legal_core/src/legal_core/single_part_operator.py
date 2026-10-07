@@ -74,6 +74,15 @@ def read_single_part_package(path: Path) -> SinglePartPackage:
     root = path.parent
     request = SinglePartRequest.model_validate(_json_file(root, path.name))
     corpus = CorpusManifest.model_validate(_json_file(root, request.corpus_manifest_path))
+    if (
+        corpus.source_key != "garant"
+        or corpus.source_revision != 1
+        or corpus.source_name != "Гарант"
+        or corpus.source_trust_level != "VERIFIED_COPY"
+        or corpus.source_base_url != "https://internet.garant.ru/"
+        or corpus.allowed_hosts != ["internet.garant.ru"]
+    ):
+        raise ValueError("Garant source revision or profile differs from the pilot contract")
     if corpus.manifest_version != "dental-legal-corpus.v4" or (
         corpus.artifact_mime_type != "application/rtf" or corpus.artifact_path is None
     ):

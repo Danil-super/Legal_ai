@@ -16,10 +16,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from legal_core.corpus_loader import CorpusFragment, corpus_fragments_sha256
 from legal_core.database import database_url
+from legal_core.group_approval import group_preview
 from legal_core.material_preparation import MaterialPreparationInput, store_preparation
 from legal_core.models import (
     LegalDocument, LegalMaterialPreparation, LegalPreparedPartVersion,
-    LegalReviewMaterial, LegalVersion, User,
+    LegalReviewMaterial, LegalSource, LegalVersion, User,
 )
 from legal_core.normative_preparation import inspect_normative_rtf
 from legal_core.single_part_operator import read_single_part_package, run_single_part_package
@@ -144,6 +145,14 @@ def test_operator_rejects_unverified_fields_and_tampered_original(tmp_path: Path
     with pytest.raises(ValueError, match="SHA-256"):
         read_single_part_package(path)
 
+    path = _package(tmp_path, uuid4(), uuid4())
+    corpus_path = tmp_path / "corpus.json"
+    corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
+    corpus["source_revision"] = 2
+    corpus_path.write_text(json.dumps(corpus, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(ValueError, match="Garant source revision"):
+        read_single_part_package(path)
+
 
 def test_cli_never_prints_supplied_legal_text_on_failure(
     tmp_path: Path, monkeypatch, capsys,
@@ -225,6 +234,10 @@ def test_single_part_dry_run_rolls_back_and_commit_replays_exactly(tmp_path: Pat
             async with factory() as session:
                 version = await session.get(LegalVersion, first.version_id)
                 assert version.approval_state == "REVIEW_REQUIRED"
+                source = await session.get(LegalSource, version.source_id)
+                assert source.status in {"DRAFT", "APPROVED"}
+                preview = await group_preview(session, "general")
+                assert first.version_id in {item.version_id for item in preview.ready}
                 assert await session.scalar(select(func.count()).select_from(
                     LegalPreparedPartVersion
                 ).where(LegalPreparedPartVersion.material_id == material.id)) == 1

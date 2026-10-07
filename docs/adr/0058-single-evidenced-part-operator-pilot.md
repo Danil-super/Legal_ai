@@ -24,6 +24,11 @@ the canonical identity and dates, full normalized text and a completeness
 locator. The sibling corpus manifest is the existing `dental-legal-corpus.v4`
 schema and names an exact sibling RTF artifact. Paths must be package-local
 regular files; inputs have size limits and are read without following symlinks.
+This pilot accepts only the existing `garant` source profile at revision `1`
+(`Гарант`, `https://internet.garant.ru/`, host `internet.garant.ru`,
+`VERIFIED_COPY`). A divergent revision or profile fails before any database
+write; a clean disposable database may create that exact source as `DRAFT`,
+while an existing matching source is reused. The CLI never approves it.
 
 The operator verifies P8 heading/source and one-part text boundaries against
 the exact RTF, compares the preparation and corpus identities, dates, text
