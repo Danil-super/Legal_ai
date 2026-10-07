@@ -89,8 +89,11 @@ class ExpectedOriginal(ContractModel):
         if self.kind == "NORMATIVE" and self.group_key == "clinical":
             raise ValueError("normative material cannot be clinical")
         if self.kind == "NORMATIVE":
-            if keys != [f"part-{index}" for index in range(1, len(keys) + 1)] or not keys:
-                raise ValueError("normative part keys must be contiguous from part-1")
+            if not keys or (
+                keys != ["document"]
+                and keys != [f"part-{index}" for index in range(1, len(keys) + 1)]
+            ):
+                raise ValueError("normative keys must be document or contiguous from part-1")
         elif keys:
             raise ValueError("references cannot have normative parts")
         return self

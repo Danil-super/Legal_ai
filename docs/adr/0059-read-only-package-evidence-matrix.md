@@ -20,7 +20,12 @@ resolve missing legal metadata.
 Before extending the importer, add a private operator inventory and deterministic
 gap-matrix generator. Its exact input is versioned and bounds the operation to
 58 originals, 54 expected part keys, eight references and six explicit UUIDs
-for the editor-visible corpus versions. The generator validates those UUIDs
+for the editor-visible corpus versions.
+Single-part keys accept only the exact `document` or `part-1` spelling;
+multi-part keys remain contiguous `part-1` onward. The received immutable
+preparations use `document` for all 48 single-part originals. No aliasing or
+renaming is performed, and request keys must match persisted keys exactly.
+The generator validates the editor-visible UUIDs
 against the editor's latest-version-per-document, `REVIEW_REQUIRED`, and
 non-expired predicate using a captured `editor_as_of_date`. It reports all
 other `REVIEW_REQUIRED` versions separately with superseded/expired reasons;
@@ -67,6 +72,9 @@ partial preparation blockers, exact editor-visible IDs, excluded corpus rows,
 checksum tampering, private output mode, write/fsync failure rollback and
 silent CLI behavior. PostgreSQL
 integration uses disposable data and checks preparation counts before/after.
+The exact-inventory PostgreSQL test runs in its own generated test database,
+including its CLI subprocess, so unrelated suite fixtures cannot change the
+global editor queue. The production exact-set check stays unchanged.
 No real documents enter tests.
 The matrix alone cannot prove that all 54 parts are correctly identified or
 that a locator describes the cited text. It must never be treated as a release

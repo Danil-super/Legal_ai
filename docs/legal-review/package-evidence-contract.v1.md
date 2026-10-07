@@ -14,9 +14,13 @@ with mode `0600` (at most 100 KB). It contains:
   expected_part_keys}` records. Kinds: 50 `NORMATIVE`, seven
   `CLINICAL_REFERENCE`, one `REFERENCE_FORM`; the latter is in `healthcare`.
   The groups have 7 clinical, 7 labour, 10 courts, 4 privacy, 3 licensing,
-  22 healthcare and 5 general originals. Normative keys are `part-1` onward;
-  48 originals have one part, one general-law original two and one four, for
-  54 intended parts. The expected keys are operator inventory, not parser proof.
+  22 healthcare and 5 general originals. A single normative part has the exact
+  key `document` or `part-1`; bundles use contiguous `part-1` onward. The
+  received package uses `document` for all 48 single-part originals, plus one
+  general-law original with `part-1`/`part-2` and one with `part-1` through
+  `part-4`, for 54 intended parts. Keys are preserved exactly and are never
+  aliased or renamed. Mixed `document`/numbered keys and unknown keys fail.
+  The expected keys are operator inventory, not parser proof.
 - `editor_visible_version_ids`: exactly six distinct UUIDs for the versions
   currently visible in the legal editor's review queue. The generator verifies
   this set against the database: highest `version_no` per document is selected

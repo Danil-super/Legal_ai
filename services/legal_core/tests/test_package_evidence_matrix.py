@@ -12,11 +12,13 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from pydantic import ValidationError
-from sqlalchemy import event, func, select
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from legal_core.database import database_url
+from legal_core.database import database_url, owner_database_url
 from legal_core.material_preparation import MaterialPreparationInput, store_preparation
 from legal_core.models import (
     LegalDocument,
@@ -36,9 +38,10 @@ from legal_core.package_evidence_matrix import (
     load_private_request,
     validate_evidence_matrix,
 )
+from legal_core.runtime_db_role import provision_runtime_role
 
 
-def _inventory() -> dict:
+def _inventory(*, received_document_keys: bool = False) -> dict:
     groups = (
         ["clinical"] * 7
         + ["labour"] * 7
@@ -65,7 +68,9 @@ def _inventory() -> dict:
                 "kind": kind,
                 "group_key": group,
                 "expected_part_keys": (
-                    [f"part-{n}" for n in range(1, part_count + 1)] if kind == "NORMATIVE" else []
+                    (["document"] if received_document_keys and part_count == 1 else
+                     [f"part-{n}" for n in range(1, part_count + 1)])
+                    if kind == "NORMATIVE" else []
                 ),
             }
         )
@@ -113,6 +118,24 @@ def test_inventory_requires_exact_package_shape_without_document_text() -> None:
     assert sum(len(item.expected_part_keys) for item in request.originals) == 54
     assert sum(item.kind != "NORMATIVE" for item in request.originals) == 8
     assert "normalized_text" not in request.model_dump_json()
+
+
+def test_inventory_preserves_received_single_document_and_code_bundle_keys() -> None:
+    payload = _inventory(received_document_keys=True)
+    request = PackageEvidenceRequest.model_validate(payload)
+    assert sum(item.expected_part_keys == ["document"] for item in request.originals) == 48
+    assert [item.expected_part_keys for item in request.originals if (
+        len(item.expected_part_keys) > 1
+    )] == [["part-1", "part-2", "part-3", "part-4"], ["part-1", "part-2"]]
+    assert request.model_dump(mode="json")["originals"] == payload["originals"]
+
+
+@pytest.mark.parametrize("keys", [["document", "part-2"], ["document-1"], ["part-2"]])
+def test_inventory_rejects_mixed_or_unknown_single_document_keys(keys: list[str]) -> None:
+    payload = _inventory()
+    payload["originals"][7]["expected_part_keys"] = keys
+    with pytest.raises(ValidationError):
+        PackageEvidenceRequest.model_validate(payload)
 
 
 def test_inventory_rejects_ambiguous_legacy_version_ids() -> None:
@@ -336,10 +359,35 @@ def test_private_output_failed_directory_fsync_rolls_back_published_target(
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
-def test_postgres_matrix_reads_exact_inventory_without_text_or_writes(tmp_path: Path) -> None:
+@pytest.fixture
+def isolated_matrix_database(monkeypatch: pytest.MonkeyPatch):
+    """Keep exact global corpus inventory independent of other integration fixtures."""
     if os.environ.get("POSTGRES_INTEGRATION") != "1":
         pytest.skip("set POSTGRES_INTEGRATION=1 for disposable PostgreSQL")
-    payload = _inventory()
+    assert os.environ.get("POSTGRES_DB", "").startswith("dental_legal_test_")
+    identifier = "dental_legal_test_matrix_" + uuid4().hex[:16]
+    owner = create_engine(
+        owner_database_url(), isolation_level="AUTOCOMMIT"
+    )
+    with owner.connect() as connection:
+        connection.exec_driver_sql(f'CREATE DATABASE "{identifier}"')
+    try:
+        monkeypatch.setenv("POSTGRES_DB", identifier)
+        provision_runtime_role()
+        command.upgrade(Config(str(Path(__file__).parents[3] / "alembic.ini")), "head")
+        provision_runtime_role()
+        yield
+    finally:
+        # Only the exact generated test database, never the shared suite database.
+        with owner.connect() as connection:
+            connection.exec_driver_sql(f'DROP DATABASE "{identifier}" WITH (FORCE)')
+        owner.dispose()
+
+
+def test_postgres_matrix_reads_exact_inventory_without_text_or_writes(
+    isolated_matrix_database, tmp_path: Path
+) -> None:
+    payload = _inventory(received_document_keys=True)
     payload["package_key"] = f"synthetic-matrix-{uuid4().hex}"
     raw_by_id = {}
     for index, item in enumerate(payload["originals"]):
@@ -445,7 +493,7 @@ def test_postgres_matrix_reads_exact_inventory_without_text_or_writes(tmp_path: 
                             "parser_version": "synthetic",
                             "parts": [
                                 {
-                                    "part_key": "part-1",
+                                    "part_key": "document",
                                     "title": "Synthetic legal title",
                                     "document_type": "Synthetic act",
                                     "evidence": {
@@ -494,6 +542,7 @@ def test_postgres_matrix_reads_exact_inventory_without_text_or_writes(tmp_path: 
             assert len(matrix.editor_visible_versions) == 6
             assert matrix.omitted_review_required_versions == []
             assert matrix.originals[7].extraction_scope == "PARTIAL"
+            assert matrix.originals[7].parts[0].part_key == "document"
             assert "TEXT_COMPLETENESS_UNVERIFIED" in matrix.originals[7].blockers
             assert "SOURCE_HEADING_UNVERIFIED" in matrix.originals[7].blockers
             assert "PART_TEXT_SCOPE_UNVERIFIED" in matrix.originals[7].parts[0].blockers
@@ -525,6 +574,12 @@ def test_postgres_matrix_reads_exact_inventory_without_text_or_writes(tmp_path: 
             with pytest.raises(ValueError, match="receipt checksum"):
                 await generate_evidence_matrix(
                     factory, PackageEvidenceRequest.model_validate(wrong_payload)
+                )
+            renamed_part = json.loads(json.dumps(payload))
+            renamed_part["originals"][7]["expected_part_keys"] = ["part-1"]
+            with pytest.raises(ValueError, match="unexpected or duplicate prepared part"):
+                await generate_evidence_matrix(
+                    factory, PackageEvidenceRequest.model_validate(renamed_part)
                 )
             wrong_package = json.loads(json.dumps(payload))
             wrong_package["package_key"] = "other-synthetic-package"
