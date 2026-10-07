@@ -99,6 +99,14 @@ def test_impossible_heading_date_is_left_unset() -> None:
     assert "ACT_DATE_NOT_FOUND" in part.blockers
 
 
+@pytest.mark.parametrize("number", ["7н", "1051н", "323-ФЗ", "2300-I", "659"])
+def test_official_number_preserves_letter_suffix_in_heading(number: str) -> None:
+    title = f'Приказ Синтетического ведомства от 1 января 2001 г. N {number} "О примере"'
+    url = "https://internet.garant.ru/document/redirect/11111111/0"
+    part = inspect_normative_rtf(_rtf(title, url), title).parts[0]
+    assert part.official_number == number
+
+
 def test_code_parts_are_scoped_without_treating_repeal_notices_as_boundaries() -> None:
     title = (
         "Гражданский кодекс Российской Федерации (ГК РФ) "

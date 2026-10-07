@@ -43,7 +43,8 @@ _CENTERED_TITLE_STYLE = re.compile(rb"\\s1(?![0-9])[^\r\n]{0,160}\\qc")
 _GARANT_HEADING_URL = re.compile(
     rb'HYPERLINK "(https://internet\.garant\.ru/document/redirect/[0-9]{1,20}/0)"'
 )
-_NUMBER = re.compile(r"(?:\bN|№)\s*([0-9]+(?:[-‐‑–][А-Яа-яA-Za-z0-9]+)?)")
+_ACT_NUMBER = r"[0-9]+(?:[-‐‑–][А-Яа-яA-Za-z0-9]+|[А-Яа-яA-Za-z]+)?"
+_NUMBER = re.compile(r"(?:\bN|№)\s*(" + _ACT_NUMBER + r")(?![А-Яа-яA-Za-z0-9])")
 _DATE = re.compile(
     r"\b([0-9]{1,2})\s+"
     r"(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)"
@@ -54,7 +55,7 @@ _PART_HEADING = re.compile(r"(?m)^Часть (первая|вторая|трет
 _SIGNATURE = re.compile(
     r"(?m)([0-9]{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|"
     r"сентября|октября|ноября|декабря)\s+[0-9]{4}\s*(?:г\.|года)?)"
-    r"[ \t]*\n[ \t]*(?:N|№)[ \t]*([0-9]+(?:[-‐‑–][А-Яа-яA-Za-z0-9]+)?)",
+    r"[ \t]*\n[ \t]*(?:N|№)[ \t]*(" + _ACT_NUMBER + r")(?![А-Яа-яA-Za-z0-9])",
     re.IGNORECASE,
 )
 _MONTHS = {
