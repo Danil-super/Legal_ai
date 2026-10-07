@@ -90,3 +90,12 @@ def test_bandit_cannot_pass_with_unscanned_files() -> None:
     spec.loader.exec_module(module)
     with pytest.raises(ValueError):
         module.summary("bandit", {"results": [], "errors": [{"reason": "syntax error"}]})
+
+
+def test_gitleaks_control_values_are_stable_and_distinct() -> None:
+    from ops.ci.check_secret_scan import PATHS, synthetic_control_value
+
+    first = tuple(synthetic_control_value(name) for name in PATHS)
+    second = tuple(synthetic_control_value(name) for name in PATHS)
+    if first != second or len(set(first)) != len(PATHS):
+        pytest.fail("Gitleaks control values must be stable and distinct", pytrace=False)
