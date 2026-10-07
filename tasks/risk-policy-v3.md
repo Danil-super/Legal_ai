@@ -20,7 +20,13 @@ and collects neither an exact monetary demand nor representative/regulator facts
 Even after laws are approved, those omissions prevent risk clearance. Keep all
 existing answers intact; changing the meaning of NO_KNOWN_INFORMATION is invalid.
 
-Proposed extension for review before changing the fact/risk contract:
+Owner-authorised next implementation slice: SPEC-factual-safety-intake-v1.md.
+Its versioned factual envelope avoids asking the clinic to classify legal harm,
+formal claims or deadlines. The candidate risk capability and new internal
+reported-event triggers must be present in the exact LEGAL_EDITOR review payload.
+The current v3 implementation does not yet include this capability.
+
+Implementation outline:
 
 1. Ask a short factual safety follow-up before final confirmation: “Сообщал ли
    пациент об ухудшении здоровья или осложнении?” and “Сообщалось ли о
@@ -43,7 +49,8 @@ or court gives CRITICAL; unknown stays unavailable; generic “document” is no
 inferred as a claim; contradicting health facts stay blocked with urgent routing;
 old draft resume and both finalization entry points work; no cross-tenant access.
 
-This proposal requires a reviewed intake/risk contract before implementation.
-The present v3 payload has not been activated, so any approved extension can be
-included in the candidate before the human review; changing an already approved
-payload would require a new policy version.
+The owner has authorised preparing and testing this workflow; do not re-request
+permission for routine implementation. The present v3 payload has not been
+activated, so the explicit extension can be included in its candidate before
+the human review. LEGAL_EDITOR confirmation remains required for activation;
+changing an already approved payload would require a new policy version.
