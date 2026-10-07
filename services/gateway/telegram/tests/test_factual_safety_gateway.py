@@ -74,6 +74,12 @@ def test_back_reopens_last_factual_question_without_losing_previous_answers():
     assert previous_screening_question(data) is False
 
 
+@pytest.mark.parametrize("invalid_answer", [None, True, ["NO"], {"value": "NO"}])
+def test_summary_never_renders_invalid_answers_as_confirmed_facts(invalid_answer):
+    data = {"safetyScreening": {"healthDeteriorationReported": invalid_answer}}
+    assert screening_summary(data)[0] == "Сообщение об ухудшении/осложнении: не указано"  # noqa: RUF001
+
+
 def test_partial_screening_survives_durable_draft_contract():
     data = _base_data()
     answer_screening(data, "healthDeteriorationReported", "UNKNOWN")

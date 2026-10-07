@@ -141,9 +141,13 @@ def screening_summary(data: dict[str, Any]) -> list[str]:
     if not isinstance(value, dict):
         return []
     labels = {"YES": "да", "NO": "нет", "UNKNOWN": "неизвестно"}
-    lines = [
-        f"{label}: {labels.get(value.get(field), 'не указано')}" for field, label in LABELS.items()
-    ]
+    lines = []
+    for field, label in LABELS.items():
+        answer = value.get(field)
+        rendered_answer = (
+            labels.get(answer, "не указано") if isinstance(answer, str) else "не указано"
+        )
+        lines.append(f"{label}: {rendered_answer}")
     amount = value.get("amount")
     if isinstance(amount, dict):
         kopecks = amount["amountKopecks"]
