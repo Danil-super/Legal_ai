@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-import secrets
 import subprocess
 import sys
 import tempfile
@@ -16,6 +16,11 @@ PATHS = (
     "services/legal_core/src/legal_core/contracts.py",
     "ops/deploy/production.env.example",
 )
+
+
+def synthetic_control_value(name: str) -> str:
+    # Gitleaks can allowlist random substrings, so keep this sensitivity check repeatable.
+    return hashlib.sha256(("gitleaks-control:" + name).encode()).hexdigest()
 
 
 def check(scanner: str) -> None:
@@ -50,7 +55,9 @@ def check(scanner: str) -> None:
             if actual != expected_files or result.returncode != (1 if expected_files else 0):
                 print(
                     f"Control failed: exit={result.returncode}, "
-                    f"expected_files={len(expected_files)}, actual_files={len(actual)}",
+                    f"expected_files={len(expected_files)}, actual_files={len(actual)}, "
+                    f"missing={sorted(expected_files - actual)}, "
+                    f"unexpected={sorted(actual - expected_files)}",
                     file=sys.stderr,
                 )
                 raise RuntimeError("Gitleaks sensitivity regression")
@@ -59,7 +66,7 @@ def check(scanner: str) -> None:
         # Generated only in a disposable directory; these values have never been issued.
         for name in PATHS:
             with (target / name).open("a", encoding="utf-8") as stream:
-                stream.write('api_key = "' + secrets.token_urlsafe(32) + '"\n')
+                stream.write('api_key = "' + synthetic_control_value(name) + '"\n')
         scan(set(PATHS))
     print("Gitleaks controls passed: placeholders ignored; new keys detected in all four files")
 
