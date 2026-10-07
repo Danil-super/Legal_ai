@@ -62,3 +62,33 @@ application deployment; this prevents every ordinary bot change from recompiling
 `Rollback production` is a manual GitHub Actions workflow. It accepts a full commit SHA that is
 still reachable from `main`. Do not roll back across a non-backward-compatible Alembic migration;
 restore from a tested backup instead.
+
+Normal deployments also compare the request with the last successful revision
+before checkout or building. A delayed request for a strict ancestor is a successful
+no-op; the newer stack and success state are left untouched. Same-SHA requests
+still rebuild, so reviewed `app.env` changes (including the analysis profile) can
+be applied. Missing state allows initial bootstrap; malformed/non-commit state
+or incomparable histories fail closed. Explicit rollback retains its intentional
+operator-controlled downgrade semantics and still validates `origin/main` ancestry.
+See [ADR-0067](../../docs/adr/0067-monotonic-normal-deployment-revisions.md).
+
+### Updating the installed deployer
+
+The root-owned `/usr/local/sbin/dental-legal-ai-deploy` does **not** update when an
+application commit is checked out. After independent review and green CI, an
+administrator must separately verify an immutable trusted checkout and install
+the reviewed script. On the VPS, from that verified checkout, run as root:
+
+```bash
+bash -n ops/deploy/deploy-commit.sh
+install -o root -g root -m 0750 ops/deploy/deploy-commit.sh /usr/local/sbin/dental-legal-ai-deploy
+cmp ops/deploy/deploy-commit.sh /usr/local/sbin/dental-legal-ai-deploy
+```
+
+Perform this administration step between deployments under the existing
+`/run/lock/dental-legal-ai-deploy.lock` (for example, in an interactive root shell
+with `exec 9>/run/lock/dental-legal-ai-deploy.lock` followed by `flock -n 9`; stop
+if acquiring it fails). Retain the prior installed script for recovery. Do not
+change deploy keys, the forced command, sudo rules or `app.env` during this update.
+Do not erase or hand-edit success state to bypass the guard. Recheck service
+readiness after the next authorized deploy; do not assume a merge installed this fix.

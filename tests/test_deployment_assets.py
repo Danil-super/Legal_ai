@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from shlex import quote
@@ -77,6 +78,218 @@ def analysis_compose_fixture() -> dict:
             "AGENT_ORCHESTRATOR_URL": "http://agent-orchestrator:8010",
         }},
     }}
+
+
+def local_deploy_history(tmp_path: Path) -> tuple[Path, str, str]:
+    """A real local origin/DAG; no SSH, production paths or Docker daemon."""
+    origin, repository = tmp_path / "origin.git", tmp_path / "repository"
+    run(["git", "init", "--bare", str(origin)], check=True, capture_output=True)
+    run(["git", "init", "-b", "main", str(repository)], check=True, capture_output=True)
+    for key, value in (("user.name", "Synthetic Deployer"),
+                       ("user.email", "deployer@example.invalid"), ("commit.gpgsign", "false")):
+        local_git(repository, "config", key, value)
+    (repository / "ops" / "deploy").mkdir(parents=True)
+    (repository / "ops" / "deploy" / "analysis-preflight.py").write_bytes(
+        (DEPLOY / "analysis-preflight.py").read_bytes()
+    )
+    local_git(repository, "add", ".")
+    local_git(repository, "commit", "-m", "Synthetic older deployment")
+    older = local_git(repository, "rev-parse", "HEAD")
+    local_git(repository, "commit", "--allow-empty", "-m", "Synthetic newer deployment")
+    newer = local_git(repository, "rev-parse", "HEAD")
+    local_git(repository, "remote", "add", "origin", str(origin))
+    local_git(repository, "push", "origin", "main")
+    return repository, older, newer
+
+
+def local_git(repository: Path, *arguments: str) -> str:
+    return run(
+        ["git", "-C", str(repository), *arguments], check=True, capture_output=True,
+        text=True, timeout=10,
+        env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
+    ).stdout.strip()
+
+
+def run_local_deploy(
+    tmp_path: Path, repository: Path, revision: str, *, operation: str = "deploy",
+    analysis: bool = False,
+):
+    """Run the unchanged post-lock deploy body, with only external side effects faked."""
+    commands, binaries = tmp_path / "commands", tmp_path / "bin"
+    binaries.mkdir(exist_ok=True)
+    docker = binaries / "docker"
+    docker.write_text(
+        '#!/bin/bash\n'
+        'printf "%s\\n" "$*" >> "$COMMAND_LOG"\n'
+        'if [[ "$*" == *"config --format json"* ]]; then printf "%s" "$COMPOSE_JSON"; fi\n'
+        'exit 0\n', encoding="utf-8",
+    )
+    docker.chmod(0o700)
+    logger = binaries / "logger"
+    logger.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    logger.chmod(0o700)
+    env_file = tmp_path / "app.env"
+    env_file.write_text(f"DEPLOY_ANALYSIS_ENABLED={int(analysis)}\n", encoding="utf-8")
+    source = (DEPLOY / "deploy-commit.sh").read_text(encoding="utf-8")
+    body = source[source.index('if [[ "$(git -C "$repository_dir" config') :]
+    script = tmp_path / "deploy.sh"
+    script.write_text(
+        "set -euo pipefail\n"
+        "readonly project_name=synthetic-deploy git_ssh_command=/bin/false\n"
+        f"readonly repository_url={quote(str(tmp_path / 'origin.git'))}\n"
+        f"readonly repository_dir={quote(str(repository))} env_file={quote(str(env_file))}\n"
+        f"readonly state_dir={quote(str(tmp_path))} revision={quote(revision)}\n"
+        f"readonly operation={quote(operation)}\n" + body, encoding="utf-8",
+    )
+    return run(
+        ["/bin/bash", str(script)], capture_output=True, text=True, check=False, timeout=15,
+        env={
+            "PATH": str(binaries) + os.pathsep + os.defpath,
+            "COMMAND_LOG": str(commands), "COMPOSE_JSON": json.dumps(analysis_compose_fixture()),
+            "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+        },
+    )
+
+
+def test_late_old_deploy_does_not_replace_a_successful_new_revision(tmp_path: Path) -> None:
+    repository, older, newer = local_deploy_history(tmp_path)
+    result = run_local_deploy(tmp_path, repository, newer)
+    assert result.returncode == 0, result.stderr
+    state_file, commands = tmp_path / "last-successful-revision", tmp_path / "commands"
+    previous_commands = commands.read_text(encoding="utf-8")
+
+    late = run_local_deploy(tmp_path, repository, older)
+
+    assert late.returncode == 0, late.stderr
+    assert local_git(repository, "rev-parse", "HEAD") == newer
+    assert state_file.read_text(encoding="utf-8") == newer + "\n"
+    assert commands.read_text(encoding="utf-8") == previous_commands
+
+
+@pytest.mark.parametrize("mode", ["bootstrap", "forward", "same", "rollback"])
+def test_deploy_preserves_bootstrap_forward_same_sha_and_explicit_rollback(
+    tmp_path: Path, mode: str,
+) -> None:
+    repository, older, newer = local_deploy_history(tmp_path)
+    state_file = tmp_path / "last-successful-revision"
+    if mode != "bootstrap":
+        state_file.write_text((older if mode == "forward" else newer) + "\n", encoding="utf-8")
+    requested = older if mode in {"bootstrap", "rollback"} else newer
+    result = run_local_deploy(
+        tmp_path, repository, requested, operation="rollback" if mode == "rollback" else "deploy",
+    )
+    assert result.returncode == 0, result.stderr
+    assert local_git(repository, "rev-parse", "HEAD") == requested
+    assert state_file.read_text(encoding="utf-8") == requested + "\n"
+    assert "up --no-build" in (tmp_path / "commands").read_text(encoding="utf-8")
+
+
+def test_same_sha_redeploy_applies_a_changed_analysis_profile(tmp_path: Path) -> None:
+    repository, _, newer = local_deploy_history(tmp_path)
+    result = run_local_deploy(tmp_path, repository, newer)
+    assert result.returncode == 0, result.stderr
+    previous_commands = (tmp_path / "commands").read_text(encoding="utf-8")
+    result = run_local_deploy(tmp_path, repository, newer, analysis=True)
+    assert result.returncode == 0, result.stderr
+    new_commands = (tmp_path / "commands").read_text(encoding="utf-8")[len(previous_commands) :]
+    assert "--profile analysis" in new_commands and "up --no-build" in new_commands
+    assert "build legal-core telegram-gateway agent-orchestrator" in new_commands
+
+
+@pytest.mark.parametrize("malformed", [
+    "", "not-a-sha", "f" * 40, "two_lines", "extra_line", "oversized", "nul", "blob",
+])
+def test_deploy_rejects_malformed_or_unknown_success_state_before_checkout(
+    tmp_path: Path, malformed: str,
+) -> None:
+    repository, older, newer = local_deploy_history(tmp_path)
+    state = older + "\n" + newer if malformed == "two_lines" else (
+        older + "\n\n" if malformed == "extra_line" else malformed
+    )
+    if malformed == "oversized":
+        state = "SENTINEL_PRIVATE_STATE" * 5000
+    elif malformed == "nul":
+        state = older + "\x00"
+    elif malformed == "blob":
+        state = local_git(repository, "rev-parse", "HEAD:ops/deploy/analysis-preflight.py")
+    state_file = tmp_path / "last-successful-revision"
+    state_file.write_text(state, encoding="utf-8")
+    local_git(repository, "checkout", "--detach", older)
+    result = run_local_deploy(tmp_path, repository, newer)
+    assert result.returncode == 65, result.stderr
+    assert local_git(repository, "rev-parse", "HEAD") == older
+    assert state_file.read_text(encoding="utf-8") == state
+    assert not (tmp_path / "commands").exists()
+    assert "SENTINEL_PRIVATE_STATE" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("invalid_type", ["directory", "symlink", "broken_symlink"])
+def test_deploy_rejects_nonregular_success_state(tmp_path: Path, invalid_type: str) -> None:
+    repository, older, newer = local_deploy_history(tmp_path)
+    state = tmp_path / "last-successful-revision"
+    if invalid_type == "directory":
+        state.mkdir()
+    else:
+        target = tmp_path / "symlink-target"
+        if invalid_type == "symlink":
+            target.write_text(older + "\n", encoding="utf-8")
+        state.symlink_to(target)
+    local_git(repository, "checkout", "--detach", older)
+    result = run_local_deploy(tmp_path, repository, newer)
+    assert result.returncode == 65, result.stderr
+    assert local_git(repository, "rev-parse", "HEAD") == older
+    assert not (tmp_path / "commands").exists()
+
+
+def test_explicit_rollback_can_recover_from_invalid_success_state(tmp_path: Path) -> None:
+    repository, older, _ = local_deploy_history(tmp_path)
+    state = tmp_path / "last-successful-revision"
+    state.write_text("SENTINEL_PRIVATE_STATE", encoding="utf-8")
+    result = run_local_deploy(tmp_path, repository, older, operation="rollback")
+    assert result.returncode == 0, result.stderr
+    assert local_git(repository, "rev-parse", "HEAD") == older
+    assert state.read_text(encoding="utf-8") == older + "\n"
+    assert "SENTINEL_PRIVATE_STATE" not in result.stdout + result.stderr
+
+
+def test_success_guard_does_not_bypass_requested_revision_main_validation(tmp_path: Path) -> None:
+    repository, _, newer = local_deploy_history(tmp_path)
+    local_git(repository, "checkout", "--orphan", "unreachable")
+    local_git(repository, "commit", "--allow-empty", "-m", "Synthetic unreachable history")
+    unreachable = local_git(repository, "rev-parse", "HEAD")
+    local_git(repository, "checkout", "--detach", newer)
+    (tmp_path / "last-successful-revision").write_text(unreachable + "\n", encoding="utf-8")
+    result = run_local_deploy(tmp_path, repository, unreachable)
+    assert result.returncode == 65, result.stderr
+    assert "not reachable from origin/main" in result.stderr
+    assert local_git(repository, "rev-parse", "HEAD") == newer
+    assert not (tmp_path / "commands").exists()
+
+
+@pytest.mark.parametrize("history", ["orphan", "divergent"])
+def test_deploy_rejects_incomparable_success_history_before_checkout(
+    tmp_path: Path, history: str,
+) -> None:
+    repository, older, newer = local_deploy_history(tmp_path)
+    if history == "orphan":
+        local_git(repository, "checkout", "--orphan", "unrelated")
+    else:
+        local_git(repository, "checkout", "-b", "divergent", older)
+    local_git(repository, "commit", "--allow-empty", "-m", "Synthetic other history")
+    other = local_git(repository, "rev-parse", "HEAD")
+    local_git(repository, "checkout", "main")
+    if history == "divergent":
+        local_git(repository, "merge", "--no-ff", "-m", "Synthetic merge", "divergent")
+        local_git(repository, "push", "origin", "main")
+    state = other if history == "orphan" else newer
+    requested = newer if history == "orphan" else other
+    (tmp_path / "last-successful-revision").write_text(state + "\n", encoding="utf-8")
+    local_git(repository, "checkout", "--detach", older)
+    result = run_local_deploy(tmp_path, repository, requested)
+    assert result.returncode == 65, result.stderr
+    assert local_git(repository, "rev-parse", "HEAD") == older
+    assert (tmp_path / "last-successful-revision").read_text(encoding="utf-8") == state + "\n"
+    assert not (tmp_path / "commands").exists()
 
 
 @pytest.mark.parametrize(

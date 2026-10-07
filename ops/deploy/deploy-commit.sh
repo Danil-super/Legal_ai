@@ -50,6 +50,40 @@ if ! git -C "$repository_dir" merge-base --is-ancestor "$revision" origin/main; 
   exit 65
 fi
 
+# A queued CI run may arrive after a newer successful deploy. Keep normal
+# deployments monotonic; explicit rollback retains its operator-only semantics.
+success_state_file="$state_dir/last-successful-revision"
+if [[ "$operation" == deploy && ( -e "$success_state_file" || -L "$success_state_file" ) ]]; then
+  if [[ ! -f "$success_state_file" || ! -r "$success_state_file" || -L "$success_state_file" ]] \
+    || ! success_state_size="$(stat -c %s "$success_state_file" 2>/dev/null)" \
+    || [[ ! "$success_state_size" =~ ^(40|41)$ ]]; then
+    echo "Invalid last-successful-revision state. Verify it before deployment." >&2
+    exit 65
+  fi
+  # Bound the read even if a damaged file changes after stat. Match the byte
+  # count too: Bash discards NUL bytes, which must not silently repair bad state.
+  last_successful_revision=''
+  IFS= read -r -N 42 last_successful_revision <"$success_state_file" || true
+  success_state_read_size="${#last_successful_revision}"
+  last_successful_revision="${last_successful_revision%$'\n'}"
+  if [[ "$success_state_read_size" -ne "$success_state_size" \
+    || ! "$last_successful_revision" =~ ^[0-9a-f]{40}$ ]] \
+    || [[ "$(git -C "$repository_dir" cat-file -t "$last_successful_revision" 2>/dev/null)" != commit ]]; then
+    echo "Invalid last-successful-revision state. Verify it before deployment." >&2
+    exit 65
+  fi
+  if [[ "$revision" != "$last_successful_revision" ]]; then
+    if git -C "$repository_dir" merge-base --is-ancestor "$revision" "$last_successful_revision"; then
+      echo "Skipping stale deployment: a newer revision already succeeded."
+      exit 0
+    fi
+    if ! git -C "$repository_dir" merge-base --is-ancestor "$last_successful_revision" "$revision"; then
+      echo "Requested revision and successful deployment have incomparable histories." >&2
+      exit 65
+    fi
+  fi
+fi
+
 git -C "$repository_dir" checkout --detach --force "$revision"
 cd "$repository_dir"
 
