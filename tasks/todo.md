@@ -8,6 +8,7 @@
 - [x] Verify disposable PostgreSQL, auth/RLS, recovery and full project gates.
   Evidence: 35 focused PostgreSQL tests; 1081 full local tests with 136 optional
   DB skips; 11 gateway notification tests; Ruff, mypy and Compose passed.
+  Full Core PostgreSQL run: 565 passed, one separately enabled MinIO smoke skipped.
 - [ ] Independent review and GitHub release; production synthetic delivery check.
 
 ## Complete package preparation: discovery, 2026-09-27
