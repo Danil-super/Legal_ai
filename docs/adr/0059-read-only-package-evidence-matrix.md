@@ -9,26 +9,33 @@ The 58 immutable originals have been delivered, while the offline P8 inspector
 finds 54 intended normative parts and eight references. Title-bound URLs and
 scoped hashes are candidate extraction results, not verified edition dates or
 proof that tables and figures survived conversion. Existing preparations may
-remain partial. Six earlier corpus versions have no proven relationship to the
-new originals. The one-part P11 pilot does not safely import two multi-part code
-bundles or resolve missing legal metadata.
+remain partial. A 2026-10-07 read-only audit found ten `REVIEW_REQUIRED` corpus
+versions: six visible in the editor queue and four historical rows excluded by
+latest-version or expiry rules. Their relationship to new originals is unproven.
+The one-part P11 pilot does not safely import two multi-part code bundles or
+resolve missing legal metadata.
 
 ## Decision
 
 Before extending the importer, add a private operator inventory and deterministic
 gap-matrix generator. Its exact input is versioned and bounds the operation to
-58 originals, 54 expected part keys, eight references and six explicit legacy
-version UUIDs. The database is read through a `REPEATABLE READ READ ONLY`
-transaction, selecting only allowlisted receipt/preparation/binding/version
-columns; raw bytes and normalized document text are never selected. The exact
+58 originals, 54 expected part keys, eight references and six explicit UUIDs
+for the editor-visible corpus versions. The generator validates those UUIDs
+against the editor's latest-version-per-document, `REVIEW_REQUIRED`, and
+non-expired predicate using a captured `editor_as_of_date`. It reports all
+other `REVIEW_REQUIRED` versions separately with superseded/expired reasons;
+their count is not assumed to remain four. The database is read through a
+`REPEATABLE READ READ ONLY` transaction, selecting only allowlisted
+receipt/preparation/binding/version columns; raw bytes and normalized document
+text are never selected. The exact
 binding material, original checksum, part-text checksum and bound-version
 checksum are checked against the fixed inventory and current preparation.
 
 The matrix exposes existing candidate public-law metadata and exact preparation
 locators for human verification, plus explicit blockers. It does not infer
 unknown fields, certify their provenance, compare old editions, or approve
-anything. Old versions are a separate list containing only their existing
-binding state. Output is an owned `0600` file in a private directory, created
+anything. Corpus versions and exact binding IDs remain separate from incoming
+originals. Output is an owned `0600` file in a private directory, created
 with exclusive/no-follow flags; CLI stdout stays empty and errors contain no
 candidate values. Input and output schema are documented in
 `docs/legal-review/package-evidence-contract.v1.md`.
@@ -43,7 +50,7 @@ APPROVED status remains exclusively with the authenticated editor API.
 
 - Auto-populate missing dates from act adoption or receipt time: a consolidated
   edition may have different publication and effective dates.
-- Guess links to six prior versions by title, number or raw hash: none proves
+- Guess links from corpus versions by title, number or raw hash: none proves
   the same act, part and edition; two distinct laws can share a number.
 - Include full text in the gap report: it expands leak scope without helping
   identify missing fields and violates the package's private-document boundary.
@@ -53,9 +60,10 @@ APPROVED status remains exclusively with the authenticated editor API.
 ## Verification and limits
 
 Synthetic tests check fixed counts, unsafe input rejection, exact DB inventory,
-partial preparation blockers, distinct legacy rows, checksum tampering, private
-output mode and silent CLI behavior. PostgreSQL integration uses disposable
-data and checks preparation counts before/after. No real documents enter tests.
+partial preparation blockers, exact editor-visible IDs, excluded corpus rows,
+checksum tampering, private output mode and silent CLI behavior. PostgreSQL
+integration uses disposable data and checks preparation counts before/after.
+No real documents enter tests.
 The matrix alone cannot prove that all 54 parts are correctly identified or
 that a locator describes the cited text. It must never be treated as a release
 or legal-review attestation.

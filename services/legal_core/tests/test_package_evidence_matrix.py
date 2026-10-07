@@ -73,8 +73,38 @@ def _inventory() -> dict:
         "schema_version": "package-evidence.v1",
         "package_key": "synthetic-package",
         "originals": originals,
-        "legacy_version_ids": [str(uuid4()) for _ in range(6)],
+        "editor_visible_version_ids": [str(uuid4()) for _ in range(6)],
     }
+
+
+def _synthetic_corpus_version(
+    document_id, source_id, *, version_no: int, effective_to: date | None = None
+) -> LegalVersion:
+    version_id = uuid4()
+    raw = f"synthetic corpus bytes {version_id}".encode()
+    normalized = f"synthetic corpus text {version_id}"
+    return LegalVersion(
+        id=version_id,
+        document_id=document_id,
+        source_id=source_id,
+        version_no=version_no,
+        source_external_id=str(version_id),
+        source_url=f"https://example.invalid/{version_id}",
+        effective_from=date(2020, 1, 1),
+        effective_to=effective_to,
+        approval_state="REVIEW_REQUIRED",
+        artifact_kind="NORMALIZED_EXCERPT",
+        raw_sha256=hashlib.sha256(raw).hexdigest(),
+        raw_mime_type="application/rtf",
+        raw_bytes=raw,
+        raw_size_bytes=len(raw),
+        normalized_text=normalized,
+        normalized_sha256=hashlib.sha256(normalized.encode()).hexdigest(),
+        fragments_sha256="b" * 64,
+        normalization_scope="SELECTED_EXCERPT",
+        parser_version="synthetic",
+        regression_passed=False,
+    )
 
 
 def test_inventory_requires_exact_package_shape_without_document_text() -> None:
@@ -83,6 +113,13 @@ def test_inventory_requires_exact_package_shape_without_document_text() -> None:
     assert sum(len(item.expected_part_keys) for item in request.originals) == 54
     assert sum(item.kind != "NORMATIVE" for item in request.originals) == 8
     assert "normalized_text" not in request.model_dump_json()
+
+
+def test_inventory_rejects_ambiguous_legacy_version_ids() -> None:
+    payload = _inventory()
+    payload["legacy_version_ids"] = payload.pop("editor_visible_version_ids")
+    with pytest.raises(ValidationError):
+        PackageEvidenceRequest.model_validate(payload)
 
 
 @pytest.mark.parametrize(
@@ -191,7 +228,9 @@ def test_private_output_rejects_symlink_parent_and_existing_target(tmp_path: Pat
         package_key="synthetic-package",
         input_sha256="a" * 64,
         originals=[],
-        legacy_versions=[],
+        editor_as_of_date=date.today(),
+        editor_visible_versions=[],
+        omitted_review_required_versions=[],
         snapshot_sha256="b" * 64,
     )
     target = private / "matrix.json"
@@ -258,17 +297,26 @@ def test_postgres_matrix_reads_exact_inventory_without_text_or_writes(tmp_path: 
                 )
                 session.add(source)
                 await session.flush()
-                for number, version_id in enumerate(request.legacy_version_ids, start=1):
+                first_document_id = None
+                second_document_id = None
+                third_document_id = None
+                for number, version_id in enumerate(request.editor_visible_version_ids, start=1):
                     document = LegalDocument(
                         canonical_key=f"synthetic-matrix-{uuid4().hex}",
                         document_type="Synthetic",
-                        title="Synthetic legacy record",
+                        title="Synthetic corpus record",
                         issuer="Synthetic",
                         official_number=str(number),
                     )
                     session.add(document)
                     await session.flush()
-                    raw = f"synthetic legacy {number}".encode()
+                    if number == 1:
+                        first_document_id = document.id
+                    elif number == 2:
+                        second_document_id = document.id
+                    elif number == 3:
+                        third_document_id = document.id
+                    raw = f"synthetic corpus {number}".encode()
                     normalized = f"synthetic normalized {number}"
                     session.add(
                         LegalVersion(
@@ -354,7 +402,8 @@ def test_postgres_matrix_reads_exact_inventory_without_text_or_writes(tmp_path: 
             validate_evidence_matrix(request, matrix)
             assert len(matrix.originals) == 58
             assert sum(len(item.parts) for item in matrix.originals) == 54
-            assert len(matrix.legacy_versions) == 6
+            assert len(matrix.editor_visible_versions) == 6
+            assert matrix.omitted_review_required_versions == []
             assert matrix.originals[7].extraction_scope == "PARTIAL"
             assert "TEXT_COMPLETENESS_UNVERIFIED" in matrix.originals[7].blockers
             assert "SOURCE_HEADING_UNVERIFIED" in matrix.originals[7].blockers
@@ -366,7 +415,10 @@ def test_postgres_matrix_reads_exact_inventory_without_text_or_writes(tmp_path: 
             assert matrix.originals[7].parts[0].fields["title"].evidence_locator == (
                 "Synthetic heading line 1"
             )
-            assert all(item.existing_binding_id is None for item in matrix.legacy_versions)
+            assert all(
+                item.binding_state == "NO_PREPARED_PART_BINDING"
+                for item in matrix.editor_visible_versions
+            )
             assert "synthetic partial extraction" not in matrix.model_dump_json()
             assert "Synthetic material" not in matrix.model_dump_json()
             async with factory() as session:
@@ -444,6 +496,66 @@ def test_postgres_matrix_reads_exact_inventory_without_text_or_writes(tmp_path: 
             )
             assert repeated.returncode == 1
             assert "Synthetic legal title" not in repeated.stderr
+            assert all(
+                item is not None
+                for item in (first_document_id, second_document_id, third_document_id)
+            )
+            async with factory() as session, session.begin():
+                first_new = _synthetic_corpus_version(first_document_id, source.id, version_no=2)
+                second_new = _synthetic_corpus_version(second_document_id, source.id, version_no=2)
+                session.add_all([first_new, second_new])
+                expired_ids = []
+                for expiration in (date.today(), date(2021, 1, 1)):
+                    expired_document = LegalDocument(
+                        canonical_key=f"synthetic-matrix-{uuid4().hex}",
+                        document_type="Synthetic",
+                        title="Synthetic expired record",
+                        issuer="Synthetic",
+                    )
+                    session.add(expired_document)
+                    await session.flush()
+                    expired = _synthetic_corpus_version(
+                        expired_document.id, source.id, version_no=1,
+                        effective_to=expiration,
+                    )
+                    expired_ids.append(expired.id)
+                    session.add(expired)
+            with pytest.raises(ValueError, match="editor-visible"):
+                await generate_evidence_matrix(factory, request)
+            corrected_payload = json.loads(json.dumps(payload))
+            corrected_payload["editor_visible_version_ids"][:2] = [
+                str(first_new.id), str(second_new.id),
+            ]
+            corrected_request = PackageEvidenceRequest.model_validate(corrected_payload)
+            corrected_matrix = await generate_evidence_matrix(factory, corrected_request)
+            omitted = corrected_matrix.omitted_review_required_versions
+            assert corrected_matrix.editor_as_of_date == date.today()
+            assert len(omitted) == 4
+            assert {item.version_id for item in omitted} == {
+                request.editor_visible_version_ids[0],
+                request.editor_visible_version_ids[1],
+                *expired_ids,
+            }
+            assert {item.exclusion_reason for item in omitted} == {
+                "SUPERSEDED_BY_NEWER_VERSION", "EXPIRED",
+            }
+            assert sum(item.exclusion_reason == "EXPIRED" for item in omitted) == 2
+            assert "Synthetic expired record" not in corrected_matrix.model_dump_json()
+            assert "synthetic corpus text" not in corrected_matrix.model_dump_json()
+            duplicated_omission = corrected_matrix.model_copy(
+                update={"omitted_review_required_versions": [*omitted, omitted[0]]}
+            )
+            with pytest.raises(ValueError, match="entries differ"):
+                validate_evidence_matrix(corrected_request, duplicated_omission)
+            assert third_document_id is not None
+            blocked_newer = _synthetic_corpus_version(
+                third_document_id, source.id, version_no=2,
+            )
+            blocked_newer.approval_state = "BLOCKED"
+            async with factory() as session, session.begin():
+                session.add(blocked_newer)
+            with pytest.raises(ValueError, match="editor-visible"):
+                await generate_evidence_matrix(factory, corrected_request)
         finally:
             await engine.dispose()
 

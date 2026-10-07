@@ -13,12 +13,13 @@ import os
 import stat
 import sys
 from collections import Counter
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import Field, model_validator
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.contracts import ContractModel
@@ -98,15 +99,16 @@ class PackageEvidenceRequest(ContractModel):
     schema_version: Literal["package-evidence.v1"]
     package_key: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9][a-z0-9-]*$")
     originals: list[ExpectedOriginal] = Field(min_length=58, max_length=58)
-    legacy_version_ids: list[UUID] = Field(min_length=6, max_length=6)
+    editor_visible_version_ids: list[UUID] = Field(min_length=6, max_length=6)
 
     @model_validator(mode="after")
     def fixed_package_shape(self) -> PackageEvidenceRequest:
         items = self.originals
         if len({item.material_id for item in items}) != 58 or (
-            len({item.raw_sha256 for item in items}) != 58 or len(set(self.legacy_version_ids)) != 6
+            len({item.raw_sha256 for item in items}) != 58
+            or len(set(self.editor_visible_version_ids)) != 6
         ):
-            raise ValueError("duplicate material, original hash or legacy version")
+            raise ValueError("duplicate material, original hash or editor-visible version")
         if Counter(item.group_key for item in items) != _GROUP_COUNTS:
             raise ValueError("seven-group original inventory differs")
         if sum(item.kind == "NORMATIVE" for item in items) != 50 or (
@@ -217,18 +219,29 @@ class OriginalEvidence(ContractModel):
         return self
 
 
-class LegacyEvidence(ContractModel):
+class EditorVisibleVersionEvidence(ContractModel):
     version_id: UUID
     raw_sha256: Digest
-    approval_state: ApprovalState
-    existing_binding_id: UUID | None = None
-    blocker: Literal["LEGACY_UNLINKED", "EXISTING_BINDING_REQUIRES_REVIEW"]
+    approval_state: Literal["REVIEW_REQUIRED"]
+    binding_ids: list[UUID]
+    binding_state: Literal["NO_PREPARED_PART_BINDING", "HAS_PREPARED_PART_BINDING"]
 
     @model_validator(mode="after")
-    def consistent_legacy(self) -> LegacyEvidence:
-        if (self.existing_binding_id is None) != (self.blocker == "LEGACY_UNLINKED"):
-            raise ValueError("legacy binding state differs from blocker")
+    def consistent_binding(self) -> EditorVisibleVersionEvidence:
+        if len(set(self.binding_ids)) != len(self.binding_ids) or (
+            bool(self.binding_ids) != (self.binding_state == "HAS_PREPARED_PART_BINDING")
+        ):
+            raise ValueError("editor-visible binding state differs")
         return self
+
+
+class OmittedReviewRequiredVersionEvidence(ContractModel):
+    version_id: UUID
+    document_id: UUID
+    version_no: int = Field(ge=1)
+    raw_sha256: Digest
+    effective_to: date | None = None
+    exclusion_reason: Literal["SUPERSEDED_BY_NEWER_VERSION", "EXPIRED"]
 
 
 class PackageEvidenceMatrix(ContractModel):
@@ -236,7 +249,9 @@ class PackageEvidenceMatrix(ContractModel):
     package_key: str
     input_sha256: Digest
     originals: list[OriginalEvidence]
-    legacy_versions: list[LegacyEvidence]
+    editor_as_of_date: date
+    editor_visible_versions: list[EditorVisibleVersionEvidence]
+    omitted_review_required_versions: list[OmittedReviewRequiredVersionEvidence]
     snapshot_sha256: Digest
 
 
@@ -413,6 +428,34 @@ def _original_evidence(
 async def _read_snapshot(
     session: AsyncSession, request: PackageEvidenceRequest
 ) -> PackageEvidenceMatrix:
+    editor_as_of_date = date.today()
+    # Mirror legal_api.list_platform_review_queue: rank every version before
+    # filtering by state and expiry, including newer BLOCKED/APPROVED revisions.
+    ranked = select(
+        LegalVersion.id.label("version_id"),
+        LegalVersion.document_id.label("document_id"),
+        LegalVersion.version_no.label("version_no"),
+        LegalVersion.raw_sha256.label("raw_sha256"),
+        LegalVersion.approval_state.label("approval_state"),
+        LegalVersion.effective_to.label("effective_to"),
+        func.row_number().over(
+            partition_by=LegalVersion.document_id,
+            order_by=LegalVersion.version_no.desc(),
+        ).label("document_rank"),
+    ).subquery()
+    review_rows = (
+        (await session.execute(
+            select(ranked).where(ranked.c.approval_state == "REVIEW_REQUIRED")
+        )).mappings().all()
+    )
+    visible_version_ids = {
+        row["version_id"]
+        for row in review_rows
+        if row["document_rank"] == 1
+        and (row["effective_to"] is None or row["effective_to"] > editor_as_of_date)
+    }
+    if visible_version_ids != set(request.editor_visible_version_ids):
+        raise ValueError("editor-visible version inventory differs")
     ids = [item.material_id for item in request.originals]
     receipt_rows = (
         (
@@ -496,16 +539,30 @@ async def _read_snapshot(
         .all()
     )
     reviewed = {row["preparation_id"]: row["id"] for row in reviews}
-    versions = (
+    bound_versions = (
         (
             await session.execute(
                 select(
                     LegalVersion.id,
                     LegalVersion.raw_sha256,
                     LegalVersion.approval_state,
+                ).where(LegalVersion.id.in_([row["legal_version_id"] for row in bindings]))
+            )
+        )
+        .mappings()
+        .all()
+    )
+    version_by_id = {row["version_id"]: row for row in review_rows}
+    version_by_id.update({row["id"]: row for row in bound_versions})
+    visible_bindings = (
+        (
+            await session.execute(
+                select(
+                    LegalPreparedPartVersion.id,
+                    LegalPreparedPartVersion.legal_version_id,
                 ).where(
-                    LegalVersion.id.in_(
-                        request.legacy_version_ids + [row["legal_version_id"] for row in bindings]
+                    LegalPreparedPartVersion.legal_version_id.in_(
+                        request.editor_visible_version_ids
                     )
                 )
             )
@@ -513,20 +570,9 @@ async def _read_snapshot(
         .mappings()
         .all()
     )
-    version_by_id = {row["id"]: row for row in versions}
-    legacy_bindings = (
-        (
-            await session.execute(
-                select(
-                    LegalPreparedPartVersion.id,
-                    LegalPreparedPartVersion.legal_version_id,
-                ).where(LegalPreparedPartVersion.legal_version_id.in_(request.legacy_version_ids))
-            )
-        )
-        .mappings()
-        .all()
-    )
-    legacy_bound = {row["legal_version_id"]: row["id"] for row in legacy_bindings}
+    binding_ids_by_version: dict[UUID, list[UUID]] = {}
+    for row in visible_bindings:
+        binding_ids_by_version.setdefault(row["legal_version_id"], []).append(row["id"])
     originals = [
         _original_evidence(
             expected,
@@ -538,29 +584,43 @@ async def _read_snapshot(
         )
         for expected in request.originals
     ]
-    legacy: list[LegacyEvidence] = []
-    for version_id in request.legacy_version_ids:
-        legacy_row = version_by_id.get(version_id)
-        if legacy_row is None:
-            raise ValueError("legacy version missing")
-        existing_binding = legacy_bound.get(version_id)
-        legacy.append(
-            LegacyEvidence(
+    editor_visible: list[EditorVisibleVersionEvidence] = []
+    for version_id in request.editor_visible_version_ids:
+        version = version_by_id[version_id]
+        binding_ids = sorted(binding_ids_by_version.get(version_id, []), key=str)
+        editor_visible.append(
+            EditorVisibleVersionEvidence(
                 version_id=version_id,
-                raw_sha256=legacy_row["raw_sha256"],
-                approval_state=legacy_row["approval_state"],
-                existing_binding_id=existing_binding,
-                blocker=(
-                    "EXISTING_BINDING_REQUIRES_REVIEW" if existing_binding else "LEGACY_UNLINKED"
+                raw_sha256=version["raw_sha256"],
+                approval_state="REVIEW_REQUIRED",
+                binding_ids=binding_ids,
+                binding_state=(
+                    "HAS_PREPARED_PART_BINDING" if binding_ids else "NO_PREPARED_PART_BINDING"
                 ),
             )
         )
+    omitted = [
+        OmittedReviewRequiredVersionEvidence(
+            version_id=row["version_id"],
+            document_id=row["document_id"],
+            version_no=row["version_no"],
+            raw_sha256=row["raw_sha256"],
+            effective_to=row["effective_to"],
+            exclusion_reason=(
+                "SUPERSEDED_BY_NEWER_VERSION" if row["document_rank"] != 1 else "EXPIRED"
+            ),
+        )
+        for row in sorted(review_rows, key=lambda item: str(item["version_id"]))
+        if row["version_id"] not in visible_version_ids
+    ]
     matrix = PackageEvidenceMatrix(
         schema_version="package-evidence.v1",
         package_key=request.package_key,
         input_sha256=_digest(request.model_dump(mode="json")),
         originals=originals,
-        legacy_versions=legacy,
+        editor_as_of_date=editor_as_of_date,
+        editor_visible_versions=editor_visible,
+        omitted_review_required_versions=omitted,
         snapshot_sha256="0" * 64,
     )
     return matrix.model_copy(
@@ -591,7 +651,7 @@ def validate_evidence_matrix(
         matrix.package_key != request.package_key
         or matrix.input_sha256 != _digest(request.model_dump(mode="json"))
         or len(matrix.originals) != 58
-        or len(matrix.legacy_versions) != 6
+        or len(matrix.editor_visible_versions) != 6
     ):
         raise ValueError("matrix inventory or request digest differs")
     expected = {item.material_id: item for item in request.originals}
@@ -605,7 +665,19 @@ def validate_evidence_matrix(
             or [part.part_key for part in row.parts] != expected[row.material_id].expected_part_keys
             for row in matrix.originals
         )
-        or [row.version_id for row in matrix.legacy_versions] != request.legacy_version_ids
+        or [row.version_id for row in matrix.editor_visible_versions]
+        != request.editor_visible_version_ids
+        or len({row.version_id for row in matrix.omitted_review_required_versions})
+        != len(matrix.omitted_review_required_versions)
+        or bool(
+            {row.version_id for row in matrix.omitted_review_required_versions}
+            & set(request.editor_visible_version_ids)
+        )
+        or any(
+            row.exclusion_reason == "EXPIRED"
+            and (row.effective_to is None or row.effective_to > matrix.editor_as_of_date)
+            for row in matrix.omitted_review_required_versions
+        )
     ):
         raise ValueError("matrix entries differ from exact inventory")
     if matrix.snapshot_sha256 != _digest(
