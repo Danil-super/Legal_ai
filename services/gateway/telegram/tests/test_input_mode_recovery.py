@@ -175,6 +175,10 @@ def test_delivery_failure_keeps_confirmation_retryable_without_archiving_draft(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = context_with_draft(bot.WizardState.CONFIRM)
+    context.user_data[bot.WIZARD_DATA_KEY]["service_date"] = {
+        "date": "2026-08-25",
+        "precision": "EXACT",
+    }
     client = context.bot_data[bot.LEGAL_CORE_CLIENT_KEY]
     client.submit_workflow = AsyncMock(return_value={})
     client.archive_intake_draft = AsyncMock()
@@ -190,6 +194,49 @@ def test_delivery_failure_keeps_confirmation_retryable_without_archiving_draft(
     client.archive_intake_draft.assert_not_called()
     client.submit_workflow.assert_awaited_once_with(UUID(DRAFT_ID), [], ACTOR_ID)
     assert "Telegram" in update.effective_message.reply_text.call_args.args[0]
+
+
+def test_v2_delivery_failure_preserves_guided_confirmation_for_safe_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = context_with_draft(bot.WizardState.V2_CONFIRM)
+    context.user_data[bot.WIZARD_DATA_KEY] = {
+        "workflow_id": DRAFT_ID,
+        bot.DRAFT_ID_KEY: DRAFT_ID,
+        bot.DRAFT_REVISION_KEY: 7,
+        bot.DRAFT_STATE_KEY: "V2_CONFIRM",
+        "intakeVersion": 2,
+        "incomingKind": "COMPLAINT",
+        "incomingSourceStatus": "NOT_ATTACHED",
+        "situationAreas": ["TREATMENT"],
+        "affectedServices": ["терапевтическое лечение"],
+        "eventSummary": "После лечения пациент отметил дискомфорт.",
+        "eventDate": {"date": "2026-09-01", "precision": "EXACT"},
+        "conflictStage": "FIRST",
+        "clinicActions": ["INVITED_FOR_EXAMINATION"],
+        "healthSignals": ["NO_KNOWN_INFORMATION"],
+        "caseMaterialsStatus": "NOT_ATTACHED",
+    }
+    client = context.bot_data[bot.LEGAL_CORE_CLIENT_KEY]
+    client.submit_workflow = AsyncMock(return_value={})
+    client.archive_intake_draft = AsyncMock()
+    delivery = AsyncMock(side_effect=[TimedOut(), None])
+    monkeypatch.setattr(bot, "_send_workflow_report", delivery)
+    update = fake_update(callback=f"case:confirm:{DRAFT_ID}")
+
+    failed = asyncio.run(bot._persist_transition(bot.confirm_case, update, context))
+
+    assert failed == bot.WizardState.V2_CONFIRM
+    assert context.user_data[bot.WIZARD_DATA_KEY][bot.DRAFT_STATE_KEY] == "V2_CONFIRM"
+    client.save_intake_draft.assert_not_called()
+    client.archive_intake_draft.assert_not_called()
+
+    retried = asyncio.run(bot._persist_transition(bot.confirm_case, update, context))
+
+    assert retried == ConversationHandler.END
+    assert client.submit_workflow.await_count == 2
+    client.archive_intake_draft.assert_awaited_once()
+    assert bot.WIZARD_DATA_KEY not in context.user_data
 
 
 def test_long_analysis_preserves_the_entire_draft_and_review_warning() -> None:

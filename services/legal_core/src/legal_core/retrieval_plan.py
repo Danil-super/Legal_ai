@@ -64,6 +64,27 @@ def _tokens(value: object) -> set[str]:
 def plan_legal_queries(facts: Mapping[FactKey, object]) -> tuple[str, ...]:
     queries = list(_BASE_QUERIES)
 
+    if facts.get(FactKey.INTAKE_VERSION) == "GUIDED_V2":
+        areas = _tokens(facts.get(FactKey.SITUATION_AREAS))
+        if "PERSONAL_DATA" in areas:
+            queries.extend(_INCIDENT_QUERIES["PERSONAL_DATA"])
+        if "MEDICAL_RECORDS" in areas:
+            queries.append("медицинская документация пациент копии")
+
+        actions = _tokens(facts.get(FactKey.CLINIC_ACTIONS))
+        if "OFFERED_REFUND" in actions:
+            queries.append("возврат денежных средств медицинские услуги")
+        if "OFFERED_CORRECTION" in actions:
+            queries.extend(_REWORK_QUERIES)
+
+        health_signals = _tokens(facts.get(FactKey.HEALTH_CONSEQUENCE_SIGNALS))
+        if health_signals & {"COMPLICATION_OR_WORSENING", "HOSPITALIZATION"}:
+            queries.append("возмещение вреда здоровью медицинские услуги")
+
+        # V2 narratives and service labels are not legal classifications or search inputs.
+        # These fixed phrases only select candidates, never establish a legal conclusion.
+        return tuple(dict.fromkeys(queries))
+
     if _is_yes(facts.get(FactKey.FORMAL_CLAIM)):
         queries.append("требования потребителя претензия медицинские услуги")
     if _is_yes(facts.get(FactKey.HARM_CLAIMED)):
