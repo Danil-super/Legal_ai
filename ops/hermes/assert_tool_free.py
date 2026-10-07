@@ -14,6 +14,37 @@ from typing import Any
 EXPECTED_HERMES_VERSION = "0.20.6"
 
 
+def assert_call_budget(config: dict[str, Any]) -> dict[str, int]:
+    error = "Hermes legal call budget mismatch; refusing to start"
+    model = config.get("model")
+    agent = config.get("agent")
+    if not isinstance(model, dict) or not isinstance(agent, dict):
+        raise SystemExit(error)
+    provider = model.get("provider")
+    model_id = model.get("default")
+    attempts = agent.get("api_max_retries")
+    if provider != "custom" or not isinstance(model_id, str) or not model_id:
+        raise SystemExit(error)
+    if type(attempts) is not int or attempts != 1:
+        raise SystemExit(error)
+    try:
+        from hermes_cli.timeouts import get_provider_request_timeout, get_provider_stale_timeout
+
+        request_timeout = get_provider_request_timeout(provider, model_id)
+        stale_timeout = get_provider_stale_timeout(provider, model_id)
+    except Exception:
+        # Loader/adapter errors must not print private configuration values.
+        raise SystemExit(error) from None
+    for timeout in (request_timeout, stale_timeout):
+        if type(timeout) not in (int, float) or timeout != 29:
+            raise SystemExit(error)
+    return {
+        "apiAttemptsPerCycle": 1,
+        "requestOperationTimeoutSeconds": 29,
+        "configuredStaleTimeoutSeconds": 29,
+    }
+
+
 def _tool_name(definition: dict[str, Any]) -> str:
     function = definition.get("function")
     if isinstance(function, dict) and isinstance(function.get("name"), str):
@@ -57,6 +88,7 @@ def main() -> None:
         raise SystemExit(f"Hermes plugin discovery failed closed: {type(exc).__name__}") from exc
 
     config = load_config()
+    call_budget = assert_call_budget(config)
     enabled_toolsets = sorted(_get_platform_tools(config, "api_server"))
     agent_config = config.get("agent")
     disabled_toolsets: list[str] = []
@@ -76,6 +108,7 @@ def main() -> None:
         "platform": "api_server",
         "enabledToolsets": enabled_toolsets,
         "toolSchemas": tool_names,
+        "callBudget": call_budget,
     }
     if enabled_toolsets or tool_names:
         print(json.dumps(result, sort_keys=True), file=sys.stderr)

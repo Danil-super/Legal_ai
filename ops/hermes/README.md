@@ -17,6 +17,16 @@ memory/profile features. That static file is **not sufficient by itself**. `asse
 loads the actual pinned Hermes builtin/plugin registries and the final model-tool schema and exits
 non-zero unless both the resolved toolset list and tool schema are empty.
 
+The same preflight verifies the pinned provider/model timeout resolvers: both legal profiles
+use `agent.api_max_retries: 1`, and custom provider request/stale timeouts of 29 seconds.
+The orchestrator's total wall timeout remains 30 seconds. Request timeouts apply to HTTP operations,
+not the total turn. The configured stale value is a base, not the effective worker threshold:
+pinned streaming can raise it for large contexts or a reasoning-model floor even with explicit
+configuration. Continuous chunks can keep the worker alive beyond the outer deadline, and Hermes
+can perform one primary-transport recovery cycle. This reduces configured wait/retry budgets but
+does not guarantee cancellation. Token caps, reasoning effort, provider and model choices are
+unchanged (ADR-0071).
+
 ## Build the exact upstream commit
 
 Do not use `nousresearch/hermes-agent:latest` or another floating tag.
@@ -77,7 +87,10 @@ At minimum verify all of the following on the actual deployment host:
 
 1. `docker image inspect` shows the local pinned image tag built by the helper script.
 2. Both Hermes container logs contain a successful zero-tool preflight result with empty
-   `enabledToolsets` and `toolSchemas`.
+   `enabledToolsets` and `toolSchemas`, and `callBudget.apiAttemptsPerCycle: 1`,
+   `requestOperationTimeoutSeconds: 29` and `configuredStaleTimeoutSeconds: 29`. These are
+   resolved configuration values, not an effective stale threshold, total turn deadline or
+   single upstream call guarantee.
 3. Neither Hermes container has a published host port.
 4. Researcher and reviewer use distinct container origins and distinct API-server keys.
 5. The configured LLM provider has passed the project's privacy/data-processing review.

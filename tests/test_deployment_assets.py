@@ -607,6 +607,13 @@ def test_hermes_legal_profile_uses_the_explicit_custom_provider_contract() -> No
         "  api_key: ${OPENAI_API_KEY}"
     ) in profile
     assert "  model: ${HERMES_MODEL}" not in profile
+    assert "agent:\n  api_max_retries: 1" in profile
+    assert (
+        "providers:\n  custom:\n    request_timeout_seconds: 29\n"
+        "    stale_timeout_seconds: 29"
+    ) in profile
+    assert "max_tokens:" not in profile
+    assert "reasoning_effort:" not in profile
 
 
 def test_legal_watch_services_pass_required_arguments_to_their_modules() -> None:

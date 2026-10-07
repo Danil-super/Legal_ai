@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hmac
+import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import Annotated
@@ -32,6 +34,7 @@ InternalKeyHeader = Annotated[
 ]
 TelegramUserIdHeader = Annotated[int, Header(alias="X-Telegram-User-Id", gt=0)]
 IdempotencyKeyHeader = Annotated[UUID, Header(alias="Idempotency-Key")]
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,7 +178,16 @@ def create_app(
                 status_code=exc.status_code,
                 detail={"code": exc.code, "message": str(exc)},
             ) from exc
-        except (HermesUnavailable, LegalCoreProtocolError) as exc:
+        except HermesUnavailable as exc:
+            logger.warning(json.dumps({
+                "event": "hermes_unavailable", "reason": exc.reason.value,
+                "entryPoint": "analyze", "requestId": str(idempotency_key),
+            }, sort_keys=True))
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "ANALYSIS_PROVIDER_UNAVAILABLE"},
+            ) from exc
+        except LegalCoreProtocolError as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={"code": "ANALYSIS_PROVIDER_UNAVAILABLE"},
