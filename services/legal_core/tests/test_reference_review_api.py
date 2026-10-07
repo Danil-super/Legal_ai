@@ -71,6 +71,9 @@ def test_reference_confirmation_is_explicit_and_never_creates_legal_approval(mon
         group = client.get("/v1/legal/editor/groups/healthcare", headers=headers)
         assert group.status_code == 200
         assert group.json()["referenceReviewableCount"] >= 1
+        before_progress = group.json()["progress"]
+        assert before_progress["referenceMaterials"] >= 1
+        assert before_progress["reviewedReferenceMaterials"] < before_progress["referenceMaterials"]
         assert response.status_code == 200
         preview = response.json()
         assert str(prep) in [item["preparationId"] for item in preview["ready"]]
@@ -106,6 +109,19 @@ def test_reference_confirmation_is_explicit_and_never_creates_legal_approval(mon
         after = ledger_counts()
         assert after[0] == before[0] + len(request["preparationIds"])
         assert after[1:] == before[1:]
+        updated = client.get("/v1/legal/editor/groups/healthcare", headers=headers).json()
+        assert updated["referenceReviewableCount"] == 0
+        assert updated["progress"]["reviewedReferenceMaterials"] == (
+            before_progress["reviewedReferenceMaterials"] + len(request["preparationIds"])
+        )
+        items = updated["items"]
+        for page in range(2, (updated["totalItems"] + 9) // 10 + 1):
+            items.extend(client.get(
+                f"/v1/legal/editor/groups/healthcare?page={page}", headers=headers
+            ).json()["items"])
+        assert next(item for item in items if item["preparationId"] == str(prep))[
+            "referenceReviewed"
+        ] is True
 
 
 def test_changed_preparation_invalidates_reference_preview(monkeypatch):

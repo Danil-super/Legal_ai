@@ -695,10 +695,42 @@ def render_editor_review_materials(
     lines = [
         "⚖️ ПРОВЕРКА МАТЕРИАЛОВ",
         f"Материалов: {total_items}. Страница {page}.",
-        "Новые материалы не одобрены и не участвуют в рекомендациях до отдельного подтверждения.",
-        "Для неподготовленных документов требуются реквизиты и проверка.",
-        "Откройте нужный материал кнопкой ниже.",
     ]
+    progress = payload.get("progress")
+    if progress is not None:
+        if not isinstance(progress, dict) or type(progress.get("complete")) is not bool:
+            raise ValueError("group progress")
+        keys = (
+            "normativeVersions", "approvedNormativeVersions", "referenceMaterials",
+            "reviewedReferenceMaterials", "missingParts", "unpreparedOriginals",
+            "unlinkedVersions",
+        )
+        if any(type(progress.get(key)) is not int or progress[key] < 0 for key in keys):
+            raise ValueError("group progress counts")
+        lines.extend([
+            f"Нормы: утверждено {progress['approvedNormativeVersions']}/"
+            f"{progress['normativeVersions']}.",
+            f"Справочные: проверено {progress['reviewedReferenceMaterials']}/"
+            f"{progress['referenceMaterials']} (не правовое основание).",
+        ])
+        if progress["missingParts"]:
+            count = progress["missingParts"]
+            lines.append("Не связана 1 часть документа." if count == 1
+                         else f"Частей документа без связи: {count}.")
+        if progress["unpreparedOriginals"]:
+            lines.append(f"Исходников без подготовленных реквизитов: "
+                         f"{progress['unpreparedOriginals']}.")
+        if progress["unlinkedVersions"]:
+            lines.append("Отдельных версий без подтверждённой связи с исходником: "
+                         f"{progress['unlinkedVersions']}. Возможны альтернативные копии.")
+        lines.append("Группа проверена." if progress["complete"] else "Группа ещё не завершена.")
+    else:
+        lines.extend([
+            "Новые материалы не одобрены и не участвуют в рекомендациях "
+            "до отдельного подтверждения.",
+            "Для неподготовленных документов требуются реквизиты и проверка.",
+        ])
+    lines.append("Откройте нужный материал кнопкой ниже.")
     for item in raw_items[:_MAX_DOCUMENTS]:
         if not isinstance(item, dict):
             continue
@@ -720,6 +752,13 @@ def render_editor_review_materials(
                 )
             ]
         )
+        if item.get("versionId") and item.get("materialId"):
+            original_id = _editor_version_id(item["materialId"])
+            buttons.append([
+                InlineKeyboardButton(
+                    "📎 Скачать исходный файл", callback_data=f"editor:material:{original_id}"
+                )
+            ])
     if not raw_items:
         lines.append("В этой группе пока нет материалов.")
     buttons.extend(
@@ -777,6 +816,20 @@ def render_material_preparation(payload: dict[str, Any]) -> tuple[str, InlineKey
         lines.extend(f"• {_bounded(item, limit=250)}" for item in limitations[:6])
     if missing:
         lines.extend(["", "Не все реквизиты подготовлены для утверждения норм."])
+    if normative:
+        parts = payload.get("parts", [])
+        linked_keys = payload.get("linkedPartKeys", [])
+        if not isinstance(parts, list) or len(parts) > 20 or not isinstance(linked_keys, list):
+            raise ValueError("preparation parts")
+        if parts:
+            lines.extend(["", "Части исходного документа:"])
+            for part in parts:
+                if not isinstance(part, dict) or not isinstance(part.get("part_key"), str):
+                    raise ValueError("preparation part")
+                state = "связана с версией" if part["part_key"] in linked_keys else "ещё не связана"
+                lines.append(f"• {_bounded(part.get('title'), limit=85)} — {state}")
+        else:
+            lines.extend(["", "Части документа пока не определены."])
     lines.extend(["", "Для полной проверки откройте исходный документ ниже."])
     return _bounded_message("\n".join(lines)), InlineKeyboardMarkup(
         [
@@ -825,6 +878,10 @@ def render_group_approval_preview(
             label = (
                 "нужны реквизиты и подготовка версии"
                 if reason == "METADATA_REQUIRED"
+                else "не определены все части документа"
+                if reason == "PARTS_NOT_PREPARED"
+                else "не все части связаны с проверяемыми версиями"
+                if reason == "PARTS_UNBOUND"
                 else "справочный материал, не нормативный акт"
                 if reason == "CLINICAL_REFERENCE_NOT_LEGAL_VERSION"
                 else "версия не прошла проверку; откройте карточку"

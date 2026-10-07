@@ -485,6 +485,13 @@ class LegalEditorGroupItem(ContractModel):
     group_key: ReviewGroup = Field(alias="groupKey")
     preparation_id: UUID | None = Field(default=None, alias="preparationId")
     preparation_kind: MaterialKind | None = Field(default=None, alias="preparationKind")
+    expected_parts: int = Field(default=0, alias="expectedParts", ge=0, le=20)
+    linked_parts: int = Field(default=0, alias="linkedParts", ge=0, le=20)
+    part_key: str | None = Field(default=None, alias="partKey", max_length=120)
+    link_state: Literal["ORIGINAL", "EXACT_ORIGINAL", "UNLINKED_VERSION"] = Field(
+        default="ORIGINAL", alias="linkState"
+    )
+    reference_reviewed: bool = Field(default=False, alias="referenceReviewed")
 
 
 class LegalMaterialPreparationDetail(ContractModel):
@@ -503,6 +510,18 @@ class LegalMaterialPreparationDetail(ContractModel):
     limitations: list[str]
     missing_fields: list[str] = Field(alias="missingFields")
     parts: list[PreparedPart]
+    linked_part_keys: list[str] = Field(default_factory=list, alias="linkedPartKeys", max_length=20)
+
+
+class LegalEditorGroupProgress(ContractModel):
+    normative_versions: int = Field(alias="normativeVersions", ge=0)
+    approved_normative_versions: int = Field(alias="approvedNormativeVersions", ge=0)
+    reference_materials: int = Field(alias="referenceMaterials", ge=0)
+    reviewed_reference_materials: int = Field(alias="reviewedReferenceMaterials", ge=0)
+    missing_parts: int = Field(alias="missingParts", ge=0)
+    unprepared_originals: int = Field(alias="unpreparedOriginals", ge=0)
+    unlinked_versions: int = Field(alias="unlinkedVersions", ge=0)
+    complete: bool
 
 
 class LegalEditorGroupPage(ContractModel):
@@ -511,6 +530,7 @@ class LegalEditorGroupPage(ContractModel):
     total_items: int = Field(alias="totalItems", ge=0)
     selected_group: ReviewGroup | None = Field(default=None, alias="selectedGroup")
     reference_reviewable_count: int = Field(default=0, alias="referenceReviewableCount", ge=0)
+    progress: LegalEditorGroupProgress | None = None
     groups: list[LegalEditorReviewMaterialGroup] = Field(max_length=7)
     items: list[LegalEditorGroupItem] = Field(default_factory=list, max_length=10)
 
