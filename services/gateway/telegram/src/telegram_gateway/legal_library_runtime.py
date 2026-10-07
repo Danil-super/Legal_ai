@@ -23,6 +23,11 @@ from telegram.ext import (
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.editor_delivery import EditorFileDeliveryQueue
+from telegram_gateway.editor_preparation_guidance import (
+    PREPARATION_NEXT_STEP,
+    PREPARATION_REASON_CODES,
+    preparation_requirements,
+)
 from telegram_gateway.quick_intake_runtime import build_application_with_quick_intake
 from telegram_gateway.reference_evaluation_runtime import install_reference_evaluations
 from telegram_gateway.ui import back_keyboard
@@ -824,21 +829,27 @@ def render_material_preparation(payload: dict[str, Any]) -> tuple[str, InlineKey
     missing = payload.get("missingFields", [])
     if not isinstance(limitations, list) or not isinstance(missing, list):
         raise ValueError("preparation details")
-    if limitations:
-        lines.extend(["", "Ограничения извлечённого текста:"])
-        lines.extend(f"• {_bounded(item, limit=250)}" for item in limitations[:6])
-    if missing:
-        lines.extend(["", "Не все реквизиты подготовлены для утверждения норм."])
     if normative:
         parts = payload.get("parts", [])
         linked_keys = payload.get("linkedPartKeys", [])
-        if not isinstance(parts, list) or len(parts) > 20 or not isinstance(linked_keys, list):
-            raise ValueError("preparation parts")
+        if (
+            not isinstance(parts, list) or len(parts) > 20 or not isinstance(linked_keys, list)
+            or any(not isinstance(part, dict) or not isinstance(part.get("part_key"), str)
+                   for part in parts)
+            or len(missing) > 161 or any(not isinstance(field, str) for field in missing)
+        ):
+            raise ValueError("preparation fields")
+        lines.extend(["", *preparation_requirements(
+            missing, [part["part_key"] for part in parts],
+            extraction_scope=payload.get("extractionScope"),
+        )])
+    if limitations:
+        lines.extend(["", "Ограничения извлечённого текста:"])
+        lines.extend(f"• {_bounded(item, limit=250)}" for item in limitations[:6])
+    if normative:
         if parts:
             lines.extend(["", "Части исходного документа:"])
             for part in parts:
-                if not isinstance(part, dict) or not isinstance(part.get("part_key"), str):
-                    raise ValueError("preparation part")
                 state = "связана с версией" if part["part_key"] in linked_keys else "ещё не связана"
                 lines.append(f"• {_bounded(part.get('title'), limit=85)} — {state}")
         else:
@@ -875,6 +886,9 @@ def render_group_approval_preview(
         f"Ранее утверждено: {preview.get('alreadyApproved', 0)}.",
         "",
     ]
+    if any(isinstance(item.get("reasonCode"), str)
+           and item["reasonCode"] in PREPARATION_REASON_CODES for item in blocked):
+        lines.extend([PREPARATION_NEXT_STEP, ""])
     for item in ready[(page - 1) * 10 : page * 10]:
         effective_to = (
             _bounded(item.get("effectiveTo"), limit=10) if item.get("effectiveTo") else "—"
