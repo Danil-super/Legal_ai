@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from time import sleep
 from uuid import UUID
@@ -8,6 +9,7 @@ from legal_core.legal_retrieval import ApprovedLegalFragment
 from legal_core.reports import build_analysis_report, build_intake_report, render_report_pdf
 from legal_core.risk_engine import RiskAssessment, RiskLevel
 from legal_core.safe_patient_draft import SAFE_OPERATIONAL_DRAFT_VERSION
+from legal_core.verifier import VerificationDecision, VerificationResult, VerifiedClaim
 
 
 FRAGMENT_ID = UUID("00000000-0000-0000-0000-000000000030")
@@ -34,6 +36,12 @@ def _evidence() -> ApprovedLegalFragment:
         official_number="1",
         version_date=date(2026, 1, 1),
         publication_date=date(2026, 1, 1),
+    )
+
+
+def _verification() -> VerificationDecision:
+    return VerificationDecision(
+        claims=(VerifiedClaim("action-1", VerificationResult.VERIFIED, None, (FRAGMENT_ID,)),)
     )
 
 
@@ -110,7 +118,15 @@ def test_verified_low_risk_report_contains_safe_draft_actions_and_sources() -> N
             external_draft_allowed=True,
         ),
         evidence_trace_sha256="d" * 64,
-        evidence=[_evidence()],
+        evidence=[
+            _evidence(),
+            replace(
+                _evidence(),
+                fragment_id=UUID("00000000-0000-0000-0000-000000000099"),
+                document_title="Непроцитированный синтетический источник",
+            ),
+        ],
+        verification=_verification(),
         clinic_document_context_trace_sha256="e" * 64,
         clinic_document_context=[_clinic_context()],
         verified_action_items=["Зафиксировать обращение и предложить осмотр."],
@@ -133,7 +149,9 @@ def test_verified_low_risk_report_contains_safe_draft_actions_and_sources() -> N
     assert "не будем делать выводы о причинах" in payload["draftResponse"]["text"]
     assert "Пациент сообщил о сколе винира" not in payload["draftResponse"]["text"]
     assert payload["legalBasis"]["status"] == "AVAILABLE"
-    assert payload["legalBasis"]["sources"][0]["fragmentId"] == str(FRAGMENT_ID)
+    assert [source["fragmentId"] for source in payload["legalBasis"]["sources"]] == [
+        str(FRAGMENT_ID)
+    ]
     assert payload["clinicDocuments"]["status"] == "USED"
     clinic_source = payload["clinicDocuments"]["sources"][0]
     assert clinic_source["fragmentId"] == str(CLINIC_FRAGMENT_ID)
@@ -166,6 +184,7 @@ def test_high_risk_analysis_requires_escalation_and_human_review_for_draft() -> 
         ),
         evidence_trace_sha256="d" * 64,
         evidence=[_evidence()],
+        verification=_verification(),
         clinic_document_context_trace_sha256="e" * 64,
         clinic_document_context=[],
         verified_action_items=["Передать кейс ответственному юристу."],
@@ -221,6 +240,7 @@ def test_verified_analysis_pdf_is_deterministic() -> None:
         ),
         evidence_trace_sha256="d" * 64,
         evidence=[_evidence()],
+        verification=_verification(),
         clinic_document_context_trace_sha256="e" * 64,
         clinic_document_context=[_clinic_context()],
         verified_action_items=["Зафиксировать обращение."],

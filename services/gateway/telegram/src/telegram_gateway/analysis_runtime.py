@@ -317,9 +317,8 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
         lines.extend(["", "Что сделать:", *(f"• {item}" for item in safe_actions)])
 
     source_lines: list[str] = []
-    # Conclusions can cite any returned fragment, not only the first six.
-    displayed_sources = sources if report_json.get("legalConclusions") else sources[:6]
-    for source_index, source in enumerate(displayed_sources, start=1):
+    # Canonical READY reports already contain only verified, cited legal sources.
+    for source_index, source in enumerate(sources, start=1):
         if not isinstance(source, dict):
             continue
         title = _bounded_text(source.get("documentTitle"), limit=180)

@@ -535,6 +535,7 @@ def create_analysis_router(
                 risk=outcome.risk,
                 evidence_trace_sha256=outcome.evidence_trace_sha256,
                 evidence=state.evidence,
+                verification=outcome.verification,
                 clinic_document_context_trace_sha256=(
                     state.clinic_document_context_trace_sha256
                 ),
