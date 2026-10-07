@@ -21,7 +21,8 @@ CLINIC_BASELINE = {
     "services/legal_core/src/legal_core/main.py":
         # Authorized clinic-only notification router; personal composition unchanged (ADR 0062).
         "66d59eac7592bbf84d3b87d80d9213ecee352f7a",
-    "docker-compose.yml": "83f8fa40abe8c98d9a5581dd446fa8f0245efd2b",
+    # Separately reviewed clinical automation pause; no personal surface change (ADR 0064).
+    "docker-compose.yml": "c50d5c9ccd748eebed9bf2240489c898c1c0b5ef",
     "ops/deploy/docker-compose.production.yml": "9d07d50c67787a0da7a13fcfc49907d550298b83",
 }
 

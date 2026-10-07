@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
-from legal_core.contracts import FactKey
+from legal_core.contracts import FactKey, MissingFact, MissingFactSeverity
 
 
 class RiskLevel(StrEnum):
@@ -25,12 +25,21 @@ class RiskPolicy:
 
     version: str
     high_demand_threshold_kopecks: int
+    guided_v2_explicit_signals_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not self.version or len(self.version) > 80:
             raise ValueError("risk policy version must be between 1 and 80 characters")
         if self.high_demand_threshold_kopecks < 1:
             raise ValueError("high demand threshold must be positive")
+        if type(self.guided_v2_explicit_signals_enabled) is not bool:
+            raise ValueError("guided v2 risk capability must be an explicit boolean")
+        if self.guided_v2_explicit_signals_enabled:
+            _, _, version_number = self.version.rpartition(".v")
+            if not version_number.isdigit() or int(version_number) < 3:
+                raise ValueError("guided v2 risk capability requires policy version >= 3")
+            if self.high_demand_threshold_kopecks != 5_000_000:
+                raise ValueError("v3 risk threshold must remain 50,000 RUB")
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +51,42 @@ class RiskAssessment:
     external_draft_allowed: bool
 
 
+def risk_missing_facts(assessment: RiskAssessment) -> list[MissingFact]:
+    """Map deterministic blockers to bounded questions, without changing confirmed facts."""
+    questions = {
+        "HEALTH_CONSEQUENCE_SIGNALS_UNKNOWN": (
+            FactKey.HEALTH_CONSEQUENCE_SIGNALS,
+            "health_consequence_signals",
+        ),
+        "INCOMING_COMMUNICATION_UNKNOWN": (
+            FactKey.INCOMING_COMMUNICATION,
+            "incoming_communication",
+        ),
+        "HOSPITALIZATION_CONFIRMATION_CONFLICT": (
+            FactKey.HEALTH_CONSEQUENCE_SIGNALS,
+            "health_consequence_signals",
+        ),
+        "REGULATOR_OR_COURT_CONFIRMATION_CONFLICT": (
+            FactKey.INCOMING_COMMUNICATION,
+            "incoming_communication",
+        ),
+    }
+    return (
+        [
+            MissingFact(
+                factKey=questions[reason][0],
+                questionId=questions[reason][1],
+                reasonCode=reason,
+                severity=MissingFactSeverity.CRITICAL,
+            )
+            for reason in assessment.reason_codes
+            if reason in questions
+        ]
+        if assessment.level is RiskLevel.UNAVAILABLE
+        else []
+    )
+
+
 _REQUIRED_SIGNALS = (
     FactKey.HARM_CLAIMED,
     FactKey.LAWYER_CONTACT,
@@ -49,6 +94,85 @@ _REQUIRED_SIGNALS = (
     FactKey.REGULATOR_OR_COURT,
     FactKey.REGULATOR_THREAT,
 )
+
+_GUIDED_HEALTH = frozenset(
+    {
+        "NO_KNOWN_INFORMATION",
+        "COMPLICATION_OR_WORSENING",
+        "OTHER_CLINIC",
+        "HOSPITALIZATION",
+        "OTHER_CONSEQUENCE",
+        "UNKNOWN",
+    }
+)
+_GUIDED_INCOMING = frozenset(
+    {
+        "MESSAGE_OR_REQUEST",
+        "COMPLAINT",
+        "FORMAL_DOCUMENT",
+        "AUTHORITY_OR_COURT_DOCUMENT",
+        "OTHER",
+        "UNKNOWN",
+    }
+)
+
+
+def _guided_health_signals(facts: Mapping[FactKey, object]) -> tuple[str, ...] | None:
+    value = facts.get(FactKey.HEALTH_CONSEQUENCE_SIGNALS)
+    if (
+        not isinstance(value, list)
+        or not 1 <= len(value) <= 10
+        or not all(isinstance(item, str) and item in _GUIDED_HEALTH for item in value)
+        or len(value) != len(set(value))
+        or (len(value) > 1 and any(item in {"UNKNOWN", "NO_KNOWN_INFORMATION"} for item in value))
+    ):
+        return None
+    return tuple(value)
+
+
+def _guided_enabled(facts: Mapping[FactKey, object], policy: RiskPolicy) -> bool:
+    return (
+        policy.guided_v2_explicit_signals_enabled
+        and facts.get(FactKey.INTAKE_VERSION) == "GUIDED_V2"
+    )
+
+
+def _v3_critical_reasons(facts: Mapping[FactKey, object], policy: RiskPolicy) -> tuple[str, ...]:
+    guided = _guided_enabled(facts, policy)
+    health = _guided_health_signals(facts) if guided else None
+    reasons: list[str] = []
+    if (health is not None and "HOSPITALIZATION" in health) or _signal_state(
+        facts.get(FactKey.HOSPITALIZATION)
+    ) == "YES":
+        reasons.append("HOSPITALIZATION_REPORTED")
+    if guided and facts.get(FactKey.INCOMING_COMMUNICATION) == "AUTHORITY_OR_COURT_DOCUMENT":
+        reasons.append("AUTHORITY_OR_COURT_DOCUMENT_REPORTED")
+    elif _signal_state(facts.get(FactKey.REGULATOR_OR_COURT)) == "YES":
+        reasons.append("OFFICIAL_REGULATOR_OR_COURT_SIGNAL")
+    return tuple(reasons)
+
+
+def _v3_guided_blocker(facts: Mapping[FactKey, object]) -> str | None:
+    health = _guided_health_signals(facts)
+    if (
+        health is not None
+        and "HOSPITALIZATION" in health
+        and _signal_state(facts.get(FactKey.HOSPITALIZATION)) == "NO"
+    ):
+        return "HOSPITALIZATION_CONFIRMATION_CONFLICT"
+    incoming = facts.get(FactKey.INCOMING_COMMUNICATION)
+    if (
+        incoming == "AUTHORITY_OR_COURT_DOCUMENT"
+        and _signal_state(facts.get(FactKey.REGULATOR_OR_COURT)) == "NO"
+    ):
+        return "REGULATOR_OR_COURT_CONFIRMATION_CONFLICT"
+    if not isinstance(incoming, str) or incoming not in _GUIDED_INCOMING or incoming == "UNKNOWN":
+        return "INCOMING_COMMUNICATION_UNKNOWN"
+    if health is None or "HOSPITALIZATION" not in health:
+        # The current questionnaire has no explicit negative safety answer.
+        # Even NO_KNOWN_INFORMATION must not manufacture a legacy NO.
+        return "HEALTH_CONSEQUENCE_SIGNALS_UNKNOWN"
+    return None
 
 
 def fact_snapshot_sha256(facts: Mapping[FactKey, object]) -> str:
@@ -71,13 +195,20 @@ def _signal_state(value: object) -> str | None:
     return None
 
 
-def _unknown_required_signal(facts: Mapping[FactKey, object]) -> FactKey | None:
+def _unknown_required_signal(
+    facts: Mapping[FactKey, object],
+    *,
+    strict: bool = False,
+) -> FactKey | None:
     for fact_key in _REQUIRED_SIGNALS:
-        if _signal_state(facts.get(fact_key)) == "UNKNOWN":
+        signal = _signal_state(facts.get(fact_key))
+        if signal == "UNKNOWN" or (strict and signal not in {"YES", "NO"}):
             return fact_key
     harm = _signal_state(facts.get(FactKey.HARM_CLAIMED))
-    if harm == "YES" and _signal_state(facts.get(FactKey.HOSPITALIZATION)) == "UNKNOWN":
-        return FactKey.HOSPITALIZATION
+    if harm == "YES":
+        hospitalization = _signal_state(facts.get(FactKey.HOSPITALIZATION))
+        if hospitalization == "UNKNOWN" or (strict and hospitalization not in {"YES", "NO"}):
+            return FactKey.HOSPITALIZATION
     return None
 
 
@@ -120,6 +251,10 @@ def evaluate_early_triage(
     facts: Mapping[FactKey, object], *, policy: RiskPolicy
 ) -> RiskAssessment | None:
     """Route explicit safety signals, never produce a legal conclusion or LOW clearance."""
+    if policy.guided_v2_explicit_signals_enabled:
+        critical_reasons = _v3_critical_reasons(facts, policy)
+        if critical_reasons:
+            return _assessment(RiskLevel.CRITICAL, critical_reasons, policy, facts)
     for key, reason in (
         (FactKey.HOSPITALIZATION, "HOSPITALIZATION_REPORTED"),
         (FactKey.REGULATOR_OR_COURT, "OFFICIAL_REGULATOR_OR_COURT_SIGNAL"),
@@ -151,7 +286,15 @@ def evaluate_risk(
     if not evidence_verified:
         return _assessment(RiskLevel.UNAVAILABLE, ("EVIDENCE_NOT_VERIFIED",), policy, facts)
 
-    unknown_signal = _unknown_required_signal(facts)
+    if _guided_enabled(facts, policy):
+        blocker = _v3_guided_blocker(facts)
+        if blocker:
+            return _assessment(RiskLevel.UNAVAILABLE, (blocker,), policy, facts)
+
+    unknown_signal = _unknown_required_signal(
+        facts,
+        strict=policy.guided_v2_explicit_signals_enabled,
+    )
     if unknown_signal is not None:
         return _assessment(
             RiskLevel.UNAVAILABLE,
@@ -162,6 +305,10 @@ def evaluate_risk(
 
     hospitalization = _signal_state(facts.get(FactKey.HOSPITALIZATION))
     regulator_or_court = _signal_state(facts.get(FactKey.REGULATOR_OR_COURT))
+    if policy.guided_v2_explicit_signals_enabled:
+        critical_reasons = _v3_critical_reasons(facts, policy)
+        if critical_reasons:
+            return _assessment(RiskLevel.CRITICAL, critical_reasons, policy, facts)
     if hospitalization == "YES":
         return _assessment(RiskLevel.CRITICAL, ("HOSPITALIZATION_REPORTED",), policy, facts)
     if regulator_or_court == "YES":

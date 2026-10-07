@@ -158,7 +158,9 @@ def test_route_requires_identity_and_uses_owner_gate(monkeypatch):
     asyncio.run(check())
 
 
-@pytest.mark.parametrize("runtime", ["DISABLED", "CONFIG_INVALID", "UNREACHABLE", "REACHABLE"])
+@pytest.mark.parametrize(
+    "runtime", ["DISABLED", "CONFIG_INVALID", "UNREACHABLE", "REACHABLE", "SAFE_STOP"],
+)
 def test_display_shows_limits_and_never_config_or_case_text(runtime):
     payload = {
         "runtime": runtime, "riskPolicy": "NOT_READY", "legalCorpusToday": "EMPTY",

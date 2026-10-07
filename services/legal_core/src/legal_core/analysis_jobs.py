@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
 from legal_core.analysis_contracts import AnalysisSubmissionResponse
+from legal_core.analysis_safe_stop import require_analysis_running
 from legal_core.case_api import (
     ActorContext,
     ApiError,
@@ -192,12 +193,6 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
     ) -> AnalysisJobResponse:
         from legal_core.analysis_job_worker import WorkerSettings
 
-        if WorkerSettings.load() is None:
-            raise ApiError(
-                status_code=503,
-                code="ANALYSIS_SERVICE_UNAVAILABLE",
-                message="Analysis worker is not configured",
-            )
         actor = await resolve_actor(session, telegram_user_id)
         case = await _tenant_case(session, actor, case_id)
         _require_finalized_case(case)
@@ -207,6 +202,13 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
             )
         if actor.role == "CLINIC_ADMIN" and case.created_by_membership_id != actor.membership_id:
             raise ApiError(status_code=404, code="CASE_NOT_FOUND", message="Case not found")
+        require_analysis_running()
+        if WorkerSettings.load() is None:
+            raise ApiError(
+                status_code=503,
+                code="ANALYSIS_SERVICE_UNAVAILABLE",
+                message="Analysis worker is not configured",
+            )
         # Serialize intent creation before checking for an existing active job.
         await session.execute(
             select(Case.id)

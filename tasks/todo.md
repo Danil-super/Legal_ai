@@ -594,3 +594,10 @@ approved-only retrieval, applicable-date resolution and claim-to-evidence verifi
 - [ ] Deployment host smoke with actual Telegram/Hermes settings and human-approved legal versions.
 
 **Evidence:** `docs/launch-audit-2026-09-15.md`; PR #43.
+
+## Task 6.3: Guided-v2 risk-policy v3 preparation (2026-10-07)
+
+Bounded implementation and follow-up tasks: `tasks/risk-policy-v3.md`; contract:
+`SPEC-risk-policy-v3.md`; ADR 0061. This appends work without replacing unfinished
+launch tasks. Activation requires human LEGAL_EDITOR review; the preparation
+slice does not establish production readiness or usable LOW/MEDIUM guided cases.

@@ -17,13 +17,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core import __version__
 from legal_core.analysis_job_worker import WorkerSettings
+from legal_core.analysis_safe_stop import analysis_safe_stop_active
 from legal_core.case_api import TelegramUserId, _require_clinic_owner, resolve_actor
 from legal_core.contracts import ContractModel
 from legal_core.legal_retrieval import ApprovedLegalCorpusRepository
 from legal_core.models import CaseReport
 from legal_core.risk_policy_repository import ApprovedRiskPolicyRepository
 
-RuntimeStatus = Literal["DISABLED", "CONFIG_INVALID", "UNREACHABLE", "REACHABLE"]
+RuntimeStatus = Literal["DISABLED", "CONFIG_INVALID", "UNREACHABLE", "REACHABLE", "SAFE_STOP"]
 
 
 class AnalysisDiagnostics(ContractModel):
@@ -44,6 +45,8 @@ def _source_revision() -> str | None:
 
 
 async def inspect_analysis_runtime() -> RuntimeStatus:
+    if analysis_safe_stop_active():
+        return "SAFE_STOP"
     try:
         settings = WorkerSettings.load()
     except ValueError:
