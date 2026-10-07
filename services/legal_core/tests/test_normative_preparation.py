@@ -155,3 +155,9 @@ def test_unsafe_rtf_and_oversized_extraction_fail_closed() -> None:
         inspect_normative_rtf(b"{\\rtf1\\ansi\\object\\objdata bad}", title)
     with pytest.raises(ValueError, match="empty"):
         inspect_normative_rtf(_rtf(title, None), "  ")
+
+
+@pytest.mark.parametrize("extracted", ["\ufeff", " \ufeff \n\ufeff\n"])
+def test_bom_only_extraction_fails_with_a_validation_error(extracted: str) -> None:
+    with pytest.raises(ValueError, match="empty"):
+        inspect_normative_rtf(_rtf("Synthetic title", None), extracted)

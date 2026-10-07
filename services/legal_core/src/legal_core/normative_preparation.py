@@ -250,8 +250,14 @@ def inspect_normative_rtf(raw: bytes, normalized_text: str) -> NormativePreparat
         raise ValueError("empty or oversized normalized text")
     if "\x00" in normalized_text or "\ufffd" in normalized_text:
         raise ValueError("invalid normalized text")
-    title = next(line.strip().lstrip("\ufeff") for line in normalized_text.splitlines()
-                 if line.strip().lstrip("\ufeff"))
+    title = None
+    for line in normalized_text.splitlines():
+        candidate = line.replace("\ufeff", "").strip()
+        if candidate:
+            title = candidate
+            break
+    if title is None:
+        raise ValueError("empty normalized title")
     if len(title) > 1000:
         raise ValueError("normalized title exceeds limit")
     source_url, source_locator = _heading_source(raw, title)
