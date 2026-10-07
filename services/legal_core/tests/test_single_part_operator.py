@@ -205,6 +205,18 @@ def test_single_part_dry_run_rolls_back_and_commit_replays_exactly(tmp_path: Pat
                     LegalDocument
                 ).where(LegalDocument.canonical_key == package.corpus.document_key)) == 0
             first = await run_single_part_package(factory, path, commit=True)
+            cli_first = subprocess.run(
+                [sys.executable, "-m", "legal_core.single_part_operator", str(path), "--commit"],
+                check=True, capture_output=True, text=True, timeout=15,
+            )
+            cli_replay = subprocess.run(
+                [sys.executable, "-m", "legal_core.single_part_operator", str(path), "--commit"],
+                check=True, capture_output=True, text=True, timeout=15,
+            )
+            assert cli_first.stdout == cli_replay.stdout
+            assert str(first.preparation_id) in cli_replay.stdout
+            assert str(first.version_id) in cli_replay.stdout
+            assert str(first.binding_id) in cli_replay.stdout
             replay = await run_single_part_package(factory, path, commit=True)
             assert first.committed and replay.committed
             assert (first.preparation_id, first.version_id, first.binding_id) == (
@@ -219,6 +231,9 @@ def test_single_part_dry_run_rolls_back_and_commit_replays_exactly(tmp_path: Pat
                 assert await session.scalar(select(func.count()).select_from(
                     LegalMaterialPreparation
                 ).where(LegalMaterialPreparation.material_id == material.id)) == 1
+                assert await session.scalar(select(func.count()).select_from(
+                    LegalVersion
+                ).where(LegalVersion.document_id == version.document_id)) == 1
             newer = MaterialPreparationInput.model_validate(
                 package.preparation.model_dump()
                 | {"completeness_locator": "Synthetic revised completeness evidence"}
