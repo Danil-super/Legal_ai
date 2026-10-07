@@ -26,7 +26,9 @@ from legal_core.normative_preparation import inspect_normative_rtf
 from legal_core.single_part_operator import read_single_part_package, run_single_part_package
 
 
-def _package(root: Path, material_id: UUID, actor_id: UUID) -> Path:
+def _package(
+    root: Path, material_id: UUID, actor_id: UUID, *, part_key: str = "part-1",
+) -> Path:
     title = 'Федеральный закон от 1 января 2020 г. N 11-ФЗ "Синтетический"'
     source_url = "https://internet.garant.ru/document/redirect/11111111/0"
     heading = ('{\\field{\\*\\fldinst {HYPERLINK "' + source_url + '"}}'
@@ -47,7 +49,7 @@ def _package(root: Path, material_id: UUID, actor_id: UUID) -> Path:
         "group_key": "general", "parser_version": "synthetic-rtf-v1",
         "source_url": source_url, "source_locator": candidate.source_locator,
         "parts": [{
-            "part_key": "part-1", "title": title, "canonical_key": key,
+            "part_key": part_key, "title": title, "canonical_key": key,
             "document_type": "Федеральный закон", "issuer": "Российская Федерация",
             "official_number": "11-ФЗ", "adoption_date": "2020-01-01",
             "publication_date": "2020-01-02", "version_date": "2026-10-01",
@@ -91,7 +93,7 @@ def _package(root: Path, material_id: UUID, actor_id: UUID) -> Path:
     operator = {
         "schema_version": 1, "material_id": str(material_id),
         "actor_user_id": str(actor_id), "raw_sha256": raw_sha,
-        "part_key": "part-1", "part_text_sha256": part.text_sha256,
+        "part_key": part_key, "part_text_sha256": part.text_sha256,
         "source_url": source_url, "corpus_manifest_path": "corpus.json",
         "preparation": prepared,
     }
@@ -122,6 +124,24 @@ def test_operator_package_requires_exact_parser_match_and_regular_files(tmp_path
     (tmp_path / "corpus.json").rename(tmp_path / "actual.json")
     (tmp_path / "corpus.json").symlink_to(tmp_path / "actual.json")
     with pytest.raises(ValueError, match="regular"):
+        read_single_part_package(path)
+
+
+def test_legacy_single_part_key_is_preserved_without_changing_its_digest(tmp_path: Path) -> None:
+    path = _package(tmp_path, uuid4(), uuid4(), part_key="document")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    before = MaterialPreparationInput.model_validate(payload["preparation"])
+    package = read_single_part_package(path)
+    assert package.request.part_key == "document"
+    assert package.preparation.parts[0].part_key == "document"
+    assert package.preparation.digest() == before.digest()
+    assert package.preparation.parts[0].text_sha256 == package.preparation.normalized_sha256
+
+
+@pytest.mark.parametrize("part_key", ["part-2", "other", "document-1"])
+def test_single_part_alias_does_not_accept_arbitrary_keys(tmp_path: Path, part_key: str) -> None:
+    path = _package(tmp_path, uuid4(), uuid4(), part_key=part_key)
+    with pytest.raises(ValueError, match="part"):
         read_single_part_package(path)
 
 
@@ -175,13 +195,16 @@ def test_cli_never_prints_supplied_legal_text_on_failure(
 
 
 @pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1", reason="disposable PostgreSQL")
-def test_single_part_dry_run_rolls_back_and_commit_replays_exactly(tmp_path: Path) -> None:
+@pytest.mark.parametrize("part_key", ["part-1", "document"])
+def test_single_part_dry_run_rolls_back_and_commit_replays_exactly(
+    tmp_path: Path, part_key: str,
+) -> None:
     async def scenario() -> None:
         engine = create_async_engine(database_url())
         factory = async_sessionmaker(engine, expire_on_commit=False)
         try:
             async with factory() as session, session.begin():
-                path = _package(tmp_path, uuid4(), uuid4())
+                path = _package(tmp_path, uuid4(), uuid4(), part_key=part_key)
                 package = read_single_part_package(path)
                 material = LegalReviewMaterial(
                     id=package.request.material_id, package_key=f"pilot-{uuid4().hex}",
@@ -241,6 +264,13 @@ def test_single_part_dry_run_rolls_back_and_commit_replays_exactly(tmp_path: Pat
                 assert await session.scalar(select(func.count()).select_from(
                     LegalPreparedPartVersion
                 ).where(LegalPreparedPartVersion.material_id == material.id)) == 1
+                stored_preparation = await session.get(
+                    LegalMaterialPreparation, first.preparation_id,
+                )
+                assert stored_preparation.metadata_json["parts"][0]["part_key"] == part_key
+                assert stored_preparation.preparation_sha256 == package.preparation.digest()
+                binding = await session.get(LegalPreparedPartVersion, first.binding_id)
+                assert binding.part_key == part_key
                 assert await session.scalar(select(func.count()).select_from(
                     LegalMaterialPreparation
                 ).where(LegalMaterialPreparation.material_id == material.id)) == 1

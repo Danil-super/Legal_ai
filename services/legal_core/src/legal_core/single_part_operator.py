@@ -28,7 +28,11 @@ from legal_core.corpus_loader import (
 from legal_core.database import create_engine, create_session_factory
 from legal_core.material_preparation import Digest, MaterialPreparationInput, store_preparation
 from legal_core.models import LegalMaterialPreparation
-from legal_core.normative_preparation import bind_prepared_part, inspect_normative_rtf
+from legal_core.normative_preparation import (
+    bind_prepared_part,
+    inspect_normative_rtf,
+    prepared_part_keys_match,
+)
 from legal_core.preparation_import import _read_regular
 
 
@@ -113,7 +117,7 @@ def read_single_part_package(path: Path) -> SinglePartPackage:
     ):
         raise ValueError("preparation does not match the P8 original parser")
     parsed = candidate.parts[0]
-    if part.part_key != parsed.part_key or part.title != parsed.title or (
+    if not prepared_part_keys_match(prepared, candidate) or part.title != parsed.title or (
         part.text_start != parsed.text_start or part.text_end != parsed.text_end
         or part.text_sha256 != parsed.text_sha256
         or (parsed.document_type is not None and part.document_type != parsed.document_type)
