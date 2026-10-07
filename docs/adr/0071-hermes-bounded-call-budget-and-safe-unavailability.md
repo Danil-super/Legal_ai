@@ -51,7 +51,10 @@ Read-only проверка Hermes 0.20.6, pinned commit
 4. Дополнить существующий pinned preflight проверкой фактически разрешённых provider/model
    request/stale timeouts через `hermes_cli.timeouts`. Незаполненный, некорректный или
    расходящийся budget прекращает запуск без вывода конфигурационных значений.
-   Diagnostic поле `apiAttemptsPerCycle` обозначает настройку цикла, не общее число upstream вызовов.
+   Diagnostic поля `apiAttemptsPerCycle`, `requestOperationTimeoutSeconds` и
+   `configuredStaleTimeoutSeconds` обозначают настройку цикла, timeout HTTP операций и
+   разрешённую конфигурационную базу stale соответственно; не общее число вызовов,
+   wall-clock deadline или эффективный worker threshold.
 
 ## Границы и последствия
 
@@ -60,9 +63,17 @@ Read-only проверка Hermes 0.20.6, pinned commit
 - При transient transport failure pinned Hermes может восстановить primary transport и
   запустить ещё один attempt cycle даже при `api_max_retries: 1`. Убирается default cycle
   из трёх попыток, но не обещается единственный upstream вызов.
-- Stale resolver может масштабировать explicit threshold для контекста больше 50k/100k
-  estimated tokens до 150/240 с. Request timeout 29 реально передаётся HTTP SDK, но является
-  timeout операций, а не гарантией полного wall-clock завершения worker за 29 с.
+- Внутренний upstream streaming применяется и при непотоковом внешнем API ответе.
+  Streaming stale detector (`agent/chat_completion_helpers.py`, pinned строки 5084–5167)
+  масштабирует explicit базу для контекста больше 50k/100k estimated tokens до 240/300 с,
+  затем безусловно применяет reasoning-model floor: у текущего reviewer даже малый контекст
+  имеет effective stale 300 с при configured базе 29 с. Отдельный non-stream resolver
+  (`run_agent.py`, `_compute_non_stream_stale_timeout`) масштабирует базу до 150/240 с;
+  reasoning floor там не переопределяет explicit конфигурацию. Эти разные пути нельзя
+  выдавать за одинаковый эффективный предел 29 с.
+- Request timeout 29 реально передаётся HTTP SDK как timeout операций connect/read/write/pool.
+  Непрерывные chunks сбрасывают read/stale ожидания; это не гарантирует полный wall-clock
+  предел worker 29 с или его прекращение после внешних 30 с.
 - Более короткий timeout может прервать корректный, но медленный provider ответ. Это допустимое
   fail-closed поведение: юридический ответ не выпускается при провале обязательного reviewer.
 - Значение token cap нельзя выбирать наугад: hidden reasoning может исчерпать малый cap до JSON.
