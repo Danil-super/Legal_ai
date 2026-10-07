@@ -37,7 +37,7 @@ def runtime_timeouts(monkeypatch, request=29, stale=29):
 def test_guard_accepts_only_the_resolved_pinned_call_budget(monkeypatch):
     runtime_timeouts(monkeypatch)
     assert guard.assert_call_budget(config()) == {
-        "apiAttempts": 1, "requestTimeoutSeconds": 29, "staleTimeoutSeconds": 29,
+        "apiAttemptsPerCycle": 1, "requestTimeoutSeconds": 29, "staleTimeoutSeconds": 29,
     }
 
 

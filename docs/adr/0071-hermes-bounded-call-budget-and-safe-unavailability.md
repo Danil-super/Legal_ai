@@ -51,6 +51,7 @@ Read-only проверка Hermes 0.20.6, pinned commit
 4. Дополнить существующий pinned preflight проверкой фактически разрешённых provider/model
    request/stale timeouts через `hermes_cli.timeouts`. Незаполненный, некорректный или
    расходящийся budget прекращает запуск без вывода конфигурационных значений.
+   Diagnostic поле `apiAttemptsPerCycle` обозначает настройку цикла, не общее число upstream вызовов.
 
 ## Границы и последствия
 

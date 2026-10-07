@@ -84,8 +84,8 @@ At minimum verify all of the following on the actual deployment host:
 
 1. `docker image inspect` shows the local pinned image tag built by the helper script.
 2. Both Hermes container logs contain a successful zero-tool preflight result with empty
-   `enabledToolsets` and `toolSchemas`, and `callBudget` of one attempt per cycle and 29-second
-   request/stale values.
+   `enabledToolsets` and `toolSchemas`, and `callBudget.apiAttemptsPerCycle: 1` with 29-second
+   request/stale values (not a total turn deadline or single upstream call guarantee).
 3. Neither Hermes container has a published host port.
 4. Researcher and reviewer use distinct container origins and distinct API-server keys.
 5. The configured LLM provider has passed the project's privacy/data-processing review.

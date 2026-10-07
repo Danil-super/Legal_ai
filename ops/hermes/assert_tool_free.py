@@ -38,7 +38,7 @@ def assert_call_budget(config: dict[str, Any]) -> dict[str, int]:
     for timeout in (request_timeout, stale_timeout):
         if type(timeout) not in (int, float) or timeout != 29:
             raise SystemExit(error)
-    return {"apiAttempts": 1, "requestTimeoutSeconds": 29, "staleTimeoutSeconds": 29}
+    return {"apiAttemptsPerCycle": 1, "requestTimeoutSeconds": 29, "staleTimeoutSeconds": 29}
 
 
 def _tool_name(definition: dict[str, Any]) -> str:
