@@ -286,6 +286,8 @@ jobs:
         run: python -m legal_core.runtime_db_role
 
       - name: PostgreSQL and MinIO integration tests
+        env:
+          POSTGRES_TEST_CONTAINER: ${{ job.services.postgres.id }}
         run: timeout 120s python -m pytest -vv services/legal_core/tests
 
   codeql:
