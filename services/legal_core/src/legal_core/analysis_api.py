@@ -71,6 +71,7 @@ from legal_core.retrieval_plan import plan_legal_queries, retrieve_planned_evide
 from legal_core.risk_engine import RiskLevel, fact_snapshot_sha256
 from legal_core.risk_persistence import record_case_risk_assessment
 from legal_core.risk_policy_repository import ApprovedRiskPolicy, ApprovedRiskPolicyRepository
+from legal_core.risk_engine import risk_missing_facts
 from legal_core.verifier import (
     ClaimKind,
     ProposedClaim,
@@ -559,7 +560,7 @@ def create_analysis_router(
                 report_version=report_version,
                 generated_at=datetime.now(UTC),
                 facts=state.facts,
-                missing_facts=[],
+                missing_facts=risk_missing_facts(outcome.risk),
                 block_reason_code=block_reason,
             )
 

@@ -25,6 +25,7 @@ from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError, LegalCoreClient
 from telegram_gateway.escalation_workspace import show_workspace, workspace_action
 from telegram_gateway.legal_conclusion_display import legal_conclusion_lines
+from telegram_gateway.risk_labels import risk_reason_label
 from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
@@ -303,7 +304,8 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
         lines.append("🔴 Требуется передача ответственному юристу.")
 
     safe_reasons = [
-        item[:80] for item in reason_codes[:8] if isinstance(item, str) and item.strip()
+        risk_reason_label(item)
+        for item in reason_codes[:8] if isinstance(item, str) and item.strip()
     ]
     if safe_reasons:
         lines.extend(["", "Почему:", *(f"• {item}" for item in safe_reasons)])
@@ -413,7 +415,8 @@ def telegram_lawyer_handoff_summary(payload: dict[str, Any]) -> str | None:
         "Статус: требуется юридическая проверка.",
     ]
     safe_reasons = [
-        item[:80] for item in reason_codes[:8] if isinstance(item, str) and item.strip()
+        risk_reason_label(item)
+        for item in reason_codes[:8] if isinstance(item, str) and item.strip()
     ]
     if safe_reasons:
         lines.extend(["", "Триггеры эскалации:", *(f"• {item}" for item in safe_reasons)])
