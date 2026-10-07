@@ -10,7 +10,7 @@ LEGAL_EDITOR confirmation. No automatic approval or production activation.
 - [x] R5: Authored synthetic gates; both PostgreSQL confirmation paths, tenant denial,
   unavailable evidence and idempotent routing tests.
 - [ ] R6: Independent review and project quality gates on current main.
-- [ ] R7: Implement/exercise v3-compatible operational safe-stop before activation.
+- [x] R7: Implement/exercise v3-compatible operational safe-stop before activation (ADR 0064).
 - [ ] R8: LEGAL_EDITOR reviews exact hash/threshold/triggers and authorises activation.
 
 ## Concrete next slice for usable ordinary cases

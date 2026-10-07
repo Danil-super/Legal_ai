@@ -17,6 +17,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.analysis_jobs import AnalysisJob, ClaimedJob, claim_job, job_result
+from legal_core.analysis_safe_stop import analysis_safe_stop_active, require_analysis_running
 from legal_core.case_api import ApiError, _tenant_case, resolve_actor
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ async def execute_job(
         stored = await session.get(AnalysisJob, job.id)
         if stored is not None and await job_result(session, stored) is not None:
             return  # Submission committed before a crash/HTTP timeout; never run the models again.
+    require_analysis_running()
     response = await asyncio.wait_for(
         client.post(
             f"{settings.url}/v1/cases/{job.case_id}/analyze",
@@ -150,6 +152,8 @@ async def worker_once(
     client: httpx.AsyncClient,
     settings: WorkerSettings,
 ) -> bool:
+    if analysis_safe_stop_active():
+        return False
     # Compose starts Core before orchestrator. Leave the durable backlog untouched until
     # the configured consumer is reachable; startup order is not an analysis failure.
     try:

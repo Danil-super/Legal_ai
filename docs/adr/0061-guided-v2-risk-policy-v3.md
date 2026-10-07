@@ -53,10 +53,9 @@ questionnaire cannot record an explicit negative health answer and omits legacy
 safety facts. tasks/risk-policy-v3.md describes the next factual intake slice.
 No automatic legal approval, model activation or production writes occur here.
 
-Production activation is blocked until an operational safe-stop is implemented
-and exercised: stop new automated analyses with a v3-compatible application,
-preserve drafts and urgent escalations, retain authorised lawyer access and show
-manual review/retry for blocked confirmations. DEPLOY_ANALYSIS_ENABLED=0 alone
-is not claimed to satisfy that gate. Retired v1 cannot be reactivated; recovery
+ADR 0064 implements the required operational safe-stop and its tests: stop new
+automated analyses with a v3-compatible application, preserve drafts and urgent
+escalations, retain authorised lawyer access and show manual review/retry.
+DEPLOY_ANALYSIS_ENABLED=0 alone does not satisfy that gate. Retired v1 cannot be reactivated; recovery
 requires a separately reviewed monotonic policy version, at least v4. Rolling
 back to an application that cannot parse v3 is invalid after activation.

@@ -141,6 +141,7 @@ def test_changed_predecessor_rolls_back_without_creating_or_approving_v3():
 
 
 @pytest.mark.parametrize("entrypoint", ["workflow", "finalization"])
+@pytest.mark.parametrize("safe_stop", [False, True])
 @pytest.mark.parametrize(
     ("health", "incoming", "level"),
     [
@@ -154,8 +155,11 @@ def test_both_confirmations_route_v3_without_corpus_or_llm_and_replay_one_escala
     health,
     incoming,
     level,
+    safe_stop,
+    monkeypatch,
 ):
     _, _, policy_id = prepare_policy()
+    monkeypatch.setenv("LEGAL_ANALYSIS_SAFE_STOP", "1" if safe_stop else "0")
     user = 8_510_000_000 + uuid4().int % 1_000_000_000
     other = 8_610_000_000 + uuid4().int % 1_000_000_000
     clinic_id, membership_id = seed_admin(user)

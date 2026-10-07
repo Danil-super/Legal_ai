@@ -26,6 +26,7 @@ from legal_core.analysis_freshness import (
     AnalysisContextFingerprint,
     analysis_context_is_stale,
 )
+from legal_core.analysis_safe_stop import require_analysis_running
 from legal_core.api_contracts import LegalFragmentResponse, ReportResponse
 from legal_core.case_api import (
     ApiError,
@@ -167,6 +168,7 @@ def _require_analysis_eligible_case(case: Case) -> None:
 async def _load_analysis_state(session: AsyncSession, actor: Any, case_id: UUID) -> AnalysisState:
     case = await _tenant_case(session, actor, case_id)
     _require_analysis_eligible_case(case)
+    require_analysis_running()
     facts = _domain_facts(await _current_fact_rows(session, case.id))
     missing = missing_facts_for(facts)
     if missing:

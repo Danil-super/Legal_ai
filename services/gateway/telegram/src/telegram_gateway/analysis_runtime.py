@@ -128,6 +128,10 @@ def _bounded_text(value: object, *, limit: int) -> str | None:
 
 def analysis_error_message(code: str) -> str:
     messages = {
+        "ANALYSIS_SAFE_STOP": (
+            "Автоматический анализ временно приостановлен. Кейс сохранён; "
+            "повторите анализ после возобновления или обратитесь к юристу клиники."
+        ),
         "INSUFFICIENT_FACTS": "В кейсе не хватает обязательных фактов.",
         "ANALYSIS_DATE_UNCERTAIN": (
             "Не удалось определить применимую редакцию закона: уточните точную дату "
