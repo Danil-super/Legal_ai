@@ -11,8 +11,8 @@ from telegram_gateway.case_wizard import facts_from_v2_data
 from telegram_gateway.guided_case_intake_v2 import (
     V2_CONFIRM,
     V2_EVENT_DATE,
+    V2_SAFETY,
     V2_SERVICES,
-    V2_SUMMARY,
     active_states,
     next_missing_state,
     parse_answer,
@@ -43,7 +43,7 @@ def test_treatment_requires_service_but_other_topics_do_not() -> None:
     assert next_missing_state(data) == V2_SERVICES
 
     data["situationAreas"] = ["PERSONAL_DATA"]
-    assert next_missing_state(data) == V2_SUMMARY
+    assert next_missing_state(data) == V2_SAFETY
 
 
 def test_unknown_event_date_remains_a_targeted_follow_up() -> None:
@@ -105,4 +105,4 @@ def test_v2_sequence_ends_in_deterministic_summary() -> None:
     data = _base_data()
 
     assert active_states(data)[-1] == V2_CONFIRM
-    assert next_missing_state(data) == V2_SUMMARY
+    assert next_missing_state(data) == V2_SAFETY

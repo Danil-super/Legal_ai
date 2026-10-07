@@ -13,25 +13,33 @@ def policy():
 
 def facts(**overrides):
     return {
-        FactKey.INTAKE_VERSION: "GUIDED_V2", FactKey.INCOMING_COMMUNICATION: "MESSAGE_OR_REQUEST",
+        FactKey.INTAKE_VERSION: "GUIDED_V2",
+        FactKey.INCOMING_COMMUNICATION: "MESSAGE_OR_REQUEST",
         FactKey.HEALTH_CONSEQUENCE_SIGNALS: ["NO_KNOWN_INFORMATION"],
         FactKey.FACTUAL_SAFETY_SCREENING: screening(**overrides),
     }
 
 
-@pytest.mark.parametrize(("overrides", "level"), [
-    ({}, RiskLevel.LOW),
-    ({"moneyRequested": "YES", "amount": {"amountKopecks": 4_999_999, "currency": "RUB"}},
-     RiskLevel.MEDIUM),
-    ({"moneyRequested": "YES", "amount": {"amountKopecks": 5_000_000, "currency": "RUB"}},
-     RiskLevel.HIGH),
-    ({"healthDeteriorationReported": "YES"}, RiskLevel.HIGH),
-    ({"representativeContact": "YES"}, RiskLevel.HIGH),
-    ({"writtenRequirementsReceived": "YES"}, RiskLevel.HIGH),
-    ({"authorityReferralMentioned": "YES"}, RiskLevel.MEDIUM),
-    ({"hospitalizationReported": "YES"}, RiskLevel.CRITICAL),
-    ({"authorityOrCourtDocumentReceived": "YES"}, RiskLevel.CRITICAL),
-])
+@pytest.mark.parametrize(
+    ("overrides", "level"),
+    [
+        ({}, RiskLevel.LOW),
+        (
+            {"moneyRequested": "YES", "amount": {"amountKopecks": 4_999_999, "currency": "RUB"}},
+            RiskLevel.MEDIUM,
+        ),
+        (
+            {"moneyRequested": "YES", "amount": {"amountKopecks": 5_000_000, "currency": "RUB"}},
+            RiskLevel.HIGH,
+        ),
+        ({"healthDeteriorationReported": "YES"}, RiskLevel.HIGH),
+        ({"representativeContact": "YES"}, RiskLevel.HIGH),
+        ({"writtenRequirementsReceived": "YES"}, RiskLevel.HIGH),
+        ({"authorityReferralMentioned": "YES"}, RiskLevel.MEDIUM),
+        ({"hospitalizationReported": "YES"}, RiskLevel.CRITICAL),
+        ({"authorityOrCourtDocumentReceived": "YES"}, RiskLevel.CRITICAL),
+    ],
+)
 def test_explicit_facts_clear_only_their_independently_confirmed_risk_dimensions(overrides, level):
     data = facts(**overrides)
     assessment = evaluate_risk(data, policy=policy(), evidence_verified=True)
@@ -42,11 +50,18 @@ def test_explicit_facts_clear_only_their_independently_confirmed_risk_dimensions
     assert (urgent is not None) == (level in {RiskLevel.HIGH, RiskLevel.CRITICAL})
 
 
-@pytest.mark.parametrize("field", [
-    "healthDeteriorationReported", "hospitalizationReported", "representativeContact",
-    "writtenRequirementsReceived", "authorityOrCourtDocumentReceived", "authorityReferralMentioned",
-    "moneyRequested",
-])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "healthDeteriorationReported",
+        "hospitalizationReported",
+        "representativeContact",
+        "writtenRequirementsReceived",
+        "authorityOrCourtDocumentReceived",
+        "authorityReferralMentioned",
+        "moneyRequested",
+    ],
+)
 def test_unknown_safety_answers_do_not_clear_a_case(field):
     overrides = {field: "UNKNOWN"}
     if field == "moneyRequested":
@@ -54,23 +69,31 @@ def test_unknown_safety_answers_do_not_clear_a_case(field):
     result = evaluate_risk(facts(**overrides), policy=policy(), evidence_verified=True)
     assert result.level is RiskLevel.UNAVAILABLE
     from legal_core.risk_engine import risk_missing_facts
+
     assert risk_missing_facts(result)[0].question_id == "factual_safety_" + field
 
 
 def test_unknown_monetary_amount_needs_an_exact_follow_up():
-    result = evaluate_risk(facts(moneyRequested="YES", amount="UNKNOWN"),
-                           policy=policy(), evidence_verified=True)
+    result = evaluate_risk(
+        facts(moneyRequested="YES", amount="UNKNOWN"), policy=policy(), evidence_verified=True
+    )
     assert result.level is RiskLevel.UNAVAILABLE
     from legal_core.risk_engine import risk_missing_facts
+
     assert risk_missing_facts(result)[0].question_id == "factual_safety_amount"
 
 
 def test_missing_envelope_and_historical_policy_never_infer_clearance():
     data = facts()
     old_candidate = RiskPolicy("dental-risk.v3", 5_000_000, True)
-    assert evaluate_risk(data, policy=old_candidate, evidence_verified=True).level is RiskLevel.UNAVAILABLE
+    assert (
+        evaluate_risk(data, policy=old_candidate, evidence_verified=True).level
+        is RiskLevel.UNAVAILABLE
+    )
     del data[FactKey.FACTUAL_SAFETY_SCREENING]
-    assert evaluate_risk(data, policy=policy(), evidence_verified=True).level is RiskLevel.UNAVAILABLE
+    assert (
+        evaluate_risk(data, policy=policy(), evidence_verified=True).level is RiskLevel.UNAVAILABLE
+    )
 
 
 def test_urgent_positive_survives_a_contradictory_factual_negative_but_blocks_final_report():
@@ -86,14 +109,18 @@ def test_urgent_positive_survives_a_contradictory_factual_negative_but_blocks_fi
 def test_early_routing_never_removes_the_evidence_gate():
     data = facts(hospitalizationReported="YES", healthDeteriorationReported="UNKNOWN")
     assert evaluate_early_triage(data, policy=policy()).level is RiskLevel.CRITICAL
-    assert evaluate_risk(data, policy=policy(), evidence_verified=False).level is RiskLevel.UNAVAILABLE
+    assert (
+        evaluate_risk(data, policy=policy(), evidence_verified=False).level is RiskLevel.UNAVAILABLE
+    )
 
 
 @pytest.mark.parametrize("value", [0, 1, [], {}, "INVALID"])
 def test_new_envelope_does_not_hide_invalid_independently_recorded_legacy_signals(value):
     data = facts()
     data[FactKey.REGULATOR_THREAT] = value
-    assert evaluate_risk(data, policy=policy(), evidence_verified=True).level is RiskLevel.UNAVAILABLE
+    assert (
+        evaluate_risk(data, policy=policy(), evidence_verified=True).level is RiskLevel.UNAVAILABLE
+    )
 
 
 @pytest.mark.parametrize("incoming", [None, "UNKNOWN", "INVALID"])

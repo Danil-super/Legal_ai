@@ -103,6 +103,7 @@ _V2_DRAFT_DATA_KEYS = frozenset(
         "clinicActionsNote",
         "healthSignals",
         "caseMaterialsStatus",
+        "safetyScreening",
     }
 )
 _DRAFT_DATA_KEYS = _V1_DRAFT_DATA_KEYS | _V2_DRAFT_DATA_KEYS
@@ -117,6 +118,7 @@ _V2_DRAFT_STATES = frozenset(
         "CLINIC_ACTIONS",
         "HEALTH",
         "MATERIALS",
+        "SAFETY",
         "SUMMARY",
         "V2_CONFIRM",
     }
@@ -154,6 +156,7 @@ TelegramDraftWizardState = Literal[
     "CLINIC_ACTIONS",
     "HEALTH",
     "MATERIALS",
+    "SAFETY",
     "SUMMARY",
     "V2_CONFIRM",
 ]
@@ -284,6 +287,10 @@ class TelegramIntakeDraftUpdateRequest(ContractModel):
             raise ValueError("draftData mixes incompatible intake versions")
         if "intakeVersion" in value and not is_v2:
             raise ValueError("draftData intakeVersion is invalid")
+        if "safetyScreening" in value:
+            from legal_core.factual_safety_intake import validate_partial_screening
+
+            validate_partial_screening(value["safetyScreening"])
         encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
         if len(encoded.encode()) > 16_384:
             raise ValueError("draftData exceeds 16384 bytes")

@@ -5,13 +5,13 @@ from collections.abc import Mapping
 from pydantic import ValidationError
 
 from legal_core.contracts import FactKey
-from legal_core.factual_safety_intake import FactualSafetyScreening, RequestedMoney
-
-SCREENING_SIGNALS = (
-    "healthDeteriorationReported", "hospitalizationReported", "representativeContact",
-    "writtenRequirementsReceived", "authorityOrCourtDocumentReceived", "authorityReferralMentioned",
-    "moneyRequested",
+from legal_core.factual_safety_intake import (
+    SCREENING_FIELDS,
+    FactualSafetyScreening,
+    RequestedMoney,
 )
+
+SCREENING_SIGNALS = SCREENING_FIELDS
 
 
 def confirmed_screening(facts: Mapping[FactKey, object]) -> FactualSafetyScreening | None:
@@ -22,12 +22,19 @@ def confirmed_screening(facts: Mapping[FactKey, object]) -> FactualSafetyScreeni
 
 
 def screening_blocker(
-    facts: Mapping[FactKey, object], screening: FactualSafetyScreening | None,
+    facts: Mapping[FactKey, object],
+    screening: FactualSafetyScreening | None,
 ) -> str | None:
     if screening is None:
         return "FACTUAL_SAFETY_SCREENING_UNKNOWN"
-    for key in (FactKey.HARM_CLAIMED, FactKey.HOSPITALIZATION, FactKey.LAWYER_CONTACT,
-                FactKey.FORMAL_CLAIM, FactKey.REGULATOR_OR_COURT, FactKey.REGULATOR_THREAT):
+    for key in (
+        FactKey.HARM_CLAIMED,
+        FactKey.HOSPITALIZATION,
+        FactKey.LAWYER_CONTACT,
+        FactKey.FORMAL_CLAIM,
+        FactKey.REGULATOR_OR_COURT,
+        FactKey.REGULATOR_THREAT,
+    ):
         if key in facts:
             value = facts[key]
             if type(value) is not bool and not (
@@ -37,15 +44,16 @@ def screening_blocker(
     data = screening.model_dump(by_alias=True)
     health = facts.get(FactKey.HEALTH_CONSEQUENCE_SIGNALS)
     positives = {
-        "hospitalizationReported": (
-            isinstance(health, list) and "HOSPITALIZATION" in health
-        ) or facts.get(FactKey.HOSPITALIZATION) in (True, "YES"),
+        "hospitalizationReported": (isinstance(health, list) and "HOSPITALIZATION" in health)
+        or facts.get(FactKey.HOSPITALIZATION) in (True, "YES"),
         "healthDeteriorationReported": (
             isinstance(health, list) and "COMPLICATION_OR_WORSENING" in health
-        ) or facts.get(FactKey.HARM_CLAIMED) in (True, "YES"),
+        )
+        or facts.get(FactKey.HARM_CLAIMED) in (True, "YES"),
         "authorityOrCourtDocumentReceived": (
             facts.get(FactKey.INCOMING_COMMUNICATION) == "AUTHORITY_OR_COURT_DOCUMENT"
-        ) or facts.get(FactKey.REGULATOR_OR_COURT) in (True, "YES"),
+        )
+        or facts.get(FactKey.REGULATOR_OR_COURT) in (True, "YES"),
         "representativeContact": facts.get(FactKey.LAWYER_CONTACT) in (True, "YES"),
         "writtenRequirementsReceived": facts.get(FactKey.FORMAL_CLAIM) in (True, "YES"),
         "authorityReferralMentioned": facts.get(FactKey.REGULATOR_THREAT) in (True, "YES"),
@@ -70,11 +78,15 @@ def screening_blocker(
 def screening_high_reasons(screening: FactualSafetyScreening | None) -> tuple[str, ...]:
     if screening is None:
         return ()
-    reasons = [reason for value, reason in (
-        (screening.health_deterioration_reported, "HEALTH_DETERIORATION_REPORTED"),
-        (screening.representative_contact, "LAWYER_OR_REPRESENTATIVE_CONTACT"),
-        (screening.written_requirements_received, "WRITTEN_REQUIREMENTS_REPORTED"),
-    ) if value == "YES"]
+    reasons = [
+        reason
+        for value, reason in (
+            (screening.health_deterioration_reported, "HEALTH_DETERIORATION_REPORTED"),
+            (screening.representative_contact, "LAWYER_OR_REPRESENTATIVE_CONTACT"),
+            (screening.written_requirements_received, "WRITTEN_REQUIREMENTS_REPORTED"),
+        )
+        if value == "YES"
+    ]
     if (
         isinstance(screening.amount, RequestedMoney)
         and screening.amount.amount_kopecks >= 5_000_000

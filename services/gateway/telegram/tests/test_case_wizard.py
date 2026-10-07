@@ -7,6 +7,7 @@ from uuid import UUID
 
 import httpx2
 import pytest
+from legal_core.factual_safety_intake import SCREENING_FIELDS, SCREENING_VERSION
 from telegram.ext import ConversationHandler
 from telegram_gateway.bot import (
     LEGAL_CORE_CLIENT_KEY,
@@ -856,6 +857,9 @@ def test_v2_confirmation_submits_plain_language_facts_without_legacy_qualificati
                 "clinicActions": ["INVITED_FOR_EXAMINATION"],
                 "healthSignals": ["NO_KNOWN_INFORMATION"],
                 "caseMaterialsStatus": "NOT_ATTACHED",
+                "safetyScreening": {"schemaVersion": SCREENING_VERSION,
+                                    **dict.fromkeys(SCREENING_FIELDS, "NO"),
+                                    "amount": "NOT_REQUESTED"},
             }
         },
     )

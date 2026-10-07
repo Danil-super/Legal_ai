@@ -4,12 +4,61 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 
 from legal_core.contracts import ContractModel
 
 Signal = Literal["YES", "NO", "UNKNOWN"]
 SCREENING_VERSION = "factual-safety-intake.v1"
+
+SCREENING_FIELDS = (
+    "healthDeteriorationReported",
+    "hospitalizationReported",
+    "representativeContact",
+    "writtenRequirementsReceived",
+    "authorityOrCourtDocumentReceived",
+    "authorityReferralMentioned",
+    "moneyRequested",
+)
+
+
+def validate_partial_screening(value: object) -> dict[str, object]:
+    """Drafts may be incomplete, never unversioned, open-ended or mistyped."""
+    if (
+        not isinstance(value, dict)
+        or not set(value)
+        <= {
+            "schemaVersion",
+            "amount",
+            *SCREENING_FIELDS,
+        }
+        or value.get("schemaVersion") != SCREENING_VERSION
+    ):
+        raise ValueError("invalid factual screening draft shape")
+    if any(
+        not isinstance(value[field], str) or value[field] not in {"YES", "NO", "UNKNOWN"}
+        for field in SCREENING_FIELDS
+        if field in value
+    ):
+        raise ValueError("invalid factual screening draft signal")
+    if "amount" in value:
+        amount = value["amount"]
+        if not isinstance(amount, str):
+            try:
+                RequestedMoney.model_validate(amount)
+            except ValidationError as exc:
+                raise ValueError("invalid factual screening draft amount") from exc
+        elif amount not in {"UNKNOWN", "NOT_REQUESTED"}:
+            raise ValueError("invalid factual screening draft amount")
+        signal = value.get("moneyRequested")
+        if (
+            (signal == "NO" and amount != "NOT_REQUESTED")
+            or (signal == "UNKNOWN" and amount != "UNKNOWN")
+            or (signal == "YES" and amount == "NOT_REQUESTED")
+            or signal is None
+        ):
+            raise ValueError("factual screening draft monetary fields conflict")
+    return value
 
 
 class RequestedMoney(ContractModel):

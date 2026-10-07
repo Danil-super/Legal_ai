@@ -48,9 +48,10 @@ conflicts, unknown abstention, threshold boundaries, strict parser/hash/flags,
 legacy behavior, human-only direct activation, rollback on predecessor mismatch,
 both real API confirmation paths, tenant denial and idempotent escalation.
 
-This preparation slice does not make guided LOW/MEDIUM usable. The current
-questionnaire cannot record an explicit negative health answer and omits legacy
-safety facts. tasks/risk-policy-v3.md describes the next factual intake slice.
+The original four-key preparation contract alone does not make guided LOW/MEDIUM
+usable. ADR 0066 implements the owner-authorised independent factual follow-up and
+an explicitly reviewed five-key candidate extension, without reinterpreting
+NO_KNOWN_INFORMATION or legacy facts. tasks/risk-policy-v3.md records its evidence.
 No automatic legal approval, model activation or production writes occur here.
 
 ADR 0064 implements the required operational safe-stop and its tests: stop new

@@ -149,6 +149,19 @@ canonical object, and a policy with version number below 3 cannot use this
 schema. An implementation must preserve v1/v2 validation and outputs; it may
 not switch their behaviour based on the active v3 parser.
 
+Owner-authorised factual follow-up (ADR 0066 / SPEC-factual-safety-intake-v1.md)
+extends the as-yet-unapproved candidate with one optional exact, hash-covered key:
+`"factualSafetyIntakeVersion": "factual-safety-intake.v1"`. Only that reviewed
+five-key payload interprets the independent factual envelope and permits resolved
+LOW/MEDIUM intake. The original four-key object retains the conservative behavior
+above; absence of this key does not opt in. Separate explicit
+`factual_safety_intake_enabled` and `factual_safety_intake_reviewed` human flags
+are required together. Wrong versions, legacy schemas with this key and content
+hash mismatches are rejected. An existing immutable candidate with different
+content cannot be overwritten. The complete five-key content, including factual
+reported-deterioration/representative/written-requirement HIGH triggers, must be
+reviewed before activation; no automatic approval is introduced.
+
 The existing `risk_policy_versions` and `risk_policy_events` tables are expected
 to suffice. If implementation changes schema, add an Alembic migration and
 PostgreSQL/RLS tests. Do not edit v1/v2 policy payloads or their approval events.

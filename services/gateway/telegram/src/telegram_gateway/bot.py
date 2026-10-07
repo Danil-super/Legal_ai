@@ -43,6 +43,14 @@ from telegram_gateway.case_wizard import (
     parse_ruble_amount_to_kopecks,
     telegram_summary_from_report,
 )
+from telegram_gateway.factual_safety_intake import (
+    answer_screening,
+    explicitly_skip_other_questions,
+    known_urgent_report,
+    previous_screening_question,
+    screening_complete,
+    screening_question,
+)
 from telegram_gateway.guided_case_intake_v2 import (
     V2_EVENT,
     V2_INCOMING,
@@ -147,6 +155,7 @@ class WizardState(IntEnum):
     MATERIALS = 32
     SUMMARY = 33
     V2_CONFIRM = 34
+    SAFETY = 35
 
 
 def load_token(environment: Mapping[str, str] | None = None) -> str:
@@ -868,6 +877,26 @@ async def _prompt_v2_draft(
             rows = [[("Продолжить", "case:v2:material:done")]]
         if message is not None:
             await message.reply_text(prompt, reply_markup=_v2_keyboard(rows))
+    elif state is WizardState.SAFETY:
+        question = screening_question(data)
+        if question is None:
+            await _prompt_v2_draft(update, WizardState.SUMMARY, data)
+            return
+        field, prompt = question
+        rows = [[("Не знаю", f"case:safety:{field}:UNKNOWN")]]
+        if field != "amount":
+            rows.insert(0, [("Да", f"case:safety:{field}:YES"),
+                            ("Нет", f"case:safety:{field}:NO")])
+        if known_urgent_report(data):
+            rows.append([("Подтвердить известное без других уточнений",
+                          "case:safety:known:confirm")])
+        await _reply(
+            update,
+            "Уточнение фактов перед фабулой. Юридическую оценку делать не нужно.\n\n"
+            + prompt + "\n«Не знаю» не считается отрицательным ответом. "
+            "При подтверждении только известного остальные уточнения останутся неизвестными.",
+            reply_markup=_v2_keyboard(rows),
+        )
     elif state is WizardState.SUMMARY:
         if message is not None:
             await message.reply_text(
@@ -906,7 +935,10 @@ async def choose_v2_single(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return _v2_state(str(_wizard_data(context).get(DRAFT_STATE_KEY, V2_INCOMING)))
     data = _wizard_data(context)
     try:
-        data[field] = parse_v2_answer(field, value)
+        parsed = parse_v2_answer(field, value)
+        if field == "incomingKind" and data.get(field) != parsed:
+            data.pop("safetyScreening", None)
+        data[field] = parsed
     except ValueError:
         await _reply(update, "Выберите вариант кнопкой под текущим вопросом.")
         return _v2_state(str(data.get(DRAFT_STATE_KEY, V2_INCOMING)))
@@ -949,6 +981,8 @@ async def choose_v2_multi(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except ValueError as exc:
         await _reply(update, str(exc))
         return current
+    if field == "healthSignals":
+        data.pop("safetyScreening", None)
     await _prompt_v2_draft(update, current, data)
     return current
 
@@ -964,6 +998,43 @@ async def record_v2_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except ValueError as exc:
         await _reply(update, str(exc), reply_markup=_v2_keyboard([]))
         return state
+    return await _advance_v2_draft(update, data)
+
+
+async def choose_factual_safety(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    callback = await _answer_callback(update)
+    data = _wizard_data(context)
+    pending = screening_question(data)
+    if callback == "case:safety:known:confirm" and known_urgent_report(data):
+        explicitly_skip_other_questions(data)
+        return await _advance_v2_draft(update, data)
+    parts = callback.split(":") if isinstance(callback, str) else []
+    if (
+        len(parts) != 4 or parts[:2] != ["case", "safety"]
+        or pending is None or parts[2] != pending[0]
+    ):
+        await _prompt_v2_draft(update, WizardState.SAFETY, data)
+        return WizardState.SAFETY
+    try:
+        answer_screening(data, parts[2], parts[3])
+    except ValueError:
+        await _reply(update, "Выберите ответ под текущим вопросом.")
+        return WizardState.SAFETY
+    return await _advance_v2_draft(update, data)
+
+
+async def record_factual_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    data = _wizard_data(context)
+    pending = screening_question(data)
+    if pending is None or pending[0] != "amount":
+        await _reply(update, "Ответьте кнопкой под текущим вопросом.")
+        return WizardState.SAFETY
+    try:
+        answer_screening(data, "amount", _message_text(update))
+    except ValueError:
+        await _reply(update, "Укажите положительную сумму в рублях, не более двух знаков "
+                     "после запятой, или нажмите «Не знаю».")
+        return WizardState.SAFETY
     return await _advance_v2_draft(update, data)
 
 
@@ -1002,12 +1073,17 @@ async def back_v2_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return WizardState.INCOMING
     data = _wizard_data(context)
     current_name = str(data.get(DRAFT_STATE_KEY, V2_INCOMING))
+    if current_name == "SAFETY" and previous_screening_question(data):
+        await _prompt_v2_draft(update, WizardState.SAFETY, data)
+        return WizardState.SAFETY
     states = v2_active_states(data)
     try:
         index = states.index(current_name)
     except ValueError:
         return WizardState.INCOMING
     previous = _v2_state(states[max(index - 1, 0)])
+    if previous is WizardState.SAFETY and screening_complete(data):
+        previous_screening_question(data)
     await _prompt_v2_draft(update, previous, data)
     return previous
 
@@ -1730,6 +1806,10 @@ async def resume_intake_draft(update: Update, context: ContextTypes.DEFAULT_TYPE
     _clear_wizard(context)
     _clear_pending_inputs(context)
     data = dict(draft_data)
+    if data.get("intakeVersion") == 2 and state in {
+        WizardState.SUMMARY, WizardState.V2_CONFIRM,
+    }:
+        state = _v2_state(v2_next_missing_state(data))
     data.update(
         {
             "workflow_id": str(draft_id),
@@ -2374,6 +2454,13 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                 reply_markup=_keyboard(rows),
             )
             return WizardState.CONFIRM
+        if _is_v2_draft(data):
+            missing = _v2_state(v2_next_missing_state(data))
+            if missing is not WizardState.SUMMARY:
+                await _reply(update, "Перед подтверждением уточните недостающие факты. "
+                             "Черновик сохранён.")
+                await _prompt_v2_draft(update, missing, data)
+                return missing
         client = _legal_core(context)
         if _is_v2_draft(data):
             facts = facts_from_v2_data(_draft_payload(data))
@@ -2703,6 +2790,14 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
                         _persisted(confirm_v2_summary),
                         pattern=r"^case:v2:summary:confirm$",
                     ),
+                    CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
+                ],
+                WizardState.SAFETY: [
+                    CallbackQueryHandler(
+                        _persisted(choose_factual_safety), pattern=r"^case:safety:"
+                    ),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   _persisted(record_factual_amount)),
                     CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
                 ],
                 WizardState.V2_CONFIRM: [
