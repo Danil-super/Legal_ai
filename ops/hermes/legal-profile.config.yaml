@@ -13,6 +13,14 @@ model:
   base_url: ${OPENAI_BASE_URL}
   api_key: ${OPENAI_API_KEY}
 
+agent:
+  api_max_retries: 1
+
+providers:
+  custom:
+    request_timeout_seconds: 29
+    stale_timeout_seconds: 29
+
 platform_toolsets:
   api_server: []
 

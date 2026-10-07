@@ -6,6 +6,7 @@ import asyncio
 import json
 import math
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 from urllib.parse import urlparse
 
@@ -18,8 +19,41 @@ class HermesError(RuntimeError):
     """Base class for fail-closed Hermes boundary failures."""
 
 
+class HermesUnavailableReason(StrEnum):
+    UNKNOWN = "UNKNOWN"
+    WALL_TIMEOUT = "WALL_TIMEOUT"
+    CONNECT_TIMEOUT = "CONNECT_TIMEOUT"
+    READ_TIMEOUT = "READ_TIMEOUT"
+    WRITE_TIMEOUT = "WRITE_TIMEOUT"
+    POOL_TIMEOUT = "POOL_TIMEOUT"
+    HTTP_STATUS = "HTTP_STATUS"
+    TRANSPORT = "TRANSPORT"
+
+
 class HermesUnavailable(HermesError):
-    pass
+    def __init__(
+        self,
+        message: str = "Hermes API request failed",
+        *,
+        reason: HermesUnavailableReason = HermesUnavailableReason.UNKNOWN,
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+def _unavailable_reason(error: httpx.HTTPError | TimeoutError) -> HermesUnavailableReason:
+    # Inspect only types: provider exception messages can contain URLs, credentials or bodies.
+    for error_type, reason in (
+        (TimeoutError, HermesUnavailableReason.WALL_TIMEOUT),
+        (httpx.ConnectTimeout, HermesUnavailableReason.CONNECT_TIMEOUT),
+        (httpx.ReadTimeout, HermesUnavailableReason.READ_TIMEOUT),
+        (httpx.WriteTimeout, HermesUnavailableReason.WRITE_TIMEOUT),
+        (httpx.PoolTimeout, HermesUnavailableReason.POOL_TIMEOUT),
+        (httpx.HTTPStatusError, HermesUnavailableReason.HTTP_STATUS),
+    ):
+        if isinstance(error, error_type):
+            return reason
+    return HermesUnavailableReason.TRANSPORT
 
 
 class HermesProtocolError(HermesError):
@@ -159,8 +193,8 @@ class HermesClient:
                         if len(body) + len(chunk) > MAX_ENVELOPE_BYTES:
                             raise HermesProtocolError("Hermes response exceeded the envelope limit")
                         body.extend(chunk)
-            except (httpx.HTTPError, TimeoutError):
-                raise HermesUnavailable("Hermes API request failed") from None
+            except (httpx.HTTPError, TimeoutError) as exc:
+                raise HermesUnavailable(reason=_unavailable_reason(exc)) from None
 
             payload = _decode_json(bytes(body))
             try:

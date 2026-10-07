@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime
+import json
 from uuid import UUID
 
 import pytest
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import ServiceDependencies, ServiceSettings, create_app
 from agent_orchestrator.legal_core_client import LegalCoreError
+from agent_orchestrator.hermes_client import HermesUnavailable, HermesUnavailableReason
 from agent_orchestrator.reasoning import ReasoningResult
 from legal_core.analysis_contracts import AnalysisContextResponse, AnalysisSubmissionResponse
 from legal_core.api_contracts import LegalFragmentResponse, ReportResponse
@@ -213,6 +215,38 @@ def test_completed_case_is_rejected_before_hermes_reasoning() -> None:
     assert response.json()["detail"]["code"] == "CASE_ANALYSIS_ALREADY_COMPLETED"
     assert reasoning.calls == 0
     assert legal_core.submit_calls == 0
+
+
+@pytest.mark.parametrize("reason", ["UNKNOWN", "READ_TIMEOUT", "HTTP_STATUS"])
+def test_unavailable_logs_only_closed_reason_without_changing_public_detail(caplog, reason) -> None:
+    client, legal_core, reasoning = _client()
+
+    async def unavailable(projection):
+        raise HermesUnavailable(
+            "SYNTHETIC_PRIVATE_PROVIDER_DETAIL", reason=HermesUnavailableReason(reason),
+        )
+
+    reasoning.reason = unavailable
+    response = client.post(
+        f"/v1/cases/{CASE_ID}/analyze",
+        headers={
+            "X-Agent-Internal-Key": INTERNAL_KEY,
+            "X-Telegram-User-Id": "123",
+            "Idempotency-Key": str(IDEMPOTENCY_KEY),
+        },
+    )
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"code": "ANALYSIS_PROVIDER_UNAVAILABLE"}}
+    assert legal_core.submit_calls == 0
+    records = [r for r in caplog.records if r.name == "agent_orchestrator.main"]
+    assert len(records) == 1
+    assert json.loads(records[0].getMessage()) == {
+        "event": "hermes_unavailable", "reason": reason,
+        "entryPoint": "analyze", "requestId": str(IDEMPOTENCY_KEY),
+    }
+    assert not records[0].exc_info
+    assert "SYNTHETIC_PRIVATE_PROVIDER_DETAIL" not in caplog.text
+    assert INTERNAL_KEY not in caplog.text
 
 
 @pytest.mark.parametrize("job_headers", [

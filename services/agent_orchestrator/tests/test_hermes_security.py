@@ -88,8 +88,9 @@ def test_envelope_bound_does_not_trust_content_length(declared, monkeypatch) -> 
 
 def test_total_timeout_closes_a_slow_response_stream() -> None:
     stream = ResponseStream([b" "] * 10, delay=0.3)
-    with pytest.raises(HermesUnavailable):
+    with pytest.raises(HermesUnavailable) as caught:
         asyncio.run(complete(httpx.Response(200, stream=stream)))
+    assert caught.value.reason.value == "WALL_TIMEOUT"
     assert stream.closed
     assert stream.consumed < 10
 
