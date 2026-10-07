@@ -18,6 +18,7 @@ from legal_core.database import create_engine, create_session_factory
 from legal_core.models import RiskPolicyEvent, RiskPolicyVersion, User
 from legal_core.risk_engine import RiskPolicy
 from legal_core.synthetic_risk_scenarios import assert_p0_synthetic_risk_regressions
+from legal_core.synthetic_risk_v3 import assert_v3_synthetic_risk_regressions
 
 POLICY_KEY = "dental-risk"
 SCHEMA_VERSION = "risk-policy.v1"
@@ -34,11 +35,23 @@ class RiskPolicyApproval(BaseModel):
     escalation_rules_reviewed: bool
     early_triage_enabled: bool = False
     supersede_approved: bool = False
+    guided_v2_explicit_signals_enabled: bool = Field(default=False, strict=True)
+    direct_v1_supersession_reviewed: bool = Field(default=False, strict=True)
 
     @model_validator(mode="after")
     def require_explicit_review(self) -> RiskPolicyApproval:
         if self.early_triage_enabled and self.version < 2:
             raise ValueError("early triage requires a new policy version >= 2")
+        if self.guided_v2_explicit_signals_enabled and not (
+            self.version == 3
+            and self.high_demand_threshold_kopecks == 5_000_000
+            and self.early_triage_enabled
+            and self.supersede_approved
+            and self.direct_v1_supersession_reviewed
+        ):
+            raise ValueError("v3 requires the reviewed direct v1 transition and fixed threshold")
+        if self.direct_v1_supersession_reviewed and not self.guided_v2_explicit_signals_enabled:
+            raise ValueError("direct v1 supersession attestation applies only to v3")
         if not all(
             (
                 self.incident_triggers_reviewed,
@@ -51,6 +64,13 @@ class RiskPolicyApproval(BaseModel):
 
 
 def policy_payload(approval: RiskPolicyApproval) -> dict[str, object]:
+    if approval.guided_v2_explicit_signals_enabled:
+        return {
+            "schemaVersion": "risk-policy.v3",
+            "highDemandThresholdKopecks": approval.high_demand_threshold_kopecks,
+            "earlyTriageEnabled": True,
+            "guidedV2ExplicitSignalsEnabled": True,
+        }
     if approval.early_triage_enabled:
         return {
             "schemaVersion": "risk-policy.v2",
@@ -79,6 +99,13 @@ async def approve_risk_policy(
         high_demand_threshold_kopecks=approval.high_demand_threshold_kopecks,
     )
     assert_p0_synthetic_risk_regressions(candidate_policy)
+    if approval.guided_v2_explicit_signals_enabled:
+        candidate_policy = RiskPolicy(
+            version=candidate_policy.version,
+            high_demand_threshold_kopecks=candidate_policy.high_demand_threshold_kopecks,
+            guided_v2_explicit_signals_enabled=True,
+        )
+        assert_v3_synthetic_risk_regressions(candidate_policy)
 
     async with session_factory() as session, session.begin():
         reviewer = await session.scalar(
@@ -129,12 +156,16 @@ async def approve_risk_policy(
             raise ValueError("only a DRAFT risk policy can be approved")
 
         another_approved = await session.scalar(
-            select(RiskPolicyVersion).where(
+            select(RiskPolicyVersion)
+            .where(
                 RiskPolicyVersion.policy_key == POLICY_KEY,
                 RiskPolicyVersion.status == "APPROVED",
                 RiskPolicyVersion.id != policy.id,
             )
+            .with_for_update()
         )
+        if approval.guided_v2_explicit_signals_enabled:
+            await _require_direct_v1_predecessor(session, another_approved)
         if another_approved is not None:
             if not approval.supersede_approved or another_approved.version >= policy.version:
                 raise ValueError("another approved dental risk policy must be retired first")
@@ -169,6 +200,34 @@ async def approve_risk_policy(
         return policy.id
 
 
+async def _require_direct_v1_predecessor(
+    session: AsyncSession,
+    predecessor: RiskPolicyVersion | None,
+) -> None:
+    expected_payload = {
+        "schemaVersion": "risk-policy.v1",
+        "highDemandThresholdKopecks": 5_000_000,
+    }
+    expected_digest = policy_content_sha256(expected_payload)
+    if (
+        predecessor is None
+        or predecessor.version != 1
+        or predecessor.policy_json != expected_payload
+        or predecessor.content_sha256 != expected_digest
+    ):
+        raise ValueError("v3 requires the exact approved v1 predecessor at 50,000 RUB")
+    event = await session.scalar(
+        select(RiskPolicyEvent.id).where(
+            RiskPolicyEvent.risk_policy_id == predecessor.id,
+            RiskPolicyEvent.actor_user_id == predecessor.approved_by_user_id,
+            RiskPolicyEvent.decision == "APPROVED",
+            RiskPolicyEvent.expected_content_sha256 == expected_digest,
+        )
+    )
+    if event is None:
+        raise ValueError("v1 predecessor requires a matching immutable approval event")
+
+
 def rubles_to_kopecks(value: str) -> int:
     try:
         amount = Decimal(value.replace(",", "."))
@@ -195,6 +254,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--escalation-rules-reviewed", action="store_true")
     parser.add_argument("--early-triage-enabled", action="store_true")
     parser.add_argument("--supersede-approved", action="store_true")
+    parser.add_argument("--guided-v2-explicit-signals-enabled", action="store_true")
+    parser.add_argument("--direct-v1-supersession-reviewed", action="store_true")
     return parser
 
 
@@ -209,6 +270,8 @@ async def _run_cli() -> None:
         escalation_rules_reviewed=args.escalation_rules_reviewed,
         early_triage_enabled=args.early_triage_enabled,
         supersede_approved=args.supersede_approved,
+        guided_v2_explicit_signals_enabled=args.guided_v2_explicit_signals_enabled,
+        direct_v1_supersession_reviewed=args.direct_v1_supersession_reviewed,
     )
     engine = create_engine()
     factory = create_session_factory(engine)

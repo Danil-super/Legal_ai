@@ -45,6 +45,45 @@ def test_policy_approval_requires_all_human_review_flags() -> None:
         _approval(escalation_rules_reviewed=False)
 
 
+def _v3_approval(**overrides):
+    return _approval(
+        **{
+            "version": 3,
+            "high_demand_threshold_kopecks": 5_000_000,
+            "early_triage_enabled": True,
+            "guided_v2_explicit_signals_enabled": True,
+            "supersede_approved": True,
+            "direct_v1_supersession_reviewed": True,
+            **overrides,
+        }
+    )
+
+
+def test_v3_approval_has_an_exact_hash_covered_payload() -> None:
+    assert policy_payload(_v3_approval()) == {
+        "schemaVersion": "risk-policy.v3",
+        "highDemandThresholdKopecks": 5_000_000,
+        "earlyTriageEnabled": True,
+        "guidedV2ExplicitSignalsEnabled": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"version": 2},
+        {"version": 4},
+        {"early_triage_enabled": False},
+        {"high_demand_threshold_kopecks": 4_999_999},
+        {"supersede_approved": False},
+        {"direct_v1_supersession_reviewed": False},
+    ],
+)
+def test_v3_approval_rejects_unreviewed_or_different_transition(overrides) -> None:
+    with pytest.raises(ValidationError):
+        _v3_approval(**overrides)
+
+
 def test_policy_approval_allows_a_reviewed_nonbaseline_threshold_before_database_access() -> None:
     class UnusedSessionFactory:
         def __call__(self):
