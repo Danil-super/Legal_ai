@@ -118,6 +118,7 @@ def provision_runtime_role() -> str:
         # Check existence because provisioning also runs before migrations.
         for ledger in (
             "legal_material_preparations",
+            "legal_prepared_part_versions",
             "legal_reference_review_events",
             "reference_evaluation_review_events",
         ):

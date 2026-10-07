@@ -12,8 +12,27 @@ import hashlib
 import re
 from dataclasses import dataclass
 from datetime import date
+from uuid import UUID
 
-from legal_core.corpus_loader import is_safe_rtf
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from legal_core.corpus_loader import (
+    CorpusFragment,
+    corpus_fragments_sha256,
+    is_safe_rtf,
+)
+from legal_core.material_preparation import MaterialPreparationInput
+from legal_core.models import (
+    LegalDocument,
+    LegalFragment,
+    LegalMaterialPreparation,
+    LegalPreparedPartVersion,
+    LegalReviewMaterial,
+    LegalSource,
+    LegalVersion,
+    User,
+)
 
 _MAX_RAW_BYTES = 50_000_000
 _MAX_TEXT_CHARS = 25_000_000
@@ -285,3 +304,150 @@ def inspect_normative_rtf(raw: bytes, normalized_text: str) -> NormativePreparat
         source_url=source_url, source_locator=source_locator, parts=parts,
         blockers=tuple(blockers),
     )
+
+
+async def bind_prepared_part(
+    session: AsyncSession, *, preparation_id: UUID, part_key: str,
+    legal_version_id: UUID, actor_user_id: UUID,
+) -> LegalPreparedPartVersion:
+    """Bind one exact RTF part in the caller's transaction, without approving it.
+
+    The corpus version must already have been ingested through ``corpus_loader``.
+    An association failure rolls back this transaction, but does not erase an
+    earlier, unbound REVIEW_REQUIRED import. That import is not legal evidence.
+    """
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,119}", part_key) is None:
+        raise ValueError("invalid prepared part key")
+    actor = await session.get(User, actor_user_id)
+    if actor is None or actor.status != "ACTIVE" or actor.system_role != "LEGAL_EDITOR":
+        raise PermissionError("active LEGAL_EDITOR role is required")
+    await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(
+        f"prepared-part:{preparation_id}:{part_key}", 730659,
+    ))))
+    prepared = await session.scalar(select(LegalMaterialPreparation).where(
+        LegalMaterialPreparation.id == preparation_id,
+    ))
+    if prepared is None:
+        raise ValueError("prepared material is missing")
+    existing = await session.scalar(select(LegalPreparedPartVersion).where(
+        LegalPreparedPartVersion.preparation_id == preparation_id,
+        LegalPreparedPartVersion.part_key == part_key,
+    ))
+    if existing is not None:
+        if existing.legal_version_id != legal_version_id:
+            raise ValueError("prepared part is already bound to another version")
+        return existing
+    latest_revision = await session.scalar(
+        select(func.max(LegalMaterialPreparation.revision)).where(
+            LegalMaterialPreparation.material_id == prepared.material_id,
+        )
+    )
+    if prepared.revision != latest_revision:
+        raise ValueError("prepared material has a newer revision")
+    original = await session.get(LegalReviewMaterial, prepared.material_id)
+    version = await session.get(LegalVersion, legal_version_id)
+    if original is None or version is None or (
+        original.kind != "LEGAL_COPY" or prepared.kind != "NORMATIVE"
+        or original.raw_mime_type != "application/rtf"
+        or version.raw_mime_type != "application/rtf"
+        or version.artifact_kind != "THIRD_PARTY_VERIFIED_COPY"
+        or version.normalization_scope != "FULL_DOCUMENT"
+        or version.approval_state != "REVIEW_REQUIRED"
+        or version.artifact_retrieved_at is None
+        or version.parser_version != prepared.metadata_json.get("parser_version")
+        or prepared.raw_sha256 != original.raw_sha256
+        or version.raw_sha256 != original.raw_sha256
+        or version.raw_bytes != original.raw_bytes
+    ):
+        raise ValueError("version does not match the exact normative original")
+    payload = MaterialPreparationInput.model_validate(
+        prepared.metadata_json | {"normalized_text": prepared.normalized_text}
+    )
+    if payload.digest() != prepared.preparation_sha256 or (
+        payload.extraction_scope != "FULL_DOCUMENT" or not payload.parts
+        or payload.source_url is None
+    ):
+        raise ValueError("normative preparation is not complete")
+    candidate = inspect_normative_rtf(original.raw_bytes, prepared.normalized_text)
+    if candidate.raw_sha256 != payload.raw_sha256 or (
+        candidate.title != payload.title
+        or candidate.normalized_sha256 != payload.normalized_sha256
+        or candidate.source_url != payload.source_url
+        or candidate.source_locator != payload.source_locator
+        or [part.part_key for part in candidate.parts] != [part.part_key for part in payload.parts]
+    ):
+        raise ValueError("prepared source or document-part boundaries are unverified")
+    selected = None
+    for part, parsed in zip(payload.parts, candidate.parts, strict=True):
+        if part.text_start != parsed.text_start or part.text_end != parsed.text_end or (
+            part.text_sha256 is None or part.text_sha256 != parsed.text_sha256
+            or (parsed.document_type is not None and part.document_type != parsed.document_type)
+            or (parsed.official_number is not None
+                and part.official_number != parsed.official_number)
+            or (parsed.adoption_date_candidate is not None
+                and part.adoption_date != parsed.adoption_date_candidate)
+        ):
+            raise ValueError("prepared part differs from the exact extracted original")
+        if part.part_key == part_key:
+            selected = part
+    if selected is None or selected.text_start is None or (
+        selected.text_end is None or selected.text_sha256 is None
+    ):
+        raise ValueError("requested part is not completely prepared")
+    required = (
+        "title", "canonical_key", "document_type", "issuer", "official_number",
+        "adoption_date", "publication_date", "version_date", "effective_from",
+    )
+    if any(getattr(selected, field) is None or not selected.evidence.get(field)
+           for field in required):
+        raise ValueError("canonical identity or edition lacks evidence")
+    document = await session.get(LegalDocument, version.document_id)
+    source = await session.get(LegalSource, version.source_id)
+    if document is None or source is None or source.source_key != "garant" or (
+        source.trust_level != "VERIFIED_COPY" or source.status not in {"DRAFT", "APPROVED"}
+        or source.allowed_hosts != ["internet.garant.ru"]
+        or version.source_url != payload.source_url
+        or version.source_external_id != payload.source_url.rsplit("/", 2)[-2]
+        or (
+            document.canonical_key, document.document_type, document.title,
+            document.issuer, document.official_number, document.adoption_date,
+        ) != (
+            selected.canonical_key, selected.document_type, selected.title,
+            selected.issuer, selected.official_number, selected.adoption_date,
+        )
+        or (
+            version.publication_date, version.version_date,
+            version.effective_from, version.effective_to,
+        ) != (
+            selected.publication_date, selected.version_date,
+            selected.effective_from, selected.effective_to,
+        )
+    ):
+        raise ValueError("corpus identity, source or edition differs from preparation")
+    scoped_text = prepared.normalized_text[selected.text_start:selected.text_end]
+    if version.normalized_text != scoped_text or (
+        version.normalized_sha256 != selected.text_sha256
+        or hashlib.sha256(scoped_text.encode()).hexdigest() != selected.text_sha256
+    ):
+        raise ValueError("corpus text does not match the scoped original")
+    fragments = list((await session.scalars(select(LegalFragment).where(
+        LegalFragment.version_id == version.id,
+    ).order_by(LegalFragment.ordinal))).all())
+    fragment_models = [CorpusFragment(
+        ordinal=item.ordinal, article=item.article, part=item.part, point=item.point,
+        heading=item.heading, structural_path=item.structural_path,
+        text=item.fragment_text,
+    ) for item in fragments]
+    if not fragment_models or corpus_fragments_sha256(fragment_models) != (
+        version.fragments_sha256
+    ) or any(item.text not in scoped_text for item in fragment_models):
+        raise ValueError("corpus fragments do not match the scoped text")
+    binding = LegalPreparedPartVersion(
+        material_id=original.id, preparation_id=prepared.id,
+        raw_sha256=original.raw_sha256, part_key=part_key,
+        part_text_sha256=selected.text_sha256,
+        legal_version_id=version.id, created_by_user_id=actor.id,
+    )
+    session.add(binding)
+    await session.flush()
+    return binding
