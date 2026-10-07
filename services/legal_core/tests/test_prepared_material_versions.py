@@ -22,6 +22,7 @@ from legal_core.material_preparation import store_preparation
 from legal_core.models import LegalPreparedPartVersion, LegalReviewMaterial, LegalVersion, User
 from legal_core.normative_preparation import inspect_normative_rtf
 from legal_core.normative_preparation import bind_prepared_part
+from legal_core.normative_preparation import prepared_part_keys_match
 from legal_core.runtime_db_role import provision_runtime_role
 
 
@@ -115,6 +116,29 @@ def test_whitespace_only_completeness_locator_is_not_evidence() -> None:
         })
 
 
+def test_single_part_alias_matches_only_the_entire_exact_original_text() -> None:
+    prepared = _prepared_input()
+    legacy = prepared.model_copy(update={
+        "parts": [prepared.parts[0].model_copy(update={"part_key": "document"})],
+    })
+    candidate = inspect_normative_rtf(_raw(prepared.title), prepared.normalized_text)
+    assert prepared_part_keys_match(legacy, candidate)
+    for change in (
+        {"part_key": "other"}, {"text_start": 1},
+        {"text_end": len(prepared.normalized_text) - 1}, {"text_sha256": "a" * 64},
+    ):
+        altered = legacy.model_copy(update={
+            "parts": [legacy.parts[0].model_copy(update=change)],
+        })
+        assert not prepared_part_keys_match(altered, candidate)
+    assert not prepared_part_keys_match(legacy.model_copy(update={
+        "raw_sha256": "a" * 64,
+    }), candidate)
+    assert not prepared_part_keys_match(legacy.model_copy(update={
+        "extraction_scope": "PARTIAL",
+    }), candidate)
+
+
 def _bundle_input() -> MaterialPreparationInput:
     run_key = uuid4().hex
     title = "Налоговый кодекс Российской Федерации (НК РФ)"
@@ -165,6 +189,18 @@ def _bundle_input() -> MaterialPreparationInput:
         "normalized_sha256": hashlib.sha256(normalized.encode()).hexdigest(),
         "completeness_locator": "Synthetic complete two-part text",
     })
+
+
+def test_multipart_candidate_keys_are_never_aliased() -> None:
+    prepared = _bundle_input()
+    candidate = inspect_normative_rtf(_raw(prepared.title), prepared.normalized_text)
+    assert prepared_part_keys_match(prepared, candidate)
+    for keys in (("document", "part-2"), ("part-2", "part-1")):
+        altered = prepared.model_copy(update={
+            "parts": [part.model_copy(update={"part_key": key})
+                      for part, key in zip(prepared.parts, keys, strict=True)],
+        })
+        assert not prepared_part_keys_match(altered, candidate)
 
 
 def _write_manifest(
@@ -235,6 +271,60 @@ async def _insert_unvalidated_preparation(
         "title": prepared.title, "group_key": prepared.group_key,
         "normalized_text": prepared.normalized_text,
     })).scalar_one()
+
+
+@pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1", reason="disposable PostgreSQL")
+@pytest.mark.parametrize("defect", [
+    "other_single_key", "document_in_bundle", "reordered_bundle_keys",
+])
+def test_binding_rejects_false_aliases_without_inserting_associations(
+    tmp_path: Path, defect: str,
+) -> None:
+    async def scenario() -> None:
+        engine = create_async_engine(database_url())
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        prepared = _prepared_input() if defect == "other_single_key" else _bundle_input()
+        payload = prepared.model_dump()
+        if defect == "other_single_key":
+            payload["parts"][0]["part_key"] = "other"
+        elif defect == "document_in_bundle":
+            payload["parts"][0]["part_key"] = "document"
+        else:
+            payload["parts"][0]["part_key"] = "part-2"
+            payload["parts"][1]["part_key"] = "part-1"
+        prepared = MaterialPreparationInput.model_validate(payload)
+        try:
+            version_id = await ingest_manifest(factory, _write_manifest(tmp_path, prepared))
+            async with factory() as session, session.begin():
+                raw = _raw(prepared.title)
+                material = LegalReviewMaterial(
+                    package_key=f"synthetic-false-alias-{uuid4().hex}",
+                    original_filename="original.rtf", title=prepared.title,
+                    kind="LEGAL_COPY", source_name="Synthetic source",
+                    raw_mime_type="application/rtf", raw_bytes=raw,
+                    raw_size_bytes=len(raw), raw_sha256=prepared.raw_sha256,
+                    received_at=datetime.now(UTC),
+                )
+                actor = User(telegram_user_id=uuid4().int % 10**12 + 1,
+                             status="ACTIVE", system_role="LEGAL_EDITOR")
+                session.add_all([material, actor])
+                await session.flush()
+                preparation = await store_preparation(session, material.id, prepared)
+                with pytest.raises(ValueError, match="boundaries"):
+                    await bind_prepared_part(
+                        session, preparation_id=preparation.id,
+                        part_key=prepared.parts[0].part_key,
+                        legal_version_id=version_id, actor_user_id=actor.id,
+                    )
+                assert await session.scalar(select(func.count()).select_from(
+                    LegalPreparedPartVersion
+                ).where(LegalPreparedPartVersion.material_id == material.id)) == 0
+                version = await session.get(LegalVersion, version_id)
+                assert version.approval_state == "REVIEW_REQUIRED"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1", reason="disposable PostgreSQL")

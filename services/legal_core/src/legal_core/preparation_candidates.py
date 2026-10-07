@@ -23,7 +23,7 @@ from legal_core.preparation_import import (
     read_preparation_package,
 )
 
-_PARSER_VERSION = "rtf-heading-candidates.v1"
+_PARSER_VERSION = "rtf-heading-candidates.v2"
 _CANDIDATE_LIMITATION = (
     "Heading/signature metadata are candidates from the supplied copy; LEGAL_EDITOR must "
     "verify identity, publication, edition, applicability, and text completeness."
@@ -88,12 +88,31 @@ def enrich_preparation(
         "parts": [part.model_dump() for part in parts],
         "limitations": list(dict.fromkeys([*previous.limitations, _CANDIDATE_LIMITATION])),
     }
-    if previous.source_url is None and candidate.source_url is not None:
+    if candidate.source_url is not None:
         payload["source_url"] = candidate.source_url
-        payload["source_locator"] = (
-            f"Candidate heading URL: {candidate.source_locator}; raw SHA-256 {candidate.raw_sha256}"
-        )
+        # The receipt SHA in this revision binds these exact raw byte offsets.
+        payload["source_locator"] = candidate.source_locator
     return MaterialPreparationInput.model_validate(payload)
+
+
+def _scope_candidates(
+    name: str, raw: bytes, prepared: MaterialPreparationInput,
+) -> dict[str, object]:
+    """Private observations only: the importable preparation stays PARTIAL."""
+    observed = inspect_normative_rtf(raw, prepared.normalized_text)
+    return {
+        "original_filename": name, "raw_sha256": observed.raw_sha256,
+        "normalized_sha256": observed.normalized_sha256,
+        "source_url": observed.source_url, "source_locator": observed.source_locator,
+        "extraction_scope": prepared.extraction_scope,
+        "parts": [{
+            "part_key": stored.part_key, "parser_part_key": parsed.part_key,
+            "text_start": parsed.text_start, "text_end": parsed.text_end,
+            "text_sha256": parsed.text_sha256,
+            "offset_unit": "UNICODE_CODEPOINT", "status": "UNVERIFIED_CANDIDATE",
+            "blockers": list(parsed.blockers),
+        } for stored, parsed in zip(prepared.parts, observed.parts, strict=True)],
+    }
 
 
 def _write_private(directory: int, name: str, payload: bytes) -> None:
@@ -121,10 +140,14 @@ def generate_preparation_package(
         raise ValueError("original package must be a regular directory")
     if {path.name for path in originals.iterdir()} != expected_names:
         raise ValueError("original directory does not match all preparation receipts")
-    enriched = [
-        (name, enrich_preparation(_read_regular(originals, name, 50_000_000), preparation))
-        for name, preparation in previous
-    ]
+    enriched = []
+    scopes = []
+    for name, preparation in previous:
+        raw = _read_regular(originals, name, 50_000_000)
+        prepared = enrich_preparation(raw, preparation)
+        enriched.append((name, prepared))
+        if prepared.kind == "NORMATIVE":
+            scopes.append(_scope_candidates(name, raw, prepared))
     items = []
     missing: Counter[str] = Counter()
     for index, (name, preparation) in enumerate(enriched):
@@ -161,6 +184,11 @@ def generate_preparation_package(
                 )),
                 "missing_field_counts": dict(sorted(missing.items())),
                 "readiness": "UNAPPROVED; candidate metadata and partial text require review",
+            }))
+            _write_private(directory, "candidate-scopes.json", _json({
+                "schema_version": "dental-preparation-scopes.candidates.v1",
+                "package_key": baseline.package_key, "parser_version": _PARSER_VERSION,
+                "status": "UNVERIFIED_CANDIDATE", "items": scopes,
             }))
             _write_private(directory, "package.json", _json(manifest.model_dump(mode="json")))
         finally:

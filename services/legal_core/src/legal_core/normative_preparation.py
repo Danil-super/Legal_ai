@@ -307,6 +307,33 @@ def inspect_normative_rtf(raw: bytes, normalized_text: str) -> NormativePreparat
     )
 
 
+def prepared_part_keys_match(
+    prepared: MaterialPreparationInput, candidate: NormativePreparationCandidate,
+) -> bool:
+    """Keep receipt keys unchanged; alias only one exact, complete original span.
+
+    Identity/source/edition validation remains the caller's responsibility. This
+    compatibility check never promotes a partial extraction or remaps code parts.
+    """
+    if [part.part_key for part in prepared.parts] == [
+        part.part_key for part in candidate.parts
+    ]:
+        return True
+    if len(prepared.parts) != 1 or len(candidate.parts) != 1:
+        return False
+    stored, parsed = prepared.parts[0], candidate.parts[0]
+    return (
+        prepared.kind == "NORMATIVE"
+        and prepared.extraction_scope == "FULL_DOCUMENT"
+        and stored.part_key == "document" and parsed.part_key == "part-1"
+        and prepared.raw_sha256 == candidate.raw_sha256
+        and stored.text_start == parsed.text_start == 0
+        and stored.text_end == parsed.text_end == len(prepared.normalized_text)
+        and stored.text_sha256 == parsed.text_sha256 == prepared.normalized_sha256
+        == candidate.normalized_sha256
+    )
+
+
 async def bind_prepared_part(
     session: AsyncSession, *, preparation_id: UUID, part_key: str,
     legal_version_id: UUID, actor_user_id: UUID,
@@ -375,7 +402,7 @@ async def bind_prepared_part(
         or candidate.normalized_sha256 != payload.normalized_sha256
         or candidate.source_url != payload.source_url
         or candidate.source_locator != payload.source_locator
-        or [part.part_key for part in candidate.parts] != [part.part_key for part in payload.parts]
+        or not prepared_part_keys_match(payload, candidate)
     ):
         raise ValueError("prepared source or document-part boundaries are unverified")
     selected = None

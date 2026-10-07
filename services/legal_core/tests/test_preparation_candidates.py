@@ -14,6 +14,7 @@ import pytest
 from legal_core.material_preparation import MaterialPreparationInput
 from legal_core.preparation_candidates import enrich_preparation, generate_preparation_package
 from legal_core.preparation_import import read_preparation_package
+from legal_core.normative_preparation import inspect_normative_rtf
 
 
 TITLE = 'Приказ Синтетического ведомства от 1 января 2001 г. N 7н "О примере"'
@@ -72,6 +73,41 @@ def test_enrichment_rejects_changed_original_and_conflicting_existing_identity()
         enrich_preparation(RAW, MaterialPreparationInput.model_validate(altered))
 
 
+def test_existing_heading_url_gets_exact_byte_locator_without_asserting_full_text():
+    previous = MaterialPreparationInput.model_validate(preparation().model_dump() | {
+        "source_url": URL, "source_locator": "Unverified generic heading candidate",
+    })
+    old_digest = previous.digest()
+    actual = enrich_preparation(RAW, previous)
+    candidate = inspect_normative_rtf(RAW, TEXT)
+    assert actual.source_locator == candidate.source_locator
+    assert actual.parser_version == "rtf-heading-candidates.v2"
+    assert previous.digest() == old_digest
+    assert actual.digest() != old_digest
+    assert enrich_preparation(RAW, actual).digest() == actual.digest()
+    assert actual.parts[0].part_key == "document"
+    assert actual.extraction_scope == "PARTIAL" and actual.completeness_locator is None
+    assert actual.parts[0].publication_date is None
+    assert actual.parts[0].version_date is None
+    assert actual.parts[0].effective_from is None
+
+
+def test_unmatched_heading_never_produces_an_exact_source_locator():
+    raw = RAW.replace(b"\\s1\\qc", b"\\s10\\qc")
+    previous = MaterialPreparationInput.model_validate(preparation().model_dump() | {
+        "raw_sha256": hashlib.sha256(raw).hexdigest(),
+    })
+    actual = enrich_preparation(raw, previous)
+    assert actual.source_url is None and actual.source_locator is None
+    assert actual.parts[0].text_start is None
+    conflicting = MaterialPreparationInput.model_validate(preparation().model_dump() | {
+        "source_url": URL.replace("11111111", "22222222"),
+        "source_locator": "Another source heading candidate",
+    })
+    with pytest.raises(ValueError, match="source conflicts"):
+        enrich_preparation(RAW, conflicting)
+
+
 def test_reference_preparation_is_preserved_exactly():
     raw = b"%PDF-1.7\nSynthetic reference fixture\n%%EOF"
     payload = preparation().model_dump() | {
@@ -104,6 +140,23 @@ def test_generator_writes_importable_private_package_and_rejects_symlink_origina
     assert package.package_key == "synthetic-package"
     assert actual[0][0] == "example.rtf"
     assert actual[0][1].parts[0].official_number == "7н"
+    sidecar = json.loads((output / "candidate-scopes.json").read_text())
+    item = sidecar["items"][0]
+    observed = inspect_normative_rtf(RAW, TEXT)
+    assert sidecar["schema_version"] == "dental-preparation-scopes.candidates.v1"
+    assert item["raw_sha256"] == candidate.raw_sha256
+    assert item["normalized_sha256"] == candidate.normalized_sha256
+    assert item["source_locator"] == observed.source_locator
+    assert item["extraction_scope"] == "PARTIAL"
+    assert item["parts"] == [{
+        "part_key": "document", "parser_part_key": "part-1",
+        "text_start": 0, "text_end": len(TEXT),
+        "text_sha256": hashlib.sha256(TEXT.encode()).hexdigest(),
+        "offset_unit": "UNICODE_CODEPOINT", "status": "UNVERIFIED_CANDIDATE",
+        "blockers": list(observed.parts[0].blockers),
+    }]
+    assert actual[0][1].parts[0].text_start is None
+    assert actual[0][1].extraction_scope == "PARTIAL"
     assert stat.S_IMODE(output.stat().st_mode) == 0o700
     assert all(stat.S_IMODE(file.stat().st_mode) == 0o600 for file in output.iterdir())
     with pytest.raises(ValueError, match="exists"):
@@ -184,7 +237,9 @@ def test_generated_import_appends_normative_revision_and_keeps_reference_without
         originals.mkdir()
         key = "synthetic-candidates-" + uuid4().hex
         pdf = b"%PDF-1.7\nSynthetic reference fixture\n%%EOF"
-        normative = preparation()
+        normative = MaterialPreparationInput.model_validate(preparation().model_dump() | {
+            "source_url": URL, "source_locator": "Existing unverified heading candidate",
+        })
         reference = MaterialPreparationInput.model_validate(normative.model_dump() | {
             "raw_sha256": hashlib.sha256(pdf).hexdigest(), "kind": "CLINICAL_REFERENCE",
             "group_key": "clinical", "parts": [],
@@ -237,6 +292,15 @@ def test_generated_import_appends_normative_revision_and_keeps_reference_without
                 assert sorted(revisions) == [
                     (1, "CLINICAL_REFERENCE"), (1, "NORMATIVE"), (2, "NORMATIVE"),
                 ]
+                old = await session.get(LegalMaterialPreparation, previous_ids[0])
+                assert old.preparation_sha256 == normative.digest()
+                assert old.metadata_json == normative.metadata()
+                latest = await session.get(LegalMaterialPreparation, result[0])
+                assert latest.metadata_json["source_locator"] == inspect_normative_rtf(
+                    RAW, TEXT,
+                ).source_locator
+                assert latest.metadata_json["parts"][0]["part_key"] == "document"
+                assert latest.metadata_json["extraction_scope"] == "PARTIAL"
                 assert await session.scalar(select(func.count()).select_from(
                     LegalVersion
                 )) == versions_before
