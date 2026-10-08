@@ -60,6 +60,42 @@ def test_empty_legal_library_explains_that_legal_conclusions_stay_blocked() -> N
     assert keyboard.inline_keyboard[0][0].callback_data == "menu"
 
 
+def test_library_links_reviewed_references_separately_without_treating_them_as_laws():
+    text, keyboard = render_legal_library(
+        {"asOfDate": "2026-10-08", "items": []}, reviewed_references=True
+    )
+    assert "не нормативные акты" in text
+    assert any(
+        button.callback_data == "editor:group:clinical:1"
+        for row in keyboard.inline_keyboard for button in row
+    )
+    assert keyboard.inline_keyboard[-1][0].callback_data == "menu"
+
+
+@pytest.mark.parametrize("editor_allowed", [True, False])
+def test_library_reference_link_requires_existing_editor_access(monkeypatch, editor_allowed):
+    client = SimpleNamespace(
+        _editor_gateway_key="synthetic-editor-key",
+        get_library=AsyncMock(return_value={"asOfDate": "2026-10-08", "items": []}),
+        get_editor_groups=AsyncMock(
+            return_value={"progress": {"reviewedReferenceMaterials": 7}},
+            side_effect=None if editor_allowed else LegalCoreApiError(403, "DENIED", "Denied"),
+        ),
+        aclose=AsyncMock(),
+    )
+    message = SimpleNamespace(reply_text=AsyncMock())
+    update = SimpleNamespace(effective_message=message)
+    monkeypatch.setattr(runtime, "LegalLibraryClient", lambda: client)
+    monkeypatch.setattr(runtime.gateway_bot, "_actor_id", lambda _: 7_000_000_001)
+    asyncio.run(runtime.show_legal_library(update, SimpleNamespace()))
+    keyboard = message.reply_text.await_args.kwargs["reply_markup"]
+    assert any(
+        button.callback_data == "editor:group:clinical:1"
+        for row in keyboard.inline_keyboard for button in row
+    ) is editor_allowed
+    client.aclose.assert_awaited_once()
+
+
 def test_platform_review_queue_renders_statuses_without_legal_text() -> None:
     text, keyboard = render_platform_review_queue(
         {
@@ -385,7 +421,7 @@ def test_editor_review_materials_are_openable_but_not_mislabeled_as_approved() -
     assert f"editor:material:{material_id}" in callbacks
 
 
-def test_material_groups_keep_counts_filter_pagination_and_back_navigation() -> None:
+def test_material_groups_hide_counts_but_keep_filter_pagination_and_back_navigation() -> None:
     payload = {
         "page": 1,
         "pageSize": 10,
@@ -399,7 +435,7 @@ def test_material_groups_keep_counts_filter_pagination_and_back_navigation() -> 
     }
     text, keyboard = render_editor_review_materials(payload)
     callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
-    assert "21" in text
+    assert "21" not in text
     assert "editor:group:labour:2" in callbacks
     assert "editor:materials:1" in callbacks
     assert "editor:group:clinical:1" not in callbacks
@@ -516,8 +552,10 @@ def test_group_progress_does_not_label_reference_confirmation_as_legal_approval(
                    "kind": "CLINICAL_REFERENCE", "reviewState": "METADATA_REQUIRED",
                    "referenceReviewed": True}],
     })
-    assert "Справочные: проверено 1/1" in text
-    assert "Нормы: утверждено 0/0" in text
+    assert "Справочные материалы проверены" in text
+    assert "Нормы:" not in text
+    assert "1/1" not in text and "0/0" not in text
+    assert "Материалов:" not in text
     assert "Группа проверена" in text
     assert "юридическое основание" not in text
 

@@ -481,23 +481,32 @@ def _bounded_message(text: str) -> str:
     return text[: _MAX_MESSAGE - 36].rstrip() + "\n\n…список сокращён."
 
 
-def render_legal_library(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMarkup]:
+def render_legal_library(
+    payload: dict[str, Any], *, reviewed_references: bool = False
+) -> tuple[str, InlineKeyboardMarkup]:
     """Render only auditable public-source metadata, never legal text or report contents."""
 
     raw_items = payload.get("items")
     as_of_date = _bounded(payload.get("asOfDate"), limit=10)
     if not isinstance(raw_items, list):
         raise ValueError("legal library items")
+    reference_buttons = (
+        [[InlineKeyboardButton(
+            "📚 Клинические справочные материалы", callback_data="editor:group:clinical:1"
+        )]] if reviewed_references else []
+    )
+    reference_note = (
+        "\n\nПроверенные клинические материалы доступны отдельно: это не нормативные акты."
+        if reviewed_references else ""
+    )
     if not raw_items:
         return (
             "📜 НОРМАТИВНАЯ БАЗА\n\n"
             f"На {as_of_date} в Legal Core нет одобренных источников, "
             "применимых к отчёту.\n\n"
-            "Юридические выводы и черновики ответов должны "
-            "оставаться заблокированными, пока "
-            "платформенный legal editor не проверит "
-            "и не одобрит официальные документы.",
-            back_keyboard(),
+            "Юридические выводы остаются заблокированными до утверждения норм юристом."
+            + reference_note,
+            InlineKeyboardMarkup([*reference_buttons, *back_keyboard().inline_keyboard]),
         )
 
     lines = [
@@ -542,6 +551,9 @@ def render_legal_library(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMa
 
     if len(raw_items) > _MAX_DOCUMENTS:
         lines.append(f"…и ещё {len(raw_items) - _MAX_DOCUMENTS} документов.")
+    if reviewed_references:
+        lines.append(reference_note.strip())
+    buttons.extend(reference_buttons)
     buttons.extend([list(row) for row in back_keyboard().inline_keyboard])
     return _bounded_message("\n".join(lines)), InlineKeyboardMarkup(buttons)
 
@@ -687,9 +699,7 @@ def render_editor_review_materials(
         if _EDITOR_CALLBACK_RE.fullmatch(callback) is None:
             raise ValueError("review material group key")
         if selected_group is None:
-            group_label = (
-                f"📂 {_bounded(group.get('title'), limit=43)} ({group.get('totalItems', 0)})"
-            )
+            group_label = f"📂 {_bounded(group.get('title'), limit=60)}"
             buttons.append([InlineKeyboardButton(group_label[:64], callback_data=callback)])
 
     if selected_group is None:
@@ -707,7 +717,7 @@ def render_editor_review_materials(
 
     lines = [
         "⚖️ ПРОВЕРКА МАТЕРИАЛОВ",
-        f"Материалов: {total_items}. Страница {page}.",
+        f"Страница {page}.",
     ]
     progress = payload.get("progress")
     if progress is not None:
@@ -724,14 +734,18 @@ def render_editor_review_materials(
         )
         if any(type(progress.get(key)) is not int or progress[key] < 0 for key in keys):
             raise ValueError("group progress counts")
-        lines.extend(
-            [
-                f"Нормы: утверждено {progress['approvedNormativeVersions']}/"
-                f"{progress['normativeVersions']}.",
-                f"Справочные: проверено {progress['reviewedReferenceMaterials']}/"
-                f"{progress['referenceMaterials']} (не правовое основание).",
-            ]
-        )
+        if progress["normativeVersions"]:
+            lines.append(
+                "Нормы утверждены."
+                if progress["approvedNormativeVersions"] == progress["normativeVersions"]
+                else "Нормы ожидают утверждения юристом."
+            )
+        if progress["referenceMaterials"]:
+            lines.append(
+                "Справочные материалы проверены (не правовое основание)."
+                if progress["reviewedReferenceMaterials"] == progress["referenceMaterials"]
+                else "Справочные материалы ожидают проверки (не правовое основание)."
+            )
         if progress["missingParts"]:
             count = progress["missingParts"]
             lines.append(
@@ -1829,7 +1843,20 @@ async def show_legal_library(
         return
     client = LegalLibraryClient()
     try:
-        text, keyboard = render_legal_library(await client.get_library(actor_id))
+        payload = await client.get_library(actor_id)
+        reviewed_references = False
+        if client._editor_gateway_key is not None:
+            try:
+                references = await client.get_editor_groups(actor_id, group="clinical")
+                progress = references.get("progress", {})
+                count = (
+                    progress.get("reviewedReferenceMaterials", 0)
+                    if isinstance(progress, dict) else 0
+                )
+                reviewed_references = type(count) is int and count > 0
+            except LegalCoreApiError as exc:
+                logger.info("library reference link unavailable: %s", exc.code)
+        text, keyboard = render_legal_library(payload, reviewed_references=reviewed_references)
     except LegalCoreApiError as exc:
         logger.warning("legal library load failed: %s", exc.code)
         if exc.code == "LEGAL_LIBRARY_NOT_ALLOWED":
