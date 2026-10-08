@@ -48,20 +48,27 @@ class RiskPolicyApproval(BaseModel):
             self.factual_safety_intake_enabled and not self.guided_v2_explicit_signals_enabled
         ):
             raise ValueError("factual screening requires its reviewed guided-v2 candidate")
-        if self.version == 3 and not self.guided_v2_explicit_signals_enabled:
-            raise ValueError("version 3 requires the explicit guided-v2 risk contract")
+        if self.version in {3, 4} and not self.guided_v2_explicit_signals_enabled:
+            raise ValueError(
+                f"version {self.version} requires the explicit guided-v2 risk contract"
+            )
+        if self.version == 4 and not self.factual_safety_intake_enabled:
+            raise ValueError("v4 requires the reviewed factual safety capability")
         if self.early_triage_enabled and self.version < 2:
             raise ValueError("early triage requires a new policy version >= 2")
         if self.guided_v2_explicit_signals_enabled and not (
-            self.version == 3
-            and self.high_demand_threshold_kopecks == 5_000_000
+            self.version in {3, 4}
+            and self.high_demand_threshold_kopecks
+            == (1_000_000 if self.version == 4 else 5_000_000)
             and self.early_triage_enabled
             and self.supersede_approved
             and self.direct_v1_supersession_reviewed
         ):
-            raise ValueError("v3 requires the reviewed direct v1 transition and fixed threshold")
+            raise ValueError(
+                "guided policy requires the reviewed direct v1 transition and fixed threshold"
+            )
         if self.direct_v1_supersession_reviewed and not self.guided_v2_explicit_signals_enabled:
-            raise ValueError("direct v1 supersession attestation applies only to v3")
+            raise ValueError("direct v1 supersession attestation applies only to guided policies")
         if not all(
             (
                 self.incident_triggers_reviewed,
@@ -76,7 +83,7 @@ class RiskPolicyApproval(BaseModel):
 def policy_payload(approval: RiskPolicyApproval) -> dict[str, object]:
     if approval.guided_v2_explicit_signals_enabled:
         payload: dict[str, object] = {
-            "schemaVersion": "risk-policy.v3",
+            "schemaVersion": f"risk-policy.v{approval.version}",
             "highDemandThresholdKopecks": approval.high_demand_threshold_kopecks,
             "earlyTriageEnabled": True,
             "guidedV2ExplicitSignalsEnabled": True,
@@ -181,7 +188,9 @@ async def approve_risk_policy(
             .with_for_update()
         )
         if approval.guided_v2_explicit_signals_enabled:
-            await _require_direct_v1_predecessor(session, another_approved)
+            await _require_direct_v1_predecessor(
+                session, another_approved, target_version=approval.version
+            )
         if another_approved is not None:
             if not approval.supersede_approved or another_approved.version >= policy.version:
                 raise ValueError("another approved dental risk policy must be retired first")
@@ -219,6 +228,8 @@ async def approve_risk_policy(
 async def _require_direct_v1_predecessor(
     session: AsyncSession,
     predecessor: RiskPolicyVersion | None,
+    *,
+    target_version: int = 3,
 ) -> None:
     expected_payload = {
         "schemaVersion": "risk-policy.v1",
@@ -231,7 +242,9 @@ async def _require_direct_v1_predecessor(
         or predecessor.policy_json != expected_payload
         or predecessor.content_sha256 != expected_digest
     ):
-        raise ValueError("v3 requires the exact approved v1 predecessor at 50,000 RUB")
+        raise ValueError(
+            f"v{target_version} requires the exact approved v1 predecessor at 50,000 RUB"
+        )
     event = await session.scalar(
         select(RiskPolicyEvent.id).where(
             RiskPolicyEvent.risk_policy_id == predecessor.id,
@@ -261,7 +274,7 @@ def rubles_to_kopecks(value: str) -> int:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Approve Dental Legal AI risk-policy v1")
+    parser = argparse.ArgumentParser(description="Approve a versioned Dental Legal AI risk policy")
     parser.add_argument("--reviewer-telegram-id", type=int, required=True)
     parser.add_argument("--threshold-rubles", required=True)
     parser.add_argument("--version", type=int, default=1)

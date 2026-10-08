@@ -84,7 +84,9 @@ def screening_blocker(
     return None
 
 
-def screening_high_reasons(screening: FactualSafetyScreening | None) -> tuple[str, ...]:
+def screening_high_reasons(
+    screening: FactualSafetyScreening | None, *, high_demand_threshold_kopecks: int = 5_000_000
+) -> tuple[str, ...]:
     if screening is None:
         return ()
     reasons = [
@@ -98,7 +100,7 @@ def screening_high_reasons(screening: FactualSafetyScreening | None) -> tuple[st
     ]
     if (
         isinstance(screening.amount, RequestedMoney)
-        and screening.amount.amount_kopecks >= 5_000_000
+        and screening.amount.amount_kopecks >= high_demand_threshold_kopecks
     ):
         reasons.append("HIGH_DEMAND_AMOUNT")
     return tuple(reasons)

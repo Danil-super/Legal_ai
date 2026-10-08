@@ -37,11 +37,20 @@ class ApprovedRiskPolicyRepository:
             raise LookupError("approved risk policy is not available")
 
         payload = row.policy_json
-        guided = payload.get("schemaVersion") == "risk-policy.v3"
+        v4 = payload.get("schemaVersion") == "risk-policy.v4"
+        guided = payload.get("schemaVersion") in {"risk-policy.v3", "risk-policy.v4"}
         factual = guided and "factualSafetyIntakeVersion" in payload
         if row.version == 3 and not guided:
             raise ValueError("version 3 requires the explicit guided-v2 risk contract")
-        early = payload.get("schemaVersion") in {"risk-policy.v2", "risk-policy.v3"}
+        if row.version == 4 and not v4:
+            raise ValueError("version 4 requires the explicit v4 risk contract")
+        if v4 and (row.version != 4 or not factual):
+            raise ValueError("v4 requires its exact version and factual safety capability")
+        early = payload.get("schemaVersion") in {
+            "risk-policy.v2",
+            "risk-policy.v3",
+            "risk-policy.v4",
+        }
         expected = {"schemaVersion", "highDemandThresholdKopecks"}
         if early:
             expected.add("earlyTriageEnabled")
@@ -57,6 +66,7 @@ class ApprovedRiskPolicyRepository:
             "risk-policy.v1",
             "risk-policy.v2",
             "risk-policy.v3",
+            "risk-policy.v4",
         }:
             raise ValueError("approved risk policy has an unsupported schema version")
         threshold = payload["highDemandThresholdKopecks"]
@@ -67,7 +77,7 @@ class ApprovedRiskPolicyRepository:
         if guided:
             if (
                 row.version < 3
-                or threshold != 5_000_000
+                or threshold != (1_000_000 if v4 else 5_000_000)
                 or payload["guidedV2ExplicitSignalsEnabled"] is not True
             ):
                 raise ValueError("v3 policy requires its explicit capability and fixed threshold")
