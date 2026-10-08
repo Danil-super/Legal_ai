@@ -58,6 +58,10 @@ Pinned Hermes 0.20.6, commit `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`:
   Распознавание может отставать до следующей записи, обычно до heartbeat 30 с; последующая
   остановка зависит от hard-interrupt обработки SDK/thread. Нельзя обещать total upstream
   wall 30/50/115 с или zero orphan work. Наш HTTP response/analysis ограничен независимо.
+- Сам по себе `stop`/`[DONE]` доказывает только wire completion: stock pinned server
+  скрывает `completed=False` без error text и некоторые `partial=True` за успешным finish.
+  ADR 0074 отдельно исправляет это condition в памяти процесса с exact-source guard.
+  Без этого дополнения нельзя обещать проверку скрытого worker status клиентским парсером.
 - Нет автоматических повторов клиента и нет нового low-effort режима. Pinned transport
   recovery может сделать дополнительные upstream calls внутри существующей настройки.
 - Таймаут на submission может произойти после commit Legal Core: idempotency и job fencing

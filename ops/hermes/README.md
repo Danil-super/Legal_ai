@@ -30,9 +30,20 @@ recognises disconnect on its next write and requests the agent's hard interrupt.
 up to the 30-second heartbeat interval; this is not an instant thread kill or a guaranteed upstream
 termination wall. Hermes can perform one primary-transport recovery cycle. Only complete tool-free
 streams with successful `stop` and `[DONE]` are decoded and passed to existing strict contracts;
-partial/failed responses never count as success. Legacy nonstream clients remain available, but
+observable partial/failed responses never count as success. The guarded launcher additionally
+exposes the pinned server's otherwise hidden `completed=False`/`partial=True` statuses as error
+finishes with metadata (ADR-0074); `stop` alone is only a wire signal, not proof of worker status.
+Legacy nonstream clients remain available, but
 the production analysis path uses SSE. Token caps, reasoning effort, provider and model choices
 are unchanged (ADR-0071, ADR-0073).
+
+`run_guarded_gateway.py` verifies the exact pinned SSE handler SHA before replacing one finish
+condition in memory, then runs the same installed `hermes gateway run --no-supervise` CLI in that
+interpreter. No image/source/config file is rewritten. Handler drift refuses startup with a fixed
+message. Both profiles mount the launcher read-only and retain the tool/budget preflight; changed
+Compose entrypoints require reviewed recreation of both Hermes containers after green CI.
+Future launcher-only changes also require reviewed recreation: updating a bind-mounted file
+does not replace the handler already installed in a running Python process.
 
 ## Build the exact upstream commit
 
