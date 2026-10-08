@@ -6,6 +6,20 @@ Make the complete supplied package accessible to LEGAL_EDITOR in Telegram, group
 by subject. Preserve original bytes and approval boundaries. Never imply that
 receipt or a document count establishes legal approval or completeness of coverage.
 
+### Telegram presentation: group-only approval
+
+Each prepared document has one `Открыть` button in its group, without a second
+download row. Its read-only card provides the preserved original, source and
+selected excerpts where applicable, plus back navigation. Reference cards retain
+their explicit non-normative designation and original-file action.
+
+Document cards have no individual attestation checkboxes or approval button.
+Previously sent `editor:attest` / `editor:confirm` callbacks clear obsolete
+document state and lead back to groups without calling an approval API.
+Only the existing explicit group preview/confirmation approves norms; reference
+group acknowledgment remains separate. Server authorization, immutable snapshot
+checks, legal approval events and production retrieval rules are unchanged.
+
 ## Increment 1 acceptance
 
 - Import all 58 supplied files idempotently using the repaired importer.

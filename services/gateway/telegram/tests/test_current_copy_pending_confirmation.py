@@ -88,13 +88,13 @@ def _set_enabled(pending: dict, flag: object) -> None:
 
 
 @pytest.mark.parametrize("oversized", [False, True], ids=["full-render", "overflow"])
-def test_single_pending_enablement_requires_the_complete_prospective_checklist(
+def test_single_pending_never_enables_individual_approval(
     oversized: bool,
 ) -> None:
     pending = runtime._new_editor_state(_detail(oversized=oversized))
 
-    assert pending.get("confirmationEnabled") is (not oversized)
-    assert all(value is False for value in pending["attestations"].values())
+    assert pending.get("confirmationEnabled") is False
+    assert "attestations" not in pending
 
 
 @pytest.mark.parametrize("flag", [_MISSING, False, None, 0, 1, "true"])
@@ -111,17 +111,17 @@ def test_single_callback_rejects_missing_false_or_non_boolean_enablement(
     client.approve_editor_version.assert_not_awaited()
 
 
-def test_single_callback_accepts_a_fully_shown_and_explicitly_attested_checklist(
+def test_single_callback_rejects_even_a_previously_attested_checklist(
     client: SimpleNamespace,
 ) -> None:
     pending = runtime._new_editor_state(_detail())
-    assert pending.get("confirmationEnabled") is True
+    pending["confirmationEnabled"] = True  # State left by an older Telegram screen.
     pending["attestations"] = dict.fromkeys(("source", "artifact", "dates", "fragments"), True)
     context = SimpleNamespace(user_data={runtime._EDITOR_PENDING_KEY: pending})
 
     asyncio.run(runtime._confirm_editor_approval(SimpleNamespace(), context, version_id=VERSION_ID))
 
-    client.approve_editor_version.assert_awaited_once()
+    client.approve_editor_version.assert_not_awaited()
 
 
 @pytest.mark.parametrize("flag", [_MISSING, False, None, 0, 1, "true"])

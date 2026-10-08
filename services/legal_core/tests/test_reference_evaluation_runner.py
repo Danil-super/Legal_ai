@@ -235,9 +235,19 @@ def test_review_receipt_is_bound_to_workbook_and_row_and_independent_review(tmp_
         audit_workbook(workbook, manifest=manifest.model_copy(update={"workbook_sha256": "0" * 64}))
 
 
-def test_direct_identifiers_block_even_when_a_receipt_claims_privacy_review(tmp_path: Path) -> None:
+@pytest.mark.parametrize("hash_contains_phone_digits", [False, True])
+def test_direct_identifiers_block_even_when_a_receipt_claims_privacy_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hash_contains_phone_digits: bool
+) -> None:
     workbook = tmp_path / "synthetic.xlsx"
     _workbook(workbook, [_row(scenario="Synthetic contact +7 999 123-45-67.")])
+    if hash_contains_phone_digits:
+        from legal_core import reference_evaluation_runner as runner
+
+        read_rows = runner._sheet_rows
+        monkeypatch.setattr(
+            runner, "_sheet_rows", lambda path: ("999" + "a" * 61, read_rows(path)[1])
+        )
     initial = audit_workbook(workbook)
     manifest = ReferenceReviewManifest(
         workbookSha256=initial.workbook_sha256, cases=[_receipt(initial.cases[0].row_sha256)]
@@ -245,7 +255,23 @@ def test_direct_identifiers_block_even_when_a_receipt_claims_privacy_review(tmp_
     result = audit_workbook(workbook, manifest=manifest)
     assert result.eligible_cases == 0
     assert result.cases[0].blockers == ["DIRECT_IDENTIFIER_DETECTED"]
-    assert "999" not in result.model_dump_json()
+    # Digits can occur by chance in SHA-256; only the fixed metadata contract is allowed.
+    assert result.model_dump() == {
+        "schema_version": "reference-workbook-audit.v1",
+        "workbook_sha256": initial.workbook_sha256,
+        "total_cases": 1,
+        "eligible_cases": 0,
+        "blocker_counts": {"DIRECT_IDENTIFIER_DETECTED": 1},
+        "cases": [
+            {
+                "case_id": "case_1",
+                "row_sha256": initial.cases[0].row_sha256,
+                "eligible": False,
+                "blockers": ["DIRECT_IDENTIFIER_DETECTED"],
+            }
+        ],
+    }
+    assert "+7 999 123-45-67" not in result.model_dump_json()
 
 
 @pytest.mark.parametrize("kind", ["duplicate", "unsafe_id", "formula"])
