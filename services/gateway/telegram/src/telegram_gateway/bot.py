@@ -43,6 +43,7 @@ from telegram_gateway.case_wizard import (
     parse_ruble_amount_to_kopecks,
     telegram_summary_from_report,
 )
+from telegram_gateway.clinic_team_ui import clinic_team_text
 from telegram_gateway.factual_safety_intake import (
     answer_screening,
     explicitly_skip_other_questions,
@@ -479,10 +480,20 @@ async def clinic_team(update: Update, context: ContextTypes.DEFAULT_TYPE | None)
     if actor.get("role") != "CLINIC_OWNER":
         await _reply(update, "🔒 Управление командой доступно владельцу клиники.")
         return
+    try:
+        members = await _legal_core(cast(ContextTypes.DEFAULT_TYPE, context)).list_clinic_members(
+            actor_id
+        )
+        text = clinic_team_text(members.get("items"))
+    except (LegalCoreApiError, ValueError):
+        await _reply(
+            update, "⚠️ Не удалось загрузить команду клиники. Попробуйте позже.",
+            reply_markup=back_keyboard(),
+        )
+        return
     await _reply(
         update,
-        "👥 КОМАНДА КЛИНИКИ\n\nДобавьте сотрудника по Telegram ID. Администратор создаёт "
-        "и ведёт кейсы; юрист получает только критические кейсы и внутренний диалог по ним.",
+        text,
         reply_markup=clinic_team_keyboard(),
     )
 
@@ -499,7 +510,9 @@ async def prompt_team_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     _clear_pending_inputs(context)
     _user_data(context)[TEAM_MEMBER_ROLE_KEY] = role
     title = "администратора" if role == "CLINIC_ADMIN" else "юриста"
-    await _reply(update, f"Введите Telegram ID {title} одним числом.")
+    await _reply(
+        update, f"Введите Telegram ID {title} одним числом.", reply_markup=back_keyboard()
+    )
 
 
 async def record_team_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -523,6 +536,7 @@ async def record_team_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     _user_data(context).pop(TEAM_MEMBER_ROLE_KEY, None)
     label = "администратор" if member.get("role") == "CLINIC_ADMIN" else "юрист"
     await _reply(update, f"✅ Пользователь {target_id} добавлен в команду: {label}.")
+    await clinic_team(update, context)
 
 
 def _target_telegram_id(raw_value: str) -> int | None:
