@@ -1,8 +1,10 @@
+import asyncio
 from datetime import UTC, date, datetime
 import json
 from uuid import UUID
 
 import pytest
+import httpx
 
 from fastapi.testclient import TestClient
 
@@ -268,3 +270,132 @@ def test_incomplete_or_mismatched_lease_is_not_downgraded_to_unfenced_submission
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "ANALYSIS_JOB_LEASE_EXPIRED"
     assert legal_core.context_calls == reasoning.calls == legal_core.submit_calls == 0
+
+
+def test_runtime_uses_distinct_bounded_streaming_stage_budgets():
+    from agent_orchestrator import main
+    settings = ServiceSettings(
+        internal_key=INTERNAL_KEY, legal_core_url="http://legal-core:8000",
+        hermes_researcher_url="http://hermes-researcher:8642",
+        hermes_researcher_key="research-key", hermes_researcher_model="researcher",
+        hermes_reviewer_url="http://hermes-reviewer:8642",
+        hermes_reviewer_key="review-key", hermes_reviewer_model="reviewer",
+    )
+    dependencies = main.build_dependencies(settings)
+    research = dependencies.reasoning._researcher.endpoint
+    review = dependencies.reasoning._reviewer.endpoint
+    assert (research.timeout_seconds, review.timeout_seconds) == (30, 50)
+    assert research.stream_response is review.stream_response is True
+    assert (research.model, review.model) == ("researcher", "reviewer")
+    assert (research.api_key, review.api_key) == ("research-key", "review-key")
+    assert main.ANALYSIS_WALL_TIMEOUT_SECONDS == 115
+
+
+@pytest.mark.parametrize("stage", ["context", "reasoning", "submission"])
+def test_whole_analysis_deadline_cancels_each_stage_and_logs_no_private_detail(
+    monkeypatch, caplog, stage,
+):
+    from agent_orchestrator import main
+    monkeypatch.setattr(main, "ANALYSIS_WALL_TIMEOUT_SECONDS", 0.02, raising=False)
+    client, legal_core, reasoning = _client()
+    cancelled = []
+
+    async def wait_forever(*args, **kwargs):
+        try:
+            await asyncio.sleep(0.2)
+            raise AssertionError("whole deadline did not cancel stage")
+        finally:
+            cancelled.append(stage)
+
+    if stage == "context":
+        legal_core.get_analysis_context = wait_forever
+    elif stage == "reasoning":
+        reasoning.reason = wait_forever
+    else:
+        legal_core.submit_reasoning = wait_forever
+    response = client.post(
+        f"/v1/cases/{CASE_ID}/analyze",
+        headers={"X-Agent-Internal-Key": INTERNAL_KEY, "X-Telegram-User-Id": "123",
+                 "Idempotency-Key": str(IDEMPOTENCY_KEY)},
+    )
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"code": "ANALYSIS_PROVIDER_UNAVAILABLE"}}
+    assert cancelled == [stage]
+    assert legal_core.submit_calls == 0
+    records = [r for r in caplog.records if r.name == "agent_orchestrator.main"]
+    assert len(records) == 1
+    assert json.loads(records[0].getMessage()) == {
+        "event": "analysis_deadline_exceeded", "entryPoint": "analyze",
+        "requestId": str(IDEMPOTENCY_KEY),
+    }
+    assert not records[0].exc_info
+    assert INTERNAL_KEY not in caplog.text
+
+
+def test_analysis_wall_budget_is_shared_not_reset_between_stages(monkeypatch):
+    from agent_orchestrator import main
+    monkeypatch.setattr(main, "ANALYSIS_WALL_TIMEOUT_SECONDS", 0.03, raising=False)
+    client, legal_core, reasoning = _client()
+    cancelled = []
+
+    async def delayed_context(**kwargs):
+        await asyncio.sleep(0.02)
+        return _context()
+
+    async def delayed_reasoning(projection):
+        try:
+            await asyncio.sleep(0.02)
+            return _reasoning()
+        finally:
+            cancelled.append("reasoning")
+
+    legal_core.get_analysis_context = delayed_context
+    reasoning.reason = delayed_reasoning
+    response = client.post(
+        f"/v1/cases/{CASE_ID}/analyze",
+        headers={"X-Agent-Internal-Key": INTERNAL_KEY, "X-Telegram-User-Id": "123",
+                 "Idempotency-Key": str(IDEMPOTENCY_KEY)},
+    )
+    assert response.status_code == 503
+    assert cancelled == ["reasoning"]
+    assert legal_core.submit_calls == 0
+
+
+def test_whole_deadline_closes_in_progress_hermes_http_stream(monkeypatch):
+    from agent_orchestrator import main
+    from agent_orchestrator.hermes_client import HermesClient, HermesEndpoint
+    monkeypatch.setattr(main, "ANALYSIS_WALL_TIMEOUT_SECONDS", 0.02)
+    client, legal_core, reasoning = _client()
+
+    class WaitingStream(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            yield b": keepalive\n\n"
+            await asyncio.Event().wait()
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = WaitingStream()
+
+    async def handler(request):
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=stream)
+
+    async def wait_for_hermes(projection):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            hermes = HermesClient(HermesEndpoint(
+                "http://synthetic-hermes:8642", "synthetic-key", stream_response=True,
+            ), client=http)
+            await hermes.complete_json(system="fixed system", user="fixed fiction")
+        raise AssertionError("cancelled stream cannot become successful reasoning")
+
+    reasoning.reason = wait_for_hermes
+    response = client.post(
+        f"/v1/cases/{CASE_ID}/analyze",
+        headers={"X-Agent-Internal-Key": INTERNAL_KEY, "X-Telegram-User-Id": "123",
+                 "Idempotency-Key": str(IDEMPOTENCY_KEY)},
+    )
+    assert response.status_code == 503
+    assert stream.closed
+    assert legal_core.submit_calls == 0

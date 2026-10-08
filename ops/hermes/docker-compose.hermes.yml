@@ -17,7 +17,7 @@ services:
         /opt/hermes/.venv/bin/python /opt/legal/render_profile.py
         /opt/legal/legal-profile.config.yaml /opt/data/config.yaml &&
         /opt/hermes/.venv/bin/python /opt/legal/assert_tool_free.py &&
-        exec /opt/hermes/.venv/bin/hermes gateway run --no-supervise
+        exec /opt/hermes/.venv/bin/python /opt/legal/run_guarded_gateway.py
     environment:
       HERMES_HOME: /opt/data
       PYTHONPATH: /opt/hermes
@@ -41,6 +41,7 @@ services:
       - ./ops/hermes/legal-profile.config.yaml:/opt/legal/legal-profile.config.yaml:ro
       - ./ops/hermes/render_profile.py:/opt/legal/render_profile.py:ro
       - ./ops/hermes/assert_tool_free.py:/opt/legal/assert_tool_free.py:ro
+      - ./ops/hermes/run_guarded_gateway.py:/opt/legal/run_guarded_gateway.py:ro
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -60,7 +61,7 @@ services:
         /opt/hermes/.venv/bin/python /opt/legal/render_profile.py
         /opt/legal/legal-profile.config.yaml /opt/data/config.yaml &&
         /opt/hermes/.venv/bin/python /opt/legal/assert_tool_free.py &&
-        exec /opt/hermes/.venv/bin/hermes gateway run --no-supervise
+        exec /opt/hermes/.venv/bin/python /opt/legal/run_guarded_gateway.py
     environment:
       HERMES_HOME: /opt/data
       PYTHONPATH: /opt/hermes
@@ -84,6 +85,7 @@ services:
       - ./ops/hermes/legal-profile.config.yaml:/opt/legal/legal-profile.config.yaml:ro
       - ./ops/hermes/render_profile.py:/opt/legal/render_profile.py:ro
       - ./ops/hermes/assert_tool_free.py:/opt/legal/assert_tool_free.py:ro
+      - ./ops/hermes/run_guarded_gateway.py:/opt/legal/run_guarded_gateway.py:ro
     security_opt:
       - no-new-privileges:true
     cap_drop:

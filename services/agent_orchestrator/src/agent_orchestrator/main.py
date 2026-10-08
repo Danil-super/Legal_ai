@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
@@ -35,6 +36,9 @@ InternalKeyHeader = Annotated[
 TelegramUserIdHeader = Annotated[int, Header(alias="X-Telegram-User-Id", gt=0)]
 IdempotencyKeyHeader = Annotated[UUID, Header(alias="Idempotency-Key")]
 logger = logging.getLogger(__name__)
+# One shared budget leaves margins inside the worker's unchanged HTTP 120 s,
+# wall 125 s and fenced lease 180 s. HTTP operation timeouts are not total walls.
+ANALYSIS_WALL_TIMEOUT_SECONDS = 115
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +101,8 @@ def build_dependencies(settings: ServiceSettings) -> ServiceDependencies:
             base_url=settings.hermes_researcher_url,
             api_key=settings.hermes_researcher_key,
             model=settings.hermes_researcher_model,
+            timeout_seconds=30,
+            stream_response=True,
         )
     )
     reviewer = HermesClient(
@@ -104,6 +110,8 @@ def build_dependencies(settings: ServiceSettings) -> ServiceDependencies:
             base_url=settings.hermes_reviewer_url,
             api_key=settings.hermes_reviewer_key,
             model=settings.hermes_reviewer_model,
+            timeout_seconds=50,
+            stream_response=True,
         )
     )
     return ServiceDependencies(
@@ -156,23 +164,33 @@ def create_app(
                 detail={"code": "ANALYSIS_JOB_LEASE_EXPIRED"},
             )
         try:
-            context = await dependencies.legal_core.get_analysis_context(
-                case_id=case_id,
-                telegram_user_id=telegram_user_id,
-            )
-            projection = build_projection_from_context(context)
-            reasoning = await dependencies.reasoning.reason(projection)
-            job_headers = (
-                {"job_id": x_analysis_job_id, "job_token": x_analysis_job_token}
-                if x_analysis_job_id is not None else {}
-            )
-            return await dependencies.legal_core.submit_reasoning(
-                context=context,
-                reasoning=reasoning,
-                telegram_user_id=telegram_user_id,
-                idempotency_key=idempotency_key,
-                **job_headers,
-            )
+            async with asyncio.timeout(ANALYSIS_WALL_TIMEOUT_SECONDS):
+                context = await dependencies.legal_core.get_analysis_context(
+                    case_id=case_id,
+                    telegram_user_id=telegram_user_id,
+                )
+                projection = build_projection_from_context(context)
+                reasoning = await dependencies.reasoning.reason(projection)
+                job_headers = (
+                    {"job_id": x_analysis_job_id, "job_token": x_analysis_job_token}
+                    if x_analysis_job_id is not None else {}
+                )
+                return await dependencies.legal_core.submit_reasoning(
+                    context=context,
+                    reasoning=reasoning,
+                    telegram_user_id=telegram_user_id,
+                    idempotency_key=idempotency_key,
+                    **job_headers,
+                )
+        except TimeoutError:
+            logger.warning(json.dumps({
+                "event": "analysis_deadline_exceeded", "entryPoint": "analyze",
+                "requestId": str(idempotency_key),
+            }, sort_keys=True))
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "ANALYSIS_PROVIDER_UNAVAILABLE"},
+            ) from None
         except LegalCoreError as exc:
             raise HTTPException(
                 status_code=exc.status_code,

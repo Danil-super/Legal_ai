@@ -19,13 +19,31 @@ non-zero unless both the resolved toolset list and tool schema are empty.
 
 The same preflight verifies the pinned provider/model timeout resolvers: both legal profiles
 use `agent.api_max_retries: 1`, and custom provider request/stale timeouts of 29 seconds.
-The orchestrator's total wall timeout remains 30 seconds. Request timeouts apply to HTTP operations,
-not the total turn. The configured stale value is a base, not the effective worker threshold:
+The orchestrator uses SSE with total stage walls of 30 seconds for research and 50 seconds for
+review, inside one shared 115-second analysis deadline (including Legal Core context/submission).
+The worker's HTTP operation timeout remains 120 seconds, wall deadline 125 seconds and lease
+180 seconds. Request timeouts apply to HTTP operations, not the total turn. The configured stale
+value is a base, not the effective worker threshold:
 pinned streaming can raise it for large contexts or a reasoning-model floor even with explicit
-configuration. Continuous chunks can keep the worker alive beyond the outer deadline, and Hermes
-can perform one primary-transport recovery cycle. This reduces configured wait/retry budgets but
-does not guarantee cancellation. Token caps, reasoning effort, provider and model choices are
-unchanged (ADR-0071).
+configuration. On stage timeout or caller cancellation the SSE response closes; the pinned server
+recognises disconnect on its next write and requests the agent's hard interrupt. Detection can lag
+up to the 30-second heartbeat interval; this is not an instant thread kill or a guaranteed upstream
+termination wall. Hermes can perform one primary-transport recovery cycle. Only complete tool-free
+streams with successful `stop` and `[DONE]` are decoded and passed to existing strict contracts;
+observable partial/failed responses never count as success. The guarded launcher additionally
+exposes the pinned server's otherwise hidden `completed=False`/`partial=True` statuses as error
+finishes with metadata (ADR-0074); `stop` alone is only a wire signal, not proof of worker status.
+Legacy nonstream clients remain available, but
+the production analysis path uses SSE. Token caps, reasoning effort, provider and model choices
+are unchanged (ADR-0071, ADR-0073).
+
+`run_guarded_gateway.py` verifies the exact pinned SSE handler SHA before replacing one finish
+condition in memory, then runs the same installed `hermes gateway run --no-supervise` CLI in that
+interpreter. No image/source/config file is rewritten. Handler drift refuses startup with a fixed
+message. Both profiles mount the launcher read-only and retain the tool/budget preflight; changed
+Compose entrypoints require reviewed recreation of both Hermes containers after green CI.
+Future launcher-only changes also require reviewed recreation: updating a bind-mounted file
+does not replace the handler already installed in a running Python process.
 
 ## Build the exact upstream commit
 

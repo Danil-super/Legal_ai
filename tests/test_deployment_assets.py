@@ -580,7 +580,7 @@ def test_tool_free_hermes_profiles_bypass_the_upstream_s6_entrypoint() -> None:
             "        /opt/hermes/.venv/bin/python /opt/legal/render_profile.py\n"
             "        /opt/legal/legal-profile.config.yaml /opt/data/config.yaml &&\n"
             "        /opt/hermes/.venv/bin/python /opt/legal/assert_tool_free.py &&\n"
-            "        exec /opt/hermes/.venv/bin/hermes gateway run --no-supervise"
+            "        exec /opt/hermes/.venv/bin/python /opt/legal/run_guarded_gateway.py"
         ) in service
         assert "\n    command:" not in service
         assert "PYTHONPATH: /opt/hermes" in service
@@ -589,6 +589,7 @@ def test_tool_free_hermes_profiles_bypass_the_upstream_s6_entrypoint() -> None:
             in service
         )
         assert "./ops/hermes/render_profile.py:/opt/legal/render_profile.py:ro" in service
+        assert "./ops/hermes/run_guarded_gateway.py:/opt/legal/run_guarded_gateway.py:ro" in service
         assert ":/opt/data/config.yaml:ro" not in service
         assert "no-new-privileges:true" in service
         assert "cap_drop:\n      - ALL" in service
