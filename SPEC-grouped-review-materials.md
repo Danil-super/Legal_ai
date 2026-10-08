@@ -241,3 +241,24 @@ part is unresolved. Preparing reference cards does not imply full PDF OCR.
 Review decision: the owner accepted this preparation/confirmation contract and
 additive storage. Detailed implementation plan/tasks follow their own review;
 approval of the specification is not a production mutation or legal approval.
+
+## Increment 4: human-reviewed current copies — accepted 2026-10-08
+
+Owner acceptance permits a lawyer to confirm the supplied copy's current
+applicability without filling absent publication/edition dates. ADR 0075 defines
+the additive LAWYER_CURRENT_COPY contract. This supersedes increment 3's required
+edition-date blocker only for explicitly attested current copies; DATED_EDITION
+and historical retrieval remain unchanged.
+
+Keep all 58 originals and the existing seven groups. Prepare 50 normative
+originals as 54 declared parts; seven clinical references and blank form remain
+separate human-review actions in their groups. PARTIAL extracted text never
+becomes FULL_DOCUMENT. Select exact usable text fragments, exclude passages
+requiring missing graphics/formulas, preserve and display all limitations.
+
+Group confirmation binds the exact displayed membership, source/raw/text hashes,
+copy applicability floor and explicit currentCopyConfirmed/extractionLimitsUnderstood.
+Missing or overflowing checklists disable confirmation, including stale callbacks.
+No absent dates or issuer are invented; preparation creates REVIEW_REQUIRED only.
+After human approval, Core retrieval uses the copy only within its confirmed
+date range; missing evidence still requires clarification or lawyer intervention.

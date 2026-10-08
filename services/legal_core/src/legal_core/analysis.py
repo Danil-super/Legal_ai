@@ -37,9 +37,7 @@ class AnalysisOutcome:
         return self.verification.analysis_allowed and self.risk.level.value != "UNAVAILABLE"
 
 
-def evidence_trace_sha256(
-    evidence: Sequence[ApprovedLegalFragment], *, as_of_date: date
-) -> str:
+def evidence_trace_sha256(evidence: Sequence[ApprovedLegalFragment], *, as_of_date: date) -> str:
     """Hash exactly the immutable evidence identity used for one analysis attempt."""
 
     identities = [
@@ -53,6 +51,14 @@ def evidence_trace_sha256(
             "rawSha256": fragment.raw_sha256,
             "textSha256": fragment.text_sha256,
             "versionId": str(fragment.version_id),
+            **(
+                {
+                    "dateBasis": fragment.date_basis,
+                    "extractionLimitations": fragment.extraction_limitations,
+                }
+                if fragment.date_basis == "LAWYER_CURRENT_COPY"
+                else {}
+            ),
         }
         for fragment in sorted(evidence, key=lambda item: str(item.fragment_id))
     ]

@@ -31,7 +31,28 @@ def _fragment(fragment_id=FRAGMENT):
         publication_date=date(2026, 1, 1), version_date=date(2026, 1, 1),
         source_url="https://example.invalid/test-source", text_sha256="a" * 64,
         raw_sha256="b" * 64,
+        date_basis="DATED_EDITION", extraction_limitations=[],
     )
+
+
+def test_current_copy_pdf_shows_all_limits_as_escaped_text(monkeypatch):
+    from legal_core import reports
+
+    fragment = _fragment()
+    fragment.date_basis = "LAWYER_CURRENT_COPY"
+    fragment.extraction_limitations = ["SYNTHETIC_LIMIT <b>one</b>", "SYNTHETIC_LIMIT & two"]
+    report = _report(evidence=[fragment])
+    captured = []
+    original = reports.Paragraph
+
+    def capture(text, *args, **kwargs):
+        captured.append(text)
+        return original(text, *args, **kwargs)
+
+    monkeypatch.setattr(reports, "Paragraph", capture)
+    assert render_report_pdf(report).startswith(b"%PDF-")
+    assert any("SYNTHETIC_LIMIT &lt;b&gt;one&lt;/b&gt;" in text for text in captured)
+    assert any("SYNTHETIC_LIMIT &amp; two" in text for text in captured)
 
 
 def _conclusion(**changes):

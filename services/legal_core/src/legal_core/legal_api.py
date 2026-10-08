@@ -53,6 +53,7 @@ from legal_core.legal_approval import (
     LegalApprovalRejected,
     approve_legal_version_in_session,
     legal_approval_preflight_reason,
+    potential_approval_attestation,
 )
 from legal_core.legal_retrieval import ApprovedLegalCorpusRepository
 from legal_core.material_preparation import MaterialGroup, MaterialKind, PreparedPart
@@ -161,20 +162,7 @@ def create_legal_router(
         source = await session.get(LegalSource, version.source_id)
         if source is None:  # pragma: no cover - foreign key protection
             return False
-        attestation = ApprovalAttestation(
-            reviewer_telegram_user_id=1,
-            version_id=version.id,
-            expected_sha256=version.raw_sha256,
-            expected_normalized_sha256=version.normalized_sha256,
-            expected_fragments_sha256=version.fragments_sha256,
-            expected_effective_from=version.effective_from,
-            expected_effective_to=version.effective_to,
-            source_is_official=version.artifact_kind == "OFFICIAL_RAW",
-            official_text_compared=True,
-            artifact_is_complete=True,
-            effective_dates_verified=True,
-            fragments_verified=True,
-        )
+        attestation = potential_approval_attestation(version, 1)
         return await legal_approval_preflight_reason(session, version, source, attestation) is None
 
     def approval_response(version: LegalVersion) -> LegalEditorApprovalResponse:
@@ -347,11 +335,14 @@ def create_legal_router(
         progress = None
         if group is not None:
             progress_rows = (
-                await session.execute(select(items).where(items.c.group_key == group).limit(1001))
-            ).mappings().all()
+                (await session.execute(select(items).where(items.c.group_key == group).limit(1001)))
+                .mappings()
+                .all()
+            )
             if len(progress_rows) > 1000:
-                raise ApiError(status_code=422, code="LEGAL_GROUP_TOO_LARGE",
-                               message="Group exceeds limit")
+                raise ApiError(
+                    status_code=422, code="LEGAL_GROUP_TOO_LARGE", message="Group exceeds limit"
+                )
             progress = LegalEditorGroupProgress.model_validate(group_progress(progress_rows))
         rows = (
             []
@@ -585,12 +576,18 @@ def create_legal_router(
         metadata = preparation.metadata_json
         parts = [PreparedPart.model_validate(part) for part in metadata["parts"]]
         group_items = editor_group_items()
-        linked_part_keys = list((await session.scalars(
-            select(group_items.c.part_key)
-            .where(group_items.c.preparation_id == preparation.id,
-                   group_items.c.version_id.is_not(None))
-            .order_by(group_items.c.part_key)
-        )).all())
+        linked_part_keys = list(
+            (
+                await session.scalars(
+                    select(group_items.c.part_key)
+                    .where(
+                        group_items.c.preparation_id == preparation.id,
+                        group_items.c.version_id.is_not(None),
+                    )
+                    .order_by(group_items.c.part_key)
+                )
+            ).all()
+        )
         missing = [f"{part.part_key}:{field}" for part in parts for field in part.missing_fields()]
         if preparation.kind == "NORMATIVE" and not parts:
             missing.append("intended_parts")
@@ -710,6 +707,10 @@ def create_legal_router(
             fragmentsSha256=version.fragments_sha256,
             fragmentCount=fragment_count,
             approvalEligible=await editor_approval_eligible(session, version),
+            dateBasis=version.date_basis,
+            extractionLimitations=version.extraction_limitations,
+            publicationDate=version.publication_date,
+            versionDate=version.version_date,
         )
 
     @router.get("/review-queue/{version_id}/artifact")
@@ -833,6 +834,8 @@ def create_legal_router(
                     LegalVersion.effective_to,
                     LegalVersion.raw_sha256,
                     LegalVersion.fragments_sha256,
+                    LegalVersion.date_basis,
+                    LegalVersion.extraction_limitations,
                 )
                 .join(LegalDocument, LegalDocument.id == LegalVersion.document_id)
                 .where(LegalVersion.id == version_id)
@@ -842,11 +845,17 @@ def create_legal_router(
             raise ApiError(
                 status_code=404, code="LEGAL_VERSION_NOT_FOUND", message="Legal version not found"
             )
+        applicability_label = (
+            "Проверенная применимость копии (нижняя граница)"
+            if version.date_basis == "LAWYER_CURRENT_COPY"
+            else "Начало действия"
+        )
+        limitations = "".join(f"Ограничение: {value}\n" for value in version.extraction_limitations)
         content = bytearray(
             (
                 f"ПОЛНЫЕ ВЫБРАННЫЕ ВЫДЕРЖКИ\n{version.title}\n"
                 f"Версия: {version.id}\nURL публикации: {version.source_url}\n"
-                f"Начало действия: {version.effective_from}; до (не включительно): "
+                f"{applicability_label}: {version.effective_from}; до (не включительно): "
                 f"{version.effective_to or 'не указано'}\n"
                 f"SHA256 PDF/артефакта: {version.raw_sha256}\n"
                 f"SHA256 подборки: {version.fragments_sha256}\n\n"
@@ -854,6 +863,13 @@ def create_legal_router(
                 "Сверьте каждую выдержку по исходному PDF: статью/пункт и полноту смысла.\n"
                 "Страницы PDF для выдержек не размечены; используйте поиск в PDF по тексту.\n"
                 "Наличие выдержки в файле не означает юридического утверждения.\n\n"
+                + (
+                    "Дата редакции не установлена; к более ранним событиям копия не применяется.\n"
+                    if version.date_basis == "LAWYER_CURRENT_COPY"
+                    else ""
+                )
+                + limitations
+                + "\n"
             ).encode()
         )
         manifest_hash = hashlib.sha256()

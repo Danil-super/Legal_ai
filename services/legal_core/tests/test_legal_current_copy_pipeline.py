@@ -67,8 +67,8 @@ def _write_manifest(tmp_path: Path, *, current_copy: bool) -> tuple[Path, str]:
     payload: dict[str, Any] = {
         "manifest_version": "dental-legal-corpus.v5" if current_copy else "dental-legal-corpus.v2",
         "source_key": "garant" if current_copy else f"synthetic-pipeline-{suffix}",
-        "source_revision": 1 + identifier.int % 2_000_000_000,
-        "source_name": "Synthetic pipeline integration source",
+        "source_revision": 1 if current_copy else 1 + identifier.int % 2_000_000_000,
+        "source_name": "Гарант" if current_copy else "Synthetic pipeline integration source",
         "source_trust_level": "VERIFIED_COPY" if current_copy else "PRIMARY",
         "source_base_url": f"https://{host}/",
         "source_url": f"https://{host}/synthetic-pipeline/{suffix}",
@@ -165,7 +165,8 @@ def test_human_approval_pipeline_preserves_visibility_dates_and_policy(
                 document = await session.get(LegalDocument, version.document_id)
                 assert source is not None and document is not None
                 assert version.approval_state == "REVIEW_REQUIRED"
-                assert source.status == "DRAFT"
+                # A shared allowlisted source may already have another approved document.
+                assert source.status in {"DRAFT", "APPROVED"}
                 assert version.approved_by is None and version.approved_at is None
                 assert version.regression_passed is False
                 assert version.effective_from == COPY_VALID_FROM
@@ -297,9 +298,12 @@ def test_legacy_v2_approval_cannot_substitute_copy_flags_for_date_verification(
                     )
                 )
                 assert count == 0
-                assert await ApprovedLegalCorpusRepository(session).search(
-                    query, as_of_date=COPY_VALID_FROM
-                ) == []
+                assert (
+                    await ApprovedLegalCorpusRepository(session).search(
+                        query, as_of_date=COPY_VALID_FROM
+                    )
+                    == []
+                )
         finally:
             await engine.dispose()
 

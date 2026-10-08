@@ -32,6 +32,7 @@ from legal_core.models import (
 )
 
 APPROVAL_POLICY_VERSION = "dental-legal-approval.v2"
+CURRENT_COPY_POLICY_VERSION = "dental-legal-approval.v3"
 PAID_MEDICAL_SERVICES_BOUNDARIES: dict[str, tuple[date, date]] = {
     "736": (date(2023, 9, 1), date(2026, 9, 1)),
     "659": (date(2026, 9, 1), date(2031, 9, 1)),
@@ -53,13 +54,16 @@ class ApprovalAttestation(BaseModel):
     artifact_is_complete: bool
     effective_dates_verified: bool
     fragments_verified: bool
+    current_copy_confirmed: bool = False
+    extraction_limits_understood: bool = False
 
     @model_validator(mode="after")
     def require_human_attestations(self) -> ApprovalAttestation:
         if not all(
             (
                 self.artifact_is_complete,
-                self.effective_dates_verified,
+                self.effective_dates_verified
+                or (self.current_copy_confirmed and self.extraction_limits_understood),
                 self.fragments_verified,
             )
         ) or (not self.source_is_official and not self.official_text_compared):
@@ -86,6 +90,8 @@ def _checks(attestation: ApprovalAttestation) -> dict[str, Any]:
         "artifactIsComplete": attestation.artifact_is_complete,
         "effectiveDatesVerified": attestation.effective_dates_verified,
         "fragmentsVerified": attestation.fragments_verified,
+        "currentCopyConfirmed": attestation.current_copy_confirmed,
+        "extractionLimitsUnderstood": attestation.extraction_limits_understood,
         "expectedNormalizedSha256": attestation.expected_normalized_sha256,
         "expectedFragmentsSha256": attestation.expected_fragments_sha256,
         "expectedEffectiveFrom": attestation.expected_effective_from.isoformat(),
@@ -107,10 +113,7 @@ async def _block_reason(
         return "ARTIFACT_NOT_OFFICIAL_RAW"
     if version.artifact_kind == "OFFICIAL_RAW" and not attestation.source_is_official:
         return "OFFICIAL_SOURCE_NOT_ATTESTED"
-    if (
-        version.artifact_kind == "THIRD_PARTY_VERIFIED_COPY"
-        and attestation.source_is_official
-    ):
+    if version.artifact_kind == "THIRD_PARTY_VERIFIED_COPY" and attestation.source_is_official:
         return "TRUSTED_COPY_MISREPRESENTED_AS_OFFICIAL"
     if (
         version.artifact_kind == "THIRD_PARTY_VERIFIED_COPY"
@@ -131,7 +134,19 @@ async def _block_reason(
         return "ARTIFACT_RETRIEVAL_TIME_MISSING"
     if version.raw_mime_type == "application/pdf" and version.artifact_page_count is None:
         return "ARTIFACT_PAGE_COUNT_MISSING"
-    if version.normalization_scope != "FULL_DOCUMENT":
+    current_copy = version.date_basis == "LAWYER_CURRENT_COPY"
+    if current_copy:
+        if (
+            version.artifact_kind != "THIRD_PARTY_VERIFIED_COPY"
+            or version.normalization_scope != "TEXT_LAYER"
+            or not version.extraction_limitations
+            or not attestation.current_copy_confirmed
+            or not attestation.extraction_limits_understood
+        ):
+            return "CURRENT_COPY_NOT_ATTESTED"
+    elif not attestation.effective_dates_verified:
+        return "EFFECTIVE_DATES_NOT_ATTESTED"
+    elif version.normalization_scope != "FULL_DOCUMENT":
         return "NORMALIZATION_NOT_FULL_DOCUMENT"
     if version.normalized_sha256 != attestation.expected_normalized_sha256:
         return "EXPECTED_NORMALIZED_SHA_MISMATCH"
@@ -147,16 +162,18 @@ async def _block_reason(
     if document is None:  # pragma: no cover - protected by foreign key
         return "LEGAL_DOCUMENT_MISSING"
     boundary = PAID_MEDICAL_SERVICES_BOUNDARIES.get(document.official_number or "")
-    if boundary is not None and (version.effective_from, version.effective_to) != boundary:
+    if boundary is not None and not (
+        boundary[0] <= version.effective_from < boundary[1] and version.effective_to == boundary[1]
+        if current_copy
+        else (version.effective_from, version.effective_to) == boundary
+    ):
         return "PAID_MEDICAL_SERVICES_BOUNDARY_MISMATCH"
     hostname = urlparse(version.source_url).hostname
     if hostname is None or hostname not in source.allowed_hosts:
         return "SOURCE_HOST_NOT_ALLOWLISTED"
     if source.status not in {"DRAFT", "APPROVED"}:
         return "SOURCE_STATUS_NOT_APPROVABLE"
-    expected_trust_level = (
-        "PRIMARY" if version.artifact_kind == "OFFICIAL_RAW" else "VERIFIED_COPY"
-    )
+    expected_trust_level = "PRIMARY" if version.artifact_kind == "OFFICIAL_RAW" else "VERIFIED_COPY"
     if source.trust_level != expected_trust_level:
         return "SOURCE_TRUST_LEVEL_MISMATCH"
 
@@ -242,7 +259,7 @@ async def _regression_checks(
     official_number = document.official_number if document is not None else None
     boundary = PAID_MEDICAL_SERVICES_BOUNDARIES.get(official_number or "")
     checks: dict[str, Any] = {
-        "policyVersion": APPROVAL_POLICY_VERSION,
+        "policyVersion": approval_policy_version(version),
         "passed": blocked_reason is None,
         "reasonCode": blocked_reason,
         "rawShaMatches": hashlib.sha256(version.raw_bytes).hexdigest() == version.raw_sha256,
@@ -269,6 +286,9 @@ async def _regression_checks(
             else None
         ),
     }
+    if version.date_basis == "LAWYER_CURRENT_COPY":
+        checks["dateBasis"] = version.date_basis
+        checks["extractionLimitations"] = version.extraction_limitations
     canonical = json.dumps(checks, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     regression_result_sha256 = await session.scalar(
         text("SELECT legal_regression_result_sha256(CAST(:payload AS jsonb))"),
@@ -277,6 +297,38 @@ async def _regression_checks(
     if not isinstance(regression_result_sha256, str):  # pragma: no cover - DB contract
         raise RuntimeError("database did not return a legal regression digest")
     return checks, regression_result_sha256
+
+
+def approval_policy_version(version: LegalVersion) -> str:
+    return (
+        CURRENT_COPY_POLICY_VERSION
+        if version.date_basis == "LAWYER_CURRENT_COPY"
+        else APPROVAL_POLICY_VERSION
+    )
+
+
+def potential_approval_attestation(
+    version: LegalVersion,
+    telegram_user_id: int,
+) -> ApprovalAttestation:
+    """Construct checks for read-only eligibility, never a substitute for a human click."""
+    current = version.date_basis == "LAWYER_CURRENT_COPY"
+    return ApprovalAttestation(
+        reviewer_telegram_user_id=telegram_user_id,
+        version_id=version.id,
+        expected_sha256=version.raw_sha256,
+        expected_normalized_sha256=version.normalized_sha256,
+        expected_fragments_sha256=version.fragments_sha256,
+        expected_effective_from=version.effective_from,
+        expected_effective_to=version.effective_to,
+        source_is_official=version.artifact_kind == "OFFICIAL_RAW",
+        official_text_compared=version.artifact_kind == "THIRD_PARTY_VERIFIED_COPY",
+        artifact_is_complete=True,
+        effective_dates_verified=not current,
+        fragments_verified=True,
+        current_copy_confirmed=current,
+        extraction_limits_understood=current,
+    )
 
 
 async def _active_legal_editor(session: AsyncSession, telegram_user_id: int) -> User:
@@ -347,7 +399,7 @@ async def approve_legal_version_in_session(
                     expected_sha256=attestation.expected_sha256,
                     reason_code=blocked_reason,
                     checks_json=_checks(attestation),
-                    policy_version=APPROVAL_POLICY_VERSION,
+                    policy_version=approval_policy_version(version),
                     regression_result_sha256=regression_result_sha256,
                     regression_checks_json=regression_checks,
                 )
@@ -371,7 +423,7 @@ async def approve_legal_version_in_session(
                 **_checks(attestation),
                 **({"batchId": str(approval_batch_id)} if approval_batch_id else {}),
             },
-            policy_version=APPROVAL_POLICY_VERSION,
+            policy_version=approval_policy_version(version),
             regression_result_sha256=regression_result_sha256,
             regression_checks_json=regression_checks,
             idempotency_key=idempotency_key,

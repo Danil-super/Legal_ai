@@ -20,6 +20,7 @@ from legal_core.models import LegalDocument, LegalFragment, LegalSource, LegalVe
 _VERIFIED_COPY_SOURCE_PROFILES: dict[str, tuple[str, str]] = {
     "dental-legal-corpus.v3": ("consultant-plus", "www.consultant.ru"),
     "dental-legal-corpus.v4": ("garant", "internet.garant.ru"),
+    "dental-legal-corpus.v5": ("garant", "internet.garant.ru"),
 }
 _UNSAFE_RTF_CONTROLS = (b"\\object", b"\\objdata", b"\\objclass", b"\\objupdate")
 
@@ -65,6 +66,7 @@ class CorpusManifest(BaseModel):
         "dental-legal-corpus.v2",
         "dental-legal-corpus.v3",
         "dental-legal-corpus.v4",
+        "dental-legal-corpus.v5",
     ]
     source_key: str
     source_revision: int = Field(default=1, ge=1)
@@ -77,13 +79,16 @@ class CorpusManifest(BaseModel):
     document_key: str
     document_type: str
     title: str
-    issuer: str
-    official_number: str
+    issuer: str | None
+    official_number: str | None
     adoption_date: date
-    publication_date: date
-    version_date: date
+    publication_date: date | None
+    version_date: date | None
     effective_from: date
     effective_to: date | None
+    date_basis: Literal["DATED_EDITION", "LAWYER_CURRENT_COPY"] = "DATED_EDITION"
+    copy_valid_from: date | None = None
+    extraction_limitations: list[str] = Field(default_factory=list, max_length=40)
     approval_state: Literal["REVIEW_REQUIRED"]
     artifact_kind: Literal[
         "NORMALIZED_EXCERPT",
@@ -100,12 +105,45 @@ class CorpusManifest(BaseModel):
     normalized_text: str | None = Field(default=None, min_length=50)
     normalized_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     fragments_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    normalization_scope: Literal["SELECTED_EXCERPT", "FULL_DOCUMENT"] = "SELECTED_EXCERPT"
+    normalization_scope: Literal["SELECTED_EXCERPT", "FULL_DOCUMENT", "TEXT_LAYER"] = (
+        "SELECTED_EXCERPT"
+    )
     parser_version: str = Field(default="manual-official-excerpt.v1", min_length=1, max_length=80)
     fragments: list[CorpusFragment] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_source_and_checksum(self) -> "CorpusManifest":
+        current_copy = self.manifest_version == "dental-legal-corpus.v5"
+        if current_copy:
+            if (
+                self.date_basis != "LAWYER_CURRENT_COPY"
+                or self.copy_valid_from is None
+                or self.effective_from != self.copy_valid_from
+                or self.normalization_scope != "TEXT_LAYER"
+                or not self.extraction_limitations
+                or any(
+                    not value.strip() or len(value) > 1000 for value in self.extraction_limitations
+                )
+            ):
+                raise ValueError(
+                    "current copies require explicit applicability and extraction limits"
+                )
+        elif (
+            self.date_basis != "DATED_EDITION"
+            or self.copy_valid_from is not None
+            or self.extraction_limitations
+            or self.normalization_scope == "TEXT_LAYER"
+            or any(
+                value is None
+                for value in (
+                    self.issuer,
+                    self.official_number,
+                    self.publication_date,
+                    self.version_date,
+                )
+            )
+        ):
+            raise ValueError("legacy manifests require dated-edition metadata")
         parsed = urlparse(self.source_url)
         if parsed.scheme != "https" or parsed.hostname not in self.allowed_hosts:
             raise ValueError("source URL must be HTTPS and match the manifest allowlist")
@@ -129,9 +167,7 @@ class CorpusManifest(BaseModel):
                 else "THIRD_PARTY_VERIFIED_COPY"
             )
             expected_trust_level = (
-                "PRIMARY"
-                if self.manifest_version == "dental-legal-corpus.v2"
-                else "VERIFIED_COPY"
+                "PRIMARY" if self.manifest_version == "dental-legal-corpus.v2" else "VERIFIED_COPY"
             )
             if self.artifact_kind != expected_artifact_kind:
                 raise ValueError(
@@ -166,7 +202,7 @@ class CorpusManifest(BaseModel):
                 or self.artifact_size_bytes is None
                 or self.normalized_sha256 is None
                 or self.fragments_sha256 is None
-                or self.normalization_scope != "FULL_DOCUMENT"
+                or self.normalization_scope != ("TEXT_LAYER" if current_copy else "FULL_DOCUMENT")
             ):
                 raise ValueError(
                     "v2/v3/v4 manifests require complete retrieval and normalization metadata"
@@ -263,15 +299,11 @@ def load_manifest(path: Path) -> CorpusManifest:
         if not base_path.is_file():
             raise ValueError("selection base manifest does not exist")
         base = load_manifest(base_path)
-        if (
-            base.manifest_version
-            not in {
-                "dental-legal-corpus.v2",
-                "dental-legal-corpus.v3",
-                "dental-legal-corpus.v4",
-            }
-            or base.artifact_kind not in {"OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"}
-        ):
+        if base.manifest_version not in {
+            "dental-legal-corpus.v2",
+            "dental-legal-corpus.v3",
+            "dental-legal-corpus.v4",
+        } or base.artifact_kind not in {"OFFICIAL_RAW", "THIRD_PARTY_VERIFIED_COPY"}:
             raise ValueError(
                 "selection base manifest must be a complete approved-artifact candidate"
             )
@@ -282,9 +314,7 @@ def load_manifest(path: Path) -> CorpusManifest:
                 "fragments_sha256": corpus_fragments_sha256(selection.fragments),
             }
         )
-        manifest = CorpusManifest.model_validate(
-            selected_payload
-        )
+        manifest = CorpusManifest.model_validate(selected_payload)
     else:
         manifest = CorpusManifest.model_validate(payload)
     load_artifact(manifest, path)
@@ -369,7 +399,9 @@ async def _document(session: AsyncSession, manifest: CorpusManifest) -> LegalDoc
 
 
 async def ingest_manifest_in_session(
-    session: AsyncSession, manifest: CorpusManifest, raw_bytes: bytes,
+    session: AsyncSession,
+    manifest: CorpusManifest,
+    raw_bytes: bytes,
 ) -> UUID:
     """Ingest one guarded candidate inside the caller's transaction."""
     validate_artifact_bytes(manifest, raw_bytes)
@@ -416,6 +448,8 @@ async def ingest_manifest_in_session(
             manifest.normalization_scope,
             manifest.artifact_retrieved_at,
             manifest.artifact_page_count,
+            manifest.date_basis,
+            manifest.extraction_limitations,
         )
         stored_version = (
             existing.source_id,
@@ -436,6 +470,8 @@ async def ingest_manifest_in_session(
             existing.normalization_scope,
             existing.artifact_retrieved_at,
             existing.artifact_page_count,
+            existing.date_basis,
+            existing.extraction_limitations,
         )
         stored_fragments = list(
             (
@@ -458,10 +494,7 @@ async def ingest_manifest_in_session(
             )
             for fragment in stored_fragments
         ]
-        if (
-            stored_version != expected_version
-            or stored_fragment_models != manifest.fragments
-        ):
+        if stored_version != expected_version or stored_fragment_models != manifest.fragments:
             raise ValueError("existing legal version metadata conflicts with the manifest")
         return existing.id
     current_version = await session.scalar(
@@ -492,6 +525,8 @@ async def ingest_manifest_in_session(
         normalization_scope=manifest.normalization_scope,
         artifact_retrieved_at=manifest.artifact_retrieved_at,
         artifact_page_count=manifest.artifact_page_count,
+        date_basis=manifest.date_basis,
+        extraction_limitations=manifest.extraction_limitations,
         regression_passed=False,
     )
     session.add(version)

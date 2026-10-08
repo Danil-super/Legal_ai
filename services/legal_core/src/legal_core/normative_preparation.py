@@ -59,15 +59,31 @@ _SIGNATURE = re.compile(
     re.IGNORECASE,
 )
 _MONTHS = {
-    name: index for index, name in enumerate((
-        "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа",
-        "сентября", "октября", "ноября", "декабря",
-    ), start=1)
+    name: index
+    for index, name in enumerate(
+        (
+            "января",
+            "февраля",
+            "марта",
+            "апреля",
+            "мая",
+            "июня",
+            "июля",
+            "августа",
+            "сентября",
+            "октября",
+            "ноября",
+            "декабря",
+        ),
+        start=1,
+    )
 }
 _PART_NAMES = ("первая", "вторая", "третья", "четвертая")
 _IDENTITY_BLOCKERS = (
-    "CANONICAL_IDENTITY_UNVERIFIED", "PUBLICATION_DATE_UNVERIFIED",
-    "VERSION_DATE_UNVERIFIED", "EFFECTIVE_DATE_UNVERIFIED",
+    "CANONICAL_IDENTITY_UNVERIFIED",
+    "PUBLICATION_DATE_UNVERIFIED",
+    "VERSION_DATE_UNVERIFIED",
+    "EFFECTIVE_DATE_UNVERIFIED",
     "TEXT_COMPLETENESS_UNVERIFIED",
 )
 
@@ -114,7 +130,7 @@ def _heading_source(raw: bytes, title: str) -> tuple[str | None, str | None]:
         end = _PARAGRAPH_END.search(heading_region, start.end())
         if end is None:
             break
-        paragraph = heading_region[start.start():end.end()]
+        paragraph = heading_region[start.start() : end.end()]
         if _CENTERED_TITLE_STYLE.search(paragraph[:200]) is None:
             continue
         links = list(_GARANT_HEADING_URL.finditer(paragraph))
@@ -176,7 +192,10 @@ def _issuer(title: str) -> str | None:
 
 
 def _identity_hash(
-    kind: str | None, issuer: str | None, number: str | None, act_date: date | None,
+    kind: str | None,
+    issuer: str | None,
+    number: str | None,
+    act_date: date | None,
 ) -> str | None:
     if kind is None or number is None or act_date is None:
         return None
@@ -186,24 +205,38 @@ def _identity_hash(
 
 
 def _part_candidate(
-    *, key: str, title: str, identity_text: str, identity_locator: str,
-    source_url: str | None, whole_text: str, start: int | None, end: int | None,
-    number: str | None = None, act_date: date | None = None,
+    *,
+    key: str,
+    title: str,
+    identity_text: str,
+    identity_locator: str,
+    source_url: str | None,
+    whole_text: str,
+    start: int | None,
+    end: int | None,
+    number: str | None = None,
+    act_date: date | None = None,
 ) -> NormativePartCandidate:
     kind = _document_type(title)
     issuer = _issuer(title)
     if number is None:
         found = _NUMBER.search(_clean(identity_text))
-        number = found.group(1).replace("‐", "-").replace("‑", "-").replace("–", "-") \
-            if found else None
+        number = (
+            found.group(1).replace("‐", "-").replace("‑", "-").replace("–", "-") if found else None
+        )
     if act_date is None:
         act_date = _date_candidate(identity_text)
-    scoped_hash = hashlib.sha256(whole_text[start:end].encode()).hexdigest() \
-        if start is not None and end is not None else None
+    scoped_hash = (
+        hashlib.sha256(whole_text[start:end].encode()).hexdigest()
+        if start is not None and end is not None
+        else None
+    )
     blockers = list(_IDENTITY_BLOCKERS)
     for missing, value in (
-        ("DOCUMENT_TYPE_NOT_FOUND", kind), ("ISSUER_NOT_IN_HEADING", issuer),
-        ("OFFICIAL_NUMBER_NOT_FOUND", number), ("ACT_DATE_NOT_FOUND", act_date),
+        ("DOCUMENT_TYPE_NOT_FOUND", kind),
+        ("ISSUER_NOT_IN_HEADING", issuer),
+        ("OFFICIAL_NUMBER_NOT_FOUND", number),
+        ("ACT_DATE_NOT_FOUND", act_date),
     ):
         if value is None:
             blockers.append(missing)
@@ -212,35 +245,49 @@ def _part_candidate(
     if source_url is None:
         blockers.append("SOURCE_HEADING_UNVERIFIED")
     return NormativePartCandidate(
-        part_key=key, title=title, document_type=kind, issuer=issuer,
-        official_number=number, adoption_date_candidate=act_date,
+        part_key=key,
+        title=title,
+        document_type=kind,
+        issuer=issuer,
+        official_number=number,
+        adoption_date_candidate=act_date,
         identity_sha256=_identity_hash(kind, issuer, number, act_date),
-        source_url=source_url, identity_locator=identity_locator,
-        text_start=start, text_end=end, text_sha256=scoped_hash,
+        source_url=source_url,
+        identity_locator=identity_locator,
+        text_start=start,
+        text_end=end,
+        text_sha256=scoped_hash,
         blockers=tuple(blockers),
     )
 
 
 def _bundle_parts(
-    title: str, text: str, source_url: str | None, expected: tuple[str, ...],
+    title: str,
+    text: str,
+    source_url: str | None,
+    expected: tuple[str, ...],
 ) -> tuple[tuple[NormativePartCandidate, ...], bool]:
     markers = list(_PART_HEADING.finditer(text))
     valid = len(markers) == len(expected) and tuple(m.group(1) for m in markers) == expected
     if valid:
-        first_lines = text[:markers[0].start()].splitlines()
+        first_lines = text[: markers[0].start()].splitlines()
         valid = len([line for line in first_lines if line.strip()]) == 1
     if valid:
         for marker in markers:
-            following = text[marker.end():].splitlines()[:3]
-            if not any(re.match(r"Принят[ао]? Государственной Думой", x.strip())
-                       for x in following):
+            following = text[marker.end() :].splitlines()[:3]
+            if not any(
+                re.match(r"Принят[ао]? Государственной Думой", x.strip()) for x in following
+            ):
                 valid = False
                 break
     parts = []
     for index, name in enumerate(expected):
         start = (0 if index == 0 else markers[index].start()) if valid else None
-        end = (markers[index + 1].start() if index + 1 < len(markers) else len(text)) \
-            if valid else None
+        end = (
+            (markers[index + 1].start() if index + 1 < len(markers) else len(text))
+            if valid
+            else None
+        )
         signature = None
         if start is not None and end is not None:
             signature_tail = _clean_signature_text(text[start:end])[-500:]
@@ -248,13 +295,22 @@ def _bundle_parts(
             signature = signature_matches[-1] if signature_matches else None
         act_date = _date_candidate(signature.group(1)) if signature else None
         number = signature.group(2) if signature else None
-        parts.append(_part_candidate(
-            key=f"part-{index + 1}", title=f"{title} — часть {name}",
-            identity_text="", identity_locator=(
-                f"normalized part {index + 1} signature tail; unverified conversion"
-            ), source_url=source_url, whole_text=text, start=start, end=end,
-            number=number, act_date=act_date,
-        ))
+        parts.append(
+            _part_candidate(
+                key=f"part-{index + 1}",
+                title=f"{title} — часть {name}",
+                identity_text="",
+                identity_locator=(
+                    f"normalized part {index + 1} signature tail; unverified conversion"
+                ),
+                source_url=source_url,
+                whole_text=text,
+                start=start,
+                end=end,
+                number=number,
+                act_date=act_date,
+            )
+        )
     return tuple(parts), valid
 
 
@@ -287,56 +343,76 @@ def inspect_normative_rtf(raw: bytes, normalized_text: str) -> NormativePreparat
     if title.startswith("Гражданский кодекс Российской Федерации"):
         parts, boundaries_ok = _bundle_parts(title, normalized_text, source_url, _PART_NAMES)
     elif title.startswith("Налоговый кодекс Российской Федерации"):
-        parts, boundaries_ok = _bundle_parts(title, normalized_text, source_url,
-                                             _PART_NAMES[:2])
+        parts, boundaries_ok = _bundle_parts(title, normalized_text, source_url, _PART_NAMES[:2])
     else:
-        parts = (_part_candidate(
-            key="part-1", title=title, identity_text=title,
-            identity_locator="normalized first title line; unverified conversion",
-            source_url=source_url, whole_text=normalized_text,
-            start=0, end=len(normalized_text),
-        ),)
+        parts = (
+            _part_candidate(
+                key="part-1",
+                title=title,
+                identity_text=title,
+                identity_locator="normalized first title line; unverified conversion",
+                source_url=source_url,
+                whole_text=normalized_text,
+                start=0,
+                end=len(normalized_text),
+            ),
+        )
         boundaries_ok = True
     if not boundaries_ok:
         blockers.append("CODE_PART_BOUNDARIES_UNVERIFIED")
     return NormativePreparationCandidate(
-        title=title, raw_sha256=hashlib.sha256(raw).hexdigest(),
+        title=title,
+        raw_sha256=hashlib.sha256(raw).hexdigest(),
         normalized_sha256=hashlib.sha256(normalized_text.encode()).hexdigest(),
-        source_url=source_url, source_locator=source_locator, parts=parts,
+        source_url=source_url,
+        source_locator=source_locator,
+        parts=parts,
         blockers=tuple(blockers),
     )
 
 
 def prepared_part_keys_match(
-    prepared: MaterialPreparationInput, candidate: NormativePreparationCandidate,
+    prepared: MaterialPreparationInput,
+    candidate: NormativePreparationCandidate,
 ) -> bool:
     """Keep receipt keys unchanged; alias only one exact, complete original span.
 
     Identity/source/edition validation remains the caller's responsibility. This
     compatibility check never promotes a partial extraction or remaps code parts.
     """
-    if [part.part_key for part in prepared.parts] == [
-        part.part_key for part in candidate.parts
-    ]:
+    if [part.part_key for part in prepared.parts] == [part.part_key for part in candidate.parts]:
         return True
     if len(prepared.parts) != 1 or len(candidate.parts) != 1:
         return False
     stored, parsed = prepared.parts[0], candidate.parts[0]
     return (
         prepared.kind == "NORMATIVE"
-        and prepared.extraction_scope == "FULL_DOCUMENT"
-        and stored.part_key == "document" and parsed.part_key == "part-1"
+        and (
+            prepared.extraction_scope == "FULL_DOCUMENT"
+            or (
+                prepared.extraction_scope == "PARTIAL"
+                and stored.date_basis == "LAWYER_CURRENT_COPY"
+            )
+        )
+        and stored.part_key == "document"
+        and parsed.part_key == "part-1"
         and prepared.raw_sha256 == candidate.raw_sha256
         and stored.text_start == parsed.text_start == 0
         and stored.text_end == parsed.text_end == len(prepared.normalized_text)
-        and stored.text_sha256 == parsed.text_sha256 == prepared.normalized_sha256
+        and stored.text_sha256
+        == parsed.text_sha256
+        == prepared.normalized_sha256
         == candidate.normalized_sha256
     )
 
 
 async def bind_prepared_part(
-    session: AsyncSession, *, preparation_id: UUID, part_key: str,
-    legal_version_id: UUID, actor_user_id: UUID,
+    session: AsyncSession,
+    *,
+    preparation_id: UUID,
+    part_key: str,
+    legal_version_id: UUID,
+    actor_user_id: UUID,
 ) -> LegalPreparedPartVersion:
     """Bind one exact RTF part in the caller's transaction, without approving it.
 
@@ -349,18 +425,29 @@ async def bind_prepared_part(
     actor = await session.get(User, actor_user_id)
     if actor is None or actor.status != "ACTIVE" or actor.system_role != "LEGAL_EDITOR":
         raise PermissionError("active LEGAL_EDITOR role is required")
-    await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(
-        f"prepared-part:{preparation_id}:{part_key}", 730659,
-    ))))
-    prepared = await session.scalar(select(LegalMaterialPreparation).where(
-        LegalMaterialPreparation.id == preparation_id,
-    ))
+    await session.execute(
+        select(
+            func.pg_advisory_xact_lock(
+                func.hashtextextended(
+                    f"prepared-part:{preparation_id}:{part_key}",
+                    730659,
+                )
+            )
+        )
+    )
+    prepared = await session.scalar(
+        select(LegalMaterialPreparation).where(
+            LegalMaterialPreparation.id == preparation_id,
+        )
+    )
     if prepared is None:
         raise ValueError("prepared material is missing")
-    existing = await session.scalar(select(LegalPreparedPartVersion).where(
-        LegalPreparedPartVersion.preparation_id == preparation_id,
-        LegalPreparedPartVersion.part_key == part_key,
-    ))
+    existing = await session.scalar(
+        select(LegalPreparedPartVersion).where(
+            LegalPreparedPartVersion.preparation_id == preparation_id,
+            LegalPreparedPartVersion.part_key == part_key,
+        )
+    )
     if existing is not None:
         if existing.legal_version_id != legal_version_id:
             raise ValueError("prepared part is already bound to another version")
@@ -374,25 +461,34 @@ async def bind_prepared_part(
         raise ValueError("prepared material has a newer revision")
     original = await session.get(LegalReviewMaterial, prepared.material_id)
     version = await session.get(LegalVersion, legal_version_id)
-    if original is None or version is None or (
-        original.kind != "LEGAL_COPY" or prepared.kind != "NORMATIVE"
-        or original.raw_mime_type != "application/rtf"
-        or version.raw_mime_type != "application/rtf"
-        or version.artifact_kind != "THIRD_PARTY_VERIFIED_COPY"
-        or version.normalization_scope != "FULL_DOCUMENT"
-        or version.approval_state != "REVIEW_REQUIRED"
-        or version.artifact_retrieved_at is None
-        or version.parser_version != prepared.metadata_json.get("parser_version")
-        or prepared.raw_sha256 != original.raw_sha256
-        or version.raw_sha256 != original.raw_sha256
-        or version.raw_bytes != original.raw_bytes
+    if (
+        original is None
+        or version is None
+        or (
+            original.kind != "LEGAL_COPY"
+            or prepared.kind != "NORMATIVE"
+            or original.raw_mime_type != "application/rtf"
+            or version.raw_mime_type != "application/rtf"
+            or version.artifact_kind != "THIRD_PARTY_VERIFIED_COPY"
+            or version.normalization_scope
+            != ("TEXT_LAYER" if version.date_basis == "LAWYER_CURRENT_COPY" else "FULL_DOCUMENT")
+            or version.approval_state != "REVIEW_REQUIRED"
+            or version.artifact_retrieved_at is None
+            or version.parser_version != prepared.metadata_json.get("parser_version")
+            or prepared.raw_sha256 != original.raw_sha256
+            or version.raw_sha256 != original.raw_sha256
+            or version.raw_bytes != original.raw_bytes
+        )
     ):
         raise ValueError("version does not match the exact normative original")
     payload = MaterialPreparationInput.model_validate(
         prepared.metadata_json | {"normalized_text": prepared.normalized_text}
     )
+    current_copy = version.date_basis == "LAWYER_CURRENT_COPY"
     if payload.digest() != prepared.preparation_sha256 or (
-        payload.extraction_scope != "FULL_DOCUMENT" or not payload.parts
+        payload.extraction_scope != ("PARTIAL" if current_copy else "FULL_DOCUMENT")
+        or (current_copy and version.extraction_limitations != payload.limitations)
+        or not payload.parts
         or payload.source_url is None
     ):
         raise ValueError("normative preparation is not complete")
@@ -407,74 +503,137 @@ async def bind_prepared_part(
         raise ValueError("prepared source or document-part boundaries are unverified")
     selected = None
     for part, parsed in zip(payload.parts, candidate.parts, strict=True):
-        if part.text_start != parsed.text_start or part.text_end != parsed.text_end or (
-            part.text_sha256 is None or part.text_sha256 != parsed.text_sha256
-            or (parsed.document_type is not None and part.document_type != parsed.document_type)
-            or (parsed.official_number is not None
-                and part.official_number != parsed.official_number)
-            or (parsed.adoption_date_candidate is not None
-                and part.adoption_date != parsed.adoption_date_candidate)
+        if (
+            part.text_start != parsed.text_start
+            or part.text_end != parsed.text_end
+            or (
+                part.text_sha256 is None
+                or part.text_sha256 != parsed.text_sha256
+                or (parsed.document_type is not None and part.document_type != parsed.document_type)
+                or (
+                    parsed.official_number is not None
+                    and part.official_number != parsed.official_number
+                )
+                or (
+                    parsed.adoption_date_candidate is not None
+                    and part.adoption_date != parsed.adoption_date_candidate
+                )
+            )
         ):
             raise ValueError("prepared part differs from the exact extracted original")
         if part.part_key == part_key:
             selected = part
-    if selected is None or selected.text_start is None or (
-        selected.text_end is None or selected.text_sha256 is None
+    if (
+        selected is None
+        or selected.text_start is None
+        or (selected.text_end is None or selected.text_sha256 is None)
     ):
         raise ValueError("requested part is not completely prepared")
-    required = (
-        "title", "canonical_key", "document_type", "issuer", "official_number",
-        "adoption_date", "publication_date", "version_date", "effective_from",
+    required: tuple[str, ...] = (
+        "title",
+        "canonical_key",
+        "document_type",
+        "issuer",
+        "official_number",
+        "adoption_date",
+        "publication_date",
+        "version_date",
+        "effective_from",
     )
-    if any(getattr(selected, field) is None or not selected.evidence.get(field)
-           for field in required):
+    if current_copy:
+        required = ("title", "canonical_key", "document_type", "adoption_date", "copy_valid_from")
+    if selected.date_basis != ("LAWYER_CURRENT_COPY" if current_copy else "DATED_EDITION"):
+        raise ValueError("prepared part has a different applicability basis")
+    if any(
+        getattr(selected, field) is None or not selected.evidence.get(field) for field in required
+    ):
         raise ValueError("canonical identity or edition lacks evidence")
     document = await session.get(LegalDocument, version.document_id)
     source = await session.get(LegalSource, version.source_id)
-    if document is None or source is None or source.source_key != "garant" or (
-        source.trust_level != "VERIFIED_COPY" or source.status not in {"DRAFT", "APPROVED"}
-        or source.allowed_hosts != ["internet.garant.ru"]
-        or version.source_url != payload.source_url
-        or version.source_external_id != payload.source_url.rsplit("/", 2)[-2]
+    if (
+        document is None
+        or source is None
+        or source.source_key != "garant"
         or (
-            document.canonical_key, document.document_type, document.title,
-            document.issuer, document.official_number, document.adoption_date,
-        ) != (
-            selected.canonical_key, selected.document_type, selected.title,
-            selected.issuer, selected.official_number, selected.adoption_date,
-        )
-        or (
-            version.publication_date, version.version_date,
-            version.effective_from, version.effective_to,
-        ) != (
-            selected.publication_date, selected.version_date,
-            selected.effective_from, selected.effective_to,
+            source.trust_level != "VERIFIED_COPY"
+            or source.status not in {"DRAFT", "APPROVED"}
+            or source.allowed_hosts != ["internet.garant.ru"]
+            or version.source_url != payload.source_url
+            or version.source_external_id != payload.source_url.rsplit("/", 2)[-2]
+            or (
+                document.canonical_key,
+                document.document_type,
+                document.title,
+                document.issuer,
+                document.official_number,
+                document.adoption_date,
+            )
+            != (
+                selected.canonical_key,
+                selected.document_type,
+                selected.title,
+                selected.issuer,
+                selected.official_number,
+                selected.adoption_date,
+            )
+            or (
+                version.publication_date,
+                version.version_date,
+                version.effective_from,
+                version.effective_to,
+            )
+            != (
+                selected.publication_date,
+                selected.version_date,
+                selected.copy_valid_from if current_copy else selected.effective_from,
+                selected.effective_to,
+            )
         )
     ):
         raise ValueError("corpus identity, source or edition differs from preparation")
-    scoped_text = prepared.normalized_text[selected.text_start:selected.text_end]
+    scoped_text = prepared.normalized_text[selected.text_start : selected.text_end]
     if version.normalized_text != scoped_text or (
         version.normalized_sha256 != selected.text_sha256
         or hashlib.sha256(scoped_text.encode()).hexdigest() != selected.text_sha256
     ):
         raise ValueError("corpus text does not match the scoped original")
-    fragments = list((await session.scalars(select(LegalFragment).where(
-        LegalFragment.version_id == version.id,
-    ).order_by(LegalFragment.ordinal))).all())
-    fragment_models = [CorpusFragment(
-        ordinal=item.ordinal, article=item.article, part=item.part, point=item.point,
-        heading=item.heading, structural_path=item.structural_path,
-        text=item.fragment_text,
-    ) for item in fragments]
-    if not fragment_models or corpus_fragments_sha256(fragment_models) != (
-        version.fragments_sha256
-    ) or any(item.text not in scoped_text for item in fragment_models):
+    fragments = list(
+        (
+            await session.scalars(
+                select(LegalFragment)
+                .where(
+                    LegalFragment.version_id == version.id,
+                )
+                .order_by(LegalFragment.ordinal)
+            )
+        ).all()
+    )
+    fragment_models = [
+        CorpusFragment(
+            ordinal=item.ordinal,
+            article=item.article,
+            part=item.part,
+            point=item.point,
+            heading=item.heading,
+            structural_path=item.structural_path,
+            text=item.fragment_text,
+        )
+        for item in fragments
+    ]
+    if (
+        not fragment_models
+        or corpus_fragments_sha256(fragment_models) != (version.fragments_sha256)
+        or any(item.text not in scoped_text for item in fragment_models)
+    ):
         raise ValueError("corpus fragments do not match the scoped text")
     binding = LegalPreparedPartVersion(
-        material_id=original.id, preparation_id=prepared.id,
-        raw_sha256=original.raw_sha256, part_key=part_key,
+        material_id=original.id,
+        preparation_id=prepared.id,
+        raw_sha256=original.raw_sha256,
+        part_key=part_key,
         part_text_sha256=selected.text_sha256,
-        legal_version_id=version.id, created_by_user_id=actor.id,
+        legal_version_id=version.id,
+        created_by_user_id=actor.id,
     )
     session.add(binding)
     await session.flush()

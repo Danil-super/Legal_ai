@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -40,10 +41,12 @@ class ApprovedLegalFragment:
     source_url: str
     raw_sha256: str
     document_title: str
-    issuer: str
+    issuer: str | None
     official_number: str | None
     version_date: date | None
     publication_date: date | None
+    date_basis: Literal["DATED_EDITION", "LAWYER_CURRENT_COPY"] = "DATED_EDITION"
+    extraction_limitations: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,20 +56,22 @@ class ApprovedLegalLibraryDocument:
     document_id: UUID
     version_id: UUID
     document_title: str
-    issuer: str
+    issuer: str | None
     official_number: str | None
     effective_from: date
     effective_to: date | None
     source_url: str
     raw_sha256: str
     fragment_count: int
+    date_basis: Literal["DATED_EDITION", "LAWYER_CURRENT_COPY"] = "DATED_EDITION"
+    extraction_limitations: list[str] = field(default_factory=list)
 
 
 _FRAGMENT_COLUMNS = """
     fragment_id, version_id, document_id, article, part, point,
     structural_path, fragment_text, text_sha256, effective_from,
     effective_to, source_url, raw_sha256, document_title, issuer,
-    official_number, version_date, publication_date
+    official_number, version_date, publication_date, date_basis, extraction_limitations
 """
 
 _VECTOR_FRAGMENT_COLUMNS = """
@@ -87,7 +92,9 @@ _VECTOR_FRAGMENT_COLUMNS = """
     p.issuer AS issuer,
     p.official_number AS official_number,
     p.version_date AS version_date,
-    p.publication_date AS publication_date
+    p.publication_date AS publication_date,
+    p.date_basis AS date_basis,
+    p.extraction_limitations AS extraction_limitations
 """
 
 _SEARCH_APPROVED_LEXICAL = text(
@@ -144,7 +151,9 @@ _LIST_APPROVED_LIBRARY_DOCUMENTS = text(
            effective_to,
            source_url,
            raw_sha256,
-           count(*)::integer AS fragment_count
+           count(*)::integer AS fragment_count,
+           date_basis,
+           extraction_limitations
       FROM production_legal_fragments
      WHERE effective_from <= :as_of_date
        AND (effective_to IS NULL OR :as_of_date < effective_to)
@@ -156,7 +165,9 @@ _LIST_APPROVED_LIBRARY_DOCUMENTS = text(
               effective_from,
               effective_to,
               source_url,
-              raw_sha256
+              raw_sha256,
+              date_basis,
+              extraction_limitations
      ORDER BY document_title, official_number NULLS LAST, document_id, version_id
      LIMIT :limit
     """
@@ -249,10 +260,7 @@ class ApprovedLegalCorpusRepository:
             _LIST_APPROVED_LIBRARY_DOCUMENTS,
             {"as_of_date": as_of_date, "limit": limit},
         )
-        return [
-            ApprovedLegalLibraryDocument(**dict(row))
-            for row in result.mappings()
-        ]
+        return [ApprovedLegalLibraryDocument(**dict(row)) for row in result.mappings()]
 
     async def _semantic(
         self,

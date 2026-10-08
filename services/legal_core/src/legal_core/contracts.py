@@ -116,9 +116,7 @@ class DraftResponse(ContractModel):
     status: Literal["NOT_AVAILABLE", "AVAILABLE", "BLOCKED"] = "NOT_AVAILABLE"
     text: str | None = Field(default=None, max_length=8_000)
     is_draft: Literal[True] = Field(default=True, alias="isDraft")
-    human_approval_required: Literal[True] = Field(
-        default=True, alias="humanApprovalRequired"
-    )
+    human_approval_required: Literal[True] = Field(default=True, alias="humanApprovalRequired")
     reason_code: str | None = Field(default=None, alias="reasonCode")
     policy_version: str | None = Field(default=None, alias="policyVersion", max_length=80)
 
@@ -144,6 +142,10 @@ class LegalSourceCard(ContractModel):
     source_url: str = Field(alias="sourceUrl")
     text_sha256: str = Field(alias="textSha256", pattern=r"^[0-9a-f]{64}$")
     raw_sha256: str = Field(alias="rawSha256", pattern=r"^[0-9a-f]{64}$")
+    date_basis: Literal["DATED_EDITION", "LAWYER_CURRENT_COPY"] = Field(
+        default="DATED_EDITION", alias="dateBasis"
+    )
+    extraction_limitations: list[str] = Field(default_factory=list, alias="extractionLimitations")
 
 
 class LegalBasis(ContractModel):
@@ -214,9 +216,7 @@ class AnalysisSnapshot(ContractModel):
     analysis_run_id: UUID = Field(alias="analysisRunId")
     as_of_date: date = Field(alias="asOfDate")
     verifier_status: Literal["PASSED", "BLOCKED"] = Field(alias="verifierStatus")
-    evidence_trace_sha256: str = Field(
-        alias="evidenceTraceSha256", pattern=r"^[0-9a-f]{64}$"
-    )
+    evidence_trace_sha256: str = Field(alias="evidenceTraceSha256", pattern=r"^[0-9a-f]{64}$")
     clinic_document_context_trace_sha256: str | None = Field(
         default=None,
         alias="clinicDocumentContextTraceSha256",
@@ -229,9 +229,7 @@ class LegalConclusion(ContractModel):
 
     claim_id: str = Field(alias="claimId", min_length=1, max_length=80)
     text: str = Field(min_length=1, max_length=4_000)
-    verification_status: Literal["VERIFIED"] = Field(
-        default="VERIFIED", alias="verificationStatus"
-    )
+    verification_status: Literal["VERIFIED"] = Field(default="VERIFIED", alias="verificationStatus")
     evidence_fragment_ids: list[UUID] = Field(
         alias="evidenceFragmentIds", min_length=1, max_length=10
     )

@@ -112,6 +112,8 @@ def build_case_projection(
             effectiveFrom=fragment.effective_from,
             effectiveTo=fragment.effective_to,
             sourceUrl=fragment.source_url,
+            dateBasis=fragment.date_basis,
+            extractionLimitations=fragment.extraction_limitations,
         )
         for fragment in evidence
     ]
@@ -150,6 +152,8 @@ def build_projection_from_context(
             effectiveFrom=fragment.effective_from,
             effectiveTo=fragment.effective_to,
             sourceUrl=fragment.source_url,
+            dateBasis=fragment.date_basis,
+            extractionLimitations=fragment.extraction_limitations,
         )
         for fragment in context.evidence
     ]
