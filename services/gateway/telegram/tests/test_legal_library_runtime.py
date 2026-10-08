@@ -86,7 +86,7 @@ def test_platform_review_queue_renders_statuses_without_legal_text() -> None:
     assert keyboard.inline_keyboard[-1][0].callback_data == "menu"
 
 
-def test_editor_detail_requires_all_four_explicit_attestations_before_confirm() -> None:
+def test_editor_detail_is_read_only_even_with_old_attestations() -> None:
     detail = {
         "versionId": "00000000-0000-0000-0000-000000000002",
         "documentTitle": "Правила платных медицинских услуг",
@@ -125,7 +125,10 @@ def test_editor_detail_requires_all_four_explicit_attestations_before_confirm() 
         for button in row
         if button.callback_data is not None
     }
-    assert "editor:confirm:00000000-0000-0000-0000-000000000002" in approved_callbacks
+    assert not any(
+        callback.startswith(("editor:attest:", "editor:confirm:"))
+        for callback in pending_callbacks | approved_callbacks
+    )
 
 
 def test_editor_detail_opens_the_preserved_pdf_instead_of_fragment_screen() -> None:
@@ -207,7 +210,7 @@ def test_editor_detail_labels_a_consultant_copy_without_calling_it_an_official_s
     assert "не первичная публикация" in text
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
     assert "🌐 Источник: КонсультантПлюс" in labels
-    assert any("редакцией" in label for label in labels)
+    assert not any(label.startswith(("☐", "✅")) for label in labels)
 
 
 def test_editor_detail_labels_a_garant_rtf_copy_and_offers_the_document() -> None:
@@ -475,7 +478,7 @@ def test_same_title_original_and_unlinked_version_are_distinguished_on_buttons()
     assert all(len(label) <= 64 for label in labels)
 
 
-def test_bound_part_group_card_links_version_and_preserved_original_without_repeated_title():
+def test_bound_part_has_one_document_button_without_an_extra_download_row():
     version_id = "00000000-0000-0000-0000-000000000002"
     material_id = "00000000-0000-0000-0000-000000000003"
     text, keyboard = render_editor_review_materials({
@@ -493,7 +496,8 @@ def test_bound_part_group_card_links_version_and_preserved_original_without_repe
     })
     callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
     assert f"editor:detail:{version_id}:1" in callbacks
-    assert f"editor:material:{material_id}" in callbacks
+    assert f"editor:material:{material_id}" not in callbacks
+    assert callbacks.count(f"editor:detail:{version_id}:1") == 1
     assert "Налоговый кодекс — часть первая" not in text
     assert "Не связана 1 часть" in text  # noqa: RUF001
 
@@ -691,11 +695,10 @@ def test_editor_review_material_client_checks_integrity_and_editor_credentials(m
     asyncio.run(scenario())
 
 
-def test_return_from_pdf_keeps_attestations_for_the_same_immutable_version(monkeypatch) -> None:
+def test_return_from_pdf_keeps_read_only_identity_for_the_same_version(monkeypatch) -> None:
     version_id = "00000000-0000-0000-0000-000000000002"
     detail = {"versionId": version_id, "rawSha256": "a" * 64}
     pending = _new_editor_state(detail)
-    pending["attestations"]["source"] = True
     context = SimpleNamespace(user_data={runtime._EDITOR_PENDING_KEY: pending})
     monkeypatch.setattr(runtime.gateway_bot, "_actor_id", lambda _: 12345)
     monkeypatch.setattr(
@@ -713,7 +716,8 @@ def test_return_from_pdf_keeps_attestations_for_the_same_immutable_version(monke
     )
     with pytest.raises(ApplicationHandlerStop):
         asyncio.run(runtime.legal_editor_callback(SimpleNamespace(), context))
-    assert context.user_data[runtime._EDITOR_PENDING_KEY]["attestations"]["source"] is True
+    assert context.user_data[runtime._EDITOR_PENDING_KEY] == pending
+    assert pending["confirmationEnabled"] is False
 
 
 def test_queue_does_not_mislabel_deferred_integrity_checks_as_unavailable() -> None:
@@ -803,7 +807,7 @@ def test_clinical_group_has_reference_confirmation_without_repeating_titles() ->
     assert "Кариес зубов" not in text
     assert "editor:refbatch:clinical" in callbacks
     assert "editor:batch:clinical" not in callbacks
-    assert any(button.text == "📚 Справочный файл: Кариес зубов" for button in buttons)
+    assert any(button.text == "📄 Открыть: Кариес зубов" for button in buttons)
 
 
 def test_mixed_group_shows_distinct_norm_and_reference_actions() -> None:

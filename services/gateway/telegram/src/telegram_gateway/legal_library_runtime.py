@@ -769,15 +769,10 @@ def render_editor_review_materials(
             prefix = (
                 "📄 Версия без связи: "
                 if item.get("linkState") == "UNLINKED_VERSION"
-                else "📄 Нормативная версия: "
+                else "📄 Открыть: "
             )
         else:
-            prefix = (
-                "📚 Справочный файл: "
-                if item.get("kind") == "CLINICAL_REFERENCE"
-                or item.get("preparationKind") == "REFERENCE_FORM"
-                else "📎 Исходный файл: "
-            )
+            prefix = "📄 Открыть: " if item.get("preparationId") else "📎 Исходный файл: "
         buttons.append(
             [
                 InlineKeyboardButton(
@@ -792,15 +787,6 @@ def render_editor_review_materials(
                 )
             ]
         )
-        if item.get("versionId") and item.get("materialId"):
-            original_id = _editor_version_id(item["materialId"])
-            buttons.append(
-                [
-                    InlineKeyboardButton(
-                        "📎 Скачать исходный файл", callback_data=f"editor:material:{original_id}"
-                    )
-                ]
-            )
     if not raw_items:
         lines.append("В этой группе пока нет материалов.")
     buttons.extend(
@@ -894,10 +880,11 @@ def render_material_preparation(payload: dict[str, Any]) -> tuple[str, InlineKey
         [
             [
                 InlineKeyboardButton(
-                    "📄 Скачать оригинал", callback_data=f"editor:material:{material_id}"
+                    "📄 Открыть документ", callback_data=f"editor:material:{material_id}"
                 )
             ],
             [InlineKeyboardButton("← Назад к группе", callback_data=back)],
+            *[list(row) for row in back_keyboard().inline_keyboard],
         ]
     )
 
@@ -1095,38 +1082,17 @@ def _new_editor_state(detail: dict[str, Any]) -> dict[str, Any]:
         isinstance(value, str) and value for value in expected.values() if value is not None
     ):
         raise ValueError("editor version identity")
-    state = {
+    return {
         "versionId": str(version_id),
-        "artifactKind": detail.get("artifactKind"),
-        "dateBasis": detail.get("dateBasis", "DATED_EDITION"),
         "expected": expected,
-        "attestations": {
-            "source": False,
-            "artifact": False,
-            "dates": False,
-            "fragments": False,
-        },
-        "idempotencyKey": str(uuid4()),
+        "confirmationEnabled": False,
     }
-    prospective = {**state, "attestations": dict.fromkeys(state["attestations"], True)}
-    _, keyboard = render_editor_version_detail(detail, prospective)
-    state["confirmationEnabled"] = any(
-        button.callback_data == f"editor:confirm:{version_id}"
-        for row in keyboard.inline_keyboard
-        for button in row
-    )
-    return state
-
-
-def _attestation_label(state: dict[str, Any], key: str, label: str) -> str:
-    raw = state.get("attestations")
-    checked = isinstance(raw, dict) and raw.get(key) is True
-    return f"{'✅' if checked else '☐'} {label}"
 
 
 def render_editor_version_detail(
     detail: dict[str, Any], state: dict[str, Any]
 ) -> tuple[str, InlineKeyboardMarkup]:
+    del state  # Old document checklists cannot enable approval on a read-only card.
     version_id = _editor_version_id(detail.get("versionId"))
     source_url = _official_url(detail.get("sourceUrl"))
     third_party_copy = detail.get("artifactKind") == "THIRD_PARTY_VERIFIED_COPY"
@@ -1177,7 +1143,9 @@ def render_editor_version_detail(
         ),
         "",
         (
-            "Подтверждение доступно после всех четырёх ручных проверок."
+            "Документ утверждён. Просмотр и скачивание доступны ниже."
+            if detail.get("approvalState") == "APPROVED"
+            else "После просмотра документов вернитесь к группе для общего подтверждения."
             if approval_eligible
             else "Эта версия не может быть одобрена через рабочее место."
         ),
@@ -1214,85 +1182,13 @@ def render_editor_version_detail(
                     "📑 Полные выдержки для проверки", callback_data=f"editor:excerpts:{version_id}"
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    _attestation_label(
-                        state,
-                        "source",
-                        (
-                            "Сверил копию с официальным текстом и редакцией"
-                            if third_party_copy
-                            else "Источник — официальная публикация"
-                        ),
-                    ),
-                    callback_data=f"editor:attest:{version_id}:source",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    _attestation_label(state, "artifact", "Исходный файл полный"),
-                    callback_data=f"editor:attest:{version_id}:artifact",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    _attestation_label(
-                        state,
-                        "dates",
-                        (
-                            "Актуальность копии с указанной даты подтверждена"
-                            if current_copy
-                            else "Даты действия проверены"
-                        ),
-                    ),
-                    callback_data=f"editor:attest:{version_id}:dates",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    _attestation_label(
-                        state,
-                        "fragments",
-                        (
-                            "Фрагменты проверены; ограничения извлечения понятны"
-                            if current_copy
-                            else "Фрагменты проверены"
-                        ),
-                    ),
-                    callback_data=f"editor:attest:{version_id}:fragments",
-                )
-            ],
         ]
     )
-    attestations = state.get("attestations")
-    if (
-        approval_eligible
-        and isinstance(attestations, dict)
-        and all(
-            attestations.get(key) is True for key in ("source", "artifact", "dates", "fragments")
-        )
-    ):
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    "✅ Одобрить версию", callback_data=f"editor:confirm:{version_id}"
-                )
-            ]
-        )
     buttons.append([InlineKeyboardButton("← К списку", callback_data="editor:open")])
     buttons.extend([list(row) for row in back_keyboard().inline_keyboard])
     if len("\n".join(lines)) > _MAX_MESSAGE:
-        buttons = [
-            row
-            for row in buttons
-            if not any(
-                isinstance(button.callback_data, str)
-                and button.callback_data.startswith("editor:confirm:")
-                for button in row
-            )
-        ]
         lines = [
-            "Все проверки не помещаются в карточку; одобрение через эту карточку заблокировано. "
+            "Все сведения не помещаются в карточку. "
             "Выгрузите полные выдержки: файл содержит все ограничения извлечения.",
         ]
     return _bounded_message("\n".join(lines)), InlineKeyboardMarkup(buttons)
@@ -1604,64 +1500,20 @@ async def _start_editor_material_delivery(
 async def _confirm_editor_approval(
     update: Update, context: ContextTypes.DEFAULT_TYPE, *, version_id: UUID
 ) -> None:
-    actor_id = gateway_bot._actor_id(update)
-    pending = _pending_editor_state(context)
-    if (
-        actor_id is None
-        or pending is None
-        or pending.get("versionId") != str(version_id)
-        or pending.get("confirmationEnabled") is not True
-    ):
-        await gateway_bot._reply(update, "⚠️ Откройте версию заново и подтвердите проверки.")
-        return
-    attestations = pending.get("attestations")
-    expected = pending.get("expected")
-    if (
-        not isinstance(attestations, dict)
-        or not isinstance(expected, dict)
-        or not all(
-            attestations.get(key) is True for key in ("source", "artifact", "dates", "fragments")
-        )
-    ):
-        await gateway_bot._reply(update, "⚠️ Подтвердите все четыре проверки перед одобрением.")
-        return
-    try:
-        idempotency_key = UUID(str(pending.get("idempotencyKey")))
-        request = {
-            **expected,
-            "sourceIsOfficial": pending.get("artifactKind") == "OFFICIAL_RAW",
-            "officialTextCompared": True,
-            "artifactIsComplete": True,
-            "effectiveDatesVerified": pending.get("dateBasis") != "LAWYER_CURRENT_COPY",
-            "fragmentsVerified": True,
-            "currentCopyConfirmed": pending.get("dateBasis") == "LAWYER_CURRENT_COPY",
-            "extractionLimitsUnderstood": pending.get("dateBasis") == "LAWYER_CURRENT_COPY",
-        }
-        client = LegalLibraryClient()
-        try:
-            result = await client.approve_editor_version(
-                actor_id,
-                version_id,
-                payload=request,
-                idempotency_key=idempotency_key,
-            )
-        finally:
-            await client.aclose()
-    except (LegalCoreApiError, ValueError) as exc:
-        code = exc.code if isinstance(exc, LegalCoreApiError) else type(exc).__name__
-        logger.warning("legal editor approval failed: %s", code)
-        await gateway_bot._reply(
-            update,
-            "⚠️ Версия не одобрена: она могла измениться или не пройти серверную проверку. "
-            "Откройте её заново.",
-        )
-        return
+    """Handle old Telegram buttons without submitting a per-document approval."""
+    del version_id
     if context.user_data is not None:
         context.user_data.pop(_EDITOR_PENDING_KEY, None)
     await _editor_reply(
         update,
-        f"✅ Версия одобрена. Время решения: {_bounded(result.get('approvedAt'), limit=32)}.",
-        back_keyboard(),
+        "Документы подтверждаются целой группой. Откройте группу, просмотрите документы "
+        "и нажмите её кнопку подтверждения.",
+        InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("← К группам", callback_data="editor:materials:1")],
+                *[list(row) for row in back_keyboard().inline_keyboard],
+            ]
+        ),
     )
 
 
@@ -1749,18 +1601,9 @@ async def legal_editor_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 page=int(raw_page),
             )
         elif callback_data.startswith("editor:attest:"):
-            _, _, raw_version_id, key = callback_data.split(":")
-            version_id = UUID(raw_version_id)
-            pending = _pending_editor_state(context)
-            if (
-                pending is None
-                or pending.get("versionId") != str(version_id)
-                or not isinstance(pending.get("attestations"), dict)
-            ):
-                await gateway_bot._reply(update, "⚠️ Откройте версию заново и повторите проверку.")
-            else:
-                pending["attestations"][key] = not bool(pending["attestations"].get(key))
-                await _show_editor_detail(update, context, version_id=version_id, reset=False)
+            await _confirm_editor_approval(
+                update, context, version_id=UUID(callback_data.split(":")[2])
+            )
         elif callback_data.startswith("editor:confirm:"):
             await _confirm_editor_approval(
                 update, context, version_id=UUID(callback_data.rsplit(":", 1)[1])
@@ -1883,8 +1726,7 @@ async def _show_group_approval(
             for page in range(1, max(1, (len(ids) + 9) // 10) + 1)
         ]
         confirmation_enabled = all(
-            not page_text.startswith("Список проверок не помещается")
-            for page_text, _ in pages
+            not page_text.startswith("Список проверок не помещается") for page_text, _ in pages
         ) and any(
             button.callback_data == f"editor:batchconfirm:{batch_id}"
             for row in pages[-1][1].inline_keyboard
