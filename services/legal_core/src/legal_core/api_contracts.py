@@ -369,10 +369,14 @@ class LegalFragmentResponse(ContractModel):
     source_url: str = Field(alias="sourceUrl")
     raw_sha256: str = Field(alias="rawSha256")
     document_title: str = Field(alias="documentTitle")
-    issuer: str
+    issuer: str | None
     official_number: str | None = Field(alias="officialNumber")
     version_date: date | None = Field(alias="versionDate")
     publication_date: date | None = Field(alias="publicationDate")
+    date_basis: Literal["DATED_EDITION", "LAWYER_CURRENT_COPY"] = Field(
+        default="DATED_EDITION", alias="dateBasis"
+    )
+    extraction_limitations: list[str] = Field(default_factory=list, alias="extractionLimitations")
 
 
 class LegalFragmentSearchResponse(ContractModel):
@@ -385,13 +389,17 @@ class LegalLibraryDocumentResponse(ContractModel):
     document_id: UUID = Field(alias="documentId")
     version_id: UUID = Field(alias="versionId")
     document_title: str = Field(alias="documentTitle", min_length=1, max_length=1_000)
-    issuer: str = Field(min_length=1, max_length=240)
+    issuer: str | None = Field(min_length=1, max_length=240)
     official_number: str | None = Field(default=None, alias="officialNumber", max_length=80)
     effective_from: date = Field(alias="effectiveFrom")
     effective_to: date | None = Field(default=None, alias="effectiveTo")
     source_url: str = Field(alias="sourceUrl", min_length=1, max_length=2_000)
     raw_sha256: str = Field(alias="rawSha256", pattern=r"^[0-9a-f]{64}$")
     fragment_count: int = Field(alias="fragmentCount", ge=1, le=10_000)
+    date_basis: Literal["DATED_EDITION", "LAWYER_CURRENT_COPY"] = Field(
+        default="DATED_EDITION", alias="dateBasis"
+    )
+    extraction_limitations: list[str] = Field(default_factory=list, alias="extractionLimitations")
 
 
 class LegalLibraryResponse(ContractModel):
@@ -407,7 +415,7 @@ class PlatformLegalReviewQueueItem(ContractModel):
     document_id: UUID = Field(alias="documentId")
     version_id: UUID = Field(alias="versionId")
     document_title: str = Field(alias="documentTitle", min_length=1, max_length=2_000)
-    issuer: str = Field(min_length=1, max_length=240)
+    issuer: str | None = Field(min_length=1, max_length=240)
     official_number: str | None = Field(default=None, alias="officialNumber", max_length=80)
     approval_state: Literal["REVIEW_REQUIRED", "APPROVED", "BLOCKED"] = Field(alias="approvalState")
     effective_from: date = Field(alias="effectiveFrom")
@@ -547,7 +555,7 @@ class LegalEditorVersionDetail(ContractModel):
     document_id: UUID = Field(alias="documentId")
     version_id: UUID = Field(alias="versionId")
     document_title: str = Field(alias="documentTitle", min_length=1, max_length=2_000)
-    issuer: str = Field(min_length=1, max_length=240)
+    issuer: str | None = Field(min_length=1, max_length=240)
     official_number: str | None = Field(default=None, alias="officialNumber", max_length=80)
     source_url: str = Field(alias="sourceUrl", min_length=8, max_length=2_000)
     approval_state: Literal["REVIEW_REQUIRED", "APPROVED", "BLOCKED"] = Field(alias="approvalState")
@@ -565,6 +573,12 @@ class LegalEditorVersionDetail(ContractModel):
     fragments_sha256: str = Field(alias="fragmentsSha256", pattern=r"^[0-9a-f]{64}$")
     fragment_count: int = Field(alias="fragmentCount", ge=0, le=10_000)
     approval_eligible: bool = Field(alias="approvalEligible")
+    date_basis: Literal["DATED_EDITION", "LAWYER_CURRENT_COPY"] = Field(
+        default="DATED_EDITION", alias="dateBasis"
+    )
+    extraction_limitations: list[str] = Field(default_factory=list, alias="extractionLimitations")
+    publication_date: date | None = Field(default=None, alias="publicationDate")
+    version_date: date | None = Field(default=None, alias="versionDate")
 
 
 class LegalEditorFragment(ContractModel):
@@ -595,8 +609,18 @@ class LegalEditorApprovalRequest(ContractModel):
     source_is_official: bool = Field(alias="sourceIsOfficial")
     official_text_compared: Literal[True] = Field(alias="officialTextCompared")
     artifact_is_complete: Literal[True] = Field(alias="artifactIsComplete")
-    effective_dates_verified: Literal[True] = Field(alias="effectiveDatesVerified")
+    effective_dates_verified: bool = Field(alias="effectiveDatesVerified")
     fragments_verified: Literal[True] = Field(alias="fragmentsVerified")
+    current_copy_confirmed: bool = Field(default=False, alias="currentCopyConfirmed")
+    extraction_limits_understood: bool = Field(default=False, alias="extractionLimitsUnderstood")
+
+    @model_validator(mode="after")
+    def require_date_or_current_copy_checks(self) -> "LegalEditorApprovalRequest":
+        if not self.effective_dates_verified and not (
+            self.current_copy_confirmed and self.extraction_limits_understood
+        ):
+            raise ValueError("explicit date or current-copy review is required")
+        return self
 
 
 class LegalEditorApprovalResponse(ContractModel):
@@ -610,6 +634,11 @@ class LegalGroupCandidate(ContractModel):
     title: str = Field(max_length=2_000)
     effective_from: date = Field(alias="effectiveFrom")
     effective_to: date | None = Field(alias="effectiveTo")
+    date_basis: Literal["DATED_EDITION", "LAWYER_CURRENT_COPY"] = Field(
+        default="DATED_EDITION", alias="dateBasis"
+    )
+    extraction_limitations: list[str] = Field(default_factory=list, alias="extractionLimitations")
+    missing_metadata: list[str] = Field(default_factory=list, alias="missingMetadata")
 
 
 class LegalGroupBlocked(ContractModel):
@@ -630,8 +659,18 @@ class LegalGroupApprovalRequest(ContractModel):
     version_ids: list[UUID] = Field(alias="versionIds", min_length=1, max_length=200)
     official_text_compared: Literal[True] = Field(alias="officialTextCompared")
     artifact_is_complete: Literal[True] = Field(alias="artifactIsComplete")
-    effective_dates_verified: Literal[True] = Field(alias="effectiveDatesVerified")
+    effective_dates_verified: bool = Field(alias="effectiveDatesVerified")
     fragments_verified: Literal[True] = Field(alias="fragmentsVerified")
+    current_copy_confirmed: bool = Field(default=False, alias="currentCopyConfirmed")
+    extraction_limits_understood: bool = Field(default=False, alias="extractionLimitsUnderstood")
+
+    @model_validator(mode="after")
+    def require_date_or_current_copy_checks(self) -> "LegalGroupApprovalRequest":
+        if not self.effective_dates_verified and not (
+            self.current_copy_confirmed and self.extraction_limits_understood
+        ):
+            raise ValueError("explicit date or current-copy review is required")
+        return self
 
 
 class LegalGroupApprovalResponse(ContractModel):
@@ -754,8 +793,7 @@ class FactInput(ContractModel):
             if not isinstance(items, list) or not 1 <= len(items) <= 5:
                 raise ValueError(f"{self.fact_key.value} requires one to five text items")
             if any(
-                not isinstance(item, str) or not 2 <= len(item.strip()) <= 120
-                for item in items
+                not isinstance(item, str) or not 2 <= len(item.strip()) <= 120 for item in items
             ):
                 raise ValueError(f"{self.fact_key.value} contains an invalid text item")
             if len(items) != len(set(items)):

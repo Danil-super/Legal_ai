@@ -175,6 +175,8 @@ def _source_cards(
             structuralPath=fragment.structural_path,
             effectiveFrom=fragment.effective_from,
             effectiveTo=fragment.effective_to,
+            dateBasis=fragment.date_basis,
+            extractionLimitations=fragment.extraction_limitations,
             sourceUrl=fragment.source_url,
             textSha256=fragment.text_sha256,
             rawSha256=fragment.raw_sha256,
@@ -253,9 +255,7 @@ def build_analysis_report(
         if actions
         else Recommendations(
             status="AVAILABLE",
-            items=[
-                "Передайте карточку ответственному сотруднику для внутренней проверки."
-            ],
+            items=["Передайте карточку ответственному сотруднику для внутренней проверки."],
         )
     )
     escalation_required = risk.level in {RiskLevel.HIGH, RiskLevel.CRITICAL}
@@ -427,9 +427,11 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
                 )
                 story.append(Paragraph(f"Основание: {citations}.", muted))
         else:
-            story.append(Paragraph(
-                "Отдельные проверенные юридические выводы в этом отчёте не сохранены.", body
-            ))
+            story.append(
+                Paragraph(
+                    "Отдельные проверенные юридические выводы в этом отчёте не сохранены.", body
+                )
+            )
 
         story.append(Paragraph("Рекомендованные действия", heading))
         for recommendation_item in report.recommendations.items:
@@ -451,20 +453,33 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
 
         story.append(Paragraph("Правовая основа", heading))
         for source_index, legal_source in enumerate(report.legal_basis.sources, start=1):
+            applicability_label = (
+                "проверенная применимость начиная с даты"
+                if legal_source.date_basis == "LAWYER_CURRENT_COPY"
+                else "действует с"
+            )
             number = (
-                f" № {escape(legal_source.official_number)}"
-                if legal_source.official_number
-                else ""
+                f" № {escape(legal_source.official_number)}" if legal_source.official_number else ""
             )
             story.append(
                 Paragraph(
                     f"[{source_index}] {escape(legal_source.document_title)}{number}; "
-                    f"{escape(legal_source.structural_path)}; действует с "
+                    f"{escape(legal_source.structural_path)}; {applicability_label} "
                     f"{legal_source.effective_from.isoformat()}.<br/>"
                     f"Источник: {escape(legal_source.source_url)}",
                     body,
                 )
             )
+            if legal_source.date_basis == "LAWYER_CURRENT_COPY":
+                story.append(
+                    Paragraph(
+                        "Дата редакции и публикации не установлена; более ранняя "
+                        "применимость этой копии не подтверждена.",
+                        muted,
+                    )
+                )
+                for limitation in legal_source.extraction_limitations:
+                    story.append(Paragraph(escape(limitation), muted))
 
         if report.clinic_documents.status == "USED":
             story.append(Paragraph("Документы клиники — внутренний контекст", heading))
@@ -531,18 +546,14 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
     # ReportLab 5 still varies only the trailer document ID between identical renders.
     # Replacing the fixed-width ID with the canonical report digest keeps the file byte-stable
     # without changing offsets or rendered content.
-    document_id = hashlib.sha256(
-        _canonical_json(report.model_dump(mode="json", by_alias=True))
-    ).hexdigest()[:32].encode()
+    document_id = (
+        hashlib.sha256(_canonical_json(report.model_dump(mode="json", by_alias=True)))
+        .hexdigest()[:32]
+        .encode()
+    )
     return re.sub(
         rb"(/ID\s*\[<)[0-9A-Fa-f]{32}(><)[0-9A-Fa-f]{32}(>\])",
-        lambda match: (
-            match.group(1)
-            + document_id
-            + match.group(2)
-            + document_id
-            + match.group(3)
-        ),
+        lambda match: match.group(1) + document_id + match.group(2) + document_id + match.group(3),
         rendered,
         count=1,
     )

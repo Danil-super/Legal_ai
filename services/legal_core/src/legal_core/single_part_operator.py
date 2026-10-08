@@ -96,15 +96,22 @@ def _read_part_package(path: Path, *, require_single: bool) -> SinglePartPackage
         or corpus.allowed_hosts != ["internet.garant.ru"]
     ):
         raise ValueError("Garant source revision or profile differs from the pilot contract")
-    if corpus.manifest_version != "dental-legal-corpus.v4" or (
+    current_copy = corpus.manifest_version == "dental-legal-corpus.v5" and not require_single
+    if (not current_copy and corpus.manifest_version != "dental-legal-corpus.v4") or (
         corpus.artifact_mime_type != "application/rtf" or corpus.artifact_path is None
     ):
         raise ValueError("one-part pilot requires a v4 Garant RTF artifact")
     raw_bytes = _read_regular(root, corpus.artifact_path, 50_000_000)
     validate_artifact_bytes(corpus, raw_bytes)
     prepared = request.preparation
-    if prepared.kind != "NORMATIVE" or prepared.extraction_scope != "FULL_DOCUMENT" or (
-        not prepared.parts or prepared.limitations
+    if (
+        prepared.kind != "NORMATIVE"
+        or prepared.extraction_scope != ("PARTIAL" if current_copy else "FULL_DOCUMENT")
+        or (
+            not prepared.parts
+            or (not current_copy and prepared.limitations)
+            or (current_copy and prepared.limitations != corpus.extraction_limitations)
+        )
     ):
         raise ValueError("part operation requires a complete normative preparation")
     if require_single and len(prepared.parts) != 1:
@@ -132,41 +139,74 @@ def _read_part_package(path: Path, *, require_single: bool) -> SinglePartPackage
         raise ValueError("part keys differ from the P8 original parser")
     parsed = candidate.parts[prepared.parts.index(part)]
     if (len(prepared.parts) == 1 and part.title != parsed.title) or (
-        part.text_start != parsed.text_start or part.text_end != parsed.text_end
+        part.text_start != parsed.text_start
+        or part.text_end != parsed.text_end
         or part.text_sha256 != parsed.text_sha256
         or (parsed.document_type is not None and part.document_type != parsed.document_type)
         or (parsed.issuer is not None and part.issuer != parsed.issuer)
-        or (parsed.official_number is not None
-            and part.official_number != parsed.official_number)
-        or (parsed.adoption_date_candidate is not None
-            and part.adoption_date != parsed.adoption_date_candidate)
+        or (parsed.official_number is not None and part.official_number != parsed.official_number)
+        or (
+            parsed.adoption_date_candidate is not None
+            and part.adoption_date != parsed.adoption_date_candidate
+        )
     ):
         raise ValueError("part identity or text scope differs from the P8 parser")
-    required = (
-        "title", "canonical_key", "document_type", "issuer", "official_number",
-        "adoption_date", "publication_date", "version_date", "effective_from",
+    required: tuple[str, ...] = (
+        "title",
+        "canonical_key",
+        "document_type",
+        "issuer",
+        "official_number",
+        "adoption_date",
+        "publication_date",
+        "version_date",
+        "effective_from",
     )
-    if any(getattr(part, field) is None or not part.evidence.get(field, "").strip()
-           for field in required):
+    if current_copy:
+        required = ("title", "canonical_key", "document_type", "adoption_date", "copy_valid_from")
+    if any(
+        getattr(part, field) is None or not part.evidence.get(field, "").strip()
+        for field in required
+    ):
         raise ValueError("part identity or dates lack field-by-field evidence")
-    if (corpus.document_key, corpus.document_type, corpus.title, corpus.issuer,
-        corpus.official_number, corpus.adoption_date, corpus.publication_date,
-        corpus.version_date, corpus.effective_from, corpus.effective_to) != (
-        part.canonical_key, part.document_type, part.title, part.issuer,
-        part.official_number, part.adoption_date, part.publication_date,
-        part.version_date, part.effective_from, part.effective_to,
+    if (
+        corpus.document_key,
+        corpus.document_type,
+        corpus.title,
+        corpus.issuer,
+        corpus.official_number,
+        corpus.adoption_date,
+        corpus.publication_date,
+        corpus.version_date,
+        corpus.effective_from,
+        corpus.effective_to,
+    ) != (
+        part.canonical_key,
+        part.document_type,
+        part.title,
+        part.issuer,
+        part.official_number,
+        part.adoption_date,
+        part.publication_date,
+        part.version_date,
+        part.copy_valid_from if current_copy else part.effective_from,
+        part.effective_to,
     ) or (
         corpus.source_external_id != request.source_url.rsplit("/", 2)[-2]
-        or corpus.normalized_text != prepared.normalized_text[part.text_start:part.text_end]
+        or corpus.normalized_text != prepared.normalized_text[part.text_start : part.text_end]
         or corpus.normalized_sha256 != part.text_sha256
         or corpus.parser_version != prepared.parser_version
+        or corpus.date_basis != part.date_basis
     ):
         raise ValueError("corpus manifest differs from evidenced prepared part")
     return SinglePartPackage(request, prepared, corpus, raw_bytes)
 
 
 async def run_single_part_package(
-    factory: async_sessionmaker[AsyncSession], path: Path, *, commit: bool = False,
+    factory: async_sessionmaker[AsyncSession],
+    path: Path,
+    *,
+    commit: bool = False,
 ) -> SinglePartResult:
     """Create preparation, version and exact binding atomically, or roll all back."""
     package = read_single_part_package(path)
@@ -181,12 +221,12 @@ async def run_single_part_package(
         )
         if preparation.revision != latest_revision:
             raise ValueError("newer preparation revision supersedes this operator manifest")
-        version_id = await ingest_manifest_in_session(
-            session, package.corpus, package.raw_bytes
-        )
+        version_id = await ingest_manifest_in_session(session, package.corpus, package.raw_bytes)
         binding = await bind_prepared_part(
-            session, preparation_id=preparation.id,
-            part_key=package.request.part_key, legal_version_id=version_id,
+            session,
+            preparation_id=preparation.id,
+            part_key=package.request.part_key,
+            legal_version_id=version_id,
             actor_user_id=package.request.actor_user_id,
         )
         result = SinglePartResult(preparation.id, version_id, binding.id, commit)
@@ -198,9 +238,7 @@ async def run_single_part_package(
 async def _run(path: Path, commit: bool) -> None:
     engine = create_engine()
     try:
-        result = await run_single_part_package(
-            create_session_factory(engine), path, commit=commit
-        )
+        result = await run_single_part_package(create_session_factory(engine), path, commit=commit)
     finally:
         await engine.dispose()
     state = "committed" if result.committed else "dry-run rolled back"

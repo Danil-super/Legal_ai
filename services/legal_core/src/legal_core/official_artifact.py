@@ -152,9 +152,7 @@ def inspect_pdf(path: Path) -> PdfSnapshot:
         raise ValueError("pdfinfo did not report a page count")
     if encrypted_match is not None and encrypted_match.group(1).lower() != "no":
         raise ValueError("encrypted official artifacts are not supported")
-    extracted = _run_tool(
-        ["pdftotext", "-enc", "UTF-8", "-nopgbrk", str(path), "-"]
-    ).stdout
+    extracted = _run_tool(["pdftotext", "-enc", "UTF-8", "-nopgbrk", str(path), "-"]).stdout
     normalized = normalize_pdf_text(extracted)
     if len(normalized) < 500:
         normalized = normalize_pdf_text(_ocr_pdf(path))
@@ -183,7 +181,7 @@ def _validate_profile(
     actual = (
         base.official_number,
         base.adoption_date.isoformat(),
-        base.publication_date.isoformat(),
+        base.publication_date.isoformat() if base.publication_date else None,
         base.effective_from.isoformat(),
         base.effective_to.isoformat() if base.effective_to else None,
     )
@@ -262,7 +260,7 @@ def prepare_official_manifest(
         raise ValueError("official PDF size is outside the allowed range")
 
     base = load_manifest(base_manifest_path)
-    profile = OFFICIAL_PROFILES.get(base.official_number)
+    profile = OFFICIAL_PROFILES.get(base.official_number or "")
     if profile is None:
         raise ValueError("no official artifact profile exists for this document")
     digest = hashlib.sha256(raw).hexdigest()

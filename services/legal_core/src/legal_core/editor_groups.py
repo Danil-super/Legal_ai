@@ -4,7 +4,20 @@ from collections.abc import Mapping, Sequence
 from datetime import date
 from typing import Any
 
-from sqlalchemy import String, Uuid, case, cast, exists, func, literal, null, or_, select, union_all
+from sqlalchemy import (
+    String,
+    Uuid,
+    and_,
+    case,
+    cast,
+    exists,
+    func,
+    literal,
+    null,
+    or_,
+    select,
+    union_all,
+)
 from sqlalchemy.sql.selectable import Subquery
 
 from legal_core.models import (
@@ -18,6 +31,17 @@ from legal_core.models import (
 from legal_core.review_material_groups import GROUP_TITLES, review_group_expression
 
 EDITOR_GROUP_TITLES = {key: title for key, title in GROUP_TITLES.items() if key != "other"}
+
+# Exact UI aliases for the six pilot acts already represented in the supplied
+# package. This is not fuzzy legal-identity matching, deletion or legal approval.
+LEGACY_EDITOR_COPY_ALIASES = {
+    "ru-government-decree-659-2026": "garant-414322049-document",
+    "ru-civil-code-part-ii-2026-06-09": "garant-10164072-part-2",
+    "ru-consumer-protection-law-2026-04-01": "garant-10106035-document",
+    "ru-federal-law-152-fz-2026-07-26": "garant-12148567-document",
+    "ru-federal-law-323-fz-2026-08-04": "garant-12191967-document",
+    "ru-minzdrav-order-1051n-2022": "garant-403111701-document",
+}
 
 
 def current_preparations() -> Subquery:
@@ -55,6 +79,8 @@ def editor_group_items() -> Subquery:
             LegalVersion.approval_state,
             LegalDocument.title,
             LegalDocument.official_number,
+            LegalDocument.canonical_key,
+            LegalDocument.adoption_date,
         )
         .join(LegalDocument, LegalDocument.id == LegalVersion.document_id)
         .join(ranked, ranked.c.id == LegalVersion.id)
@@ -74,8 +100,10 @@ def editor_group_items() -> Subquery:
     )
     preparations = current_preparations()
     expected_parts = case(
-        (preparations.c.kind == "NORMATIVE",
-         func.coalesce(func.jsonb_array_length(preparations.c.metadata_json["parts"]), 0)),
+        (
+            preparations.c.kind == "NORMATIVE",
+            func.coalesce(func.jsonb_array_length(preparations.c.metadata_json["parts"]), 0),
+        ),
         else_=0,
     )
     bindings = (
@@ -98,6 +126,25 @@ def editor_group_items() -> Subquery:
         .subquery("current_bound_counts")
     )
     linked_parts = func.coalesce(current_bound_counts.c.linked_parts, 0)
+    replacement = versions.alias("editor_replacement_version")
+    replacement_binding = bindings.alias("editor_replacement_binding")
+    has_exact_replacement = exists(
+        select(replacement.c.id)
+        .join(replacement_binding, replacement_binding.c.legal_version_id == replacement.c.id)
+        .where(
+            versions.c.adoption_date.is_not(None),
+            replacement.c.adoption_date == versions.c.adoption_date,
+            or_(
+                *[
+                    and_(
+                        versions.c.canonical_key == old_key, replacement.c.canonical_key == new_key
+                    )
+                    for old_key, new_key in LEGACY_EDITOR_COPY_ALIASES.items()
+                ]
+            ),
+        )
+        .correlate(versions)
+    )
     originals = (
         select(
             LegalReviewMaterial.id.label("material_id"),
@@ -117,13 +164,14 @@ def editor_group_items() -> Subquery:
             linked_parts.label("linked_parts"),
             cast(null(), String(120)).label("part_key"),
             literal("ORIGINAL").label("link_state"),
-            exists(select(LegalReferenceReviewEvent.id).where(
-                LegalReferenceReviewEvent.preparation_id == preparations.c.id
-            )).label("reference_reviewed"),
+            exists(
+                select(LegalReferenceReviewEvent.id).where(
+                    LegalReferenceReviewEvent.preparation_id == preparations.c.id
+                )
+            ).label("reference_reviewed"),
         )
         .outerjoin(preparations, preparations.c.material_id == LegalReviewMaterial.id)
-        .outerjoin(current_bound_counts,
-                   current_bound_counts.c.preparation_id == preparations.c.id)
+        .outerjoin(current_bound_counts, current_bound_counts.c.preparation_id == preparations.c.id)
         .where(
             or_(
                 preparations.c.kind != "NORMATIVE",
@@ -133,31 +181,33 @@ def editor_group_items() -> Subquery:
             )
         )
     )
-    prepared = (select(
-        bindings.c.material_id.label("material_id"),
-        versions.c.id.label("version_id"),
-        versions.c.title,
-        literal("LEGAL_COPY").label("kind"),
-        versions.c.approval_state.label("review_state"),
-        func.coalesce(
-            preparations.c.group_key,
-            case((version_group == "other", "general"), else_=version_group),
-        ).label("group_key"),
-        versions.c.raw_sha256,
-        preparations.c.id.label("preparation_id"),
-        preparations.c.kind.label("preparation_kind"),
-        preparations.c.preparation_sha256,
-        expected_parts.label("expected_parts"),
-        linked_parts.label("linked_parts"),
-        bindings.c.part_key,
-        case((bindings.c.material_id.is_not(None), "EXACT_ORIGINAL"),
-             else_="UNLINKED_VERSION").label("link_state"),
-        literal(False).label("reference_reviewed"),
-    )
+    prepared = (
+        select(
+            bindings.c.material_id.label("material_id"),
+            versions.c.id.label("version_id"),
+            versions.c.title,
+            literal("LEGAL_COPY").label("kind"),
+            versions.c.approval_state.label("review_state"),
+            func.coalesce(
+                preparations.c.group_key,
+                case((version_group == "other", "general"), else_=version_group),
+            ).label("group_key"),
+            versions.c.raw_sha256,
+            preparations.c.id.label("preparation_id"),
+            preparations.c.kind.label("preparation_kind"),
+            preparations.c.preparation_sha256,
+            expected_parts.label("expected_parts"),
+            linked_parts.label("linked_parts"),
+            bindings.c.part_key,
+            case(
+                (bindings.c.material_id.is_not(None), "EXACT_ORIGINAL"), else_="UNLINKED_VERSION"
+            ).label("link_state"),
+            literal(False).label("reference_reviewed"),
+        )
         .outerjoin(bindings, bindings.c.legal_version_id == versions.c.id)
         .outerjoin(preparations, preparations.c.id == bindings.c.preparation_id)
-        .outerjoin(current_bound_counts,
-                   current_bound_counts.c.preparation_id == preparations.c.id)
+        .outerjoin(current_bound_counts, current_bound_counts.c.preparation_id == preparations.c.id)
+        .where(or_(bindings.c.material_id.is_not(None), ~has_exact_replacement))
     )
     return union_all(originals, prepared).subquery("editor_group_items")
 
@@ -190,6 +240,8 @@ def group_progress(rows: Sequence[Mapping[Any, Any]]) -> dict[str, int | bool]:
         "missingParts": missing_parts,
         "unpreparedOriginals": unprepared,
         "unlinkedVersions": unlinked,
-        "complete": bool(rows) and not (missing_parts or unprepared or unlinked)
-        and approved == len(legal_versions) and reviewed_references == references,
+        "complete": bool(rows)
+        and not (missing_parts or unprepared or unlinked)
+        and approved == len(legal_versions)
+        and reviewed_references == references,
     }

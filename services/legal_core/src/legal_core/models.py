@@ -947,8 +947,10 @@ class LegalMaterialPreparation(Base):
         UniqueConstraint("material_id", "preparation_sha256"),
         CheckConstraint("revision > 0"),
         CheckConstraint("kind IN ('NORMATIVE', 'CLINICAL_REFERENCE', 'REFERENCE_FORM')"),
-        CheckConstraint("group_key IN ('clinical','labour','courts','privacy',"
-                        "'licensing','healthcare','general')"),
+        CheckConstraint(
+            "group_key IN ('clinical','labour','courts','privacy',"
+            "'licensing','healthcare','general')"
+        ),
         CheckConstraint("preparation_sha256 = legal_regression_result_sha256(metadata_json)"),
         CheckConstraint(
             "(metadata_json->>'normalized_sha256' IS NULL AND normalized_text = '') OR "
@@ -958,8 +960,9 @@ class LegalMaterialPreparation(Base):
         ),
     )
 
-    id: Mapped[UUID] = mapped_column(UUID_PK, primary_key=True,
-                                   server_default=text("gen_random_uuid()"))
+    id: Mapped[UUID] = mapped_column(
+        UUID_PK, primary_key=True, server_default=text("gen_random_uuid()")
+    )
     material_id: Mapped[UUID] = mapped_column(UUID_PK)
     raw_sha256: Mapped[str] = mapped_column(String(64))
     revision: Mapped[int] = mapped_column(Integer)
@@ -1045,7 +1048,7 @@ class LegalDocument(Base):
     jurisdiction: Mapped[str] = mapped_column(String(8), server_default="RU")
     document_type: Mapped[str] = mapped_column(String(50))
     title: Mapped[str] = mapped_column(Text)
-    issuer: Mapped[str] = mapped_column(String(240))
+    issuer: Mapped[str | None] = mapped_column(String(240))
     official_number: Mapped[str | None] = mapped_column(String(80))
     adoption_date: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
@@ -1079,16 +1082,31 @@ class LegalVersion(Base):
             name="ck_legal_versions_normalized_sha256",
         ),
         CheckConstraint(
-            "normalization_scope IN ('SELECTED_EXCERPT', 'FULL_DOCUMENT')",
+            "normalization_scope IN ('SELECTED_EXCERPT', 'FULL_DOCUMENT', 'TEXT_LAYER')",
             name="ck_legal_versions_normalization_scope",
         ),
         CheckConstraint(
             "artifact_kind NOT IN ('OFFICIAL_RAW', 'THIRD_PARTY_VERIFIED_COPY') OR "
-            "(artifact_retrieved_at IS NOT NULL AND normalization_scope = 'FULL_DOCUMENT' "
+            "(artifact_retrieved_at IS NOT NULL AND (normalization_scope = 'FULL_DOCUMENT' "
+            "OR (normalization_scope = 'TEXT_LAYER' AND date_basis = 'LAWYER_CURRENT_COPY')) "
             "AND (raw_mime_type <> 'application/pdf' OR artifact_page_count IS NOT NULL))",
             name="ck_legal_versions_reviewable_metadata",
         ),
         Index("ix_legal_versions_resolution", "document_id", "approval_state", "effective_from"),
+        CheckConstraint(
+            "date_basis IN ('DATED_EDITION', 'LAWYER_CURRENT_COPY')",
+            name="ck_legal_versions_date_basis",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(extraction_limitations) = 'array'",
+            name="ck_legal_versions_extraction_limitations",
+        ),
+        CheckConstraint(
+            "date_basis <> 'LAWYER_CURRENT_COPY' OR "
+            "(artifact_kind = 'THIRD_PARTY_VERIFIED_COPY' AND normalization_scope = 'TEXT_LAYER' "
+            "AND jsonb_array_length(extraction_limitations) > 0)",
+            name="ck_legal_versions_current_copy",
+        ),
         Index(
             "uq_legal_versions_approved_raw",
             "document_id",
@@ -1123,6 +1141,10 @@ class LegalVersion(Base):
     fragments_sha256: Mapped[str] = mapped_column(String(64))
     normalization_scope: Mapped[str] = mapped_column(String(30))
     parser_version: Mapped[str] = mapped_column(String(80))
+    date_basis: Mapped[str] = mapped_column(String(30), server_default="DATED_EDITION")
+    extraction_limitations: Mapped[list[str]] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
     regression_passed: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_by: Mapped[UUID | None] = mapped_column(UUID_PK, ForeignKey("users.id"))

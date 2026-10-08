@@ -24,6 +24,12 @@ class EvidenceItem(StrictModel):
     effective_from: date = Field(alias="effectiveFrom")
     effective_to: date | None = Field(default=None, alias="effectiveTo")
     source_url: str = Field(alias="sourceUrl", min_length=1, max_length=2_000)
+    date_basis: Literal["DATED_EDITION", "LAWYER_CURRENT_COPY"] = Field(
+        default="DATED_EDITION", alias="dateBasis"
+    )
+    extraction_limitations: list[str] = Field(
+        default_factory=list, alias="extractionLimitations", max_length=40
+    )
 
 
 class ClinicDocumentContextItem(StrictModel):

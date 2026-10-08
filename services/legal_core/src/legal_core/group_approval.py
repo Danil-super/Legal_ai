@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, Literal, cast
 from uuid import UUID, uuid5
 
 from sqlalchemy import func, select
@@ -22,8 +22,9 @@ from legal_core.legal_approval import (
     LegalApprovalRejected,
     approve_legal_version_in_session,
     legal_approval_preflight_reason,
+    potential_approval_attestation,
 )
-from legal_core.models import LegalApprovalEvent, LegalSource, LegalVersion, User
+from legal_core.models import LegalApprovalEvent, LegalDocument, LegalSource, LegalVersion, User
 from legal_core.review_material_groups import ReviewGroup
 
 
@@ -38,20 +39,7 @@ def _digest(value: Any) -> str:
 def _attestation(version: LegalVersion, actor: int) -> ApprovalAttestation:
     # A read-only preflight uses these checks without recording a human decision.
     # The write path may call this only after validating all explicit declarations.
-    return ApprovalAttestation(
-        reviewer_telegram_user_id=actor,
-        version_id=version.id,
-        expected_sha256=version.raw_sha256,
-        expected_normalized_sha256=version.normalized_sha256,
-        expected_fragments_sha256=version.fragments_sha256,
-        expected_effective_from=version.effective_from,
-        expected_effective_to=version.effective_to,
-        source_is_official=version.artifact_kind == "OFFICIAL_RAW",
-        official_text_compared=True,
-        artifact_is_complete=True,
-        effective_dates_verified=True,
-        fragments_verified=True,
-    )
+    return potential_approval_attestation(version, actor)
 
 
 async def group_preview(session: AsyncSession, group: ReviewGroup) -> LegalGroupPreview:
@@ -87,6 +75,8 @@ async def group_preview(session: AsyncSession, group: ReviewGroup) -> LegalGroup
                 raise ApiError(status_code=409, code="LEGAL_GROUP_CHANGED", message="Group changed")
             attestation = _attestation(version, 1)
             fingerprint["version"] = attestation.model_dump(mode="json")
+            fingerprint["dateBasis"] = version.date_basis
+            fingerprint["extractionLimitations"] = version.extraction_limitations
             if version.approval_state == "APPROVED":
                 approved += 1
                 identity.append(fingerprint)
@@ -105,12 +95,27 @@ async def group_preview(session: AsyncSession, group: ReviewGroup) -> LegalGroup
                     session, version, source, attestation
                 )
             if reason is None:
+                document = await session.get(LegalDocument, version.document_id)
                 ready.append(
                     LegalGroupCandidate(
                         versionId=version.id,
                         title=row["title"],
                         effectiveFrom=version.effective_from,
                         effectiveTo=version.effective_to,
+                        dateBasis=cast(
+                            Literal["DATED_EDITION", "LAWYER_CURRENT_COPY"], version.date_basis
+                        ),
+                        extractionLimitations=version.extraction_limitations,
+                        missingMetadata=[
+                            name
+                            for name, value in (
+                                ("issuer", document.issuer if document else None),
+                                ("officialNumber", document.official_number if document else None),
+                                ("publicationDate", version.publication_date),
+                                ("versionDate", version.version_date),
+                            )
+                            if value is None
+                        ],
                     )
                 )
         fingerprint["reason"] = reason
@@ -185,6 +190,11 @@ async def approve_group(
             version = await session.get(LegalVersion, version_id)
             if version is None:
                 raise LookupError("version missing")
+            if version.date_basis == "LAWYER_CURRENT_COPY":
+                if not (payload.current_copy_confirmed and payload.extraction_limits_understood):
+                    raise LegalApprovalRejected("CURRENT_COPY_NOT_ATTESTED")
+            elif not payload.effective_dates_verified:
+                raise LegalApprovalRejected("EFFECTIVE_DATES_NOT_ATTESTED")
             await approve_legal_version_in_session(
                 session,
                 _attestation(version, editor.telegram_user_id),

@@ -464,12 +464,15 @@ def _artifact_suffix(mime_type: str) -> str:
     }[mime_type]
 
 
-def _applicability(effective_from: object, effective_to: object) -> str:
+def _applicability(
+    effective_from: object, effective_to: object, date_basis: object = "DATED_EDITION"
+) -> str:
     start = _bounded(effective_from, limit=10)
     end = _bounded(effective_to, limit=10)
+    label = "Проверенная применимость" if date_basis == "LAWYER_CURRENT_COPY" else "Действует"
     if end == "—":
-        return f"Действует: {start}"
-    return f"Действует: {start} — {end}"
+        return f"{label}: {start}"
+    return f"{label}: {start} — {end}"
 
 
 def _bounded_message(text: str) -> str:
@@ -520,7 +523,12 @@ def render_legal_library(payload: dict[str, Any]) -> tuple[str, InlineKeyboardMa
             [
                 f"• {title}",
                 f"  {issuer}" + (f" · № {official_number}" if official_number != "—" else ""),
-                f"  {_applicability(raw_item.get('effectiveFrom'), raw_item.get('effectiveTo'))}",
+                "  "
+                + _applicability(
+                    raw_item.get("effectiveFrom"),
+                    raw_item.get("effectiveTo"),
+                    raw_item.get("dateBasis"),
+                ),
                 f"  Фрагментов: {count_text} · SHA-256: {_short_sha(raw_item.get('rawSha256'))}",
                 "",
             ]
@@ -706,35 +714,49 @@ def render_editor_review_materials(
         if not isinstance(progress, dict) or type(progress.get("complete")) is not bool:
             raise ValueError("group progress")
         keys = (
-            "normativeVersions", "approvedNormativeVersions", "referenceMaterials",
-            "reviewedReferenceMaterials", "missingParts", "unpreparedOriginals",
+            "normativeVersions",
+            "approvedNormativeVersions",
+            "referenceMaterials",
+            "reviewedReferenceMaterials",
+            "missingParts",
+            "unpreparedOriginals",
             "unlinkedVersions",
         )
         if any(type(progress.get(key)) is not int or progress[key] < 0 for key in keys):
             raise ValueError("group progress counts")
-        lines.extend([
-            f"Нормы: утверждено {progress['approvedNormativeVersions']}/"
-            f"{progress['normativeVersions']}.",
-            f"Справочные: проверено {progress['reviewedReferenceMaterials']}/"
-            f"{progress['referenceMaterials']} (не правовое основание).",
-        ])
+        lines.extend(
+            [
+                f"Нормы: утверждено {progress['approvedNormativeVersions']}/"
+                f"{progress['normativeVersions']}.",
+                f"Справочные: проверено {progress['reviewedReferenceMaterials']}/"
+                f"{progress['referenceMaterials']} (не правовое основание).",
+            ]
+        )
         if progress["missingParts"]:
             count = progress["missingParts"]
-            lines.append("Не связана 1 часть документа." if count == 1
-                         else f"Частей документа без связи: {count}.")
+            lines.append(
+                "Не связана 1 часть документа."
+                if count == 1
+                else f"Частей документа без связи: {count}."
+            )
         if progress["unpreparedOriginals"]:
-            lines.append(f"Исходников без подготовленных реквизитов: "
-                         f"{progress['unpreparedOriginals']}.")
+            lines.append(
+                f"Исходников без подготовленных реквизитов: {progress['unpreparedOriginals']}."
+            )
         if progress["unlinkedVersions"]:
-            lines.append("Отдельных версий без подтверждённой связи с исходником: "
-                         f"{progress['unlinkedVersions']}. Возможны альтернативные копии.")
+            lines.append(
+                "Отдельных версий без подтверждённой связи с исходником: "
+                f"{progress['unlinkedVersions']}. Возможны альтернативные копии."
+            )
         lines.append("Группа проверена." if progress["complete"] else "Группа ещё не завершена.")
     else:
-        lines.extend([
-            "Новые материалы не одобрены и не участвуют в рекомендациях "
-            "до отдельного подтверждения.",
-            "Для неподготовленных документов требуются реквизиты и проверка.",
-        ])
+        lines.extend(
+            [
+                "Новые материалы не одобрены и не участвуют в рекомендациях "
+                "до отдельного подтверждения.",
+                "Для неподготовленных документов требуются реквизиты и проверка.",
+            ]
+        )
     lines.append("Откройте нужный материал кнопкой ниже.")
     for item in raw_items[:_MAX_DOCUMENTS]:
         if not isinstance(item, dict):
@@ -772,11 +794,13 @@ def render_editor_review_materials(
         )
         if item.get("versionId") and item.get("materialId"):
             original_id = _editor_version_id(item["materialId"])
-            buttons.append([
-                InlineKeyboardButton(
-                    "📎 Скачать исходный файл", callback_data=f"editor:material:{original_id}"
-                )
-            ])
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        "📎 Скачать исходный файл", callback_data=f"editor:material:{original_id}"
+                    )
+                ]
+            )
     if not raw_items:
         lines.append("В этой группе пока нет материалов.")
     buttons.extend(
@@ -833,16 +857,27 @@ def render_material_preparation(payload: dict[str, Any]) -> tuple[str, InlineKey
         parts = payload.get("parts", [])
         linked_keys = payload.get("linkedPartKeys", [])
         if (
-            not isinstance(parts, list) or len(parts) > 20 or not isinstance(linked_keys, list)
-            or any(not isinstance(part, dict) or not isinstance(part.get("part_key"), str)
-                   for part in parts)
-            or len(missing) > 161 or any(not isinstance(field, str) for field in missing)
+            not isinstance(parts, list)
+            or len(parts) > 20
+            or not isinstance(linked_keys, list)
+            or any(
+                not isinstance(part, dict) or not isinstance(part.get("part_key"), str)
+                for part in parts
+            )
+            or len(missing) > 161
+            or any(not isinstance(field, str) for field in missing)
         ):
             raise ValueError("preparation fields")
-        lines.extend(["", *preparation_requirements(
-            missing, [part["part_key"] for part in parts],
-            extraction_scope=payload.get("extractionScope"),
-        )])
+        lines.extend(
+            [
+                "",
+                *preparation_requirements(
+                    missing,
+                    [part["part_key"] for part in parts],
+                    extraction_scope=payload.get("extractionScope"),
+                ),
+            ]
+        )
     if limitations:
         lines.extend(["", "Ограничения извлечённого текста:"])
         lines.extend(f"• {_bounded(item, limit=250)}" for item in limitations[:6])
@@ -886,16 +921,37 @@ def render_group_approval_preview(
         f"Ранее утверждено: {preview.get('alreadyApproved', 0)}.",
         "",
     ]
-    if any(isinstance(item.get("reasonCode"), str)
-           and item["reasonCode"] in PREPARATION_REASON_CODES for item in blocked):
+    current_items = [item for item in ready if item.get("dateBasis") == "LAWYER_CURRENT_COPY"]
+    if current_items:
+        lines.extend(
+            [
+                "Копии проверяются на актуальность с указанных дат, не для более ранних событий.",
+                "Даты редакции и публикации не установлены. Другие неизвестные реквизиты "
+                "показаны в карточках и не выдумываются.",
+                *list(
+                    dict.fromkeys(
+                        value
+                        for item in current_items
+                        for value in item.get("extractionLimitations", [])
+                    )
+                ),
+                "",
+            ]
+        )
+    if any(
+        isinstance(item.get("reasonCode"), str) and item["reasonCode"] in PREPARATION_REASON_CODES
+        for item in blocked
+    ):
         lines.extend([PREPARATION_NEXT_STEP, ""])
     for item in ready[(page - 1) * 10 : page * 10]:
         effective_to = (
             _bounded(item.get("effectiveTo"), limit=10) if item.get("effectiveTo") else "—"
         )
+        current = item.get("dateBasis") == "LAWYER_CURRENT_COPY"
+        date_label = "Проверенная применимость с" if current else "Действует с"
         lines.append(
             f"• {_bounded(item.get('title'), limit=100)}\n"
-            f"  Действует с {_bounded(item.get('effectiveFrom'), limit=10)}; "
+            f"  {date_label} {_bounded(item.get('effectiveFrom'), limit=10)}; "
             f"до {effective_to}"
         )
     if blocked:
@@ -926,8 +982,15 @@ def render_group_approval_preview(
         lines.extend(
             [
                 "",
-                "Подтверждаю проверку всех перечисленных документов: источник и "
-                "соответствие оригиналу, полноту текста, даты действия и фрагменты.",
+                (
+                    "Подтверждаю источник и соответствие оригиналу, полноту исходных файлов "
+                    "и выбранные фрагменты. Подтверждаю актуальность копий с указанных дат; "
+                    "ограничения извлечения понятны. Для версий с установленной редакцией "
+                    "даты действия проверены."
+                    if any(item.get("dateBasis") == "LAWYER_CURRENT_COPY" for item in ready)
+                    else "Подтверждаю проверку всех перечисленных документов: источник и "
+                    "соответствие оригиналу, полноту текста, даты действия и фрагменты."
+                ),
             ]
         )
         buttons.append(
@@ -943,6 +1006,20 @@ def render_group_approval_preview(
     buttons.append(
         [InlineKeyboardButton("← К документам", callback_data=f"editor:group:{group}:1")]
     )
+    if len("\n".join(lines)) > _MAX_MESSAGE:
+        buttons = [
+            row
+            for row in buttons
+            if not any(
+                isinstance(button.callback_data, str)
+                and button.callback_data.startswith("editor:batchconfirm:")
+                for button in row
+            )
+        ]
+        lines = [
+            "Список проверок не помещается в сообщение. Утвердите документы по отдельности: "
+            "в карточках доступны исходники, полные выдержки и все ограничения извлечения.",
+        ]
     return _bounded_message("\n".join(lines)), InlineKeyboardMarkup(buttons)
 
 
@@ -1018,9 +1095,10 @@ def _new_editor_state(detail: dict[str, Any]) -> dict[str, Any]:
         isinstance(value, str) and value for value in expected.values() if value is not None
     ):
         raise ValueError("editor version identity")
-    return {
+    state = {
         "versionId": str(version_id),
         "artifactKind": detail.get("artifactKind"),
+        "dateBasis": detail.get("dateBasis", "DATED_EDITION"),
         "expected": expected,
         "attestations": {
             "source": False,
@@ -1030,6 +1108,14 @@ def _new_editor_state(detail: dict[str, Any]) -> dict[str, Any]:
         },
         "idempotencyKey": str(uuid4()),
     }
+    prospective = {**state, "attestations": dict.fromkeys(state["attestations"], True)}
+    _, keyboard = render_editor_version_detail(detail, prospective)
+    state["confirmationEnabled"] = any(
+        button.callback_data == f"editor:confirm:{version_id}"
+        for row in keyboard.inline_keyboard
+        for button in row
+    )
+    return state
 
 
 def _attestation_label(state: dict[str, Any], key: str, label: str) -> str:
@@ -1044,6 +1130,7 @@ def render_editor_version_detail(
     version_id = _editor_version_id(detail.get("versionId"))
     source_url = _official_url(detail.get("sourceUrl"))
     third_party_copy = detail.get("artifactKind") == "THIRD_PARTY_VERIFIED_COPY"
+    current_copy = detail.get("dateBasis") == "LAWYER_CURRENT_COPY"
     source_label = _verified_copy_source_label(source_url)
     artifact_is_pdf = detail.get("rawMimeType") == "application/pdf"
     approval_eligible = detail.get("approvalEligible") is True
@@ -1064,7 +1151,12 @@ def render_editor_version_detail(
         f"{_bounded(detail.get('rawMimeType'), limit=80)} · "
         f"{_bounded(detail.get('rawSizeBytes'), limit=30)} байт",
         f"Страниц: {_bounded(detail.get('artifactPageCount'), limit=20)}",
-        _applicability(detail.get("effectiveFrom"), detail.get("effectiveTo")),
+        (
+            f"Проверенная применимость с {_bounded(detail.get('effectiveFrom'), limit=10)}; "
+            "это не дата вступления закона в силу."
+            if current_copy
+            else _applicability(detail.get("effectiveFrom"), detail.get("effectiveTo"))
+        ),
         f"Получен: {_bounded(detail.get('artifactRetrievedAt'), limit=32)}",
         f"SHA raw: {_short_sha(detail.get('rawSha256'))}",
         f"SHA text: {_short_sha(detail.get('normalizedSha256'))}",
@@ -1090,6 +1182,13 @@ def render_editor_version_detail(
             else "Эта версия не может быть одобрена через рабочее место."
         ),
     ]
+    if current_copy:
+        lines.extend(
+            [
+                "Дата редакции и публикации не установлены. Исторические события исключены.",
+                *detail.get("extractionLimitations", []),
+            ]
+        )
     buttons: list[list[InlineKeyboardButton]] = []
     if source_url is not None:
         buttons.append(
@@ -1131,19 +1230,35 @@ def render_editor_version_detail(
             ],
             [
                 InlineKeyboardButton(
-                    _attestation_label(state, "artifact", "Документ полный"),
+                    _attestation_label(state, "artifact", "Исходный файл полный"),
                     callback_data=f"editor:attest:{version_id}:artifact",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    _attestation_label(state, "dates", "Даты действия проверены"),
+                    _attestation_label(
+                        state,
+                        "dates",
+                        (
+                            "Актуальность копии с указанной даты подтверждена"
+                            if current_copy
+                            else "Даты действия проверены"
+                        ),
+                    ),
                     callback_data=f"editor:attest:{version_id}:dates",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    _attestation_label(state, "fragments", "Фрагменты проверены"),
+                    _attestation_label(
+                        state,
+                        "fragments",
+                        (
+                            "Фрагменты проверены; ограничения извлечения понятны"
+                            if current_copy
+                            else "Фрагменты проверены"
+                        ),
+                    ),
                     callback_data=f"editor:attest:{version_id}:fragments",
                 )
             ],
@@ -1166,6 +1281,20 @@ def render_editor_version_detail(
         )
     buttons.append([InlineKeyboardButton("← К списку", callback_data="editor:open")])
     buttons.extend([list(row) for row in back_keyboard().inline_keyboard])
+    if len("\n".join(lines)) > _MAX_MESSAGE:
+        buttons = [
+            row
+            for row in buttons
+            if not any(
+                isinstance(button.callback_data, str)
+                and button.callback_data.startswith("editor:confirm:")
+                for button in row
+            )
+        ]
+        lines = [
+            "Все проверки не помещаются в карточку; одобрение через эту карточку заблокировано. "
+            "Выгрузите полные выдержки: файл содержит все ограничения извлечения.",
+        ]
     return _bounded_message("\n".join(lines)), InlineKeyboardMarkup(buttons)
 
 
@@ -1477,7 +1606,12 @@ async def _confirm_editor_approval(
 ) -> None:
     actor_id = gateway_bot._actor_id(update)
     pending = _pending_editor_state(context)
-    if actor_id is None or pending is None or pending.get("versionId") != str(version_id):
+    if (
+        actor_id is None
+        or pending is None
+        or pending.get("versionId") != str(version_id)
+        or pending.get("confirmationEnabled") is not True
+    ):
         await gateway_bot._reply(update, "⚠️ Откройте версию заново и подтвердите проверки.")
         return
     attestations = pending.get("attestations")
@@ -1498,8 +1632,10 @@ async def _confirm_editor_approval(
             "sourceIsOfficial": pending.get("artifactKind") == "OFFICIAL_RAW",
             "officialTextCompared": True,
             "artifactIsComplete": True,
-            "effectiveDatesVerified": True,
+            "effectiveDatesVerified": pending.get("dateBasis") != "LAWYER_CURRENT_COPY",
             "fragmentsVerified": True,
+            "currentCopyConfirmed": pending.get("dateBasis") == "LAWYER_CURRENT_COPY",
+            "extractionLimitsUnderstood": pending.get("dateBasis") == "LAWYER_CURRENT_COPY",
         }
         client = LegalLibraryClient()
         try:
@@ -1742,12 +1878,25 @@ async def _show_group_approval(
         batch_id = str(uuid4())
         text, keyboard = render_group_approval_preview(preview, batch_id=batch_id, page=1)
         ids = [str(_editor_version_id(item.get("versionId"))) for item in preview["ready"]]
+        pages = [
+            render_group_approval_preview(preview, batch_id=batch_id, page=page)
+            for page in range(1, max(1, (len(ids) + 9) // 10) + 1)
+        ]
+        confirmation_enabled = all(
+            not page_text.startswith("Список проверок не помещается")
+            for page_text, _ in pages
+        ) and any(
+            button.callback_data == f"editor:batchconfirm:{batch_id}"
+            for row in pages[-1][1].inline_keyboard
+            for button in row
+        )
         context.user_data[_EDITOR_GROUP_PENDING_KEY] = {
             "id": batch_id,
             "group": group,
             "preview": preview,
             "ids": ids,
             "lastPageShown": len(ids) <= 10,
+            "confirmationEnabled": confirmation_enabled,
         }
     except (LegalCoreApiError, ValueError):
         await gateway_bot._reply(
@@ -1768,6 +1917,7 @@ async def _confirm_group_approval(
         actor is None
         or not isinstance(pending, dict)
         or pending.get("id") != batch_id
+        or pending.get("confirmationEnabled") is not True
         or not pending.get("lastPageShown")
         or not pending.get("ids")
     ):
@@ -1775,6 +1925,12 @@ async def _confirm_group_approval(
         return
     client = LegalLibraryClient()
     try:
+        current_copy = any(
+            item.get("dateBasis") == "LAWYER_CURRENT_COPY" for item in pending["preview"]["ready"]
+        )
+        dated = any(
+            item.get("dateBasis") != "LAWYER_CURRENT_COPY" for item in pending["preview"]["ready"]
+        )
         result = await client.approve_group(
             actor,
             pending["group"],
@@ -1783,8 +1939,10 @@ async def _confirm_group_approval(
                 "versionIds": pending["ids"],
                 "officialTextCompared": True,
                 "artifactIsComplete": True,
-                "effectiveDatesVerified": True,
+                "effectiveDatesVerified": dated,
                 "fragmentsVerified": True,
+                "currentCopyConfirmed": current_copy,
+                "extractionLimitsUnderstood": current_copy,
             },
             UUID(batch_id),
         )

@@ -1,5 +1,20 @@
 # Dental Legal AI task list
 
+## Lawyer-supplied current copies — authorized 2026-10-08
+
+- [x] Verify all 58 originals against archive and production hashes.
+- [x] Record owner-approved current-copy evidence contract (ADR 0075, increment 4).
+- [x] Add immutable basis/limitations migration and independent DB approval guards.
+- [x] Prepare 50 normative originals / 54 parts and 17,119 exact text fragments;
+  preserve eight separate references and existing seven groups. No real approvals.
+- [x] Verify fresh PostgreSQL: 841 passed, one external MinIO smoke skipped;
+  full unit: 1504 passed, 174 separately gated integration tests skipped.
+- [x] Fix complete-checklist visibility, stale callback denial and PDF limitations.
+- [x] Ruff, mypy (128 sources), Compose and Code Graph refresh passed.
+- [ ] GitHub checks, reviewed release and production database backup.
+- [ ] Production dry-run/commit REVIEW_REQUIRED, seven-group previews and health.
+- [ ] Human lawyer confirms normative groups and references; not an agent action.
+
 ## Immediate lawyer alerts — authorized 2026-10-07
 
 - [x] Record already-approved all-active-lawyers direction and minimal internal contract.
