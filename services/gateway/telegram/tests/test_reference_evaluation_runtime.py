@@ -87,6 +87,22 @@ def _update(*, text: str = "", callback: str | None = None) -> SimpleNamespace:
     )
 
 
+def test_reference_directory_keeps_long_titles_compact_and_has_next_page():
+    core = FakeCore()
+    core.list_reference_evaluations = AsyncMock(return_value={
+        "items": [{"id": str(CASE_ID), "displayName": "Synthetic title " * 8, "status": "DRAFT"}],
+        "nextBefore": str(CASE_ID),
+    })
+    update = _update(callback="refeval:open")
+    asyncio.run(_callback(update, _context(core)))
+    body = update.effective_message.reply_text.await_args.args[0]
+    keyboard = update.effective_message.reply_text.await_args.kwargs["reply_markup"]
+    assert len(body) < 500
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    assert all(len(button.text) <= 64 for button in buttons)
+    assert any(button.callback_data == f"refeval:list:{CASE_ID}" for button in buttons)
+
+
 async def _callback(update: SimpleNamespace, context: SimpleNamespace) -> None:
     with pytest.raises(ApplicationHandlerStop):
         await reference_evaluation_callback(update, context)  # type: ignore[arg-type]

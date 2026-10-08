@@ -342,7 +342,7 @@ async def _show_list(
         rows.append(
             [
                 InlineKeyboardButton(
-                    f"📁 {name} — {label}", callback_data=_case_callback("view", case_id)
+                    f"📁 {name[:42]} · {label}"[:64], callback_data=_case_callback("view", case_id)
                 )
             ]
         )
@@ -360,9 +360,9 @@ async def _show_list(
             logger.warning("reference evaluation list returned invalid cursor")
     body = (
         "🗂 ЭТАЛОННЫЕ КЕЙСЫ\n\n"
-        "Здесь хранятся только обезличенные исторические примеры для проверки будущей "
-        "оценки. Они не являются нормативной базой, не обучают модель и не меняют ответы "
-        "пациентам."
+        "Обезличенные примеры для проверки бота. Откройте кейс для просмотра "
+        "фабулы, кандидата ответа и полного материала.\n\n"
+        "Черновики не являются проверенными ответами или источниками права."
     )
     if not items:
         body += "\n\nСписок пока пуст."

@@ -66,7 +66,13 @@ _MUTABLE_STATUSES = frozenset({"DRAFT", "CHANGES_REQUIRED"})
 _REVIEWABLE_STATUSES = frozenset({"READY_FOR_REVIEW"})
 
 
-def _display_name(case: ReferenceEvaluationCase) -> str:
+def _display_name(case: ReferenceEvaluationCase, scenario_text: str | None = None) -> str:
+    if scenario_text:
+        first_line = scenario_text.split("\n", 1)[0]
+        if first_line.startswith("Название: "):
+            title = " ".join(first_line.removeprefix("Название: ").split())
+            if title:
+                return f"№{case.case_no} · {title}"[:120]
     return f"Эталонный кейс №{case.case_no}"
 
 
@@ -80,7 +86,9 @@ def _summary(
 ) -> ReferenceEvaluationSummary:
     return ReferenceEvaluationSummary(
         id=case.id,
-        displayName=_display_name(case),
+        displayName=_display_name(
+            case, version.scenario_text if _content_available(version) else None
+        ),
         groupKey=cast(ReferenceEvaluationGroup, case.group_key),
         status=cast(ReferenceEvaluationStatus, case.status),
         currentVersion=case.current_version,
