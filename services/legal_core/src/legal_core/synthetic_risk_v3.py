@@ -51,7 +51,10 @@ def assert_v3_synthetic_risk_regressions(policy: RiskPolicy) -> None:
             or full.external_draft_allowed
         ):
             raise ValueError("v3 synthetic unknown-health gate failed")
-    for amount, expected in ((4_999_999, None), (5_000_000, RiskLevel.HIGH)):
+    for amount, expected in (
+        (policy.high_demand_threshold_kopecks - 1, None),
+        (policy.high_demand_threshold_kopecks, RiskLevel.HIGH),
+    ):
         facts = base | {FactKey.DEMAND_AMOUNT: {"amountKopecks": amount, "currency": "RUB"}}
         early = evaluate_early_triage(facts, policy=policy)
         if (None if early is None else early.level) != expected:

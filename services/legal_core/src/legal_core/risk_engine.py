@@ -50,8 +50,11 @@ class RiskPolicy:
             _, _, version_number = self.version.rpartition(".v")
             if not version_number.isdigit() or int(version_number) < 3:
                 raise ValueError("guided v2 risk capability requires policy version >= 3")
-            if self.high_demand_threshold_kopecks != 5_000_000:
-                raise ValueError("v3 risk threshold must remain 50,000 RUB")
+            threshold = 1_000_000 if int(version_number) == 4 else 5_000_000
+            if self.high_demand_threshold_kopecks != threshold:
+                raise ValueError("guided risk threshold does not match its policy version")
+            if int(version_number) == 4 and not self.factual_safety_intake_enabled:
+                raise ValueError("v4 requires the reviewed factual safety capability")
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,7 +304,10 @@ def evaluate_early_triage(
     if _demand_is_at_or_above_threshold(facts, policy.high_demand_threshold_kopecks):
         reasons.append("HIGH_DEMAND_AMOUNT")
     if _guided_enabled(facts, policy) and policy.factual_safety_intake_enabled:
-        reasons.extend(screening_high_reasons(confirmed_screening(facts)))
+        reasons.extend(screening_high_reasons(
+            confirmed_screening(facts),
+            high_demand_threshold_kopecks=policy.high_demand_threshold_kopecks,
+        ))
         reasons = list(dict.fromkeys(reasons))
     return _assessment(RiskLevel.HIGH, tuple(reasons), policy, facts) if reasons else None
 
@@ -376,7 +382,9 @@ def evaluate_risk(
         high_reasons.append("HARM_REPORTED")
     if _demand_is_at_or_above_threshold(facts, policy.high_demand_threshold_kopecks):
         high_reasons.append("HIGH_DEMAND_AMOUNT")
-    high_reasons.extend(screening_high_reasons(screening))
+    high_reasons.extend(screening_high_reasons(
+        screening, high_demand_threshold_kopecks=policy.high_demand_threshold_kopecks,
+    ))
     high_reasons = list(dict.fromkeys(high_reasons))
     if high_reasons:
         return _assessment(RiskLevel.HIGH, tuple(high_reasons), policy, facts)

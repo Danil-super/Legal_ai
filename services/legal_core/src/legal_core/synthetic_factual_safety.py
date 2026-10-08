@@ -21,10 +21,10 @@ def assert_factual_safety_regressions(policy: RiskPolicy) -> None:
     for patch, level in (
         ({}, RiskLevel.LOW),
         ({"moneyRequested": "YES", "amount": {
-            "amountKopecks": 4_999_999, "currency": "RUB",
+            "amountKopecks": policy.high_demand_threshold_kopecks - 1, "currency": "RUB",
         }}, RiskLevel.MEDIUM),
         ({"moneyRequested": "YES", "amount": {
-            "amountKopecks": 5_000_000, "currency": "RUB",
+            "amountKopecks": policy.high_demand_threshold_kopecks, "currency": "RUB",
         }}, RiskLevel.HIGH),
         ({"healthDeteriorationReported": "YES"}, RiskLevel.HIGH),
         ({"hospitalizationReported": "YES"}, RiskLevel.CRITICAL),
