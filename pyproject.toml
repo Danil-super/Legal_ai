@@ -17,7 +17,7 @@ dependencies = [
   "psycopg[binary]>=3.3.4,<4",
   "python-telegram-bot[job-queue]>=22.8,<23",
   "reportlab>=5.0.1,<6",
-  "sqlalchemy>=2.0.52,<2.1",
+  "sqlalchemy>=2.0.52,<2.2",
   "uvicorn[standard]>=0.35,<1",
 ]
 
