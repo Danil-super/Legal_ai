@@ -15,6 +15,8 @@ model:
 
 agent:
   api_max_retries: 1
+  reasoning_overrides:
+    gpt-6.1-sol: high
 
 providers:
   custom:
