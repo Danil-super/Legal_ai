@@ -33,9 +33,9 @@ streams with successful `stop` and `[DONE]` are decoded and passed to existing s
 observable partial/failed responses never count as success. The guarded launcher additionally
 exposes the pinned server's otherwise hidden `completed=False`/`partial=True` statuses as error
 finishes with metadata (ADR-0074); `stop` alone is only a wire signal, not proof of worker status.
-Legacy nonstream clients remain available, but
-the production analysis path uses SSE. Token caps, reasoning effort, provider and model choices
-are unchanged (ADR-0071, ADR-0073).
+Legacy nonstream clients remain available, but the production analysis path uses SSE.
+Token caps and provider routing retain the existing budget constraints (ADR-0071, ADR-0073);
+model selection and model-scoped reasoning settings are described below.
 
 `run_guarded_gateway.py` verifies the exact pinned SSE handler SHA before replacing one finish
 condition in memory, then runs the same installed `hermes gateway run --no-supervise` CLI in that
@@ -81,6 +81,10 @@ AGENT_ORCHESTRATOR_URL=http://agent-orchestrator:8010
 The underlying LLM provider may be the same for both passes, but the Hermes origins and writable
 profile state are separate. If the provider requires a non-OpenAI wire format, do not improvise in
 this overlay; add a reviewed provider-specific configuration change instead.
+
+The profile sets `high` reasoning specifically for `gpt-6.1-sol` through Hermes'
+`agent.reasoning_overrides`. Other models keep their provider-default reasoning;
+selecting Sol for the researcher does not replace the separate reviewer model.
 
 ## Start the isolated analysis stack
 
