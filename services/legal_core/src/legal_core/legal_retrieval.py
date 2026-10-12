@@ -140,6 +140,22 @@ _SEARCH_APPROVED_VECTOR = text(
     """
 )
 
+# One query-local approved snapshot; preserve explicit ordering within each query as well.
+_LEXICAL_ORDER = _SEARCH_APPROVED_LEXICAL.text.split("ORDER BY", 1)[1].rsplit("LIMIT", 1)[0]
+_SEARCH_APPROVED_LEXICAL_BATCH = text(
+    f"WITH corpus AS MATERIALIZED (SELECT {_FRAGMENT_COLUMNS} FROM production_legal_fragments "
+    "WHERE effective_from <= :as_of_date AND (effective_to IS NULL OR :as_of_date < effective_to)) "
+    "SELECT query_rows.ordinal AS query_index, hits.* "
+    "FROM unnest(CAST(:queries AS text[])) WITH ORDINALITY AS query_rows(query, ordinal) "
+    "CROSS JOIN LATERAL ("
+    + _SEARCH_APPROVED_LEXICAL.text.replace(
+        f"SELECT {_FRAGMENT_COLUMNS}",
+        f"SELECT row_number() OVER (ORDER BY {_LEXICAL_ORDER}) AS hit_rank, {_FRAGMENT_COLUMNS}",
+    ).replace("FROM production_legal_fragments", "FROM corpus")
+    .replace(":query", "query_rows.query")
+    + ") AS hits ORDER BY query_rows.ordinal, hits.hit_rank"
+)
+
 _LIST_APPROVED_LIBRARY_DOCUMENTS = text(
     """
     SELECT document_id,
@@ -290,6 +306,39 @@ class ApprovedLegalCorpusRepository:
             self._embedding_provider = embedding_provider_from_environment()
             self._embedding_provider_loaded = True
         return self._embedding_provider
+
+    async def search_many(
+        self, queries: Sequence[str], *, as_of_date: date, limit: int,
+        semantic: Sequence[bool],
+    ) -> list[list[ApprovedLegalFragment]]:
+        """Keep query order/ranking and privacy; batch only the local lexical path.
+
+        A configured semantic provider retains the existing per-query search contract.
+        The local path validates every version once per SQL statement, never across requests.
+        """
+        if len(queries) > 20 or len(queries) != len(semantic) or not 1 <= limit <= 20:
+            raise ValueError("invalid legal search batch")
+        normalized = [query.strip() for query in queries]
+        if any(not query or len(query) > 500 for query in normalized):
+            raise ValueError("invalid legal search batch query")
+        if not queries:
+            return []
+        if any(semantic) and self._provider() is not None:
+            return [
+                await self.search(query, as_of_date=as_of_date, limit=limit, semantic=flag)
+                for query, flag in zip(normalized, semantic, strict=True)
+            ]
+        result = await self._session.execute(
+            _SEARCH_APPROVED_LEXICAL_BATCH,
+            {"queries": normalized, "as_of_date": as_of_date, "limit": limit},
+        )
+        batches: list[list[ApprovedLegalFragment]] = [[] for _ in queries]
+        for row in result.mappings():
+            values = dict(row)
+            index = int(values.pop("query_index")) - 1
+            values.pop("hit_rank")
+            batches[index].append(ApprovedLegalFragment(**values))
+        return batches
 
     async def search(
         self,

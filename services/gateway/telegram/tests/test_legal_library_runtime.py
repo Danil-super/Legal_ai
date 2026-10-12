@@ -87,13 +87,45 @@ def test_library_reference_link_requires_existing_editor_access(monkeypatch, edi
     update = SimpleNamespace(effective_message=message)
     monkeypatch.setattr(runtime, "LegalLibraryClient", lambda: client)
     monkeypatch.setattr(runtime.gateway_bot, "_actor_id", lambda _: 7_000_000_001)
-    asyncio.run(runtime.show_legal_library(update, SimpleNamespace()))
+    asyncio.run(runtime._deliver_legal_library(update, SimpleNamespace()))
     keyboard = message.reply_text.await_args.kwargs["reply_markup"]
     assert any(
         button.callback_data == "editor:group:clinical:1"
         for row in keyboard.inline_keyboard for button in row
     ) is editor_allowed
     client.aclose.assert_awaited_once()
+
+
+def test_library_load_returns_without_blocking_sequential_commands(monkeypatch):
+    async def scenario():
+        started = asyncio.Event()
+        release = asyncio.Event()
+        tasks = []
+
+        async def blocked_delivery(update, context):
+            started.set()
+            await release.wait()
+
+        def create_task(coroutine, **kwargs):
+            task = asyncio.create_task(coroutine, **kwargs)
+            tasks.append(task)
+            return task
+
+        application = SimpleNamespace(running=True, bot_data={}, create_task=create_task)
+        context = SimpleNamespace(application=application)
+        update = SimpleNamespace(effective_message=SimpleNamespace(reply_text=AsyncMock()))
+        monkeypatch.setattr(runtime, "_deliver_legal_library", blocked_delivery)
+        monkeypatch.setattr(runtime.gateway_bot, "_actor_id", lambda _: 7_000_000_001)
+        monkeypatch.setattr(runtime.gateway_bot, "_reply", AsyncMock())
+        await asyncio.wait_for(runtime.show_legal_library(update, context), timeout=0.1)
+        await asyncio.wait_for(started.wait(), timeout=0.1)
+        assert not tasks[0].done()
+        await runtime.show_legal_library(update, context)
+        assert len(tasks) == 1
+        release.set()
+        await asyncio.gather(*tasks)
+
+    asyncio.run(scenario())
 
 
 def test_platform_review_queue_renders_statuses_without_legal_text() -> None:

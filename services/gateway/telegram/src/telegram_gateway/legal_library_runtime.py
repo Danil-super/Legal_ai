@@ -40,6 +40,7 @@ _MAX_MESSAGE = 3_900
 _EDITOR_PENDING_KEY = "legal_editor_pending"
 _EDITOR_ARTIFACT_MAX_BYTES = 50_000_000
 _EDITOR_DELIVERY_KEY = "legal_editor_file_deliveries"
+_LIBRARY_TASKS_KEY = "legal_library_read_tasks"
 _EDITOR_GROUP_PENDING_KEY = "legal_editor_group_pending"
 _EDITOR_APPROVAL_TASKS_KEY = "legal_editor_group_approval_tasks"
 _EDITOR_APPROVAL_ATTEMPTS_KEY = "legal_editor_group_approval_attempts"
@@ -1930,6 +1931,40 @@ async def _finish_group_approval(
 
 
 async def show_legal_library(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    actor_id = gateway_bot._actor_id(update)
+    if actor_id is None:
+        await gateway_bot._reply(update, "Не удалось определить пользователя.")
+        return
+    queue = context.application.bot_data.get(_LIBRARY_TASKS_KEY)
+    if not isinstance(queue, EditorFileDeliveryQueue):
+        queue = EditorFileDeliveryQueue(
+            context.application, timeout_seconds=45, task_name="legal-library-read"
+        )
+        context.application.bot_data[_LIBRARY_TASKS_KEY] = queue
+
+    async def deliver() -> None:
+        await _deliver_legal_library(update, context)
+
+    async def on_error() -> None:
+        await gateway_bot._reply(
+            update, "⚠️ Не удалось загрузить нормативную базу. Попробуйте позже.",
+            reply_markup=back_keyboard(),
+        )
+
+    admission = queue.submit(actor_id, deliver, on_error)
+    message = {
+        "STARTED": "⏳ Загружаю нормативную базу. Меню остаётся доступным.",
+        "DUPLICATE": "⏳ Нормативная база уже загружается.",
+        "FULL": "⏳ Загрузка занята. Попробуйте чуть позже.",
+        "STOPPED": "⚠️ Бот перезапускается. Попробуйте чуть позже.",
+    }[admission]
+    await gateway_bot._reply(update, message, reply_markup=back_keyboard())
+
+
+async def _deliver_legal_library(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:

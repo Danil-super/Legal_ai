@@ -27,6 +27,7 @@ pytestmark = pytest.mark.skipif(
     ("café", ["e\u0301"]),
     ("[a-z]+ $.*", ["$.*", "[a-z]+"]),
     ("Произвольный текст", ["текст", "отсутствует"]),
+    ("Начало " + "x" * 20_000 + " конец", ["Начало", "конец"]),
     ("", [""]),
 ])
 def test_ordered_byte_search_matches_original_text_membership(corpus, needles):
