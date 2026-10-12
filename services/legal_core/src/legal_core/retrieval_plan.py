@@ -141,16 +141,10 @@ async def retrieve_planned_evidence(
     if not 1 <= max_fragments <= 30:
         raise ValueError("max_fragments must be between 1 and 30")
 
-    ranked_results: list[list[ApprovedLegalFragment]] = []
-    for query in queries:
-        ranked_results.append(
-            await repository.search(
-                query,
-                as_of_date=as_of_date,
-                limit=limit_per_query,
-                semantic=is_semantic_safe_query(query),
-            )
-        )
+    ranked_results = await repository.search_many(
+        queries, as_of_date=as_of_date, limit=limit_per_query,
+        semantic=[is_semantic_safe_query(query) for query in queries],
+    )
 
     # Give each scenario query a place before filling the remaining budget with lower ranks.
     # Otherwise broad base queries can consume the entire context before harm/refund queries run.

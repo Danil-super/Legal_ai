@@ -94,6 +94,10 @@ def test_scenario_retrieval_preserves_date_budget_and_external_privacy():
             calls.append((query, kwargs))
             return []
 
+        async def search_many(self, queries, *, as_of_date, limit, semantic):
+            return [await self.search(query, as_of_date=as_of_date, limit=limit, semantic=flag)
+                    for query, flag in zip(queries, semantic, strict=True)]
+
     facts = {FactKey.PRIMARY_INCIDENT_TYPE: "PERSONAL_DATA",
              FactKey.SERVICE_TYPE: "SYNTHETIC_CANARY internal note"}
     queries = plan_legal_queries(facts)

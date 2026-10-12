@@ -188,11 +188,16 @@ async def _block_reason(
     )
     if not fragments:
         return "NO_FRAGMENTS"
+    search_from = 0
     for fragment in fragments:
         if hashlib.sha256(fragment.fragment_text.encode()).hexdigest() != fragment.text_sha256:
             return "FRAGMENT_SHA_MISMATCH"
-        if fragment.fragment_text not in version.normalized_text:
+        located = version.normalized_text.find(fragment.fragment_text, search_from)
+        if located < 0:
+            located = version.normalized_text.find(fragment.fragment_text)
+        if located < 0:
             return "FRAGMENT_NOT_IN_NORMALIZED_TEXT"
+        search_from = located  # Retain overlaps; unordered fragments use the full-text fallback.
     fragment_models = [
         CorpusFragment(
             ordinal=fragment.ordinal,

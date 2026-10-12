@@ -36,7 +36,9 @@ _EFFECTIVE_FROM = date(2026, 1, 1)
 _EFFECTIVE_TO = date(2027, 1, 1)
 
 
-async def _seed_large_version(session: AsyncSession) -> tuple[LegalVersion, User]:
+async def _seed_large_version(
+    session: AsyncSession, *, fragment_count: int = _FRAGMENT_COUNT, digest_bytes: int = 600
+) -> tuple[LegalVersion, User]:
     """Keep the large UTF-8 corpus valid and poorly compressible for TOAST realism."""
     identity = uuid4()
     reviewer = User(
@@ -74,10 +76,10 @@ async def _seed_large_version(session: AsyncSession) -> tuple[LegalVersion, User
             structural_path=f"synthetic/article:{ordinal}",
             text=(
                 f"Вымышленный фрагмент для проверки производительности {ordinal:04d}. "
-                + hashlib.shake_256(f"synthetic-{ordinal}".encode()).hexdigest(600)
+                + hashlib.shake_256(f"synthetic-{ordinal}".encode()).hexdigest(digest_bytes)
             ),
         )
-        for ordinal in range(1, _FRAGMENT_COUNT + 1)
+        for ordinal in range(1, fragment_count + 1)
     ]
     normalized = "\n".join(fragment.text for fragment in fragments)
     raw = b"{\\rtf1\\ansi\\ansicpg65001 " + normalized.encode("utf-8") + b"}"
@@ -135,14 +137,19 @@ async def _seed_large_version(session: AsyncSession) -> tuple[LegalVersion, User
     reason="set POSTGRES_INTEGRATION=1 to run PostgreSQL performance regressions",
 )
 @pytest.mark.parametrize("operation", ["approval", "library"])
-def test_large_current_copy_approval_and_library_fit_gateway_budget(operation: str) -> None:
+@pytest.mark.parametrize(("fragment_count", "digest_bytes"), [(1_500, 600), (9_000, 53)])
+def test_large_current_copy_approval_and_library_fit_gateway_budget(
+    operation: str, fragment_count: int, digest_bytes: int
+) -> None:
     async def scenario() -> None:
         engine = create_async_engine(database_url())
         try:
             async with AsyncSession(engine, expire_on_commit=False) as session:
                 await session.begin()
                 try:
-                    version, reviewer = await _seed_large_version(session)
+                    version, reviewer = await _seed_large_version(
+                        session, fragment_count=fragment_count, digest_bytes=digest_bytes
+                    )
                     repository = ApprovedLegalCorpusRepository(session)
                     pending = await repository.list_documents(as_of_date=_EFFECTIVE_FROM)
                     assert all(item.version_id != version.id for item in pending)
@@ -167,7 +174,7 @@ def test_large_current_copy_approval_and_library_fit_gateway_budget(operation: s
                     library_seconds = perf_counter() - started
                     matching = [item for item in documents if item.version_id == version.id]
                     assert len(matching) == 1
-                    assert matching[0].fragment_count == _FRAGMENT_COUNT
+                    assert matching[0].fragment_count == fragment_count
                     assert matching[0].raw_sha256 == version.raw_sha256
                     expired = await repository.list_documents(as_of_date=_EFFECTIVE_TO)
                     assert all(item.version_id != version.id for item in expired)
@@ -185,7 +192,7 @@ def test_large_current_copy_approval_and_library_fit_gateway_budget(operation: s
 
                     elapsed = approval_seconds if operation == "approval" else library_seconds
                     print(
-                        f"synthetic={len(version.raw_bytes)} bytes/{_FRAGMENT_COUNT} fragments; "
+                        f"synthetic={len(version.raw_bytes)} bytes/{fragment_count} fragments; "
                         f"approval={approval_seconds:.3f}s; library={library_seconds:.3f}s"
                     )
                     assert elapsed < _SECONDS_PER_VERSION, (
@@ -195,6 +202,41 @@ def test_large_current_copy_approval_and_library_fit_gateway_budget(operation: s
                     )
                 finally:
                     await session.rollback()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1", reason="disposable PostgreSQL")
+def test_batched_retrieval_preserves_single_query_results_and_dates():
+    async def scenario():
+        engine = create_async_engine(database_url())
+        try:
+            async with AsyncSession(engine, expire_on_commit=False) as session, session.begin():
+                version, reviewer = await _seed_large_version(session)
+                repository = ApprovedLegalCorpusRepository(session)
+                queries = ("Вымышленный", "фрагмент проверки", "absent-canary")
+                pending = await repository.search_many(
+                    queries, as_of_date=_EFFECTIVE_FROM, limit=5, semantic=(False,) * 3
+                )
+                assert not any(item.version_id == version.id for hits in pending for item in hits)
+                await approve_legal_version_in_session(
+                    session, potential_approval_attestation(version, reviewer.telegram_user_id)
+                )
+                await session.flush()
+                single = [await repository.search(q, as_of_date=_EFFECTIVE_FROM, limit=5)
+                          for q in queries]
+                batched = await repository.search_many(
+                    queries, as_of_date=_EFFECTIVE_FROM, limit=5, semantic=(False,) * 3
+                )
+                assert batched == single
+                assert any(item.version_id == version.id for hits in batched for item in hits)
+                expired = await repository.search_many(
+                    queries, as_of_date=_EFFECTIVE_TO, limit=5, semantic=(False,) * 3
+                )
+                assert not any(item.version_id == version.id for hits in expired for item in hits)
+                await session.rollback()
         finally:
             await engine.dispose()
 

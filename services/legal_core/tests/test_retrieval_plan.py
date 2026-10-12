@@ -191,6 +191,10 @@ def test_retrieval_marks_free_text_service_query_lexical_only() -> None:
             self.calls.append((query, semantic))
             return []
 
+        async def search_many(self, queries, *, semantic, **kwargs):
+            return [await self.search(query, semantic=flag, **kwargs)
+                    for query, flag in zip(queries, semantic, strict=True)]
+
     async def scenario() -> None:
         repository = FakeRepository()
         queries = (
@@ -220,6 +224,10 @@ def test_general_queries_cannot_exclude_later_scenario_queries() -> None:
             self.calls.append(query)
             offset = int(query) * 10
             return [SimpleNamespace(fragment_id=UUID(int=offset + rank)) for rank in range(1, 6)]
+
+        async def search_many(self, queries, *, semantic, **kwargs):
+            return [await self.search(query, semantic=flag, **kwargs)
+                    for query, flag in zip(queries, semantic, strict=True)]
 
     async def scenario() -> None:
         repository = FakeRepository()
