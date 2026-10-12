@@ -151,7 +151,9 @@ def test_group_pending_state_blocks_callbacks_when_the_actual_checklist_does_not
     client: SimpleNamespace, oversized: bool
 ) -> None:
     client.get_group_preview.return_value = _preview(oversized=oversized, count=10)
-    context = SimpleNamespace(user_data={})
+    context = SimpleNamespace(user_data={}, application=SimpleNamespace(
+        running=True, bot_data={}, create_task=asyncio.create_task
+    ))
 
     async def scenario() -> None:
         await runtime._show_group_approval(SimpleNamespace(), context, group="general")
@@ -161,6 +163,8 @@ def test_group_pending_state_blocks_callbacks_when_the_actual_checklist_does_not
         # Simulate a callback independently of whether a confirm button was rendered.
         pending["lastPageShown"] = True
         await runtime._confirm_group_approval(SimpleNamespace(), context, batch_id=pending["id"])
+        if not oversized:
+            await context.application.bot_data[runtime._EDITOR_APPROVAL_TASKS_KEY].drain()
 
     asyncio.run(scenario())
 

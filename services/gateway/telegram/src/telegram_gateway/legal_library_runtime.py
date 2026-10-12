@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import logging
 import re
@@ -40,6 +41,10 @@ _EDITOR_PENDING_KEY = "legal_editor_pending"
 _EDITOR_ARTIFACT_MAX_BYTES = 50_000_000
 _EDITOR_DELIVERY_KEY = "legal_editor_file_deliveries"
 _EDITOR_GROUP_PENDING_KEY = "legal_editor_group_pending"
+_EDITOR_APPROVAL_TASKS_KEY = "legal_editor_group_approval_tasks"
+_EDITOR_APPROVAL_ATTEMPTS_KEY = "legal_editor_group_approval_attempts"
+_EDITOR_MAX_UNRESOLVED_APPROVALS = 8
+_EDITOR_APPROVAL_TIMEOUT_SECONDS = 180.0
 _EDITOR_REFERENCE_PENDING_KEY = "legal_editor_reference_pending"
 _VERIFIED_COPY_SOURCE_LABELS = {
     "www.consultant.ru": "КонсультантПлюс",
@@ -163,6 +168,7 @@ class LegalLibraryClient:
         *,
         payload: dict[str, Any] | None = None,
         idempotency_key: UUID | None = None,
+        timeout: float = 20.0,
     ) -> dict[str, Any]:
         try:
             response = await self._http.request(
@@ -170,6 +176,7 @@ class LegalLibraryClient:
                 path,
                 headers=self._editor_headers(telegram_user_id, idempotency_key=idempotency_key),
                 json=payload,
+                timeout=timeout,
             )
         except httpx2.HTTPError as exc:
             raise LegalCoreApiError(
@@ -258,13 +265,31 @@ class LegalLibraryClient:
     ) -> dict[str, Any]:
         if _EDITOR_CALLBACK_RE.fullmatch(f"editor:batch:{group}") is None:
             raise ValueError("review group")
-        return await self._editor_json(
+        result = await self._editor_json(
             "POST",
             f"/v1/legal/editor/groups/{group}/approval-events",
             actor_id,
             payload=payload,
             idempotency_key=key,
+            timeout=_EDITOR_APPROVAL_TIMEOUT_SECONDS,
         )
+        try:
+            ids = result["versionIds"]
+            valid = (
+                isinstance(result.get("batchId"), str)
+                and UUID(result["batchId"]) == key
+                and type(result["approvedCount"]) is int
+                and result["approvedCount"] > 0
+                and isinstance(ids, list)
+                and all(isinstance(item, str) for item in ids)
+                and len(ids) == len(set(ids)) == result["approvedCount"]
+                and sorted(ids) == sorted(payload["versionIds"])
+            )
+        except (KeyError, TypeError, ValueError):
+            valid = False
+        if not valid:
+            raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid approval response")
+        return result
 
     async def get_reference_review_preview(self, actor_id: int, group: str) -> dict[str, Any]:
         if _EDITOR_CALLBACK_RE.fullmatch(f"editor:refbatch:{group}") is None:
@@ -1768,7 +1793,10 @@ async def _confirm_group_approval(
     update: Update, context: ContextTypes.DEFAULT_TYPE, *, batch_id: str
 ) -> None:
     actor = gateway_bot._actor_id(update)
-    pending = (context.user_data or {}).get(_EDITOR_GROUP_PENDING_KEY)
+    attempts = (context.user_data or {}).get(_EDITOR_APPROVAL_ATTEMPTS_KEY, {})
+    pending = attempts.get(batch_id) if isinstance(attempts, dict) else None
+    if pending is None:
+        pending = (context.user_data or {}).get(_EDITOR_GROUP_PENDING_KEY)
     if (
         actor is None
         or not isinstance(pending, dict)
@@ -1779,6 +1807,55 @@ async def _confirm_group_approval(
     ):
         await gateway_bot._reply(update, "Откройте подтверждение группы и просмотрите список.")
         return
+    if context.user_data is None:
+        return
+    if not isinstance(attempts, dict):
+        attempts = {}
+    if batch_id not in attempts and len(attempts) >= _EDITOR_MAX_UNRESOLVED_APPROVALS:
+        await gateway_bot._reply(update, "Сначала получите результат предыдущих подтверждений.")
+        return
+    queue = context.application.bot_data.get(_EDITOR_APPROVAL_TASKS_KEY)
+    if not isinstance(queue, EditorFileDeliveryQueue):
+        queue = EditorFileDeliveryQueue(
+            context.application, timeout_seconds=_EDITOR_APPROVAL_TIMEOUT_SECONDS,
+            task_name="legal-editor-group-approval",
+        )
+        context.application.bot_data[_EDITOR_APPROVAL_TASKS_KEY] = queue
+    # A later preview must not change the attestation already confirmed by this click.
+    confirmed = copy.deepcopy(pending)
+
+    async def deliver() -> None:
+        await gateway_bot._reply(
+            update, "⏳ Утверждение группы выполняется. Остальными меню можно пользоваться."
+        )
+        await _finish_group_approval(
+            update, context, actor=actor, pending=confirmed, batch_id=batch_id
+        )
+
+    async def unknown_outcome() -> None:
+        confirmed["outcomeUncertain"] = True
+        await gateway_bot._reply(
+            update, "⏳ Сервер пока не вернул окончательный результат. "
+            "Операция могла сохраниться. Повторите это подтверждение: "
+            "будет использован тот же ключ, дублей не возникнет.",
+        )
+
+    admission = queue.submit(actor, deliver, unknown_outcome)
+    if admission == "STARTED":
+        attempts[batch_id] = confirmed
+        context.user_data[_EDITOR_APPROVAL_ATTEMPTS_KEY] = attempts
+    if admission != "STARTED":
+        await gateway_bot._reply(
+            update,
+            "⏳ Ваше подтверждение ещё выполняется. Не нужно нажимать повторно."
+            if admission == "DUPLICATE" else "Сервис занят. Повторите это подтверждение позже.",
+        )
+
+
+async def _finish_group_approval(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, actor: int,
+    pending: dict[str, Any], batch_id: str,
+) -> None:
     client = LegalLibraryClient()
     try:
         current_copy = any(
@@ -1803,17 +1880,31 @@ async def _confirm_group_approval(
             UUID(batch_id),
         )
     except LegalCoreApiError as exc:
-        message = (
-            "Список или состояние документов изменились. Откройте подтверждение группы заново."
-            if exc.status_code == 409
-            else "Не удалось получить результат. Повторите подтверждение: дублей не возникнет."
+        logger.warning("legal group approval result unavailable: code=%s status=%s", exc.code,
+                       exc.status_code)
+        definitive = exc.status_code in {409, 422} or (
+            exc.status_code == 403 and pending.get("outcomeUncertain") is not True
         )
+        if definitive and context.user_data is not None:
+            attempts = context.user_data.get(_EDITOR_APPROVAL_ATTEMPTS_KEY)
+            if isinstance(attempts, dict):
+                attempts.pop(batch_id, None)
+        elif not definitive:
+            pending["outcomeUncertain"] = True
+        if exc.status_code in {409, 422}:
+            message = "Список или состояние документов изменились. Откройте подтверждение заново."
+        elif exc.status_code == 403:
+            message = "Доступ к утверждению запрещён. Обратитесь к владельцу сервиса."
+        else:
+            message = (
+                "Сервер пока не вернул окончательный результат. Операция могла сохраниться. "
+                "Повторите это подтверждение: дублей не возникнет."
+            )
         await gateway_bot._reply(update, message)
         return
     finally:
         await client.aclose()
-    if context.user_data is not None:
-        context.user_data.pop(_EDITOR_GROUP_PENDING_KEY, None)
+    pending["outcomeUncertain"] = True  # Keep a committed result until Telegram delivery succeeds.
     await _editor_reply(
         update,
         f"✅ Утверждено документов: {result.get('approvedCount')}. "
@@ -1828,6 +1919,14 @@ async def _confirm_group_approval(
             ]
         ),
     )
+    # Retain the replay key if Telegram delivery failed after a successful DB commit.
+    if context.user_data is not None:
+        attempts = context.user_data.get(_EDITOR_APPROVAL_ATTEMPTS_KEY)
+        if isinstance(attempts, dict):
+            attempts.pop(batch_id, None)
+        current = context.user_data.get(_EDITOR_GROUP_PENDING_KEY)
+        if isinstance(current, dict) and current.get("id") == batch_id:
+            context.user_data.pop(_EDITOR_GROUP_PENDING_KEY, None)
 
 
 async def show_legal_library(

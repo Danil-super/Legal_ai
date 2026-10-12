@@ -23,12 +23,14 @@ class EditorFileDeliveryQueue:
         *,
         max_pending: int = 4,
         timeout_seconds: float = 60,
+        task_name: str = "legal-editor-file-delivery",
     ) -> None:
         if max_pending < 1 or timeout_seconds <= 0:
             raise ValueError("editor delivery bounds must be positive")
         self.application = application
         self.max_pending = max_pending
         self.timeout_seconds = timeout_seconds
+        self.task_name = task_name
         self._pending: dict[int, asyncio.Task[None]] = {}
         self._one_file = asyncio.Semaphore(1)
 
@@ -45,7 +47,7 @@ class EditorFileDeliveryQueue:
             return "FULL"
         # Omitting update= intentionally avoids PTB persistence writes to old user/chat state.
         self._pending[actor_id] = self.application.create_task(
-            self._run(actor_id, deliver, on_error), name="legal-editor-file-delivery"
+            self._run(actor_id, deliver, on_error), name=self.task_name
         )
         return "STARTED"
 
