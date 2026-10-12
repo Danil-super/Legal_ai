@@ -335,7 +335,8 @@ def test_platform_editor_control_composes_with_the_clinic_lawyer_menu() -> None:
     keyboard = main_menu_keyboard("CLINIC_LAWYER", is_legal_editor=True)
     callbacks = {button.callback_data for row in keyboard.inline_keyboard for button in row}
 
-    assert {"case:escalations", "legalbase:open", "editor:open"} <= callbacks
+    assert {"case:escalations", "legalbase:open"} <= callbacks
+    assert "editor:open" not in callbacks
 
 
 def test_platform_editor_control_is_not_present_without_editor_capability() -> None:

@@ -167,7 +167,8 @@ def test_main_menu_loads_independent_actor_capabilities_in_parallel() -> None:
         release.set()
         keyboard = await pending
         callbacks = {button.callback_data for row in keyboard.inline_keyboard for button in row}
-        assert {"editor:open", "case:escalations"} <= callbacks
+        assert {"legalbase:open", "case:escalations"} <= callbacks
+        assert "editor:open" not in callbacks
 
     asyncio.run(scenario())
 

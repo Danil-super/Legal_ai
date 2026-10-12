@@ -409,6 +409,17 @@ class LegalLibraryResponse(ContractModel):
     items: list[LegalLibraryDocumentResponse] = Field(default_factory=list, max_length=50)
 
 
+class LegalLibraryGroupPage(ContractModel):
+    """Read-only groups; no editor data or approval authority is exposed here."""
+
+    as_of_date: date = Field(alias="asOfDate")
+    page: int = Field(ge=1, le=100)
+    selected_group: ReviewGroup | None = Field(default=None, alias="selectedGroup")
+    has_more: bool = Field(default=False, alias="hasMore")
+    groups: dict[str, str]
+    items: list[LegalLibraryDocumentResponse] = Field(default_factory=list, max_length=10)
+
+
 class PlatformLegalReviewQueueItem(ContractModel):
     """Метаданные кандидата; юридический текст доступен только в защищённом review-процессе."""
 
