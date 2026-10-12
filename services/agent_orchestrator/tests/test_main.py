@@ -282,6 +282,7 @@ def test_runtime_uses_distinct_bounded_streaming_stage_budgets():
         hermes_reviewer_key="review-key", hermes_reviewer_model="reviewer",
     )
     dependencies = main.build_dependencies(settings)
+    assert dependencies.legal_core.endpoint.timeout_seconds == 60
     research = dependencies.reasoning._researcher.endpoint
     review = dependencies.reasoning._reviewer.endpoint
     assert (research.timeout_seconds, review.timeout_seconds) == (30, 50)

@@ -94,6 +94,7 @@ def build_dependencies(settings: ServiceSettings) -> ServiceDependencies:
         LegalCoreEndpoint(
             base_url=settings.legal_core_url,
             internal_key=settings.internal_key,
+            timeout_seconds=60,
         )
     )
     researcher = HermesClient(
