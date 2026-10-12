@@ -643,7 +643,11 @@ def test_group_confirmation_requires_matching_preview_and_preserves_retry_key(mo
         effective_user=SimpleNamespace(id=12345),
         effective_message=SimpleNamespace(reply_text=AsyncMock()),
     )
-    context = SimpleNamespace(user_data={})
+    context = SimpleNamespace(
+        user_data={}, application=SimpleNamespace(
+            running=True, bot_data={}, create_task=asyncio.create_task
+        ),
+    )
 
     async def scenario():
         await runtime._show_group_approval(update, context, group="general")
@@ -652,13 +656,177 @@ def test_group_confirmation_requires_matching_preview_and_preserves_retry_key(mo
         await runtime._confirm_group_approval(update, context, batch_id=str(UUID(int=1)))
         client.approve_group.assert_not_awaited()
         await runtime._confirm_group_approval(update, context, batch_id=key)
+        await context.application.bot_data[runtime._EDITOR_APPROVAL_TASKS_KEY].drain()
         assert context.user_data[runtime._EDITOR_GROUP_PENDING_KEY]["id"] == key
         await runtime._confirm_group_approval(update, context, batch_id=key)
+        await context.application.bot_data[runtime._EDITOR_APPROVAL_TASKS_KEY].drain()
         assert runtime._EDITOR_GROUP_PENDING_KEY not in context.user_data
         first, second = client.approve_group.await_args_list
         assert first == second
         assert first.args[-1] == UUID(key)
         assert first.args[2]["fragmentsVerified"] is True
+
+    asyncio.run(scenario())
+
+
+def test_group_confirmation_returns_immediately_and_does_not_clear_a_new_preview(monkeypatch):
+    preview = {
+        "group": "general", "snapshot": "a" * 64, "blocked": [],
+        "ready": [{"versionId": str(UUID(int=2)), "title": "Synthetic act",
+                   "effectiveFrom": "2026-01-01", "effectiveTo": None}],
+    }
+    message = SimpleNamespace(reply_text=AsyncMock())
+    update = SimpleNamespace(effective_user=SimpleNamespace(id=12345), effective_message=message)
+
+    async def scenario():
+        started, finished = asyncio.Event(), asyncio.Event()
+
+        async def approve(*args):
+            started.set()
+            await finished.wait()
+            return {"approvedCount": 1}
+
+        client = SimpleNamespace(get_group_preview=AsyncMock(return_value=preview),
+                                 approve_group=AsyncMock(side_effect=approve), aclose=AsyncMock())
+        monkeypatch.setattr(runtime, "LegalLibraryClient", lambda: client)
+        application = SimpleNamespace(running=True, bot_data={}, create_task=asyncio.create_task)
+        context = SimpleNamespace(application=application, user_data={})
+        await runtime._show_group_approval(update, context, group="general")
+        key = context.user_data[runtime._EDITOR_GROUP_PENDING_KEY]["id"]
+        await asyncio.wait_for(runtime._confirm_group_approval(update, context, batch_id=key), 0.1)
+        await started.wait()
+        assert not finished.is_set()
+        assert "выполняется" in message.reply_text.await_args_list[-1].args[0].lower()
+        await runtime._confirm_group_approval(update, context, batch_id=key)
+        assert client.approve_group.await_count == 1
+        context.user_data[runtime._EDITOR_GROUP_PENDING_KEY] = {"id": "new-preview"}
+        finished.set()
+        await application.bot_data[runtime._EDITOR_APPROVAL_TASKS_KEY].drain()
+        assert context.user_data[runtime._EDITOR_GROUP_PENDING_KEY] == {"id": "new-preview"}
+        assert "Утверждено документов: 1" in message.reply_text.await_args_list[-1].args[0]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("telegram_failure", [False, True])
+def test_old_group_replays_after_new_preview_and_unknown_outcome(monkeypatch, telegram_failure):
+    key = str(UUID(int=5))
+    pending = {"id": key, "group": "general", "ids": [str(UUID(int=2))],
+               "lastPageShown": True, "confirmationEnabled": True,
+               "preview": {"snapshot": "a" * 64, "ready": [{}]}}
+
+    async def scenario():
+        started, finish = asyncio.Event(), asyncio.Event()
+
+        async def approve(*args):
+            started.set()
+            await finish.wait()
+            if not telegram_failure:
+                raise LegalCoreApiError(503, "LEGAL_CORE_UNAVAILABLE", "unknown outcome")
+            return {"approvedCount": 1}
+
+        client = SimpleNamespace(approve_group=AsyncMock(side_effect=approve), aclose=AsyncMock())
+        monkeypatch.setattr(runtime, "LegalLibraryClient", lambda: client)
+        app = SimpleNamespace(running=True, bot_data={}, create_task=asyncio.create_task)
+        context = SimpleNamespace(
+            application=app, user_data={runtime._EDITOR_GROUP_PENDING_KEY: pending}
+        )
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=12345),
+                                 effective_message=SimpleNamespace(reply_text=AsyncMock()))
+        await runtime._confirm_group_approval(update, context, batch_id=key)
+        await started.wait()
+        context.user_data[runtime._EDITOR_GROUP_PENDING_KEY] = {"id": "new-preview"}
+        if telegram_failure:
+            monkeypatch.setattr(
+                runtime, "_editor_reply", AsyncMock(side_effect=RuntimeError("test"))
+            )
+        finish.set()
+        await app.bot_data[runtime._EDITOR_APPROVAL_TASKS_KEY].drain()
+        await runtime._confirm_group_approval(update, context, batch_id=key)
+        await app.bot_data[runtime._EDITOR_APPROVAL_TASKS_KEY].drain()
+        assert client.approve_group.await_count == 2
+        assert client.approve_group.await_args_list[0] == client.approve_group.await_args_list[1]
+        assert context.user_data[runtime._EDITOR_GROUP_PENDING_KEY] == {"id": "new-preview"}
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("result", [
+    {}, {"batchId": str(UUID(int=5)), "approvedCount": True, "versionIds": [str(UUID(int=2))]},
+    {"batchId": str(UUID(int=6)), "approvedCount": 1, "versionIds": [str(UUID(int=2))]},
+    {"batchId": str(UUID(int=5)), "approvedCount": 1, "versionIds": [str(UUID(int=3))]},
+])
+def test_group_approval_client_rejects_unverified_success(monkeypatch, result):
+    monkeypatch.setenv("LEGAL_EDITOR_GATEWAY_KEY", "synthetic-editor-gateway-key-1234567890")
+
+    async def scenario():
+        async with httpx2.AsyncClient(
+            base_url="https://example.test",
+            transport=httpx2.MockTransport(lambda request: httpx2.Response(200, json=result)),
+        ) as http:
+            client = runtime.LegalLibraryClient(client=http)
+            with pytest.raises(LegalCoreApiError, match="Invalid"):
+                await client.approve_group(
+                    12345, "general", {"versionIds": [str(UUID(int=2))]}, UUID(int=5)
+                )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status", [403, 409, 422])
+def test_rejected_group_approvals_release_capacity(monkeypatch, status):
+    async def scenario():
+        client = SimpleNamespace(
+            approve_group=AsyncMock(side_effect=LegalCoreApiError(status, "REJECTED", "Rejected")),
+            aclose=AsyncMock(),
+        )
+        monkeypatch.setattr(runtime, "LegalLibraryClient", lambda: client)
+        app = SimpleNamespace(running=True, bot_data={}, create_task=asyncio.create_task)
+        context = SimpleNamespace(application=app, user_data={})
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=12345),
+                                 effective_message=SimpleNamespace(reply_text=AsyncMock()))
+        for number in range(runtime._EDITOR_MAX_UNRESOLVED_APPROVALS + 1):
+            key = str(UUID(int=number + 10))
+            context.user_data[runtime._EDITOR_GROUP_PENDING_KEY] = {
+                "id": key, "group": "general", "ids": [str(UUID(int=2))],
+                "lastPageShown": True, "confirmationEnabled": True,
+                "preview": {"snapshot": "a" * 64, "ready": [{}]},
+            }
+            await runtime._confirm_group_approval(update, context, batch_id=key)
+            await app.bot_data[runtime._EDITOR_APPROVAL_TASKS_KEY].drain()
+        assert client.approve_group.await_count == runtime._EDITOR_MAX_UNRESOLVED_APPROVALS + 1
+        assert not context.user_data[runtime._EDITOR_APPROVAL_ATTEMPTS_KEY]
+
+    asyncio.run(scenario())
+
+
+def test_unknown_group_result_survives_later_permission_rejection(monkeypatch):
+    key = str(UUID(int=5))
+
+    async def scenario():
+        client = SimpleNamespace(approve_group=AsyncMock(side_effect=[
+            LegalCoreApiError(503, "UNAVAILABLE", "Unknown"),
+            LegalCoreApiError(403, "DENIED", "Denied"),
+            {"approvedCount": 1},
+        ]), aclose=AsyncMock())
+        monkeypatch.setattr(runtime, "LegalLibraryClient", lambda: client)
+        app = SimpleNamespace(running=True, bot_data={}, create_task=asyncio.create_task)
+        context = SimpleNamespace(application=app, user_data={runtime._EDITOR_GROUP_PENDING_KEY: {
+            "id": key, "group": "general", "ids": [str(UUID(int=2))],
+            "lastPageShown": True, "confirmationEnabled": True,
+            "preview": {"snapshot": "a" * 64, "ready": [{}]},
+        }})
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=12345),
+                                 effective_message=SimpleNamespace(reply_text=AsyncMock()))
+        for attempt in range(3):
+            await runtime._confirm_group_approval(update, context, batch_id=key)
+            await app.bot_data[runtime._EDITOR_APPROVAL_TASKS_KEY].drain()
+            if attempt == 0:
+                context.user_data[runtime._EDITOR_GROUP_PENDING_KEY] = {"id": "new-preview"}
+        assert client.approve_group.await_count == 3
+        assert all(call == client.approve_group.await_args_list[0]
+                   for call in client.approve_group.await_args_list)
+        assert not context.user_data[runtime._EDITOR_APPROVAL_ATTEMPTS_KEY]
 
     asyncio.run(scenario())
 
