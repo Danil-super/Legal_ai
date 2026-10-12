@@ -143,7 +143,9 @@ _SEARCH_APPROVED_VECTOR = text(
 # One query-local approved snapshot; preserve explicit ordering within each query as well.
 _LEXICAL_ORDER = _SEARCH_APPROVED_LEXICAL.text.split("ORDER BY", 1)[1].rsplit("LIMIT", 1)[0]
 _SEARCH_APPROVED_LEXICAL_BATCH = text(
-    f"WITH corpus AS MATERIALIZED (SELECT {_FRAGMENT_COLUMNS} FROM production_legal_fragments "
+    f"WITH corpus AS MATERIALIZED (SELECT {_FRAGMENT_COLUMNS}, "
+    "lower(fragment_text) AS lexical_text, "
+    "to_tsvector('russian', fragment_text) AS lexical_vector FROM production_legal_fragments "
     "WHERE effective_from <= :as_of_date AND (effective_to IS NULL OR :as_of_date < effective_to)) "
     "SELECT query_rows.ordinal AS query_index, hits.* "
     "FROM unnest(CAST(:queries AS text[])) WITH ORDINALITY AS query_rows(query, ordinal) "
@@ -153,6 +155,8 @@ _SEARCH_APPROVED_LEXICAL_BATCH = text(
         f"SELECT row_number() OVER (ORDER BY {_LEXICAL_ORDER}) AS hit_rank, {_FRAGMENT_COLUMNS}",
     ).replace("FROM production_legal_fragments", "FROM corpus")
     .replace(":query", "query_rows.query")
+    .replace("lower(fragment_text)", "lexical_text")
+    .replace("to_tsvector('russian', fragment_text)", "lexical_vector")
     + ") AS hits ORDER BY query_rows.ordinal, hits.hit_rank"
 )
 

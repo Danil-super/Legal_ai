@@ -25,6 +25,7 @@ def test_lexical_batch_executes_one_guarded_statement(monkeypatch):
         statement, params = session.execute.await_args.args
         assert "AS MATERIALIZED" in str(statement)
         assert "production_legal_fragments" in str(statement)
+        assert str(statement).count("to_tsvector('russian', fragment_text)") == 1
         assert params["queries"] == ["платные услуги", "возврат", "не найдено"]
         assert params["as_of_date"] == date(2026, 10, 12)
 

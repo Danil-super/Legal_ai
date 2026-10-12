@@ -100,6 +100,7 @@ class LegalLibraryClient:
             response = await self._http.get(
                 "/v1/legal/library",
                 headers={"X-Telegram-User-Id": str(telegram_user_id)},
+                timeout=60.0,
             )
         except httpx2.HTTPError as exc:
             raise LegalCoreApiError(
@@ -1941,7 +1942,7 @@ async def show_legal_library(
     queue = context.application.bot_data.get(_LIBRARY_TASKS_KEY)
     if not isinstance(queue, EditorFileDeliveryQueue):
         queue = EditorFileDeliveryQueue(
-            context.application, timeout_seconds=45, task_name="legal-library-read"
+            context.application, timeout_seconds=90, task_name="legal-library-read"
         )
         context.application.bot_data[_LIBRARY_TASKS_KEY] = queue
 

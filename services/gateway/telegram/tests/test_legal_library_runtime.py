@@ -120,12 +120,24 @@ def test_library_load_returns_without_blocking_sequential_commands(monkeypatch):
         await asyncio.wait_for(runtime.show_legal_library(update, context), timeout=0.1)
         await asyncio.wait_for(started.wait(), timeout=0.1)
         assert not tasks[0].done()
+        assert application.bot_data[runtime._LIBRARY_TASKS_KEY].timeout_seconds == 90
         await runtime.show_legal_library(update, context)
         assert len(tasks) == 1
         release.set()
         await asyncio.gather(*tasks)
 
     asyncio.run(scenario())
+
+
+def test_library_read_has_headroom_without_changing_other_client_requests(monkeypatch):
+    http = SimpleNamespace(get=AsyncMock(return_value=httpx2.Response(200, json=_payload())))
+    monkeypatch.setattr(runtime.gateway_bot, "load_legal_editor_gateway_key", lambda: None)
+    client = runtime.LegalLibraryClient(client=http)
+    asyncio.run(client.get_library(7_000_000_001))
+    assert http.get.await_args.kwargs["timeout"] == 60.0
+    owned = runtime.LegalLibraryClient(base_url="http://synthetic.example.test")
+    assert owned._http.timeout.read == 20.0
+    asyncio.run(owned.aclose())
 
 
 def test_platform_review_queue_renders_statuses_without_legal_text() -> None:
