@@ -847,7 +847,12 @@ def render_editor_review_materials(
                 )
             ]
         )
-    if selected_group != "clinical":
+    pending_norms = (
+        progress["approvedNormativeVersions"] < progress["normativeVersions"]
+        if isinstance(progress, dict)
+        else True  # Legacy pages cannot prove the status of versions on other pages.
+    )
+    if selected_group != "clinical" and pending_norms:
         buttons.append(
             [
                 InlineKeyboardButton(
