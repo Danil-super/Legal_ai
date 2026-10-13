@@ -191,9 +191,11 @@ async def _load_analysis_state(session: AsyncSession, actor: Any, case_id: UUID)
             message="An approved risk policy is not available",
         ) from exc
 
-    if policy.domain.factual_safety_intake_enabled and evaluate_early_triage(
-        facts, policy=policy.domain,
-    ) is None:
+    if (
+        facts.get(FactKey.INTAKE_VERSION) == "GUIDED_V2"
+        and policy.domain.factual_safety_intake_enabled
+        and evaluate_early_triage(facts, policy=policy.domain) is None
+    ):
         reason = screening_blocker(facts, confirmed_screening(facts))
         if reason is not None:
             raise ApiError(status_code=422, code=reason,

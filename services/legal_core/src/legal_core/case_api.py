@@ -1848,8 +1848,15 @@ def create_case_router(
             TelegramIntakeDraft.id == workflow_id,
             TelegramIntakeDraft.clinic_id == actor.clinic_id,
             TelegramIntakeDraft.actor_membership_id == actor.membership_id,
-            TelegramIntakeDraft.status == "DRAFT",
         ).with_for_update())
+        if source_draft is not None and (
+            source_draft.status != "DRAFT" or source_draft.purge_after <= datetime.now(UTC)
+        ):
+            raise ApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="INTAKE_DRAFT_CLOSED",
+                message="A closed intake draft cannot create a new case",
+            )
         correction_source = (
             source_draft.draft_json.get("correctionSource") if source_draft is not None else None
         )

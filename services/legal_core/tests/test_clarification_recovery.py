@@ -17,7 +17,7 @@ from legal_core.factual_safety_intake import SCREENING_FIELDS, SCREENING_VERSION
 from legal_core.risk_policy_approval import RiskPolicyApproval, approve_risk_policy
 from legal_core.runtime_db_role import provision_runtime_role
 from telegram_gateway.case_wizard import facts_from_v2_data
-from test_case_api import actor_headers, application_client, seed_admin
+from test_case_api import actor_headers, application_client, seed_admin, workflow_submission
 from test_case_materials_api import FakeCaseMaterialStore, _new_draft, _upload_headers
 from test_legal_editor_workspace_api import _seed_user
 
@@ -355,6 +355,96 @@ def test_preview_is_metadata_only_and_new_case_keeps_source_link():
             assert all(pointer == corrected["correctionSource"] for pointer in pointers)
     finally:
         engine.dispose()
+
+
+def test_factual_policy_preserves_complete_legacy_intake(monkeypatch):
+    actor = 99_100_000_000 + uuid4().int % 100_000_000
+    seed_admin(actor)
+    monkeypatch.setenv("AGENT_INTERNAL_KEY", INTERNAL_KEY)
+    retrieval_calls = []
+
+    async def empty_evidence(*args, **kwargs):
+        retrieval_calls.append(True)
+        return []
+
+    monkeypatch.setattr("legal_core.analysis_api.retrieve_planned_evidence", empty_evidence)
+    with application_client() as client:
+        workflow = client.post(
+            f"/v1/telegram-case-workflows/{uuid4()}/submissions",
+            headers=actor_headers(actor), json=workflow_submission(),
+        )
+        assert workflow.status_code == 201, workflow.text
+        response = client.get(
+            f"/v1/cases/{workflow.json()['case']['id']}/analysis-context",
+            headers={**actor_headers(actor), "X-Agent-Internal-Key": INTERNAL_KEY},
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["error"]["code"] == "LEGAL_EVIDENCE_UNAVAILABLE"
+        assert retrieval_calls == [True]
+
+
+@pytest.mark.parametrize("inactive", ["archived", "expired"])
+def test_closed_clarification_draft_cannot_be_confirmed(inactive):
+    actor = 99_200_000_000 + uuid4().int % 100_000_000
+    seed_admin(actor)
+    with application_client() as client:
+        original = _confirm(client, actor, _guided_data())
+        draft = _request_draft(client, actor, original).json()
+        if inactive == "archived":
+            archived = client.post(
+                f"/v1/telegram-intake-drafts/{draft['id']}/archive",
+                headers=actor_headers(actor, uuid4()),
+                json={"expectedRevision": draft["revision"]},
+            )
+            assert archived.status_code == 200, archived.text
+        else:
+            engine = create_engine(owner_database_url())
+            with engine.begin() as connection:
+                connection.execute(text(
+                    "UPDATE telegram_intake_drafts SET purge_after=now() - INTERVAL '1 minute' "
+                    "WHERE id=:id"
+                ), {"id": draft["id"]})
+            engine.dispose()
+        before = _source_rows(original["case"]["id"])
+        response = client.post(
+            f"/v1/telegram-case-workflows/{draft['id']}/submissions",
+            headers=actor_headers(actor),
+            json={"intakeSchemaVersion": "dental-case-intake.v2", "locale": "ru-RU",
+                  "facts": facts_from_v2_data(draft["draftData"])},
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["error"]["code"] == "INTAKE_DRAFT_CLOSED"
+        assert _source_rows(original["case"]["id"]) == before
+        engine = create_engine(owner_database_url())
+        with engine.connect() as connection:
+            count = connection.execute(text(
+                "SELECT count(*) FROM telegram_case_workflows WHERE id=:id"
+            ), {"id": draft["id"]}).scalar_one()
+            assert count == 0
+        engine.dispose()
+
+
+def test_confirmed_clarification_replay_survives_archived_draft():
+    actor = 99_300_000_000 + uuid4().int % 100_000_000
+    seed_admin(actor)
+    with application_client() as client:
+        original = _confirm(client, actor, _guided_data())
+        draft = _request_draft(client, actor, original).json()
+        confirmed = _confirm(client, actor, draft["draftData"], UUID(draft["id"]))
+        archived = client.post(
+            f"/v1/telegram-intake-drafts/{draft['id']}/archive",
+            headers=actor_headers(actor, uuid4()),
+            json={"expectedRevision": draft["revision"]},
+        )
+        assert archived.status_code == 200, archived.text
+        replay = client.post(
+            f"/v1/telegram-case-workflows/{draft['id']}/submissions",
+            headers=actor_headers(actor),
+            json={"intakeSchemaVersion": "dental-case-intake.v2", "locale": "ru-RU",
+                  "facts": facts_from_v2_data(draft["draftData"])},
+        )
+        assert replay.status_code == 200, replay.text
+        assert replay.json() == confirmed
 
 
 @pytest.mark.parametrize("invalid_source", ["stale", "unconfirmed", "expired"])
