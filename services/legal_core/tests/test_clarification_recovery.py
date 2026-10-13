@@ -464,6 +464,108 @@ def test_confirmed_clarification_replay_survives_archived_draft():
         assert replay.json() == confirmed
 
 
+def test_purge_scrubs_expired_draft_replies_but_keeps_replay_metadata():
+    actor = 99_400_000_000 + uuid4().int % 100_000_000
+    other_actor = actor + 1_000_000_000
+    seed_admin(actor)
+    seed_admin(other_actor)
+    with application_client() as client:
+        original = _confirm(client, actor, _guided_data())
+        other_original = _confirm(client, other_actor, _guided_data())
+        key, other_key = uuid4(), uuid4()
+        draft = _request_draft(client, actor, original, key).json()
+        active = _request_draft(client, other_actor, other_original, other_key).json()
+        saved = client.put(f"/v1/telegram-intake-drafts/{draft['id']}",
+                           headers=actor_headers(actor, uuid4()),
+                           json={"expectedRevision": draft["revision"],
+                                 "wizardState": "SUMMARY", "draftData": draft["draftData"]})
+        assert saved.status_code == 200, saved.text
+        engine = create_engine(owner_database_url())
+        with engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE telegram_intake_drafts SET purge_after=now()-INTERVAL '1 minute' "
+                "WHERE id=:id"
+            ), {"id": draft["id"]})
+            before = connection.execute(text(
+                "SELECT to_jsonb(i) - 'response_json' FROM idempotency_records i "
+                "WHERE resource_type='TELEGRAM_INTAKE_DRAFT' AND resource_id=:id ORDER BY id"
+            ), {"id": draft["id"]}).scalars().all()
+        assert len(before) == 2
+        before_purge = _request_draft(client, actor, original, key)
+        assert before_purge.status_code == 410, before_purge.text
+        assert before_purge.json()["error"]["code"] == "INTAKE_DRAFT_EXPIRED"
+
+        async def purge():
+            db = create_async_engine(database_url())
+            try:
+                await purge_expired_intake_drafts(async_sessionmaker(db))
+            finally:
+                await db.dispose()
+        asyncio.run(purge())
+        with engine.connect() as connection:
+            after = connection.execute(text(
+                "SELECT to_jsonb(i) - 'response_json' FROM idempotency_records i "
+                "WHERE resource_type='TELEGRAM_INTAKE_DRAFT' AND resource_id=:id ORDER BY id"
+            ), {"id": draft["id"]}).scalars().all()
+            payloads = connection.execute(text(
+                "SELECT response_json FROM idempotency_records "
+                "WHERE resource_type='TELEGRAM_INTAKE_DRAFT' AND resource_id=:id"
+            ), {"id": draft["id"]}).scalars().all()
+            assert after == before
+            assert payloads == [None, None]
+        engine.dispose()
+        expired = _request_draft(client, actor, original, key)
+        assert expired.status_code == 410, expired.text
+        assert expired.json()["error"]["code"] == "INTAKE_DRAFT_EXPIRED"
+        assert "draftData" not in expired.text
+        replay = _request_draft(client, other_actor, other_original, other_key)
+        assert replay.status_code == 200, replay.text
+        assert replay.json() == active
+        submitted = client.post(
+            f"/v1/telegram-case-workflows/{draft['id']}/submissions",
+            headers=actor_headers(actor),
+            json={"intakeSchemaVersion": "dental-case-intake.v2", "locale": "ru-RU",
+                  "facts": facts_from_v2_data(draft["draftData"])},
+        )
+        assert submitted.status_code == 409, submitted.text
+        assert submitted.json()["error"]["code"] == "INTAKE_DRAFT_CLOSED"
+
+
+def test_migration_scrubs_historical_orphan_replies_without_removing_receipts():
+    actor = 99_500_000_000 + uuid4().int % 100_000_000
+    seed_admin(actor)
+    with application_client() as client:
+        original = _confirm(client, actor, _guided_data())
+        draft = _request_draft(client, actor, original).json()
+    engine = create_engine(owner_database_url())
+    config = Config(str(Path(__file__).parents[3] / "alembic.ini"))
+    try:
+        command.downgrade(config, "c3f9b2e5d741")
+        with engine.begin() as connection:
+            connection.execute(text("DELETE FROM telegram_intake_drafts WHERE id=:id"),
+                               {"id": draft["id"]})
+            before = connection.execute(text(
+                "SELECT to_jsonb(i) - 'response_json' FROM idempotency_records i "
+                "WHERE resource_type='TELEGRAM_INTAKE_DRAFT' AND resource_id=:id"
+            ), {"id": draft["id"]}).scalar_one()
+            assert connection.execute(text(
+                "SELECT response_json IS NOT NULL FROM idempotency_records "
+                "WHERE resource_type='TELEGRAM_INTAKE_DRAFT' AND resource_id=:id"
+            ), {"id": draft["id"]}).scalar_one()
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            metadata, reply = connection.execute(text(
+                "SELECT to_jsonb(i) - 'response_json', response_json "
+                "FROM idempotency_records i "
+                "WHERE resource_type='TELEGRAM_INTAKE_DRAFT' AND resource_id=:id"
+            ), {"id": draft["id"]}).one()
+            assert metadata == before
+            assert reply is None
+    finally:
+        command.upgrade(config, "head")
+        engine.dispose()
+
+
 @pytest.mark.parametrize("invalid_source", ["stale", "unconfirmed", "expired"])
 def test_clarification_rejects_stale_unconfirmed_or_expired_sources(invalid_source: str) -> None:
     actor = 97_000_000_000 + uuid4().int % 100_000_000

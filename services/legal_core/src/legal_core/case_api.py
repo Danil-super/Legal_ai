@@ -439,6 +439,7 @@ async def _idempotency_replay(
 ) -> dict[str, Any] | None:
     record = await session.scalar(
         select(IdempotencyRecord).where(
+            IdempotencyRecord.clinic_id == actor.clinic_id,
             IdempotencyRecord.scope == scope,
             IdempotencyRecord.actor_membership_id == actor.membership_id,
             IdempotencyRecord.key == str(key),
@@ -452,6 +453,17 @@ async def _idempotency_replay(
             code="IDEMPOTENCY_KEY_REUSED",
             message="Idempotency key was already used with another request",
         )
+    if record.state == "SUCCEEDED" and record.resource_type == "TELEGRAM_INTAKE_DRAFT":
+        expiry = None
+        if record.response_json is not None:
+            expiry = await session.scalar(select(TelegramIntakeDraft.purge_after).where(
+                TelegramIntakeDraft.id == record.resource_id,
+                TelegramIntakeDraft.clinic_id == actor.clinic_id,
+                TelegramIntakeDraft.actor_membership_id == actor.membership_id,
+            ))
+        if expiry is None or expiry <= datetime.now(UTC):
+            raise ApiError(status_code=410, code="INTAKE_DRAFT_EXPIRED",
+                           message="The private intake draft has expired")
     if record.state != "SUCCEEDED" or record.response_json is None:
         raise ApiError(
             status_code=status.HTTP_409_CONFLICT,

@@ -40,9 +40,14 @@ async def create_clarification(update: Update, context: ContextTypes.DEFAULT_TYP
                 "caseId": str(case_id), "factSnapshotSha256": sha,
         }):
             raise ValueError("invalid clarification draft")
-    except (KeyError, ValueError, LegalCoreApiError):
-        await gateway_bot._reply(update,
-            "⚠️ Не удалось открыть уточнение. Старый кейс сохранён. Повторное нажатие безопасно.",
+    except (KeyError, ValueError, LegalCoreApiError) as exc:
+        text = (
+            "⚠️ Срок хранения этого черновика истёк. Создайте новый кейс из главного меню. "
+            "Старый кейс не изменён."
+            if isinstance(exc, LegalCoreApiError) and exc.code == "INTAKE_DRAFT_EXPIRED" else
+            "⚠️ Не удалось открыть уточнение. Старый кейс сохранён. Повторное нажатие безопасно."
+        )
+        await gateway_bot._reply(update, text,
             reply_markup=back_keyboard())
         raise ApplicationHandlerStop from None
     await gateway_bot._reply(update,

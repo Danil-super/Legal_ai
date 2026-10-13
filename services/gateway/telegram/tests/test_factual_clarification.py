@@ -73,3 +73,31 @@ def test_clarification_retry_and_restart_use_same_intent_and_resume_the_new_draf
     markup = message.reply_text.await_args.kwargs["reply_markup"]
     assert markup.inline_keyboard[0][0].callback_data == f"case:draft:{draft}"
     assert markup.inline_keyboard[-1][0].callback_data == "menu"
+
+
+def test_expired_clarification_explains_expiry_instead_of_endless_retry():
+    from telegram_gateway.case_wizard import LegalCoreApiError
+    from telegram_gateway.clarification_runtime import create_clarification
+
+    case = UUID("00000000-0000-4000-8000-000000000091")
+    client = SimpleNamespace(
+        clarification_preview=AsyncMock(return_value={
+            "caseId": str(case), "expectedFactSnapshotSha256": "a" * 64,
+        }),
+        create_clarification_draft=AsyncMock(side_effect=LegalCoreApiError(
+            410, "INTAKE_DRAFT_EXPIRED", "SYNTHETIC_PRIVATE_BOUNDARY_DETAIL",
+        )),
+    )
+    message = SimpleNamespace(message_id=77, reply_text=AsyncMock())
+    update = SimpleNamespace(effective_user=SimpleNamespace(id=7000000001),
+                             effective_message=message, callback_query=SimpleNamespace(
+                                 data=f"case:clarify:{case}", answer=AsyncMock(), message=message))
+    context = SimpleNamespace(user_data={}, bot_data={bot.LEGAL_CORE_CLIENT_KEY: client})
+    with pytest.raises(ApplicationHandlerStop):
+        asyncio.run(create_clarification(update, context))
+    text = message.reply_text.await_args.args[0]
+    assert "срок хранения" in text.lower()
+    assert "повторное нажатие" not in text.lower()
+    assert "SYNTHETIC_PRIVATE_BOUNDARY_DETAIL" not in text
+    markup = message.reply_text.await_args.kwargs["reply_markup"]
+    assert markup.inline_keyboard[-1][0].callback_data == "menu"
