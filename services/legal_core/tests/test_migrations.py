@@ -1,4 +1,5 @@
 import os
+import logging
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,10 @@ def alembic_config() -> Config:
 
 def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
     config = alembic_config()
+    application_logger = logging.getLogger("synthetic.application.alembic_regression")
+    application_logger.disabled = False
     command.upgrade(config, "head")
+    assert application_logger.disabled is False
 
     sync_url = database_url().set(drivername="postgresql+psycopg")
     engine = create_engine(sync_url)

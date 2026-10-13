@@ -44,6 +44,30 @@ def screening_complete(data: dict[str, Any]) -> bool:
     return True
 
 
+def clarification_question_for_code(code: str) -> str | None:
+    if code == "FACTUAL_SAFETY_SCREENING_UNKNOWN":
+        return ("Ответьте на фактические уточнения о последствиях, "
+                "документах и требованиях пациента.")
+    return next((question for field, question in QUESTIONS.items()
+                 if code == f"FACTUAL_SAFETY_{field.upper()}_UNKNOWN"), None)
+
+
+def reopen_unknown_screening_question(data: dict[str, Any]) -> str | None:
+    """Reopen one unanswered fact in a mutable draft, never invent an answer."""
+    if known_urgent_report(data):
+        return None
+    screening = data.get("safetyScreening")
+    if not isinstance(screening, dict):
+        return None
+    field = next((key for key in QUESTIONS if screening.get(key) == "UNKNOWN"), None)
+    if field is None:
+        return None
+    screening.pop(field)
+    if field == "moneyRequested":
+        screening.pop("amount", None)
+    return field
+
+
 def known_urgent_report(data: dict[str, Any]) -> bool:
     """UI shortcut only; Legal Core and approved policy decide actual escalation."""
     health = data.get("healthSignals")
@@ -58,7 +82,7 @@ def known_urgent_report(data: dict[str, Any]) -> bool:
     if any(screening.get(field) == "YES" for field in SCREENING_FIELDS[:5]):
         return True
     amount = screening.get("amount")
-    return isinstance(amount, dict) and amount["amountKopecks"] >= 5_000_000
+    return isinstance(amount, dict) and amount["amountKopecks"] >= 1_000_000
 
 
 def explicitly_skip_other_questions(data: dict[str, Any]) -> None:

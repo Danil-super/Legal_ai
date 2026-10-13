@@ -19,7 +19,12 @@ _PHONE: Final = re.compile(
 _PASSPORT: Final = re.compile(r"(?<!\d)\d{4}[\s-]?\d{6}(?!\d)")
 _SNILS: Final = re.compile(r"(?<!\d)\d{3}[ -]?\d{3}[ -]?\d{3}[ -]?\d{2}(?!\d)")
 _LONG_IDENTIFIER: Final = re.compile(r"(?<!\d)\d{14,20}(?!\d)")
-_RUSSIAN_NAME_WORD = r"[А-ЯЁ][а-яё]{1,30}(?:-[А-ЯЁ][а-яё]{1,30})?"
+# The country designation is not a person's name. Keep the exception lexical and
+# bounded: it must not exempt adjacent names, numeric identifiers or entire evidence.
+_RUSSIAN_NAME_WORD = (
+    r"(?!(?:Российской|Федерации)(?![А-ЯЁа-яё]))"
+    r"[А-ЯЁ][а-яё]{1,30}(?:-[А-ЯЁ][а-яё]{1,30})?"
+)
 _INITIALS_NAME: Final = re.compile(
     rf"(?<![А-ЯЁа-яё])(?:"
     rf"{_RUSSIAN_NAME_WORD}\s+[А-ЯЁ]\.\s*[А-ЯЁ]\.|"

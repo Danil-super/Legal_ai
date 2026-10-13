@@ -13,7 +13,9 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # In-process maintenance must not silence the application's closed, PII-free events.
+    # https://docs.python.org/3.13/library/logging.config.html#logging.config.fileConfig
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 config.set_main_option(
     "sqlalchemy.url",

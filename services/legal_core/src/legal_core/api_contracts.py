@@ -104,6 +104,7 @@ _V2_DRAFT_DATA_KEYS = frozenset(
         "healthSignals",
         "caseMaterialsStatus",
         "safetyScreening",
+        "correctionSource",
     }
 )
 _DRAFT_DATA_KEYS = _V1_DRAFT_DATA_KEYS | _V2_DRAFT_DATA_KEYS
@@ -271,6 +272,11 @@ class EscalationQueueResponse(ContractModel):
     next_before: UUID | None = Field(default=None, alias="nextBefore")
 
 
+class CorrectionSource(ContractModel):
+    case_id: UUID = Field(alias="caseId")
+    fact_snapshot_sha256: str = Field(alias="factSnapshotSha256", pattern=r"^[0-9a-f]{64}$")
+
+
 class TelegramIntakeDraftUpdateRequest(ContractModel):
     expected_revision: int = Field(alias="expectedRevision", ge=1)
     wizard_state: TelegramDraftWizardState = Field(alias="wizardState")
@@ -291,6 +297,8 @@ class TelegramIntakeDraftUpdateRequest(ContractModel):
             from legal_core.factual_safety_intake import validate_partial_screening
 
             validate_partial_screening(value["safetyScreening"])
+        if "correctionSource" in value:
+            CorrectionSource.model_validate(value["correctionSource"])
         encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
         if len(encoded.encode()) > 16_384:
             raise ValueError("draftData exceeds 16384 bytes")

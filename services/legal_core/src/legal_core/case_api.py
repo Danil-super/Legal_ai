@@ -66,7 +66,7 @@ from legal_core.models import (
 )
 from legal_core.pseudonymization import pseudonymize_text
 from legal_core.reports import build_intake_report, render_report_pdf
-from legal_core.risk_persistence import ensure_early_triage
+from legal_core.risk_persistence import ensure_early_triage, has_approved_urgent_signal
 from legal_core.subscription_provisioning import provision_entitlement_in_session
 
 TelegramUserId = Annotated[int, Header(alias="X-Telegram-User-Id", gt=0)]
@@ -439,6 +439,7 @@ async def _idempotency_replay(
 ) -> dict[str, Any] | None:
     record = await session.scalar(
         select(IdempotencyRecord).where(
+            IdempotencyRecord.clinic_id == actor.clinic_id,
             IdempotencyRecord.scope == scope,
             IdempotencyRecord.actor_membership_id == actor.membership_id,
             IdempotencyRecord.key == str(key),
@@ -452,6 +453,17 @@ async def _idempotency_replay(
             code="IDEMPOTENCY_KEY_REUSED",
             message="Idempotency key was already used with another request",
         )
+    if record.state == "SUCCEEDED" and record.resource_type == "TELEGRAM_INTAKE_DRAFT":
+        expiry = None
+        if record.response_json is not None:
+            expiry = await session.scalar(select(TelegramIntakeDraft.purge_after).where(
+                TelegramIntakeDraft.id == record.resource_id,
+                TelegramIntakeDraft.clinic_id == actor.clinic_id,
+                TelegramIntakeDraft.actor_membership_id == actor.membership_id,
+            ))
+        if expiry is None or expiry <= datetime.now(UTC):
+            raise ApiError(status_code=410, code="INTAKE_DRAFT_EXPIRED",
+                           message="The private intake draft has expired")
     if record.state != "SUCCEEDED" or record.response_json is None:
         raise ApiError(
             status_code=status.HTTP_409_CONFLICT,
@@ -1219,6 +1231,9 @@ def create_case_router(
                 code="INTAKE_DRAFT_REVISION_CONFLICT",
                 message="The intake draft has a newer revision",
             )
+        if draft.draft_json.get("correctionSource") != payload.draft_data.get("correctionSource"):
+            raise ApiError(status_code=409, code="CLARIFICATION_SOURCE_IMMUTABLE",
+                           message="The source of a clarification draft cannot be changed")
         now = datetime.now(UTC)
         draft.wizard_state = payload.wizard_state
         draft.draft_json = payload.draft_data
@@ -1624,7 +1639,7 @@ def create_case_router(
         _require_open_case_intake(case)
         facts = _domain_facts(await _current_fact_rows(session, case.id))
         missing = missing_facts_for(facts)
-        if missing:
+        if missing and not await has_approved_urgent_signal(session, facts):
             raise ApiError(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 code="INSUFFICIENT_FACTS",
@@ -1655,6 +1670,9 @@ def create_case_router(
             actor_membership_id=actor.membership_id,
             facts=facts,
         )
+        if missing and early_escalation_id is None:
+            raise ApiError(status_code=409, code="RISK_POLICY_NOT_READY",
+                           message="Urgent routing policy changed; retry confirmation")
         result = _case_response(case)
         result.early_escalation_id = early_escalation_id
         response_json = result.model_dump(mode="json", by_alias=True)
@@ -1712,7 +1730,7 @@ def create_case_router(
         fact_rows = await _current_fact_rows(session, case.id)
         facts = _domain_facts(fact_rows)
         missing = missing_facts_for(facts)
-        if missing:
+        if missing and not await has_approved_urgent_signal(session, facts):
             raise ApiError(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 code="INSUFFICIENT_FACTS",
@@ -1831,13 +1849,43 @@ def create_case_router(
 
         facts = {item.fact_key: _input_value(item.value_type, item.value) for item in payload.facts}
         missing = missing_facts_for(facts)
-        if missing:
+        if missing and not await has_approved_urgent_signal(session, facts):
             raise ApiError(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 code="INSUFFICIENT_FACTS",
                 message="Карточку пока нельзя подтвердить",
                 details={"missingFactKeys": [item.fact_key.value for item in missing]},
             )
+        source_draft = await session.scalar(select(TelegramIntakeDraft).where(
+            TelegramIntakeDraft.id == workflow_id,
+            TelegramIntakeDraft.clinic_id == actor.clinic_id,
+            TelegramIntakeDraft.actor_membership_id == actor.membership_id,
+        ).with_for_update())
+        # Use retained receipt metadata after retention has deleted the draft row.
+        # A delayed button must not turn a purged saved draft into a new unlinked case.
+        purged_draft_receipt = None
+        if source_draft is None:
+            purged_draft_receipt = await session.scalar(select(IdempotencyRecord.id).where(
+                IdempotencyRecord.clinic_id == actor.clinic_id,
+                IdempotencyRecord.actor_membership_id == actor.membership_id,
+                IdempotencyRecord.resource_type == "TELEGRAM_INTAKE_DRAFT",
+                IdempotencyRecord.resource_id == workflow_id,
+                IdempotencyRecord.state == "SUCCEEDED",
+            ).limit(1))
+        if purged_draft_receipt is not None:
+            raise ApiError(status_code=409, code="INTAKE_DRAFT_CLOSED",
+                           message="A purged intake draft cannot create a new case")
+        if source_draft is not None and (
+            source_draft.status != "DRAFT" or source_draft.purge_after <= datetime.now(UTC)
+        ):
+            raise ApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="INTAKE_DRAFT_CLOSED",
+                message="A closed intake draft cannot create a new case",
+            )
+        correction_source = (
+            source_draft.draft_json.get("correctionSource") if source_draft is not None else None
+        )
         await _enforce_case_limits(
             session,
             actor,
@@ -1883,7 +1931,9 @@ def create_case_router(
                 value_type=item.value_type,
                 value_json=item.value,
                 source_type=item.source_type,
-                source_ref_json={"workflowId": str(workflow_id)},
+                source_ref_json={"workflowId": str(workflow_id), **(
+                    {"correctionSource": correction_source} if correction_source is not None else {}
+                )},
                 evidence_status="UNVERIFIED",
                 recorded_by_membership_id=actor.membership_id,
                 supersedes_fact_id=None,
@@ -1899,7 +1949,7 @@ def create_case_router(
             report_version=1,
             generated_at=datetime.now(UTC),
             facts=facts,
-            missing_facts=[],
+            missing_facts=missing,
         )
         report_json = canonical.model_dump(mode="json", by_alias=True)
         pdf = render_report_pdf(canonical)
@@ -1927,6 +1977,10 @@ def create_case_router(
             actor_membership_id=actor.membership_id,
             facts=facts,
         )
+
+        if missing and early_escalation_id is None:
+            raise ApiError(status_code=409, code="RISK_POLICY_NOT_READY",
+                           message="Urgent routing policy changed; retry confirmation")
 
         case_response = _case_response(case)
         case_response.early_escalation_id = early_escalation_id
@@ -2065,4 +2119,8 @@ def create_case_router(
             },
         )
 
+    # Register the case subresource after this module's helpers are available.
+    from legal_core.case_clarification import create_clarification_router
+
+    router.include_router(create_clarification_router(session_factory))
     return router

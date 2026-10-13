@@ -1,0 +1,110 @@
+# ADR 0081: исправления сквозного процесса по аудиту релиза
+
+## Контекст и дата
+
+2026-10-13. Владелец поручил исправить все выявленные при повторном аудите
+ошибки. Технически зелёный тестовый набор не подтверждает юридическое качество
+ответов на реальные эталоны. Основа изменений — действующие контракты guided-v2,
+factual-safety-intake.v1, reference workspace и утверждённая risk policy v4.
+
+## Решение и границы
+
+- Ложное распознавание «Российской Федерации» как частей ФИО исправляется
+  ограниченным лексическим исключением этих слов, не исключением evidence из
+  privacy guard. Соседние ФИО, контакты и числовые идентификаторы продолжают
+  проверяться. Нормативный текст и цитаты не изменяются.
+- Положительные срочные сигналы допускают подтверждение и early escalation
+  независимо от неизвестной даты. Точную дату по-прежнему требует юридический
+  анализ; UNKNOWN не заменяется текущим числом и остаётся в missing facts.
+  Legal Core решает маршрутизацию по утверждённой policy, не Telegram shortcut.
+- Неизвестные критичные ответы требуют конкретных уточнений. Подтверждённые
+  факты и отчёты не разблокируются для редактирования: исправление создаёт
+  новый подтверждаемый черновик согласно factual-safety-intake.v1.
+  Metadata-only GET `/v1/cases/{id}/clarification-drafts/preview` и POST
+  `/v1/cases/{id}/clarification-drafts` доступны только создателю подтверждённого
+  guided-v2 кейса в действующей клинике. POST требует Idempotency-Key и
+  expectedFactSnapshotSha256. Он создаёт отдельный DRAFT с immutable
+  correctionSource={caseId,factSnapshotSha256}; исходные материалы не копируются.
+  UNKNOWN-поля открываются для повторного вопроса, прежние YES/NO сохраняются.
+  Источник нельзя подменить или убрать при сохранении черновика. Telegram-кнопка
+  связывает intent с актором, сообщением, кейсом и hash, в том числе после рестарта.
+  Factual-safety gate применяется только к GUIDED_V2; полные legacy-v1 кейсы
+  сохраняют предусмотренный утверждённой policy путь анализа. Закрытый или
+  просроченный сохранённый черновик не может создать новый кейс; ранее
+  подтверждённый workflow возвращается через idempotent replay до этой проверки.
+  После retention purge проверяется сохранённая metadata квитанции, чтобы
+  удалённый черновик не считался новым незарегистрированным workflow.
+  Миграция c4a0c3f6e852 очищает response_json для удаляемых по прежнему TTL
+  DRAFT/ARCHIVED и исторических orphan-квитанций; IDs, tenant/member, scope,
+  state и request hash остаются для запрета дублей. Active/SUBMITTED и другие
+  resource types не очищаются. Повтор очищенной квитанции возвращает 410
+  INTAKE_DRAFT_EXPIRED, без текста. Это исправление retention, не новый срок.
+  Downgrade возвращает прежнюю функцию, но намеренно не восстанавливает
+  истёкший приватный текст; application rollback не требует восстановления текста.
+- Обезличенные DOCX-материалы кейсов и эталонов проверяются до хранения во всех
+  поддерживаемых частях архива. Непроверяемые части отклоняются. Это отдельная
+  строгая граница; извлечение договоров клиники и hashes оригиналов не меняются.
+  Local и central ZIP names должны совпадать, включая directory entries, которые
+  ZipFile.open не проверяет: собственный отдельный regression pass воспроизвёл
+  hidden local-name carrier; после исправления проверены оба API до raw storage.
+- Эталонная проверка отличает отказ по недостаточности фактов от недоступной
+  инфраструктуры/нормативной базы. Отсутствие выполнения не считается PASS.
+  Черновики не утверждаются автоматически и не становятся правовым основанием.
+  Передача частных примеров модели не включается без отдельного согласования.
+- Профилирование production read-only EXPLAIN: поиск 25,0 с, из них 20,45 с —
+  approval guard; отдельная проверка RTF controls по версиям занимает 9,9 с.
+  Миграция c3f9b2e5d741 вычисляет `lower(encode(raw_bytes,'escape'))` один раз
+  внутри вызова, сохраняя все четыре точных проверки. Это не кеш и не approval.
+  Остальные source/editor/event/hash/date/fragment guards остаются дословно прежними.
+  Read-only сравнение полного approval predicate на production: исходный 20,702 с,
+  query-local materialized кандидат 6,408 с; все 54 version IDs совпали дословно
+  (digest fd80170a0b343d797412c18af7568788edf63bae82b5e3a5ddd595056059cc95).
+  Это ускорение предиката, не измерение нового deployed endpoint p95. Production
+  function не менялась; NULL raw не возникает (колонка NOT NULL), helper STRICT.
+  [PostgreSQL 16: локальные значения PL/pgSQL](https://www.postgresql.org/docs/16/plpgsql-declarations.html).
+- Обычный двухпроходный Hermes на вымышленных фактах и двух реально approved
+  фрагментах остановился на research wall 30 с. Process-local probe с research/review
+  stage 65 с прошёл за 48,435 с: один claim и один SUPPORTED review, draft присутствует.
+  Поэтому nominal stage walls теперь 65/65, но единый context→models→submission
+  wall остаётся 115 с; worker HTTP/wall/lease остаются 120/125/180. Стадии делят
+  остаток общего budget, а не гарантированно получают каждая 65 с. Нет новых retries,
+  облегчённого reasoning, моделей, provider, tools, внутреннего профиля или секретов.
+  SSE completion/size/privacy/evidence checks сохраняются. Probe не создавал кейс,
+  отчёт или уведомление в Core и не подтверждает качество всех 67 эталонов.
+- In-process Alembic не отключает существующие application loggers: полный PG
+  прогон воспроизвёл потерю шести closed-reason событий из-за `fileConfig` default.
+  Параметр `disable_existing_loggers=False` сохраняет уже проверенные safe events.
+  [Python 3.13: fileConfig](https://docs.python.org/3.13/library/logging.config.html#logging.config.fileConfig).
+
+Роли, tenant scope, trusted sources, risk policy v4 и запрет автоматической
+отправки пациенту сохраняются. Новых поставщиков моделей и категорий данных нет.
+
+## Проверка и выпуск
+
+Каждый дефект получает воспроизводящий RED-тест, исправление и GREEN-проверку.
+Прогоны с подменёнными моделями отдельно обозначаются как технические, не как
+юридическая валидация. Перед выпуском нужны независимое ревью, полный PostgreSQL
+прогон и проверки проекта. Production approval ledger не изменяется.
+Откат приложения сохраняет исходные документы, события утверждения и policy.
+
+### Фактический closeout (код 86f7335)
+
+- Полный PostgreSQL и реальный тестовый MinIO: 1967 passed, 0 skipped, 141,46 с.
+  Существующие PTB deprecation/isolated-jobqueue warnings не скрывались.
+- Ruff, mypy (135 sources), Compose, Bandit и pip-audit прошли; Core/Gateway
+  images собраны, новые модули импортируются. CI38417457458 прошёл quality,
+  PostgreSQL, CodeQL, Bandit, Gitleaks и все четыре container-import jobs.
+  Production deploy в PR корректно skipped.
+- Независимые scoped review: urgent75 gateway+14 PG; clarification59;
+  runtime/RTF166; retention42 и дополнительные SQL ACL/downgrade/tenant probes.
+  DOCX delegated candidate review не завершилось из-за недоступности reviewer;
+  вместо заявления о независимом sign-off выполнен отдельный собственный pass.
+  Он нашёл local-directory carrier, исправление проверено обоими API до storage.
+- C4 строится из последней material-gated predecessor-функции, а не ранней
+  реализации: полный тест поймал FK-regression; исправленный порядок purge
+  (blocked, raw removed, draft removed)=(0,1,1) подтверждён root и reviewer.
+  Upgrade/downgrade сохраняют function OID/owner/ACL; истёкший текст не возвращается.
+- PR92 подготовлен отдельно от dirty user branch. Production и реальные legal
+  approvals не менялись. Release требует human review/approval и последующего smoke.
+  67 эталонов DRAFT не исполнялись/не утверждались и не передавались модели;
+  юридическое качество всех сценариев и коммерческая готовность не подтверждены.

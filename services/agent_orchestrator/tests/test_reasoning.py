@@ -143,6 +143,26 @@ def test_two_pass_reasoning_returns_domain_claims_and_reviews() -> None:
     asyncio.run(scenario())
 
 
+def test_public_authority_in_approved_norm_and_claim_does_not_block_reasoning():
+    async def scenario():
+        authority = "Правительством Российской Федерации"
+        projection = _projection()
+        projection.evidence[0].text = f"Условия устанавливаются {authority}."
+        response = _claim_response()
+        response["claims"][0]["text"] = f"Условия устанавливаются {authority}."
+        researcher = FakeHermes(name="researcher", response=response)
+        reviewer = FakeHermes(name="reviewer", response=_review_response())
+        orchestrator = LegalReasoningOrchestrator(
+            researcher=cast(HermesClient, researcher), reviewer=cast(HermesClient, reviewer)
+        )
+        result = await orchestrator.reason(projection)
+        assert result.claims[0].text == f"Условия устанавливаются {authority}."
+        assert researcher.calls == reviewer.calls == 1
+        assert authority in researcher.users[0] and authority in reviewer.users[0]
+
+    asyncio.run(scenario())
+
+
 SCHEMA_MARKER = "\nJSON Schema ответа:\n"
 
 
