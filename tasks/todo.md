@@ -27,7 +27,17 @@
 - [x] Independent urgent, clarification, runtime/RTF and retention reviews passed.
   Scope evidence: 75 gateway+14 PG; 59 clarification; 166 runtime/RTF; 42 retention.
 - [x] GitHub CI on code 86f7335: run38417457458 successful; PR92, no deploy.
-- [ ] Human review and release approval; deploy, backup/ledger check and live smoke.
+- [x] Owner-approved PR92 released as 236fe9b; main CI38427062926 successful.
+  Database backup TOC verified, approval ledger unchanged (54 norms/eight references),
+  healthy services. Guided draft persistence/submission/idempotency and seven-group
+  menu checked live. This is not a successful complete analysis/release-readiness smoke.
+- [ ] Complete live analysis: first provider-invalid response, then safe BLOCKED
+  SERVICE_TYPE_UNKNOWN. Investigate provider-invalid separately; do not call it fixed.
+- [x] Prepare bounded GUIDED_V2 researcher fact-context fix without changing the
+  verifier, dependencies, models/provider/reasoning or risk policy. Ten new tests;
+  140 focused passed. In-memory candidate on synthetic PR92 case: 50.265 s,
+  14 approved fragments, one SUPPORTED/VERIFIED claim; no Core writes/server config change.
+- [ ] Independent review, follow-up CI/release approval and live persisted report test.
 - [ ] Human-reviewed structured expectations and actual gold evaluation of the
   67 private DRAFT references; no auto approval or private model sharing.
 

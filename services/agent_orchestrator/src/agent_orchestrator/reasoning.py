@@ -64,6 +64,20 @@ evidenceFragmentIds — точные строки fragmentId из evidence; ко
 номера, сокращения или условные обозначения вместо UUID и не придумывай новые UUID.
 requiredFactKeys — только значения enum FactKey из схемы, а не описания фактов.
 
+JSON контекста анкеты перечисляет только присутствующие ключи фактов, не их достоверность:
+presentFactKeys НЕ означает, что значение известно или подтверждено. Проверяй сами facts.
+При intakeMode=GUIDED_V2 описание находится в EVENT_SUMMARY, дата события — в EVENT_DATE,
+области ситуации — в SITUATION_AREAS; AFFECTED_SERVICES есть только если услуги собраны.
+EVENT_DATE не подменяет дату оказания услуги или получения претензии.
+SERVICE_TYPE, SERVICE_DATE, INCIDENT_DATE и CLAIM_DATE — поля прежней анкеты. Не добавляй
+их в requiredFactKeys автоматически как шаблонные обязательные реквизиты новой анкеты.
+Не подменяй отсутствующее поле похожим, не переименовывай зависимости и не выдумывай значения.
+requiredFactKeys содержит реальные зависимости конкретного вывода, а не все поля анкеты.
+Если вывод действительно требует отсутствующего или UNKNOWN факта, не представляй этот вывод
+как установленный: воздержись от него. Отсутствующие ключи enum не запрещены: если ты всё же
+предлагаешь зависящий от них claim, укажи зависимость честно — Legal Core заблокирует анализ.
+Нельзя убирать реальную зависимость, чтобы получить разрешение на ответ.
+
 Каждый claim обязан ссылаться только на fragmentId из evidence. Если доказательств недостаточно,
 не придумывай claim: верни claims: []. Укажи в requiredFactKeys все факты, от которых зависит
 применимость вывода. patientDraft — только черновик спокойного ответа без признания ответственности.
@@ -114,7 +128,14 @@ def _research_prompt(projection: CaseProjection) -> str:
     schema = ClaimProposalBatch.model_json_schema(by_alias=True)
     items = schema["$defs"]["ClaimProposal"]["properties"]["evidenceFragmentIds"]["items"]
     items["enum"] = sorted({str(item.fragment_id) for item in projection.evidence})
-    return _RESEARCH_SYSTEM + "\nJSON Schema ответа:\n" + json.dumps(
+    fact_context = {
+        "intakeMode": "GUIDED_V2"
+        if projection.facts.get("INTAKE_VERSION") == "GUIDED_V2" else "UNSPECIFIED",
+        "presentFactKeys": sorted({key.value for key in FactKey} & projection.facts.keys()),
+    }
+    return _RESEARCH_SYSTEM + "\nJSON контекста анкеты:\n" + json.dumps(
+        fact_context, ensure_ascii=False, sort_keys=True,
+    ) + "\nJSON Schema ответа:\n" + json.dumps(
         schema, ensure_ascii=False, sort_keys=True,
     )
 
