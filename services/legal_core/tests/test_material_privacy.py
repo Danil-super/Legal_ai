@@ -15,6 +15,7 @@ from material_privacy_fixtures import (
     CLEAN_TEXT,
     SYNTHETIC_EMAIL,
     WORD_NS,
+    directory_local_name_docx,
     docx_bytes,
     word_part,
 )
@@ -24,6 +25,21 @@ def _parse(raw: bytes) -> ParsedClinicDocumentUpload:
     return parse_clinic_document_upload(
         raw, source_filename="synthetic.docx", content_type=DOCX_MIME
     )
+
+
+@pytest.mark.parametrize("mismatched", [False, True])
+def test_directory_local_names_must_match_inspected_central_names(mismatched):
+    from legal_core.material_privacy import validate_anonymized_material
+
+    raw = directory_local_name_docx(mismatched=mismatched)
+    parsed = _parse(raw)
+    assert parsed.normalized_text == CLEAN_TEXT
+    if mismatched:
+        with pytest.raises(ValueError) as error:
+            validate_anonymized_material(raw, parsed)
+        assert SYNTHETIC_EMAIL not in str(error.value)
+    else:
+        validate_anonymized_material(raw, parsed)
 
 
 @pytest.mark.parametrize(

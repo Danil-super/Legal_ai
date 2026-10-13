@@ -6,7 +6,12 @@ from uuid import uuid4
 import pytest
 
 from legal_core.clinic_document_parser import DOCX_MIME
-from material_privacy_fixtures import SYNTHETIC_EMAIL, docx_bytes, word_part
+from material_privacy_fixtures import (
+    SYNTHETIC_EMAIL,
+    directory_local_name_docx,
+    docx_bytes,
+    word_part,
+)
 from test_case_api import actor_headers, application_client, seed_admin
 from test_case_materials_api import FakeCaseMaterialStore, _new_draft
 from test_reference_evaluation_api import FakeReferenceEvaluationStore, _create_payload, _grant
@@ -17,7 +22,10 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.mark.parametrize("boundary", ["case", "reference"])
-def test_hidden_docx_identifier_is_rejected_before_object_storage(boundary: str) -> None:
+@pytest.mark.parametrize("location", ["header", "directory-local-name"])
+def test_hidden_docx_identifier_is_rejected_before_object_storage(
+    boundary: str, location: str,
+) -> None:
     actor = 9_100_000_000 + uuid4().int % 100_000_000
     clinic_id, membership = seed_admin(actor)
     case_store = FakeCaseMaterialStore()
@@ -25,6 +33,8 @@ def test_hidden_docx_identifier_is_rejected_before_object_storage(boundary: str)
     if boundary == "reference":
         _grant(clinic_id, membership, "CONTRIBUTOR")
     raw = docx_bytes(extra_entries={"word/header1.xml": word_part("hdr", SYNTHETIC_EMAIL)})
+    if location == "directory-local-name":
+        raw = directory_local_name_docx(mismatched=True)
     with application_client(
         case_material_store=case_store, reference_evaluation_store=reference_store
     ) as client:
@@ -41,6 +51,11 @@ def test_hidden_docx_identifier_is_rejected_before_object_storage(boundary: str)
             assert created.status_code == 201, created.text
             endpoint = f"/v1/reference-evaluations/{created.json()['case']['id']}/material"
             expected_code = "REFERENCE_EVALUATION_DIRECT_IDENTIFIER_NOT_ALLOWED"
+        if location == "directory-local-name":
+            expected_code = (
+                "CASE_MATERIAL_FILE_INVALID" if boundary == "case" else
+                "REFERENCE_EVALUATION_FILE_INVALID"
+            )
         response = client.post(
             endpoint,
             content=raw,

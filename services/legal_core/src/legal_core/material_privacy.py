@@ -96,6 +96,11 @@ def validate_anonymized_material(
                 if cursor + 30 > len(raw):
                     raise ValueError("Material archive header is invalid")
                 filename_size, local_extra_size = struct.unpack_from("<HH", raw, cursor + 26)
+                local_name = raw[cursor + 30:cursor + 30 + filename_size]
+                encoding = "utf-8" if info.flag_bits & 0x800 else "cp437"
+                if local_name != info.filename.encode(encoding):
+                    # ZipFile.open checks file names, but directory entries are not opened.
+                    raise ValueError("Material archive entry names do not match")
                 if info.extra or local_extra_size or info.flag_bits & 8:
                     raise ValueError("Material archive metadata cannot be inspected")
                 _check_comment(info.comment)

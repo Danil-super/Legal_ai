@@ -59,3 +59,16 @@ def docx_bytes(
         struct.pack_into("<I", changed, end + 16, central + len(local_extra))
         raw = bytes(changed)
     return raw
+
+
+def directory_local_name_docx(*, mismatched: bool) -> bytes:
+    local_name = (SYNTHETIC_EMAIL + "/").encode()
+    central_name = "x" * (len(local_name) - 1) + "/"
+    raw = docx_bytes(extra_entries={central_name: b""})
+    if not mismatched:
+        return raw
+    changed = bytearray(raw)
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        offset = archive.getinfo(central_name).header_offset + 30
+    changed[offset:offset + len(local_name)] = local_name
+    return bytes(changed)
