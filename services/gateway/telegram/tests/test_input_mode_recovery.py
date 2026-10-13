@@ -266,7 +266,7 @@ def test_long_analysis_preserves_the_entire_draft_and_review_warning() -> None:
     assert all(len(message.encode("utf-16-le")) // 2 <= 4_000 for message in messages)
     combined = "".join(messages)
     assert draft in combined
-    assert "Перед отправкой текст должен проверить" in combined
+    assert "обязательна проверка человеком перед отправкой" in combined
     assert combined.endswith("Автоматическая отправка пациенту отключена.")
 
 

@@ -11,6 +11,12 @@ from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from legal_core.report_presentation import (
+    present_report,
+    readable_source_path,
+    risk_level_label,
+    risk_reason_description,
+)
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     ApplicationHandlerStop,
@@ -26,7 +32,6 @@ from telegram_gateway.case_wizard import LegalCoreApiError, LegalCoreClient
 from telegram_gateway.escalation_workspace import show_workspace, workspace_action
 from telegram_gateway.factual_safety_intake import clarification_question_for_code
 from telegram_gateway.legal_conclusion_display import legal_conclusion_lines
-from telegram_gateway.risk_labels import risk_reason_label
 from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
@@ -256,10 +261,34 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
 
     missing_document_lines = _missing_clinic_document_lines(payload)
     if payload.get("analysisAllowed") is not True:
+        response = payload.get("report")
+        saved = response.get("reportJson") if isinstance(response, dict) else None
+        if isinstance(saved, dict):
+            # The current analysis gate may reject even a previously READY snapshot.
+            # This local view never alters the saved report or exposes its legal content.
+            blocked = dict(saved)
+            summary = saved.get("summary")
+            summary = dict(summary) if isinstance(summary, dict) else {}
+            availability = summary.get("analysisAvailability")
+            availability = dict(availability) if isinstance(availability, dict) else {}
+            availability["status"] = "BLOCKED"
+            availability["reasonCode"] = availability.get("reasonCode") or "VERIFICATION_BLOCKED"
+            summary["analysisAvailability"] = availability
+            blocked["summary"] = summary
+            presentation = present_report(blocked)
+            lines = list(presentation.header)
+            for block in presentation.blocks:
+                lines.extend(["", block.title, *block.lines])
+                if block.title == "Что уже сделала клиника":
+                    lines.extend(_missing_clinic_document_lines(saved))
+            lines.extend(
+                ["", presentation.disclaimer, "Автоматическая отправка пациенту отключена."]
+            )
+            return "\n".join(lines)
         blocked_risk = _bounded_text(payload.get("riskLevel"), limit=24) or "UNAVAILABLE"
         lines = [
             "⚖️ Юридический анализ не прошёл проверку доказательств.",
-            f"Риск: {blocked_risk}",
+            risk_level_label(blocked_risk),
             "",
             "Бот не будет додумывать вывод. Проверьте недостающие факты или передайте кейс юристу.",
             *missing_document_lines,
@@ -305,9 +334,7 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
     clinic_sources = clinic_documents_data.get("sources")
     clinic_status = _bounded_text(clinic_documents_data.get("status"), limit=24)
     draft_status = _bounded_text(draft_data.get("status"), limit=32)
-    draft_reason = _bounded_text(draft_data.get("reasonCode"), limit=80)
     draft_text = _bounded_text(draft_data.get("text"), limit=8_000)
-    draft_policy_version = _bounded_text(draft_data.get("policyVersion"), limit=80)
     if (
         public_number is None
         or risk_level is None
@@ -324,75 +351,19 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
     if draft_status == "AVAILABLE" and draft_text is None:
         raise ValueError("available patient draft has no text")
 
-    lines = [
-        f"⚖️ АНАЛИЗ {public_number}",
-        f"Риск: {risk_level}",
-    ]
-    if risk_data.get("escalationRequired") is True:
-        lines.append("🔴 Требуется передача ответственному юристу.")
-
-    safe_reasons = [
-        risk_reason_label(item)
-        for item in reason_codes[:8] if isinstance(item, str) and item.strip()
-    ]
-    if safe_reasons:
-        lines.extend(["", "Почему:", *(f"• {item}" for item in safe_reasons)])
-
-    lines.extend(legal_conclusion_lines(report_json))
-
-    safe_actions = [
-        item[:500] for item in action_items[:8] if isinstance(item, str) and item.strip()
-    ]
-    if safe_actions:
-        lines.extend(["", "Что сделать:", *(f"• {item}" for item in safe_actions)])
-
-    source_lines: list[str] = []
-    # Canonical READY reports already contain only verified, cited legal sources.
-    for source_index, source in enumerate(sources, start=1):
-        if not isinstance(source, dict):
-            continue
-        title = _bounded_text(source.get("documentTitle"), limit=180)
-        path = _bounded_text(source.get("structuralPath"), limit=100)
-        url = _bounded_text(source.get("sourceUrl"), limit=500)
-        if title and path and url:
-            source_lines.append(f"[{source_index}] {title}, {path}\n  {url}")
-    if source_lines:
-        lines.extend(["", "Правовая основа:", *source_lines])
-
-    clinic_lines: list[str] = []
-    if clinic_status == "USED":
-        for source in clinic_sources[:6]:
-            if not isinstance(source, dict):
-                continue
-            title = _bounded_text(source.get("documentTitle"), limit=160)
-            doc_type = _bounded_text(source.get("documentType"), limit=80)
-            path = _bounded_text(source.get("structuralPath"), limit=100)
-            version_no = source.get("versionNo")
-            if title and doc_type and path and isinstance(version_no, int):
-                clinic_lines.append(f"• {title}, v{version_no} · {doc_type} · {path}")
-    if clinic_lines:
-        lines.extend(
-            [
-                "",
-                "📄 Документы клиники (внутренний контекст):",
-                *clinic_lines,
-                "Не являются нормативной правовой основой.",
-            ]
-        )
-
-    lines.extend(missing_document_lines)
-
-    if draft_status == "AVAILABLE" and draft_text is not None:
-        lines.extend(["", "💬 Черновик ответа пациенту:", draft_text])
-        lines.append("⚠️ Перед отправкой текст должен проверить сотрудник клиники.")
-    else:
-        lines.extend(["", f"Черновик пациенту: {draft_status}"])
-        if draft_reason:
-            lines.append(f"Причина: {draft_reason}")
-    if draft_policy_version:
-        lines.append(f"Draft policy: {draft_policy_version}")
-    lines.append("Автоматическая отправка пациенту отключена.")
-
+    # Keep the established conclusion validation; presentation only rewords saved data.
+    legal_conclusion_lines(report_json)
+    presentation_payload = dict(report_json)
+    if "summary" not in report_json:
+        # Older adapter fixtures may omit the summary; no facts or legal content are inferred.
+        presentation_payload["summary"] = {"analysisAvailability": {"status": "READY"}}
+    presentation = present_report(presentation_payload)
+    lines = [*presentation.header]
+    for block in presentation.blocks:
+        lines.extend(["", block.title, *block.lines])
+        if block.title == "Что уже сделала клиника":
+            lines.extend(_missing_clinic_document_lines(report_json))
+    lines.extend(["", presentation.disclaimer, "Автоматическая отправка пациенту отключена."])
     return "\n".join(lines)
 
 
@@ -439,11 +410,11 @@ def telegram_lawyer_handoff_summary(payload: dict[str, Any]) -> str | None:
 
     lines = [
         f"⚖️ ПАКЕТ ДЛЯ ЮРИСТА · {public_number}",
-        f"Риск: {risk_level}",
+        risk_level_label(risk_level),
         "Статус: требуется юридическая проверка.",
     ]
     safe_reasons = [
-        risk_reason_label(item)
+        risk_reason_description(item)
         for item in reason_codes[:8] if isinstance(item, str) and item.strip()
     ]
     if safe_reasons:
@@ -457,7 +428,14 @@ def telegram_lawyer_handoff_summary(payload: dict[str, Any]) -> str | None:
         path = _bounded_text(source.get("structuralPath"), limit=100)
         url = _bounded_text(source.get("sourceUrl"), limit=500)
         if title and path and url:
-            source_lines.append(f"• {title}, {path}\n  {url}")
+            source_lines.append(f"• {title}, {readable_source_path(path)}\n  {url}")
+            if source.get("dateBasis") == "LAWYER_CURRENT_COPY":
+                source_lines.append("Дата редакции и публикации не установлена; "
+                                    "более ранняя применимость этой копии не подтверждена.")
+            limitations = source.get("extractionLimitations", [])
+            if isinstance(limitations, list):
+                source_lines.extend("Ограничение извлечения: " + item
+                                    for item in limitations if isinstance(item, str))
     if source_lines:
         lines.extend(["", "Проверенная правовая основа:", *source_lines])
 

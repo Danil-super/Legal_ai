@@ -8,6 +8,7 @@ def _payload(readiness: list[dict[str, object]], *, allowed: bool = True) -> dic
         "clinicDocumentReadiness": readiness,
         "report": {
             "reportJson": {
+                "clinicDocumentReadiness": readiness,
                 "case": {"publicNumber": "DL-2026-000099"},
                 "risk": {
                     "level": "LOW",

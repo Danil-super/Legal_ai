@@ -133,12 +133,13 @@ def test_verified_analysis_summary_uses_only_canonical_server_report_fields() ->
     )
 
     assert "DL-2026-000042" in summary
-    assert "Риск: HIGH" in summary
-    assert "Требуется передача" in summary
+    assert "Высокий риск — требуется юрист" in summary
+    assert "передайте кейс юристу" in summary
     assert "Передать кейс ответственному юристу" in summary
     assert "publication.pravo.gov.ru" in summary
-    assert "HUMAN_LEGAL_REVIEW_REQUIRED" in summary
-    assert "Draft policy: safe-operational-draft.v1" in summary
+    assert "Для подготовки ответа требуется проверка юристом" in summary
+    assert "HUMAN_LEGAL_REVIEW_REQUIRED" not in summary
+    assert "safe-operational-draft.v1" not in summary
     assert "Автоматическая отправка пациенту отключена" in summary
 
 
@@ -196,7 +197,8 @@ def test_high_risk_handoff_is_deidentified_and_has_only_verified_metadata() -> N
 
     assert handoff is not None
     assert "DL-2026-000046" in handoff
-    assert "FORMAL_CLAIM_RECEIVED" in handoff
+    assert "Получена письменная претензия" in handoff
+    assert "FORMAL_CLAIM_RECEIVED" not in handoff
     assert "договор на платные стоматологические услуги" in handoff
     assert "publication.pravo.gov.ru" in handoff
     assert "Иванов" not in handoff
@@ -261,10 +263,10 @@ def test_available_safe_patient_draft_is_shown_but_never_auto_sent() -> None:
         }
     )
 
-    assert "💬 Черновик ответа пациенту" in summary
+    assert "Черновик ответа пациенту" in summary
     assert draft in summary
-    assert "Draft policy: safe-operational-draft.v1" in summary
-    assert "Перед отправкой текст должен проверить сотрудник клиники" in summary
+    assert "safe-operational-draft.v1" not in summary
+    assert "обязательна проверка человеком перед отправкой" in summary
     assert "Автоматическая отправка пациенту отключена" in summary
 
 
@@ -305,9 +307,10 @@ def test_clinic_document_provenance_is_separate_and_does_not_expose_text() -> No
         }
     )
 
-    assert "📄 Документы клиники" in summary
-    assert "Гарантийное положение, v2 · WARRANTY_POLICY · section:3" in summary
-    assert "Не являются нормативной правовой основой" in summary
+    assert "Документы клиники — внутренний контекст" in summary
+    assert "Гарантийное положение; раздел 3" in summary
+    assert "не нормативные основания" in summary
+    assert "WARRANTY_POLICY" not in summary and "section:3" not in summary
     assert "SECRET CLINIC DOCUMENT CONTENT" not in summary
 
 

@@ -271,9 +271,8 @@ def test_pdf_includes_escaped_conclusions_and_matching_source_numbers(monkeypatc
     pdf = render_report_pdf(report)
     assert pdf.startswith(b"%PDF-")
     assert pdf == render_report_pdf(report)
-    assert "Юридическая оценка" in paragraphs
-    assert f"1. {escape(text)}" in paragraphs
-    assert "Основание: [1]." in paragraphs
+    assert "Проверенные выводы и нормативные основания" in paragraphs
+    assert f"1. {escape(text)} Основания: [1]." in paragraphs
     assert any(p.startswith("[1] Синтетический источник") for p in paragraphs)
     assert not any("Непроцитированный источник" in p for p in paragraphs)
 
@@ -294,7 +293,7 @@ def test_telegram_runtime_delivers_all_conclusions_and_sources_without_truncatio
     assert all(len(m.encode("utf-16-le")) // 2 <= 4_000 for m in messages)
     for conclusion in conclusions:
         assert conclusion.text in text
-    assert "Основание: [1]." in text
+    assert "Основания: [1]." in text
     assert "[1] Синтетический источник" in text
     assert "Автоматическая отправка пациенту отключена." in text
 
