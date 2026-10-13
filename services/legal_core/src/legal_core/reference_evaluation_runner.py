@@ -177,6 +177,8 @@ def _receipt_blockers(receipt: ReferenceReviewReceipt | None) -> list[str]:
         blockers.append("AS_OF_DATE_REQUIRED")
     if receipt.group_key is None:
         blockers.append("COVERAGE_GROUP_REQUIRED")
+    if receipt.analysis_case_id is None or receipt.fact_snapshot_sha256 is None:
+        blockers.append("REPORT_BINDING_REQUIRED")
     if receipt.expected_route is None:
         blockers.append("EXPECTED_ROUTE_REQUIRED")
     if receipt.expected_route in {"HUMAN_ESCALATION", "INTERNAL_DRAFT"} and (
@@ -415,7 +417,12 @@ def compare_reference_report(
             or report.legal_basis.status == "AVAILABLE"
         ):
             return result("FAIL", ["ROUTE_MISMATCH"])
-        return result("PASS", [])
+        # A broken service/corpus is not a correct factual abstention. Require a
+        # concrete, reviewed fact gap rather than treating every blocked report as success.
+        if (report.summary.analysis_availability.reason_code == "MISSING_CRITICAL_FACTS"
+                and report.missing_facts):
+            return result("PASS", [])
+        return result("UNAVAILABLE", ["ABSTENTION_NOT_EVALUATED"])
     if not ready and not (receipt.expected_route == "HUMAN_ESCALATION" and escalated):
         # The report's reason string is externally supplied, so only bounded codes leave here.
         reason = report.summary.analysis_availability.reason_code

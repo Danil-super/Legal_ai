@@ -23,6 +23,8 @@ prepare a private `reference-review-manifest.v1` JSON using
 `workbookSha256` and each `rowSha256` from the audit, record exact workspace UUID,
 version, approved status, contributor/reviewer membership UUIDs, reviewed scenario
 SHA-256, privacy review, `asOfDate`, `groupKey`, and `expectedRoute`.
+An executable receipt also requires `analysisCaseId` and `factSnapshotSha256`;
+workspace review alone is not proof that an analysis ran.
 
 For HUMAN_ESCALATION and INTERNAL_DRAFT, record the lawyer's `expectedRisk` and
 `expectedPolicyVersion`; INTERNAL_DRAFT additionally requires
@@ -54,6 +56,10 @@ conclusion citation coverage. It does not assess the legal meaning of prose;
 `legalCorrectness` explicitly requires lawyer output review. BLOCKED and
 UNAVAILABLE are never counted as correct legal answers. Early-triage queue
 delivery should be tested separately with the escalation API/notification tests.
+For ABSTAIN, only a concrete `MISSING_CRITICAL_FACTS` report with nonempty
+`missingFacts` is comparable as a factual refusal. Missing corpus, provider or
+policy is UNAVAILABLE, not a successful abstention. Other refusal types remain
+UNAVAILABLE until they have a separately reviewed comparison contract.
 
 Do not put workbook rows, private manifests, API exports or audit output in git,
 fixtures, application logs or provider requests. The CLI does not manage a new

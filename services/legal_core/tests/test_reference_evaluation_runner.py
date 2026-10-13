@@ -13,7 +13,7 @@ from zipfile import ZipFile
 
 import pytest
 
-from legal_core.contracts import CanonicalReport, CaseStatus, FactKey
+from legal_core.contracts import CanonicalReport, CaseStatus, FactKey, MissingFact
 from legal_core.reference_evaluation_contracts import ReferenceEvaluationDetail
 from legal_core.reference_evaluation_runner import (
     ReferenceReviewManifest,
@@ -409,7 +409,46 @@ def test_ready_human_escalation_matches_and_abstain_is_separate() -> None:
     assert result.status == "PASS"
     abstain = receipt.model_copy(update={"expected_route": "ABSTAIN", "expected_risk": None})
     reference = reference.model_copy(update={"expected_route": "ABSTAIN"})
-    assert compare_reference_report(reference, abstain, _report()).status == "PASS"
+    assert compare_reference_report(reference, abstain, _report()).status == "UNAVAILABLE"
+
+
+@pytest.mark.parametrize("reason", ["LEGAL_CORPUS_NOT_READY", "RISK_POLICY_UNAVAILABLE",
+                                     "ANALYSIS_NOT_CONFIGURED", "ANALYSIS_PROVIDER_UNAVAILABLE"])
+def test_abstention_cannot_pass_an_operational_failure(reason):
+    receipt = _receipt("a" * 64, expectedRoute="ABSTAIN", expectedRisk=None)
+    reference = _reference(receipt).model_copy(update={"expected_route": "ABSTAIN"})
+    report = _report().model_copy(deep=True)
+    report.summary.analysis_availability.reason_code = reason
+    result = compare_reference_report(reference, receipt, report)
+    assert result.status == "UNAVAILABLE"
+    assert result.legal_correctness == "NOT_EVALUATED"
+
+
+def test_unbound_review_receipt_is_not_an_executable_benchmark(tmp_path):
+    path = tmp_path / "synthetic.xlsx"
+    _workbook(path, [_row()])
+    original = audit_workbook(path)
+    receipt = _receipt(original.cases[0].row_sha256,
+                       analysisCaseId=None, factSnapshotSha256=None)
+    reviewed = audit_workbook(path, manifest=ReferenceReviewManifest(
+        workbookSha256=original.workbook_sha256, cases=[receipt],
+    ))
+    assert reviewed.eligible_cases == 0
+    assert "REPORT_BINDING_REQUIRED" in reviewed.cases[0].blockers
+
+
+def test_explicit_factual_abstention_remains_comparable():
+    receipt = _receipt("a" * 64, expectedRoute="ABSTAIN", expectedRisk=None)
+    reference = _reference(receipt).model_copy(update={"expected_route": "ABSTAIN"})
+    report = _report().model_copy(deep=True)
+    report.summary.analysis_availability.reason_code = "MISSING_CRITICAL_FACTS"
+    report.missing_facts = [MissingFact(
+        factKey="EVENT_DATE", severity="CRITICAL", reasonCode="EVENT_DATE_REQUIRED",
+        questionId="event_date",
+    )]
+    assert compare_reference_report(reference, receipt, report).status == "PASS"
+    report.missing_facts = []
+    assert compare_reference_report(reference, receipt, report).status == "UNAVAILABLE"
 
 
 def test_private_output_is_exclusive_mode_600_and_only_metadata(tmp_path: Path) -> None:
