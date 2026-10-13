@@ -24,6 +24,7 @@ from telegram.ext import (
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError, LegalCoreClient
 from telegram_gateway.escalation_workspace import show_workspace, workspace_action
+from telegram_gateway.factual_safety_intake import clarification_question_for_code
 from telegram_gateway.legal_conclusion_display import legal_conclusion_lines
 from telegram_gateway.risk_labels import risk_reason_label
 from telegram_gateway.ui import back_keyboard
@@ -127,6 +128,10 @@ def _bounded_text(value: object, *, limit: int) -> str | None:
 
 
 def analysis_error_message(code: str) -> str:
+    question = clarification_question_for_code(code)
+    if question is not None:
+        return f"Нужно уточнить факт: {question} Используйте «Уточнить факты», " \
+            "чтобы создать новый заполненный черновик. Старый кейс сохранится без изменений."
     messages = {
         "ANALYSIS_SAFE_STOP": (
             "Автоматический анализ временно приостановлен. Кейс сохранён; "
@@ -230,6 +235,22 @@ def _missing_clinic_document_lines(payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def factual_clarification_code(payload: dict[str, Any]) -> str | None:
+    response = payload.get("report")
+    report = response.get("reportJson") if isinstance(response, dict) else None
+    if not isinstance(report, dict):
+        return None
+    summary = report.get("summary")
+    availability = summary.get("analysisAvailability") if isinstance(summary, dict) else None
+    reasons = [availability.get("reasonCode")] if isinstance(availability, dict) else []
+    risk = report.get("risk")
+    codes = risk.get("reasonCodes") if isinstance(risk, dict) else None
+    if isinstance(codes, list):
+        reasons.extend(codes[:30])
+    return next((reason for reason in reasons if isinstance(reason, str)
+                 and clarification_question_for_code(reason) is not None), None)
+
+
 def telegram_analysis_summary(payload: dict[str, Any]) -> str:
     """Render only the server-verified analysis fields returned by Legal Core."""
 
@@ -243,6 +264,9 @@ def telegram_analysis_summary(payload: dict[str, Any]) -> str:
             "Бот не будет додумывать вывод. Проверьте недостающие факты или передайте кейс юристу.",
             *missing_document_lines,
         ]
+        reason = factual_clarification_code(payload)
+        if reason is not None:
+            lines.insert(3, analysis_error_message(reason))
         return "\n".join(lines)
 
     report = payload.get("report")

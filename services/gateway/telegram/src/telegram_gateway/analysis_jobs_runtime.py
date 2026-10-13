@@ -146,6 +146,7 @@ def job_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
     from telegram_gateway.analysis_runtime import (
         analysis_error_message,
         escalation_id_from_analysis,
+        factual_clarification_code,
         telegram_analysis_messages,
     )
 
@@ -158,9 +159,13 @@ def job_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
         text = "⚖️ Анализ выполняется: проверяем факты и правовую основу. Остальные меню доступны."
     elif job.state == "FAILED":
         text = f"⚠️ {analysis_error_message(job.error_code or '')}\nКейс сохранён."
-        rows.append(
-            [InlineKeyboardButton("Повторить анализ", callback_data=f"case:analyze:{job.case_id}")]
-        )
+        from telegram_gateway.factual_safety_intake import clarification_question_for_code
+
+        needs_clarification = clarification_question_for_code(job.error_code or "") is not None \
+            or job.error_code in {"INSUFFICIENT_FACTS", "ANALYSIS_DATE_UNCERTAIN"}
+        action = "clarify" if needs_clarification else "analyze"
+        label = "Уточнить факты" if needs_clarification else "Повторить анализ"
+        rows.append([InlineKeyboardButton(label, callback_data=f"case:{action}:{job.case_id}")])
     else:
         if job.result is None:
             raise ValueError("missing result")
@@ -173,6 +178,11 @@ def job_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
             [InlineKeyboardButton("📄 PDF результата", callback_data=f"analysis:pdf:{job.job_id}")],
         )
         escalation_id = escalation_id_from_analysis(job.result)
+        if (job.result.get("analysisAllowed") is False and escalation_id is None
+                and factual_clarification_code(job.result) is not None):
+            rows.append([InlineKeyboardButton(
+                "Уточнить факты", callback_data=f"case:clarify:{job.case_id}",
+            )])
         if escalation_id is not None:
             rows.insert(
                 0,

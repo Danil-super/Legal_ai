@@ -49,6 +49,7 @@ from telegram_gateway.factual_safety_intake import (
     explicitly_skip_other_questions,
     known_urgent_report,
     previous_screening_question,
+    reopen_unknown_screening_question,
     screening_complete,
     screening_question,
 )
@@ -1077,6 +1078,11 @@ async def confirm_v2_summary(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await _reply(update, "Перед подтверждением уточните недостающие сведения.")
         await _prompt_v2_draft(update, missing, data)
         return missing
+    if reopen_unknown_screening_question(data) is not None:
+        await _reply(update, "Нужно уточнить неизвестный факт. Если сейчас уточнить нельзя, "
+                     "/cancel сохранит черновик; неизвестное не считается ответом «Нет».")
+        await _prompt_v2_draft(update, WizardState.SAFETY, data)
+        return WizardState.SAFETY
     await _prompt_v2_draft(update, WizardState.V2_CONFIRM, data)
     return WizardState.V2_CONFIRM
 
@@ -2474,6 +2480,11 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                              "Черновик сохранён.")
                 await _prompt_v2_draft(update, missing, data)
                 return missing
+            if reopen_unknown_screening_question(data) is not None:
+                await _reply(update, "До подтверждения уточните неизвестный факт. "
+                             "/cancel сохранит черновик.")
+                await _prompt_v2_draft(update, WizardState.SAFETY, data)
+                return WizardState.SAFETY
         client = _legal_core(context)
         if _is_v2_draft(data):
             facts = facts_from_v2_data(_draft_payload(data))
@@ -2694,6 +2705,8 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def build_application(token: str, *, proxy_url: str | None = None) -> TelegramApplication:
+    from telegram_gateway.clarification_runtime import create_clarification
+
     # Application.builder + async handlers follows the official v22.8 pattern.
     # Source: https://docs.python-telegram-bot.org/en/v22.8/examples.echobot.html
     builder = (
@@ -2719,6 +2732,9 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
     application.add_handler(TypeHandler(Update, _record_update_heartbeat), group=-100)
     application.add_handler(TypeHandler(Update, _require_private_chat), group=-99)
     application.add_handler(TypeHandler(Update, _route_input_mode), group=-90)
+    application.add_handler(CallbackQueryHandler(
+        create_clarification, pattern=r"^case:clarify:[0-9a-f-]{36}$",
+    ), group=-2)
     application.add_handler(
         ConversationHandler(
             entry_points=[

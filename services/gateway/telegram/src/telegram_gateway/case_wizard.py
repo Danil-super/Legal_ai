@@ -779,6 +779,21 @@ class LegalCoreClient:
             "GET", f"/v1/telegram-intake-drafts/{draft_id}", telegram_user_id=telegram_user_id
         )
 
+    async def clarification_preview(self, case_id: UUID, telegram_user_id: int) -> dict[str, Any]:
+        return await self._json_request(
+            "GET", f"/v1/cases/{case_id}/clarification-drafts/preview",
+            telegram_user_id=telegram_user_id,
+        )
+
+    async def create_clarification_draft(
+        self, case_id: UUID, telegram_user_id: int, *, expected_sha256: str, key: UUID,
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "POST", f"/v1/cases/{case_id}/clarification-drafts",
+            telegram_user_id=telegram_user_id, idempotency_key=key,
+            payload={"expectedFactSnapshotSha256": expected_sha256},
+        )
+
     async def save_intake_draft(
         self,
         draft_id: UUID,
