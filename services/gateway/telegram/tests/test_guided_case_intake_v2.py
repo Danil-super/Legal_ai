@@ -10,7 +10,6 @@ from legal_core.intake import missing_facts_for
 from telegram_gateway.case_wizard import facts_from_v2_data
 from telegram_gateway.guided_case_intake_v2 import (
     V2_CONFIRM,
-    V2_EVENT_DATE,
     V2_SAFETY,
     V2_SERVICES,
     active_states,
@@ -46,11 +45,11 @@ def test_treatment_requires_service_but_other_topics_do_not() -> None:
     assert next_missing_state(data) == V2_SAFETY
 
 
-def test_unknown_event_date_remains_a_targeted_follow_up() -> None:
+def test_unknown_event_date_does_not_hide_later_urgent_facts() -> None:
     data = _base_data()
     data["eventDate"] = {"date": None, "precision": "UNKNOWN"}
 
-    assert next_missing_state(data) == V2_EVENT_DATE
+    assert next_missing_state(data) == V2_SAFETY
 
 
 def test_v2_wizard_facts_reach_legal_core_analysis_date_selection() -> None:

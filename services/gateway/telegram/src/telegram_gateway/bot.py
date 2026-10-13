@@ -847,8 +847,9 @@ async def _prompt_v2_draft(
         await _reply(
             update,
             "3/7. Когда это произошло? Укажите точную дату ГГГГ-ММ-ДД или ДД.ММ.ГГГГ. "
-            "Если точная дата пока неизвестна, /cancel сохранит черновик: "
-            "для анализа дату потребуется уточнить.",
+            "Если дата неизвестна, напишите «неизвестно» — соберём остальные факты. "
+            "Для юридического анализа дату потребуется уточнить; срочный кейс "
+            "можно передать юристу без неё. /cancel сохранит черновик.",
             reply_markup=_v2_keyboard([]),
         )
     elif state is WizardState.CHRONOLOGY:
@@ -2446,7 +2447,7 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         if workflow_id != UUID(str(data["workflow_id"])):
             raise ValueError("workflow callback does not match active conversation")
         date_questions = _dates_needing_clarification(data)
-        if date_questions:
+        if date_questions and not (_is_v2_draft(data) and known_urgent_report(data)):
             if _is_v2_draft(data):
                 await _reply(
                     update,

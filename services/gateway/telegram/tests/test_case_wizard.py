@@ -975,7 +975,7 @@ def test_legacy_date_question_preserves_claim_priority_over_exact_incident_date(
     assert _dates_needing_clarification(data) == ("claim_date",)
 
 
-def test_stale_v2_summary_button_returns_to_exact_date_question() -> None:
+def test_stale_v2_summary_button_collects_safety_before_date_gate() -> None:
     message = FakeMessage()
     pipeline = FakeReportPipeline()
     update = SimpleNamespace(
@@ -1006,12 +1006,12 @@ def test_stale_v2_summary_button_returns_to_exact_date_question() -> None:
 
     result = asyncio.run(_persist_transition(confirm_v2_summary, update, context))
 
-    assert result == WizardState.EVENT_DATE
+    assert result == WizardState.SAFETY
     assert pipeline.steps == ["save"]
-    assert context.user_data["case_wizard"]["draft_state"] == "EVENT_DATE"
+    assert context.user_data["case_wizard"]["draft_state"] == "SAFETY"
 
 
-def test_unknown_v2_date_explains_how_to_save_the_draft() -> None:
+def test_unknown_v2_date_keeps_the_draft_and_collects_remaining_events() -> None:
     message = FakeMessage()
     message.text = "неизвестно"
     update = SimpleNamespace(callback_query=None, effective_message=message)
@@ -1026,12 +1026,12 @@ def test_unknown_v2_date_explains_how_to_save_the_draft() -> None:
 
     result = asyncio.run(record_v2_text(update, context))
 
-    assert result == WizardState.EVENT_DATE
+    assert result == WizardState.CHRONOLOGY
     assert context.user_data["case_wizard"]["eventDate"] == {
         "date": None,
         "precision": "UNKNOWN",
     }
-    assert any("/cancel" in text for text in message.text_replies)
+    assert any("конфликт" in text for text in message.text_replies)
 
 
 def test_lawyer_unknown_is_preserved_and_does_not_become_a_negative_answer() -> None:

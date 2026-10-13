@@ -248,9 +248,9 @@ def _input_complete(data: dict[str, Any], state: str) -> bool:
     if state == V2_EVENT:
         return _valid_text(data.get("eventSummary"), "eventSummary")
     if state == V2_EVENT_DATE:
-        # An explicitly unknown date is retained in the summary, but needs a focused
-        # clarification before a time-dependent legal analysis can start.
-        return _valid_date(data.get("eventDate"), exact_required=True)
+        # Collect the remaining facts so a later urgent signal can still be routed.
+        # The confirmation and Legal Core analysis boundaries retain the date gate.
+        return _valid_date(data.get("eventDate"), exact_required=False)
     if state == V2_CHRONOLOGY:
         return _valid_enum(data.get("conflictStage"), "conflictStage")
     if state == V2_CLINIC_ACTIONS:

@@ -25,6 +25,19 @@ from legal_core.risk_policy_repository import ApprovedRiskPolicyRepository
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
+async def has_approved_urgent_signal(
+    session: AsyncSession, facts: dict[FactKey, object],
+) -> bool:
+    """Incomplete intake can be confirmed only for approved deterministic routing."""
+    try:
+        policy = await ApprovedRiskPolicyRepository(session).get()
+    except (LookupError, ValueError):
+        return False
+    return policy.early_triage_enabled and evaluate_early_triage(
+        facts, policy=policy.domain,
+    ) is not None
+
+
 async def ensure_early_triage(
     session: AsyncSession,
     *,

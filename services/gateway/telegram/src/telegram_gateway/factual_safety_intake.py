@@ -58,7 +58,7 @@ def known_urgent_report(data: dict[str, Any]) -> bool:
     if any(screening.get(field) == "YES" for field in SCREENING_FIELDS[:5]):
         return True
     amount = screening.get("amount")
-    return isinstance(amount, dict) and amount["amountKopecks"] >= 5_000_000
+    return isinstance(amount, dict) and amount["amountKopecks"] >= 1_000_000
 
 
 def explicitly_skip_other_questions(data: dict[str, Any]) -> None:

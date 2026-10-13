@@ -66,7 +66,7 @@ from legal_core.models import (
 )
 from legal_core.pseudonymization import pseudonymize_text
 from legal_core.reports import build_intake_report, render_report_pdf
-from legal_core.risk_persistence import ensure_early_triage
+from legal_core.risk_persistence import ensure_early_triage, has_approved_urgent_signal
 from legal_core.subscription_provisioning import provision_entitlement_in_session
 
 TelegramUserId = Annotated[int, Header(alias="X-Telegram-User-Id", gt=0)]
@@ -1624,7 +1624,7 @@ def create_case_router(
         _require_open_case_intake(case)
         facts = _domain_facts(await _current_fact_rows(session, case.id))
         missing = missing_facts_for(facts)
-        if missing:
+        if missing and not await has_approved_urgent_signal(session, facts):
             raise ApiError(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 code="INSUFFICIENT_FACTS",
@@ -1655,6 +1655,9 @@ def create_case_router(
             actor_membership_id=actor.membership_id,
             facts=facts,
         )
+        if missing and early_escalation_id is None:
+            raise ApiError(status_code=409, code="RISK_POLICY_NOT_READY",
+                           message="Urgent routing policy changed; retry confirmation")
         result = _case_response(case)
         result.early_escalation_id = early_escalation_id
         response_json = result.model_dump(mode="json", by_alias=True)
@@ -1712,7 +1715,7 @@ def create_case_router(
         fact_rows = await _current_fact_rows(session, case.id)
         facts = _domain_facts(fact_rows)
         missing = missing_facts_for(facts)
-        if missing:
+        if missing and not await has_approved_urgent_signal(session, facts):
             raise ApiError(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 code="INSUFFICIENT_FACTS",
@@ -1831,7 +1834,7 @@ def create_case_router(
 
         facts = {item.fact_key: _input_value(item.value_type, item.value) for item in payload.facts}
         missing = missing_facts_for(facts)
-        if missing:
+        if missing and not await has_approved_urgent_signal(session, facts):
             raise ApiError(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 code="INSUFFICIENT_FACTS",
@@ -1899,7 +1902,7 @@ def create_case_router(
             report_version=1,
             generated_at=datetime.now(UTC),
             facts=facts,
-            missing_facts=[],
+            missing_facts=missing,
         )
         report_json = canonical.model_dump(mode="json", by_alias=True)
         pdf = render_report_pdf(canonical)
@@ -1927,6 +1930,10 @@ def create_case_router(
             actor_membership_id=actor.membership_id,
             facts=facts,
         )
+
+        if missing and early_escalation_id is None:
+            raise ApiError(status_code=409, code="RISK_POLICY_NOT_READY",
+                           message="Urgent routing policy changed; retry confirmation")
 
         case_response = _case_response(case)
         case_response.early_escalation_id = early_escalation_id
