@@ -119,3 +119,183 @@ def test_approved_document_card_does_not_claim_approval_is_unavailable():
         for row in keyboard.inline_keyboard
         for button in row
     )
+
+
+@pytest.mark.parametrize(
+    "group", ["labour", "courts", "privacy", "licensing", "healthcare", "general"]
+)
+def test_fully_approved_group_has_no_normative_approval_action(group):
+    text, keyboard = runtime.render_editor_review_materials(
+        {
+            "page": 1,
+            "pageSize": 10,
+            "totalItems": 9,
+            "selectedGroup": group,
+            "referenceReviewableCount": 0,
+            "progress": {
+                "normativeVersions": 9,
+                "approvedNormativeVersions": 9,
+                "referenceMaterials": 0,
+                "reviewedReferenceMaterials": 0,
+                "missingParts": 0,
+                "unpreparedOriginals": 0,
+                "unlinkedVersions": 0,
+                "complete": True,
+            },
+            "items": [
+                {
+                    "versionId": str(UUID(int=index)),
+                    "title": f"Synthetic approved norm {index}",
+                    "reviewState": "APPROVED",
+                }
+                for index in range(1, 10)
+            ],
+        }
+    )
+    callbacks = [button.callback_data or "" for row in keyboard.inline_keyboard for button in row]
+    assert "Группа проверена." in text
+    assert not any(callback.startswith("editor:batch:") for callback in callbacks)
+    assert len([callback for callback in callbacks if callback.startswith("editor:detail:")]) == 9
+    assert "editor:materials:1" in callbacks
+
+
+@pytest.mark.parametrize("group", ["clinical", "healthcare"])
+def test_reviewed_references_have_no_reference_confirmation_action(group):
+    _, keyboard = runtime.render_editor_review_materials(
+        {
+            "page": 1,
+            "pageSize": 10,
+            "totalItems": 1,
+            "selectedGroup": group,
+            "referenceReviewableCount": 0,
+            "progress": {
+                "normativeVersions": 0,
+                "approvedNormativeVersions": 0,
+                "referenceMaterials": 1,
+                "reviewedReferenceMaterials": 1,
+                "missingParts": 0,
+                "unpreparedOriginals": 0,
+                "unlinkedVersions": 0,
+                "complete": True,
+            },
+            "items": [
+                {
+                    "materialId": str(UUID(int=23)),
+                    "preparationId": str(UUID(int=23)),
+                    "kind": "CLINICAL_REFERENCE",
+                    "title": "Synthetic reviewed reference",
+                    "referenceReviewed": True,
+                }
+            ],
+        }
+    )
+    callbacks = [button.callback_data or "" for row in keyboard.inline_keyboard for button in row]
+    assert not any(callback.startswith("editor:refbatch:") for callback in callbacks)
+    assert f"editor:preparation:{UUID(int=23)}" in callbacks
+
+
+@pytest.mark.parametrize(
+    "visible_review_state",
+    ["REVIEW_REQUIRED", "APPROVED"],
+    ids=["pending-on-page", "pending-off-page"],
+)
+def test_pending_newer_normative_version_keeps_group_approval_action(visible_review_state):
+    text, keyboard = runtime.render_editor_review_materials(
+        {
+            "page": 1,
+            "pageSize": 1,
+            "totalItems": 9,
+            "selectedGroup": "healthcare",
+            "referenceReviewableCount": 0,
+            "progress": {
+                "normativeVersions": 9,
+                "approvedNormativeVersions": 8,
+                "referenceMaterials": 0,
+                "reviewedReferenceMaterials": 0,
+                "missingParts": 0,
+                "unpreparedOriginals": 0,
+                "unlinkedVersions": 0,
+                "complete": False,
+            },
+            "items": [
+                {
+                    "versionId": str(UUID(int=23)),
+                    "title": "Synthetic norm version",
+                    "reviewState": visible_review_state,
+                }
+            ],
+        }
+    )
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert "Группа ещё не завершена." in text
+    assert callbacks.count("editor:batch:healthcare") == 1
+    assert "editor:group:healthcare:2" in callbacks
+
+
+def test_pending_references_do_not_reopen_approval_of_all_approved_norms():
+    _, keyboard = runtime.render_editor_review_materials(
+        {
+            "page": 1,
+            "pageSize": 10,
+            "totalItems": 11,
+            "selectedGroup": "healthcare",
+            "referenceReviewableCount": 1,
+            "progress": {
+                "normativeVersions": 9,
+                "approvedNormativeVersions": 9,
+                "referenceMaterials": 2,
+                "reviewedReferenceMaterials": 1,
+                "missingParts": 0,
+                "unpreparedOriginals": 0,
+                "unlinkedVersions": 0,
+                "complete": False,
+            },
+            "items": [
+                {
+                    "materialId": str(UUID(int=23)),
+                    "preparationId": str(UUID(int=23)),
+                    "title": "Synthetic pending reference",
+                    "kind": "CLINICAL_REFERENCE",
+                    "referenceReviewed": False,
+                }
+            ],
+        }
+    )
+    callbacks = [button.callback_data or "" for row in keyboard.inline_keyboard for button in row]
+    assert "editor:refbatch:healthcare" in callbacks
+    assert not any(callback.startswith("editor:batch:") for callback in callbacks)
+
+
+@pytest.mark.parametrize("reviewed", [False, True], ids=["pending-reference", "reviewed-reference"])
+def test_clinical_group_never_has_normative_approval_action(reviewed):
+    _, keyboard = runtime.render_editor_review_materials(
+        {
+            "page": 1,
+            "pageSize": 10,
+            "totalItems": 1,
+            "selectedGroup": "clinical",
+            "referenceReviewableCount": int(not reviewed),
+            "progress": {
+                "normativeVersions": 0,
+                "approvedNormativeVersions": 0,
+                "referenceMaterials": 1,
+                "reviewedReferenceMaterials": int(reviewed),
+                "missingParts": 0,
+                "unpreparedOriginals": 0,
+                "unlinkedVersions": 0,
+                "complete": reviewed,
+            },
+            "items": [
+                {
+                    "materialId": str(UUID(int=23)),
+                    "preparationId": str(UUID(int=23)),
+                    "title": "Synthetic clinical reference",
+                    "kind": "CLINICAL_REFERENCE",
+                    "referenceReviewed": reviewed,
+                }
+            ],
+        }
+    )
+    callbacks = [button.callback_data or "" for row in keyboard.inline_keyboard for button in row]
+    assert not any(callback.startswith("editor:batch:") for callback in callbacks)
+    assert ("editor:refbatch:clinical" in callbacks) is (not reviewed)

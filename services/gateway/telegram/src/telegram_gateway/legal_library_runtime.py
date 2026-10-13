@@ -29,12 +29,17 @@ from telegram_gateway.editor_preparation_guidance import (
     PREPARATION_REASON_CODES,
     preparation_requirements,
 )
+from telegram_gateway.legal_library_views import LIBRARY_GROUP_KEYS, render_grouped_legal_library
 from telegram_gateway.quick_intake_runtime import build_application_with_quick_intake
 from telegram_gateway.reference_evaluation_runtime import install_reference_evaluations
 from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
 LEGAL_LIBRARY_CALLBACK = "legalbase:open"
+_LIBRARY_CALLBACK_RE = re.compile(
+    r"^legalbase:(?:open|group:(?:clinical|labour|courts|privacy|licensing|healthcare|general):"
+    r"(?:[1-9]|[1-9][0-9]|100))$"
+)
 _MAX_DOCUMENTS = 20
 _MAX_MESSAGE = 3_900
 _EDITOR_PENDING_KEY = "legal_editor_pending"
@@ -96,9 +101,27 @@ class LegalLibraryClient:
             await self._http.aclose()
 
     async def get_library(self, telegram_user_id: int) -> dict[str, Any]:
+        return await self._library_json(telegram_user_id, "/v1/legal/library")
+
+    async def get_library_groups(
+        self, telegram_user_id: int, *, group: str | None = None, page: int = 1
+    ) -> dict[str, Any]:
+        if group is not None and group not in LIBRARY_GROUP_KEYS:
+            raise ValueError("legal library group")
+        _editor_page(page)
+        path = "/v1/legal/library/groups" + (f"/{group}" if group else "")
+        payload = await self._library_json(telegram_user_id, f"{path}?page={page}")
+        if payload.get("page") != page or payload.get("selectedGroup") != group:
+            raise ValueError("legal library group response")
+        for item in payload["items"]:
+            if not isinstance(item, dict) or _official_url(item.get("sourceUrl")) is None:
+                raise ValueError("legal library document source")
+        return payload
+
+    async def _library_json(self, telegram_user_id: int, path: str) -> dict[str, Any]:
         try:
             response = await self._http.get(
-                "/v1/legal/library",
+                path,
                 headers={"X-Telegram-User-Id": str(telegram_user_id)},
                 timeout=60.0,
             )
@@ -732,7 +755,7 @@ def render_editor_review_materials(
     if selected_group is None:
         buttons.extend([list(row) for row in back_keyboard().inline_keyboard])
         return (
-            "⚖️ ПРОВЕРКА НОРМ\n\nВыберите группу документов.\n"
+            "📜 НОРМАТИВНАЯ БАЗА\n\nВыберите группу документов.\n"
             "Внутри — документы для просмотра и проверки.",
             InlineKeyboardMarkup(buttons),
         )
@@ -743,7 +766,7 @@ def render_editor_review_materials(
         raise ValueError("reference review count")
 
     lines = [
-        "⚖️ ПРОВЕРКА МАТЕРИАЛОВ",
+        "📜 НОРМАТИВНАЯ БАЗА",
         f"Страница {page}.",
     ]
     progress = payload.get("progress")
@@ -847,7 +870,12 @@ def render_editor_review_materials(
                 )
             ]
         )
-    if selected_group != "clinical":
+    pending_norms = (
+        progress["approvedNormativeVersions"] < progress["normativeVersions"]
+        if isinstance(progress, dict)
+        else True  # Legacy pages cannot prove the status of versions on other pages.
+    )
+    if selected_group != "clinical" and pending_norms:
         buttons.append(
             [
                 InlineKeyboardButton(
@@ -857,6 +885,7 @@ def render_editor_review_materials(
             ]
         )
     buttons.append([InlineKeyboardButton("← К группам", callback_data="editor:materials:1")])
+    buttons.extend([list(row) for row in back_keyboard().inline_keyboard])
     return _bounded_message("\n".join(lines)), InlineKeyboardMarkup(buttons)
 
 
@@ -1934,6 +1963,7 @@ async def _finish_group_approval(
 async def show_legal_library(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
+    *, group: str | None = None, page: int = 1,
 ) -> None:
     actor_id = gateway_bot._actor_id(update)
     if actor_id is None:
@@ -1947,7 +1977,10 @@ async def show_legal_library(
         context.application.bot_data[_LIBRARY_TASKS_KEY] = queue
 
     async def deliver() -> None:
-        await _deliver_legal_library(update, context)
+        if group is None and page == 1:
+            await _deliver_legal_library(update, context)
+        else:
+            await _deliver_legal_library(update, context, group=group, page=page)
 
     async def on_error() -> None:
         await gateway_bot._reply(
@@ -1968,6 +2001,7 @@ async def show_legal_library(
 async def _deliver_legal_library(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
+    *, group: str | None = None, page: int = 1,
 ) -> None:
     actor_id = gateway_bot._actor_id(update)
     if actor_id is None:
@@ -1978,20 +2012,19 @@ async def _deliver_legal_library(
         return
     client = LegalLibraryClient()
     try:
-        payload = await client.get_library(actor_id)
-        reviewed_references = False
+        editor_payload = None
         if client._editor_gateway_key is not None:
             try:
-                references = await client.get_editor_groups(actor_id, group="clinical")
-                progress = references.get("progress", {})
-                count = (
-                    progress.get("reviewedReferenceMaterials", 0)
-                    if isinstance(progress, dict) else 0
-                )
-                reviewed_references = type(count) is int and count > 0
+                editor_payload = await client.get_editor_groups(actor_id, page=page, group=group)
             except LegalCoreApiError as exc:
-                logger.info("library reference link unavailable: %s", exc.code)
-        text, keyboard = render_legal_library(payload, reviewed_references=reviewed_references)
+                if exc.status_code != 403 or exc.code != "LEGAL_EDITOR_NOT_ALLOWED":
+                    raise
+        if editor_payload is not None:
+            text, keyboard = render_editor_review_materials(editor_payload)
+        else:
+            text, keyboard = render_grouped_legal_library(
+                await client.get_library_groups(actor_id, group=group, page=page)
+            )
     except LegalCoreApiError as exc:
         logger.warning("legal library load failed: %s", exc.code)
         if exc.code == "LEGAL_LIBRARY_NOT_ALLOWED":
@@ -2020,9 +2053,14 @@ async def legal_library_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    if await gateway_bot._answer_callback(update) != LEGAL_LIBRARY_CALLBACK:
+    callback = await gateway_bot._answer_callback(update)
+    if not isinstance(callback, str) or _LIBRARY_CALLBACK_RE.fullmatch(callback) is None:
         raise ApplicationHandlerStop
-    await show_legal_library(update, context)
+    if callback == LEGAL_LIBRARY_CALLBACK:
+        await show_legal_library(update, context)
+    else:
+        _, _, group, page = callback.split(":")
+        await show_legal_library(update, context, group=group, page=int(page))
     raise ApplicationHandlerStop
 
 
@@ -2038,7 +2076,7 @@ def build_application_with_legal_library(token: str) -> gateway_bot.TelegramAppl
         group=-4,
     )
     application.add_handler(
-        CallbackQueryHandler(legal_library_callback, pattern=r"^legalbase:open$"),
+        CallbackQueryHandler(legal_library_callback, pattern=_LIBRARY_CALLBACK_RE),
         group=-4,
     )
     return application

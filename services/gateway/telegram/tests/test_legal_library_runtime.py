@@ -76,10 +76,18 @@ def test_library_links_reviewed_references_separately_without_treating_them_as_l
 def test_library_reference_link_requires_existing_editor_access(monkeypatch, editor_allowed):
     client = SimpleNamespace(
         _editor_gateway_key="synthetic-editor-key",
-        get_library=AsyncMock(return_value={"asOfDate": "2026-10-08", "items": []}),
+        get_library_groups=AsyncMock(return_value={
+            "asOfDate": "2026-10-08", "items": [], "page": 1,
+            "groups": {"clinical": "Clinical references"}, "selectedGroup": None,
+            "hasMore": False,
+        }),
         get_editor_groups=AsyncMock(
-            return_value={"progress": {"reviewedReferenceMaterials": 7}},
-            side_effect=None if editor_allowed else LegalCoreApiError(403, "DENIED", "Denied"),
+            return_value={"page": 1, "pageSize": 10, "totalItems": 7,
+                          "selectedGroup": None, "items": [],
+                          "groups": [{"key": "clinical", "title": "Clinical references"}]},
+            side_effect=None if editor_allowed else LegalCoreApiError(
+                403, "LEGAL_EDITOR_NOT_ALLOWED", "Denied"
+            ),
         ),
         aclose=AsyncMock(),
     )

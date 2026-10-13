@@ -15,7 +15,8 @@ CLINIC_BASELINE = {
     "services/gateway/telegram/src/telegram_gateway/__main__.py":
         "dc29188aba35fcd386a7b132f0c4a012026497ae",
     "services/gateway/telegram/src/telegram_gateway/ui.py":
-        "484153ec54ecf8f34c34f199c70325db932e9751",
+        # Owner-requested clinic library unification; personal surface unchanged (ADR 0080).
+        "da2a396c379d2cfef32c4d3b2c16160d534a83b2",
     "services/gateway/telegram/src/telegram_gateway/case_experience_runtime.py":
         "19f6371c3507b844c54fa8308a97cabfafe292cd",
     "services/legal_core/src/legal_core/main.py":

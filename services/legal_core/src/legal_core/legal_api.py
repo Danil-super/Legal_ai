@@ -35,6 +35,7 @@ from legal_core.api_contracts import (
     LegalGroupApprovalResponse,
     LegalGroupPreview,
     LegalLibraryDocumentResponse,
+    LegalLibraryGroupPage,
     LegalLibraryResponse,
     LegalMaterialPreparationDetail,
     LegalReferenceReviewPreview,
@@ -55,6 +56,7 @@ from legal_core.legal_approval import (
     legal_approval_preflight_reason,
     potential_approval_attestation,
 )
+from legal_core.legal_library_groups import LIBRARY_GROUP_TITLES, list_approved_group_documents
 from legal_core.legal_retrieval import ApprovedLegalCorpusRepository
 from legal_core.material_preparation import MaterialGroup, MaterialKind, PreparedPart
 from legal_core.models import (
@@ -215,6 +217,27 @@ def create_legal_router(
                 LegalLibraryDocumentResponse.model_validate(document, from_attributes=True)
                 for document in documents
             ],
+        )
+
+    @router.get("/library/groups", response_model=LegalLibraryGroupPage)
+    @router.get("/library/groups/{group}", response_model=LegalLibraryGroupPage)
+    async def list_library_groups(
+        telegram_user_id: TelegramUserId, session: Session,
+        group: ReviewGroup | None = None, page: EditorPage = 1,
+        as_of_date: OptionalAsOfDate = None,
+    ) -> LegalLibraryGroupPage:
+        actor = await resolve_actor(session, telegram_user_id)
+        require_lawyer_library_access(actor.role)
+        resolved_date = as_of_date or datetime.now(UTC).date()
+        group = "general" if group == "other" else group
+        documents, has_more = ([], False) if group is None else await list_approved_group_documents(
+            session, group=group, as_of_date=resolved_date, page=page
+        )
+        return LegalLibraryGroupPage(
+            asOfDate=resolved_date, page=page, selectedGroup=group, hasMore=has_more,
+            groups=LIBRARY_GROUP_TITLES,
+            items=[LegalLibraryDocumentResponse.model_validate(document, from_attributes=True)
+                   for document in documents],
         )
 
     @router.get("/editor/status", response_model=LegalEditorStatusResponse)

@@ -160,10 +160,6 @@ def main_menu_keyboard(
                 )
             ],
         ]
-        if is_legal_editor:
-            lawyer_rows.append(
-                [InlineKeyboardButton("⚖️ Проверка норм", callback_data="editor:open")]
-            )
         return InlineKeyboardMarkup(
             [
                 *lawyer_rows,
@@ -197,7 +193,7 @@ def main_menu_keyboard(
                 )
             ]
         )
-    if role == "CLINIC_OWNER":
+    if role == "CLINIC_OWNER" or is_legal_editor:
         case_rows.append(
             [
                 InlineKeyboardButton(
@@ -205,11 +201,8 @@ def main_menu_keyboard(
                 )
             ]
         )
+    if role == "CLINIC_OWNER":
         case_rows.append([InlineKeyboardButton("👥 Команда клиники", callback_data="team:open")])
-    if is_legal_editor:
-        case_rows.append(
-            [InlineKeyboardButton("⚖️ Проверка норм", callback_data="editor:open")]
-        )
 
     return InlineKeyboardMarkup(
         [
