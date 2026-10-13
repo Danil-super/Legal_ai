@@ -7,9 +7,13 @@
 - [x] Create quick V2 partial draft, preserve unknowns/summary, stable retry and existing V1 resume.
 - [x] Validate actual response version/data and provide actionable unsupported V1 clarification.
   Focused local: 75 passed; independent boundary/diff review no actionable findings.
-- [ ] Shared canonical-only PDF/Telegram view; retain legal/source limitations and blocked state.
-- [ ] Real PG/MinIO, full regression/security/container gates and independent renderer review.
-- [ ] Visually inspect long/READY/HIGH/BLOCKED PDFs; reviewed GitHub release approval.
+- [x] Shared canonical-only PDF/Telegram view; retain legal/source limitations and blocked state.
+- [x] Real PG/MinIO, full regression/security/container gates and independent renderer review.
+  Combined suite: 2028 passed, no skips; Ruff/mypy (136 source files), strict pip-audit,
+  Compose and offline non-root gateway container import passed. CI gates remain required.
+- [x] Visually inspect long/READY/HIGH/BLOCKED PDFs; fix long first-page pagination.
+  Independent review found and closed truncated legal qualifiers/citations in compact Telegram.
+- [ ] Reviewed GitHub CI and explicit release approval; no production change made yet.
 - [ ] Live model + persisted synthetic report/PDF checks for both version-aligned entry paths.
 
 No weakening of evidence/risk/privacy gates or retrospective rewriting of case content.

@@ -1,4 +1,3 @@
-# ruff: noqa: RUF001
 """Production composition regressions with real versioned Core request contracts.
 
 All descriptions are fixed synthetic examples. Telegram and Core network I/O are
@@ -22,7 +21,7 @@ from telegram_gateway.factual_safety_intake import screening_question
 from test_case_experience import harness
 from test_dialog_isolation import ACTOR, DRAFT
 
-DESCRIPTION = "Пациент сообщил о сколе коронки после лечения и попросил обсудить ситуацию."
+DESCRIPTION = "Пациент сообщил про скол коронки после лечения и попросил обсудить ситуацию."
 OTHER_ACTOR = ACTOR + 1
 V2 = "dental-case-intake.v2"
 V1 = "dental-case-intake.v1"

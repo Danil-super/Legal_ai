@@ -56,3 +56,29 @@ container imports, визуальный PDF и независимая прове
 callbacks; настаивать на доказательстве полного ручного Telegram click-through
 без пользовательской сессии нельзя. Никаких автоматических legal approvals
 или передачи 67 частных DRAFT эталонов модели.
+
+## Результат объединённой проверки
+
+2026-10-13: 2028 passed / 0 skipped за 91.05 секунды с включёнными
+POSTGRES_INTEGRATION и MINIO_INTEGRATION на отдельных tmpfs-контейнерах;
+все входные материалы синтетические. 196 предупреждений PTB о deprecated
+retry_after и ограничениях тестового ConversationHandler/JobQueue не скрыты.
+Ruff, mypy всех трёх сервисов (136 файлов), strict pip-audit, базовый и
+production Compose, сборка реального gateway Dockerfile и import его entrypoint
+non-root/offline/read-only прошли. Точные worktree Code Graph: 528 nodes / 527
+edges, warnings=0; MCP index original root отдельно refreshed.
+
+Renderer review e1ff194 нашёл P2: компактная Telegram-карточка обрезала
+юридический вывод до его оговорки/ссылок. Исправлено нейтральной отсылкой
+к полному PDF вместо частичного вывода или рекомендации. Визуальный просмотр
+выявил первый лист длинного PDF без фабулы; pagination исправлена и закреплена
+тестом. Fix-only независимая перепроверка: новых actionable defects нет.
+PDF READY/HIGH/BLOCKED и четырёхстраничный long проверены; сохранённые bytes
+исторических отчётов и их hashes не меняются.
+
+Это техническая проверка поддерживаемых сценариев с реальными Core request
+validators и отдельными настоящими PG/MinIO-интеграциями. Telegram I/O и модели
+в регрессионных тестах заменены; полный ручной Telegram click-through и новый
+живой Hermes-анализ обеих веток этим прогоном не доказаны. Read-only production
+baseline: main0b0a882, все восемь сервисов healthy. Новые изменения не развёрнуты:
+необходимы GitHub CI, согласованный release и post-deploy synthetic checks.
