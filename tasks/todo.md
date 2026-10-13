@@ -1,5 +1,24 @@
 # Dental Legal AI task list
 
+## Release audit remediation — owner-authorised 2026-10-13
+
+- [x] Reproduce public-country-name false positive; preserve identifier guards.
+  RED: 4 failed / 32 passed; GREEN: 36 passed (privacy + two-pass reasoning).
+- [ ] Strict complete-package DOCX privacy validation for case/reference materials;
+  preserve clinic-document parsing; prove rejection before raw object storage.
+- [ ] Permit confirmed urgent early routing with unknown dates; align UI shortcut
+  with v4 10,000 RUB; keep dated legal analysis blocked and test both Core paths.
+- [ ] Concrete unknown-fact follow-up and confirmed-new-draft recovery without
+  changing prior snapshots, reports or tenant/material ownership.
+- [ ] Reference comparison cannot PASS missing corpus/infrastructure; distinguish
+  reviewed expectations, executable bindings and actual model/legal validation.
+- [ ] Investigate and measure slow approved-evidence retrieval without weakening
+  approval/date/checksum guards; retain optimisation only with verified gain.
+- [ ] Full local/PG quality gates, independent review and truthful release status.
+
+Contract boundaries: ADR 0081. No automatic normative/reference approval or
+private example sharing with a model; production release is separately reviewed.
+
 ## Lawyer-supplied current copies — authorized 2026-10-08
 
 - [x] Verify all 58 originals against archive and production hashes.

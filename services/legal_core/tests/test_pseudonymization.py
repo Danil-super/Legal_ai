@@ -1,4 +1,21 @@
+import pytest
+
 from legal_core.pseudonymization import contains_obvious_direct_identifier, pseudonymize_text
+
+
+@pytest.mark.parametrize("authority", [
+    "Правительством Российской Федерации",
+    "Президент Российской Федерации",
+    "Конституция Российской Федерации",
+])
+def test_public_country_authority_is_not_a_patient_name(authority):
+    assert contains_obvious_direct_identifier(authority) is False
+    assert pseudonymize_text(authority).text == authority
+    combined = f"{authority}. Иванов Иван Иванович, +7 999 123-45-67."
+    assert contains_obvious_direct_identifier(combined) is True
+    redacted = pseudonymize_text(combined)
+    assert authority in redacted.text
+    assert "Иванов" not in redacted.text and "999" not in redacted.text
 
 
 def test_pseudonymizer_redacts_common_direct_identifiers() -> None:
