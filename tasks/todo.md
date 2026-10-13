@@ -4,20 +4,36 @@
 
 - [x] Reproduce public-country-name false positive; preserve identifier guards.
   RED: 4 failed / 32 passed; GREEN: 36 passed (privacy + two-pass reasoning).
-- [ ] Strict complete-package DOCX privacy validation for case/reference materials;
+- [x] Strict complete-package DOCX privacy validation for case/reference materials;
   preserve clinic-document parsing; prove rejection before raw object storage.
-- [ ] Permit confirmed urgent early routing with unknown dates; align UI shortcut
+  42 focused checks; own separate review found and closed a directory-header gap.
+  Delegated candidate DOCX review was unavailable; no independent security sign-off claimed.
+- [x] Permit confirmed urgent early routing with unknown dates; align UI shortcut
   with v4 10,000 RUB; keep dated legal analysis blocked and test both Core paths.
-- [ ] Concrete unknown-fact follow-up and confirmed-new-draft recovery without
+- [x] Concrete unknown-fact follow-up and confirmed-new-draft recovery without
   changing prior snapshots, reports or tenant/material ownership.
-- [ ] Reference comparison cannot PASS missing corpus/infrastructure; distinguish
+- [x] Reference comparison cannot PASS missing corpus/infrastructure; distinguish
   reviewed expectations, executable bindings and actual model/legal validation.
-- [ ] Investigate and measure slow approved-evidence retrieval without weakening
+- [x] Investigate and measure slow approved-evidence retrieval without weakening
   approval/date/checksum guards; retain optimisation only with verified gain.
-- [ ] Full local/PG quality gates, independent review and truthful release status.
+  Read-only complete approval predicate: 20.702→6.408 seconds, same 54 versions.
+- [x] Expire private draft replies while preserving receipts, active resources,
+  ownership/ACL, material-first cleanup and closed-workflow replay protection.
+- [x] Ordinary Hermes completes the synthetic two-pass smoke within unchanged
+  whole-analysis wall; keep model/provider/reasoning/tool/PII guards unchanged.
+  Process-local 65/65 stage probe: 48.435s, one SUPPORTED claim; no Core writes.
+- [x] Full local PostgreSQL/real MinIO: 1967 passed, no skips; Ruff, mypy135,
+  Compose, Bandit, pip-audit, container builds/imports and Code Graph refresh.
+- [x] Independent urgent, clarification, runtime/RTF and retention reviews passed.
+  Scope evidence: 75 gateway+14 PG; 59 clarification; 166 runtime/RTF; 42 retention.
+- [x] GitHub CI on code 86f7335: run38417457458 successful; PR92, no deploy.
+- [ ] Human review and release approval; deploy, backup/ledger check and live smoke.
+- [ ] Human-reviewed structured expectations and actual gold evaluation of the
+  67 private DRAFT references; no auto approval or private model sharing.
 
 Contract boundaries: ADR 0081. No automatic normative/reference approval or
 private example sharing with a model; production release is separately reviewed.
+Technical gates are not a declaration of legal/commercial launch readiness.
 
 ## Lawyer-supplied current copies — authorized 2026-10-08
 

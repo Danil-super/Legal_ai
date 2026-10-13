@@ -86,3 +86,25 @@ factual-safety-intake.v1, reference workspace и утверждённая risk p
 юридическая валидация. Перед выпуском нужны независимое ревью, полный PostgreSQL
 прогон и проверки проекта. Production approval ledger не изменяется.
 Откат приложения сохраняет исходные документы, события утверждения и policy.
+
+### Фактический closeout (код 86f7335)
+
+- Полный PostgreSQL и реальный тестовый MinIO: 1967 passed, 0 skipped, 141,46 с.
+  Существующие PTB deprecation/isolated-jobqueue warnings не скрывались.
+- Ruff, mypy (135 sources), Compose, Bandit и pip-audit прошли; Core/Gateway
+  images собраны, новые модули импортируются. CI38417457458 прошёл quality,
+  PostgreSQL, CodeQL, Bandit, Gitleaks и все четыре container-import jobs.
+  Production deploy в PR корректно skipped.
+- Независимые scoped review: urgent75 gateway+14 PG; clarification59;
+  runtime/RTF166; retention42 и дополнительные SQL ACL/downgrade/tenant probes.
+  DOCX delegated candidate review не завершилось из-за недоступности reviewer;
+  вместо заявления о независимом sign-off выполнен отдельный собственный pass.
+  Он нашёл local-directory carrier, исправление проверено обоими API до storage.
+- C4 строится из последней material-gated predecessor-функции, а не ранней
+  реализации: полный тест поймал FK-regression; исправленный порядок purge
+  (blocked, raw removed, draft removed)=(0,1,1) подтверждён root и reviewer.
+  Upgrade/downgrade сохраняют function OID/owner/ACL; истёкший текст не возвращается.
+- PR92 подготовлен отдельно от dirty user branch. Production и реальные legal
+  approvals не менялись. Release требует human review/approval и последующего smoke.
+  67 эталонов DRAFT не исполнялись/не утверждались и не передавались модели;
+  юридическое качество всех сценариев и коммерческая готовность не подтверждены.
