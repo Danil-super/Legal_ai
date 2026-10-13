@@ -46,7 +46,25 @@ factual-safety-intake.v1, reference workspace и утверждённая risk p
   Миграция c3f9b2e5d741 вычисляет `lower(encode(raw_bytes,'escape'))` один раз
   внутри вызова, сохраняя все четыре точных проверки. Это не кеш и не approval.
   Остальные source/editor/event/hash/date/fragment guards остаются дословно прежними.
+  Read-only сравнение полного approval predicate на production: исходный 20,702 с,
+  query-local materialized кандидат 6,408 с; все 54 version IDs совпали дословно
+  (digest fd80170a0b343d797412c18af7568788edf63bae82b5e3a5ddd595056059cc95).
+  Это ускорение предиката, не измерение нового deployed endpoint p95. Production
+  function не менялась; NULL raw не возникает (колонка NOT NULL), helper STRICT.
   [PostgreSQL 16: локальные значения PL/pgSQL](https://www.postgresql.org/docs/16/plpgsql-declarations.html).
+- Обычный двухпроходный Hermes на вымышленных фактах и двух реально approved
+  фрагментах остановился на research wall 30 с. Process-local probe с research/review
+  stage 65 с прошёл за 48,435 с: один claim и один SUPPORTED review, draft присутствует.
+  Поэтому nominal stage walls теперь 65/65, но единый context→models→submission
+  wall остаётся 115 с; worker HTTP/wall/lease остаются 120/125/180. Стадии делят
+  остаток общего budget, а не гарантированно получают каждая 65 с. Нет новых retries,
+  облегчённого reasoning, моделей, provider, tools, внутреннего профиля или секретов.
+  SSE completion/size/privacy/evidence checks сохраняются. Probe не создавал кейс,
+  отчёт или уведомление в Core и не подтверждает качество всех 67 эталонов.
+- In-process Alembic не отключает существующие application loggers: полный PG
+  прогон воспроизвёл потерю шести closed-reason событий из-за `fileConfig` default.
+  Параметр `disable_existing_loggers=False` сохраняет уже проверенные safe events.
+  [Python 3.13: fileConfig](https://docs.python.org/3.13/library/logging.config.html#logging.config.fileConfig).
 
 Роли, tenant scope, trusted sources, risk policy v4 и запрет автоматической
 отправки пациенту сохраняются. Новых поставщиков моделей и категорий данных нет.
