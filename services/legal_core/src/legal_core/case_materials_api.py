@@ -43,8 +43,8 @@ from legal_core.case_material_contracts import (
 )
 from legal_core.clinic_document_parser import MAX_UPLOAD_BYTES, parse_clinic_document_upload
 from legal_core.clinic_document_store import RawCaseMaterialStore, minio_store_from_environment
+from legal_core.material_privacy import MaterialDirectIdentifier, validate_anonymized_material
 from legal_core.models import CaseMaterial, TelegramIntakeDraft
-from legal_core.pseudonymization import pseudonymize_text
 
 MAX_CASE_MATERIALS_PER_DRAFT = 10
 
@@ -283,6 +283,13 @@ def create_case_materials_router(
                 source_filename=source_filename,
                 content_type=request.headers.get("content-type", ""),
             )
+            await asyncio.to_thread(validate_anonymized_material, raw, parsed)
+        except MaterialDirectIdentifier as exc:
+            raise ApiError(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                code="CASE_MATERIAL_DIRECT_IDENTIFIER_NOT_ALLOWED",
+                message="Case material must be anonymised before upload",
+            ) from exc
         except ValueError as exc:
             raise ApiError(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -295,13 +302,6 @@ def create_case_materials_router(
                 code="CASE_MATERIAL_PARSER_UNAVAILABLE",
                 message="Case material parser is unavailable",
             ) from exc
-        if pseudonymize_text(parsed.normalized_text).changed:
-            raise ApiError(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                code="CASE_MATERIAL_DIRECT_IDENTIFIER_NOT_ALLOWED",
-                message="Case material must be anonymised before upload",
-            )
-
         # `raw` and parsed text never enter SQL, audit data, exceptions, or logs.
         request_hash = _canonical_hash(
             {"rawSha256": parsed.raw_sha256, "mimeType": parsed.mime_type, "draftId": str(draft_id)}

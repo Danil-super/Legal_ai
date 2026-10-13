@@ -50,6 +50,13 @@ Raw bytes reside only below the isolated `evaluation-case/` object prefix and ar
 never placed in the normative corpus, retrieval index, Hermes context, audit
 payload, process log, fixture or Telegram callback.
 
+DOCX material uploads additionally inspect hidden XML content and archive metadata
+before raw storage. Images, embedded/opaque parts, unsupported XML encodings and
+uninspectable ZIP metadata are rejected: submit a supported text-only package.
+The original checksum/download bytes remain unchanged. Clinic-library original
+document parsing is a separate contract and is not tightened by this material gate.
+This is identifier screening, not a guarantee of irreversible anonymisation.
+
 The case version records the review date, coverage group, expected safe route,
 de-identified scenario text, immutable checksums and optional attachment metadata.
 Review events are append-only and record only the reviewer, decision, version and

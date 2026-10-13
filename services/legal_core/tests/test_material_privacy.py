@@ -212,3 +212,16 @@ def test_plain_text_material_identifier_control_is_preserved() -> None:
     )
     with pytest.raises(MaterialDirectIdentifier):
         validate_anonymized_material(raw, parsed)
+
+
+@pytest.mark.parametrize("encoded", ["synthetic.person@example.invalid",
+                                    "synthetic.person&#64;example.invalid"])
+def test_unused_namespace_identifiers_are_checked(encoded):
+    from legal_core.material_privacy import MaterialDirectIdentifier, validate_anonymized_material
+
+    raw = docx_bytes(extra_entries={
+        "word/header1.xml": f'<w:hdr xmlns:w="{WORD_NS}" '
+        f'xmlns:private="http://example.invalid/{encoded}"/>',
+    })
+    with pytest.raises(MaterialDirectIdentifier):
+        validate_anonymized_material(raw, _parse(raw))

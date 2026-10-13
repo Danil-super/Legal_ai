@@ -36,6 +36,7 @@ from legal_core.clinic_document_store import (
     RawReferenceEvaluationStore,
     minio_store_from_environment,
 )
+from legal_core.material_privacy import MaterialDirectIdentifier, validate_anonymized_material
 from legal_core.models import (
     ReferenceEvaluationAccessGrant,
     ReferenceEvaluationCase,
@@ -544,6 +545,13 @@ def create_reference_evaluation_router(
                 source_filename=source_filename,
                 content_type=request.headers.get("content-type", ""),
             )
+            await asyncio.to_thread(validate_anonymized_material, raw, parsed)
+        except MaterialDirectIdentifier as exc:
+            raise ApiError(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                code="REFERENCE_EVALUATION_DIRECT_IDENTIFIER_NOT_ALLOWED",
+                message="Reference evaluation material must be anonymised before upload",
+            ) from exc
         except ValueError as exc:
             raise ApiError(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -556,9 +564,6 @@ def create_reference_evaluation_router(
                 code="REFERENCE_EVALUATION_PARSER_UNAVAILABLE",
                 message="Reference evaluation parser is unavailable",
             ) from exc
-        _reject_identifiers(
-            parsed.normalized_text, code="REFERENCE_EVALUATION_DIRECT_IDENTIFIER_NOT_ALLOWED"
-        )
         request_hash = _canonical_hash(
             {"caseId": str(case_id), "rawSha256": parsed.raw_sha256, "mimeType": parsed.mime_type}
         )
