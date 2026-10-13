@@ -64,12 +64,13 @@ from legal_core.contracts import (
     FactKey,
 )
 from legal_core.intake import missing_facts_for
+from legal_core.factual_safety_risk import confirmed_screening, screening_blocker
 from legal_core.legal_conclusions import select_verified_legal_conclusions
 from legal_core.legal_retrieval import ApprovedLegalCorpusRepository, ApprovedLegalFragment
 from legal_core.models import Case, CaseReport
 from legal_core.reports import build_analysis_report, build_intake_report, render_report_pdf
 from legal_core.retrieval_plan import plan_legal_queries, retrieve_planned_evidence
-from legal_core.risk_engine import RiskLevel, fact_snapshot_sha256
+from legal_core.risk_engine import RiskLevel, evaluate_early_triage, fact_snapshot_sha256
 from legal_core.risk_persistence import record_case_risk_assessment
 from legal_core.risk_policy_repository import ApprovedRiskPolicy, ApprovedRiskPolicyRepository
 from legal_core.risk_engine import risk_missing_facts
@@ -189,6 +190,14 @@ async def _load_analysis_state(session: AsyncSession, actor: Any, case_id: UUID)
             code="RISK_POLICY_NOT_READY",
             message="An approved risk policy is not available",
         ) from exc
+
+    if policy.domain.factual_safety_intake_enabled and evaluate_early_triage(
+        facts, policy=policy.domain,
+    ) is None:
+        reason = screening_blocker(facts, confirmed_screening(facts))
+        if reason is not None:
+            raise ApiError(status_code=422, code=reason,
+                           message="A factual clarification is required before analysis")
 
     evidence_repository = ApprovedLegalCorpusRepository(session)
     queries = plan_legal_queries(facts)

@@ -324,6 +324,39 @@ def test_clarification_never_copies_or_moves_confirmed_materials() -> None:
         assert store.objects == objects and store.deleted == []
 
 
+def test_preview_is_metadata_only_and_new_case_keeps_source_link():
+    actor = 99_000_000_000 + uuid4().int % 100_000_000
+    seed_admin(actor)
+    data = _guided_data()
+    data["safetyScreening"]["representativeContact"] = "UNKNOWN"
+    with application_client() as client:
+        original = _confirm(client, actor, data)
+        before = _source_rows(original["case"]["id"])
+        preview = client.get(
+            f"/v1/cases/{original['case']['id']}/clarification-drafts/preview",
+            headers=actor_headers(actor),
+        )
+        assert preview.status_code == 200
+        assert preview.json() == {"caseId": original["case"]["id"],
+                                  "expectedFactSnapshotSha256": _source_hash(original)}
+        draft = _request_draft(client, actor, original).json()
+        corrected = draft["draftData"]
+        corrected["safetyScreening"]["representativeContact"] = "NO"
+        new = _confirm(client, actor, corrected, UUID(draft["id"]))
+        assert new["case"]["id"] != original["case"]["id"]
+        assert _source_rows(original["case"]["id"]) == before
+    engine = create_engine(owner_database_url())
+    try:
+        with engine.connect() as connection:
+            pointers = connection.execute(text(
+                "SELECT source_ref_json->'correctionSource' FROM case_facts WHERE case_id=:id"
+            ), {"id": new["case"]["id"]}).scalars().all()
+            assert pointers
+            assert all(pointer == corrected["correctionSource"] for pointer in pointers)
+    finally:
+        engine.dispose()
+
+
 @pytest.mark.parametrize("invalid_source", ["stale", "unconfirmed", "expired"])
 def test_clarification_rejects_stale_unconfirmed_or_expired_sources(invalid_source: str) -> None:
     actor = 97_000_000_000 + uuid4().int % 100_000_000

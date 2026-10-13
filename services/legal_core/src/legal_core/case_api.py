@@ -1219,6 +1219,9 @@ def create_case_router(
                 code="INTAKE_DRAFT_REVISION_CONFLICT",
                 message="The intake draft has a newer revision",
             )
+        if draft.draft_json.get("correctionSource") != payload.draft_data.get("correctionSource"):
+            raise ApiError(status_code=409, code="CLARIFICATION_SOURCE_IMMUTABLE",
+                           message="The source of a clarification draft cannot be changed")
         now = datetime.now(UTC)
         draft.wizard_state = payload.wizard_state
         draft.draft_json = payload.draft_data
@@ -1841,6 +1844,15 @@ def create_case_router(
                 message="Карточку пока нельзя подтвердить",
                 details={"missingFactKeys": [item.fact_key.value for item in missing]},
             )
+        source_draft = await session.scalar(select(TelegramIntakeDraft).where(
+            TelegramIntakeDraft.id == workflow_id,
+            TelegramIntakeDraft.clinic_id == actor.clinic_id,
+            TelegramIntakeDraft.actor_membership_id == actor.membership_id,
+            TelegramIntakeDraft.status == "DRAFT",
+        ).with_for_update())
+        correction_source = (
+            source_draft.draft_json.get("correctionSource") if source_draft is not None else None
+        )
         await _enforce_case_limits(
             session,
             actor,
@@ -1886,7 +1898,9 @@ def create_case_router(
                 value_type=item.value_type,
                 value_json=item.value,
                 source_type=item.source_type,
-                source_ref_json={"workflowId": str(workflow_id)},
+                source_ref_json={"workflowId": str(workflow_id), **(
+                    {"correctionSource": correction_source} if correction_source is not None else {}
+                )},
                 evidence_status="UNVERIFIED",
                 recorded_by_membership_id=actor.membership_id,
                 supersedes_fact_id=None,
@@ -2072,4 +2086,8 @@ def create_case_router(
             },
         )
 
+    # Register the case subresource after this module's helpers are available.
+    from legal_core.case_clarification import create_clarification_router
+
+    router.include_router(create_clarification_router(session_factory))
     return router
