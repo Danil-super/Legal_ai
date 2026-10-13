@@ -1849,6 +1849,20 @@ def create_case_router(
             TelegramIntakeDraft.clinic_id == actor.clinic_id,
             TelegramIntakeDraft.actor_membership_id == actor.membership_id,
         ).with_for_update())
+        # Use retained receipt metadata after retention has deleted the draft row.
+        # A delayed button must not turn a purged saved draft into a new unlinked case.
+        purged_draft_receipt = None
+        if source_draft is None:
+            purged_draft_receipt = await session.scalar(select(IdempotencyRecord.id).where(
+                IdempotencyRecord.clinic_id == actor.clinic_id,
+                IdempotencyRecord.actor_membership_id == actor.membership_id,
+                IdempotencyRecord.resource_type == "TELEGRAM_INTAKE_DRAFT",
+                IdempotencyRecord.resource_id == workflow_id,
+                IdempotencyRecord.state == "SUCCEEDED",
+            ).limit(1))
+        if purged_draft_receipt is not None:
+            raise ApiError(status_code=409, code="INTAKE_DRAFT_CLOSED",
+                           message="A purged intake draft cannot create a new case")
         if source_draft is not None and (
             source_draft.status != "DRAFT" or source_draft.purge_after <= datetime.now(UTC)
         ):

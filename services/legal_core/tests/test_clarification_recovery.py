@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from legal_core.database import database_url, owner_database_url
+from legal_core.draft_retention import purge_expired_intake_drafts
 from legal_core.factual_safety_intake import SCREENING_FIELDS, SCREENING_VERSION
 from legal_core.risk_policy_approval import RiskPolicyApproval, approve_risk_policy
 from legal_core.runtime_db_role import provision_runtime_role
@@ -383,7 +384,7 @@ def test_factual_policy_preserves_complete_legacy_intake(monkeypatch):
         assert retrieval_calls == [True]
 
 
-@pytest.mark.parametrize("inactive", ["archived", "expired"])
+@pytest.mark.parametrize("inactive", ["archived", "expired", "purged"])
 def test_closed_clarification_draft_cannot_be_confirmed(inactive):
     actor = 99_200_000_000 + uuid4().int % 100_000_000
     seed_admin(actor)
@@ -404,7 +405,23 @@ def test_closed_clarification_draft_cannot_be_confirmed(inactive):
                     "UPDATE telegram_intake_drafts SET purge_after=now() - INTERVAL '1 minute' "
                     "WHERE id=:id"
                 ), {"id": draft["id"]})
+                expected_deleted = connection.execute(text(
+                    "SELECT count(*) FROM telegram_intake_drafts "
+                    "WHERE status IN ('DRAFT','ARCHIVED') AND purge_after <= now()"
+                )).scalar_one()
             engine.dispose()
+            if inactive == "purged":
+                async def purge():
+                    db = create_async_engine(database_url())
+                    try:
+                        deleted = await purge_expired_intake_drafts(async_sessionmaker(db))
+                        assert deleted == expected_deleted
+                    finally:
+                        await db.dispose()
+                asyncio.run(purge())
+                missing = client.get(f"/v1/telegram-intake-drafts/{draft['id']}",
+                                     headers=actor_headers(actor))
+                assert missing.status_code == 404
         before = _source_rows(original["case"]["id"])
         response = client.post(
             f"/v1/telegram-case-workflows/{draft['id']}/submissions",
