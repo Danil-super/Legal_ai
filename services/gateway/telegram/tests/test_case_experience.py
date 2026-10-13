@@ -8,6 +8,10 @@ from unittest.mock import patch
 from uuid import UUID
 
 import pytest
+from legal_core.api_contracts import (
+    TelegramIntakeDraftCreateRequest,
+    TelegramIntakeDraftUpdateRequest,
+)
 from telegram import Update
 from telegram.ext import ExtBot
 from telegram_gateway import bot as gateway_bot
@@ -147,8 +151,12 @@ class ExperienceCore(Core):
         if key in self.replays:
             return deepcopy(self.replays[key])
         if method == "POST":
+            request = TelegramIntakeDraftCreateRequest.model_validate(payload)
+            if request.intake_schema_version == "dental-case-intake.v2":
+                self.draft.update(wizardState="INCOMING", draftData={"intakeVersion": 2})
             result = deepcopy(self.draft)
         else:
+            TelegramIntakeDraftUpdateRequest.model_validate(payload)
             result = await self.save_intake_draft(DRAFT, telegram_user_id,
                 expected_revision=payload["expectedRevision"], wizard_state=payload["wizardState"],
                 draft_data=payload["draftData"])
@@ -230,20 +238,33 @@ def test_production_flow_persists_all_confirmed_fields_then_skips_repetition():
             pending = app.user_data[ACTOR]["quick_intake_candidate"]
             accept = f"quick:review:{pending['nonce']}:accept"
             await dispatch(accept)
-            assert core.draft["draftData"]["demand_amount_kopecks"] == 3_500_000
+            assert core.draft["draftData"] == {"intakeVersion": 2, "eventSummary": DESCRIPTION}
             await dispatch(accept)
             assert len(core.saved) == 1  # stale confirmation cannot create another draft
             await dispatch(f"case:draft:{DRAFT}")
-            for value in ("01.06.2026", "01.07.2026", "02.07.2026"):
-                await dispatch("text:" + value)
-            assert core.draft["wizardState"] == "HARM"
-            assert core.draft["draftData"]["problem_summary"] == DESCRIPTION
-            assert core.draft["draftData"]["patient_demand"] == "REFUND_DEMAND"
-            for callback in ("case:harm:no", "case:lawyer:no", "case:authority:no",
-                             "case:regulator_threat:no"):
+            for callback in (
+                "case:v2:single:incomingKind:COMPLAINT",
+                "case:v2:multi:situationAreas:TREATMENT",
+                "case:v2:multi:situationAreas:DONE",
+            ):
                 await dispatch(callback)
-            assert core.draft["wizardState"] == "CONFIRM"
-            assert any("Проверьте карточку" in message.get("text", "") for message in sent)
+            assert core.draft["wizardState"] == "SERVICES"
+            await dispatch("text:Установка коронки")
+            assert core.draft["wizardState"] == "EVENT_DATE"
+            await dispatch("text:13.10.2026")
+            for callback in (
+                "case:v2:single:conflictStage:FIRST",
+                "case:v2:multi:clinicActions:INVITED_FOR_EXAMINATION",
+                "case:v2:multi:clinicActions:DONE",
+                "case:v2:multi:healthSignals:NO_KNOWN_INFORMATION",
+                "case:v2:multi:healthSignals:DONE",
+                "case:v2:material:skip",
+            ):
+                await dispatch(callback)
+            assert core.draft["wizardState"] == "SAFETY"
+            assert core.draft["draftData"]["eventSummary"] == DESCRIPTION
+            assert "demand_amount_kopecks" not in core.draft["draftData"]
+            assert any("Проверьте описание" in message.get("text", "") for message in sent)
 
     asyncio.run(scenario())
 
@@ -255,12 +276,14 @@ def test_correct_only_selected_field_and_reject_stale_card():
             await dispatch("text:" + DESCRIPTION)
             pending = app.user_data[ACTOR]["quick_intake_candidate"]
             old = pending["nonce"]
-            await dispatch(f"quick:review:{old}:drop:patient_demand")
-            assert "patient_demand" not in pending["candidate_data"]
-            assert "demand_amount_kopecks" not in pending["candidate_data"]
-            assert pending["candidate_data"]["problem_summary"] == DESCRIPTION
+            await dispatch(f"quick:review:{old}:edit")
+            assert "quick_intake_candidate" not in app.user_data[ACTOR]
             await dispatch(f"quick:review:{old}:accept")
             assert not core.requests
+            await dispatch("text:Синтетическое исправленное описание проблемы с сервисом.")
+            pending = app.user_data[ACTOR]["quick_intake_candidate"]
+            assert pending["candidate_data"]["intakeVersion"] == 2
+            assert pending["nonce"] != old
             await dispatch(f"quick:review:{pending['nonce']}:accept", actor=ACTOR + 1)
             assert not core.requests
             await dispatch(f"quick:review:{pending['nonce']}:accept")

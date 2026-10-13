@@ -26,16 +26,20 @@ from telegram_gateway import bot as gateway_bot
 from telegram_gateway import quick_intake_runtime as quick
 from telegram_gateway.case_wizard import INTAKE_SCHEMA_VERSION, DateFactValue, LegalCoreApiError
 from telegram_gateway.escalation_workspace import _chunks
+from telegram_gateway.guided_case_intake_v2 import (
+    next_missing_state as next_v2_missing_state,
+)
+from telegram_gateway.guided_case_intake_v2 import (
+    parse_answer as parse_v2_answer,
+)
 from telegram_gateway.intake_experience import (
     FIELDS,
     PREFIXES,
-    confirmed_candidates,
     drop_field,
     next_missing_state,
     parse_answer,
     review_blocks,
 )
-from telegram_gateway.quick_intake import QuickIntakeError, QuickIntakePrivacyError
 from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
@@ -44,21 +48,26 @@ Handler = Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, int]
 
 def _pending(context: ContextTypes.DEFAULT_TYPE) -> dict[str, Any] | None:
     value = gateway_bot._user_data(context).get(quick._QUICK_CANDIDATE_KEY)
-    return value if isinstance(value, dict) and value.get("experienceVersion") == 1 else None
+    return value if isinstance(value, dict) and value.get("experienceVersion") == 2 else None
 
 
 def _review_keyboard(pending: dict[str, Any]) -> InlineKeyboardMarkup:
     prefix = f"quick:review:{pending['nonce']}:"
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Всё верно — продолжить", callback_data=prefix + "accept")],
-        [InlineKeyboardButton("✏️ Исправить поле", callback_data=prefix + "edit")],
+        [InlineKeyboardButton("✏️ Исправить описание", callback_data=prefix + "edit")],
         [InlineKeyboardButton("Отменить", callback_data="quick:cancel")],
         *back_keyboard().inline_keyboard,
     ])
 
 
 async def _show_review(update: Update, pending: dict[str, Any]) -> None:
-    messages = _chunks(review_blocks(pending["candidate_data"]))
+    messages = _chunks([
+        "📝 Проверьте описание ситуации\n\n" + pending["candidate_data"]["eventSummary"],
+        "Это описание, а не юридический вывод. После подтверждения уточним остальные "
+        "факты в той же анкете, что и при пошаговом создании кейса. "
+        "Перед анализом вы подтвердите итоговую фабулу.",
+    ])
     for index, message in enumerate(messages):
         await gateway_bot._reply(
             update, message,
@@ -74,16 +83,16 @@ async def receive_description(update: Update, context: ContextTypes.DEFAULT_TYPE
     if chat is None or chat.type != "private":
         raise ApplicationHandlerStop
     try:
-        candidates = confirmed_candidates(gateway_bot._message_text(update))
-    except QuickIntakePrivacyError:
-        await gateway_bot._reply(update, "Уберите ФИО и персональные сведения. "
-                                 "Пришлите обезличенное описание заново.")
-        raise ApplicationHandlerStop from None
-    except QuickIntakeError:
-        await gateway_bot._reply(update, "Нужно описание от 10 до 1500 символов.")
+        candidates = {
+            "intakeVersion": 2,
+            "eventSummary": parse_v2_answer("eventSummary", gateway_bot._message_text(update)),
+        }
+    except ValueError as exc:
+        # The existing V2 parser emits bounded validation copy, never raw input.
+        await gateway_bot._reply(update, str(exc), reply_markup=back_keyboard())
         raise ApplicationHandlerStop from None
     pending: dict[str, Any] = {
-        "experienceVersion": 1, "nonce": uuid4().hex[:12], "candidate_data": candidates,
+        "experienceVersion": 2, "nonce": uuid4().hex[:12], "candidate_data": candidates,
         "createKey": str(uuid4()), "saveKey": str(uuid4()), "submitted": False,
     }
     data[quick._QUICK_CANDIDATE_KEY] = pending
@@ -113,41 +122,32 @@ async def review_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                                  "чтобы получить результат того же сохранения.")
         raise ApplicationHandlerStop
     if action == "edit":
-        rows = []
-        seen: set[str] = set()
-        for field, label in FIELDS.values():
-            if field in candidates and field not in seen:
-                rows.append([InlineKeyboardButton(
-                    label, callback_data=f"quick:review:{pending['nonce']}:drop:{field}",
-                )])
-                seen.add(field)
-        rows.extend(list(row) for row in back_keyboard().inline_keyboard)
+        quick._clear_quick(context)
+        gateway_bot._user_data(context)[quick._QUICK_PENDING_KEY] = True
         await gateway_bot._reply(
-            update, "Выберите неверное поле. Его и зависимые сведения уточним отдельно; "
-            "остальное сохранится. Изменение исходного описания сбрасывает все его кандидаты.",
-            reply_markup=InlineKeyboardMarkup(rows),
+            update, "Пришлите исправленное обезличенное описание одним сообщением. "
+            "Кейс пока не создан; прежняя кнопка подтверждения больше не действует.",
+            reply_markup=back_keyboard(),
         )
-    elif action == "drop" and len(parts) == 5 and parts[4] in candidates:
-        if parts[4] == "problem_summary":
-            candidates.clear()
-        else:
-            drop_field(candidates, parts[4])
-        pending["nonce"] = uuid4().hex[:12]
-        await _show_review(update, pending)
     elif action == "accept" and len(parts) == 4:
         pending["submitted"] = True
         client = gateway_bot._legal_core(context)
-        state = next_missing_state(candidates)
+        state = next_v2_missing_state(candidates)
         try:
             # Stable keys across ambiguous network retries avoid duplicate drafts. Both
             # existing endpoints independently reauthorize the actor and clinic.
             created = await client._json_request(
                 "POST", "/v1/telegram-intake-drafts", telegram_user_id=actor,
-                idempotency_key=UUID(pending["createKey"]), payload={},
+                idempotency_key=UUID(pending["createKey"]),
+                payload={"intakeSchemaVersion": "dental-case-intake.v2"},
             )
             draft_id = UUID(str(created["id"]))
             revision = created["revision"]
-            if type(revision) is not int or revision < 1:
+            created_data = created.get("draftData")
+            if (type(revision) is not int or revision < 1
+                    or created.get("wizardState") != "INCOMING"
+                    or not isinstance(created_data, dict)
+                    or created_data.get("intakeVersion") != 2):
                 raise ValueError("invalid draft revision")
             saved = await client._json_request(
                 "PUT", f"/v1/telegram-intake-drafts/{draft_id}", telegram_user_id=actor,
@@ -156,7 +156,8 @@ async def review_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 },
             )
             if (saved.get("id") != str(draft_id) or saved.get("wizardState") != state
-                    or type(saved.get("revision")) is not int or saved["revision"] <= revision):
+                    or type(saved.get("revision")) is not int or saved["revision"] <= revision
+                    or saved.get("draftData") != candidates):
                 raise ValueError("invalid saved draft")
         except (KeyError, TypeError, ValueError, LegalCoreApiError):
             logger.warning("guided intake save unavailable")

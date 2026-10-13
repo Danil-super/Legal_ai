@@ -1,5 +1,19 @@
 # Dental Legal AI task list
 
+## Unified entry and action-plan report — owner authorised 2026-10-13
+
+- [x] Record approved six-section report and preservation boundaries in SPEC-report-action-plan.md.
+- [x] Reproduce quick V1 divergence with independent production-composition tests (14 RED failures).
+- [x] Create quick V2 partial draft, preserve unknowns/summary, stable retry and existing V1 resume.
+- [x] Validate actual response version/data and provide actionable unsupported V1 clarification.
+  Focused local: 75 passed; independent boundary/diff review no actionable findings.
+- [ ] Shared canonical-only PDF/Telegram view; retain legal/source limitations and blocked state.
+- [ ] Real PG/MinIO, full regression/security/container gates and independent renderer review.
+- [ ] Visually inspect long/READY/HIGH/BLOCKED PDFs; reviewed GitHub release approval.
+- [ ] Live model + persisted synthetic report/PDF checks for both version-aligned entry paths.
+
+No weakening of evidence/risk/privacy gates or retrospective rewriting of case content.
+
 ## Release audit remediation — owner-authorised 2026-10-13
 
 - [x] Reproduce public-country-name false positive; preserve identifier guards.

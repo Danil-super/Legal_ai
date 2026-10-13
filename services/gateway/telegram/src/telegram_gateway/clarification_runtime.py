@@ -41,6 +41,18 @@ async def create_clarification(update: Update, context: ContextTypes.DEFAULT_TYP
         }):
             raise ValueError("invalid clarification draft")
     except (KeyError, ValueError, LegalCoreApiError) as exc:
+        if isinstance(exc, LegalCoreApiError) and exc.code == "CLARIFICATION_SCHEMA_UNSUPPORTED":
+            await gateway_bot._reply(
+                update, "Этот кейс создан по старой анкете. Для уточнения создайте новый "
+                "кейс по общей пошаговой анкете. Старый кейс и его отчёты останутся без изменений.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "Создать кейс по новой анкете", callback_data="case:start",
+                    )],
+                    *back_keyboard().inline_keyboard,
+                ]),
+            )
+            raise ApplicationHandlerStop from None
         text = (
             "⚠️ Срок хранения этого черновика истёк. Создайте новый кейс из главного меню. "
             "Старый кейс не изменён."
