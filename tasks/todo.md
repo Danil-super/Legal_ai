@@ -190,7 +190,7 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
 - [x] Add synthetic composition/integration proofs for both entry paths, recovery,
   valid/invalid model requests, UNKNOWN, multiple services, temporal denial,
   tenant/creator/expiry/idempotency and unchanged HIGH/CRITICAL routing.
-- [ ] Full PG/MinIO regression, Ruff/mypy, Compose, existing security/container
+- [x] Full PG/MinIO regression, Ruff/mypy, Compose, existing security/container
   gates and independent review pass; no weakened tests or automatic approvals.
 - [ ] After separate immutable-head release approval, normal CI deploy and real
   fictional owner-channel Core-persisted positive + clarification/negative smoke.
@@ -211,6 +211,14 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
   vertical test with only the standard three source paths is GREEN (5 passed).
   Source reader/container-compatible candidate is 7831b42, not f4eaee8/1c75731.
   Remote main and VPS remain f4eaee8 with 8 healthy containers; no release performed.
+  Subsequent approved release: PR95 head9ebfab1 CI38612321085 passed; merged
+  fea949f CI38615867992 deployed successfully, all 8 healthy. Final local head:
+  2472 passed/0 skipped/117.48s. Both live fictional quick/guided cases persist,
+  but jobs FAILED/ANALYSIS_PROVIDER_INVALID; no new positive legal report/PDF.
+  Hermes emits failed/incomplete SSE; read-only diagnostics show timeouts and 403.
+  Same-profile minimal technical call passes (6.97s), not legal readiness.
+  Rendered request/stale budgets are 29s/high; changing them requires a separate
+  owner decision. Approval ledger 54/8 unchanged. The live FC11 gate remains open.
 
 Runtime evidence: docs/audit/bot-scenarios-2026-10-14.md. No new production change
 or legal readiness claimed. Online curated reference context remains unimplemented;

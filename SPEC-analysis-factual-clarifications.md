@@ -4,7 +4,9 @@
 
 Approved by the owner in chat on 2026-10-14; the owner subsequently approved the
 implementation plan and FC1–FC11 tasks. FC1–FC10 implementation and local vertical
-integration are complete; reviewed CI/release and live legal-readiness gates remain pending.
+integration and reviewed CI/release are complete (PR95, main fea949f).
+The live legal-readiness gate remains open: both entry paths persisted cases but
+the unchanged Hermes/provider path failed with ANALYSIS_PROVIDER_INVALID.
 This is one vertical
 capability within the existing `case-core`, `agent-orchestration` and
 `telegram-gateway` modules of CAPABILITY_MAP.md: make a blocked analysis actionable
