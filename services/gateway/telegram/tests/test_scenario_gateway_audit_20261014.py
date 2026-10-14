@@ -538,3 +538,35 @@ def test_legacy_v1_same_state_buttons_apply_only_to_the_current_prompt(old_butto
                 assert "intakeVersion" not in drafts[other]["draftData"]
 
     asyncio.run(scenario())
+
+
+def test_callback_acknowledges_before_blocked_core_read_without_cached_output():
+    async def scenario():
+        async with versioned_harness() as (_app, core, sent, dispatch):
+            await dispatch("case:start")
+            started, release = asyncio.Event(), asyncio.Event()
+            original = core.get_intake_draft
+
+            async def blocked(draft_id, actor):
+                started.set()
+                await release.wait()
+                return await original(draft_id, actor)
+
+            core.get_intake_draft = blocked
+            count = len(sent)
+            with patch.object(ExtBot, "answer_callback_query", AsyncMock(return_value=True)) as ack:
+                update = asyncio.create_task(dispatch("case:v2:single:incomingKind:COMPLAINT"))
+                try:
+                    await asyncio.wait_for(started.wait(), 0.5)
+                    assert ack.await_count == 1, "Core read blocked the callback acknowledgement"
+                    assert sent[count:] == [], "Protected read must precede cached-content output"
+                finally:
+                    release.set()
+                    await asyncio.wait_for(update, 1)
+                assert ack.await_count == 1, "The underlying handler sent a duplicate ACK"
+                await dispatch("case:v2:multi:situationAreas:TREATMENT")
+                assert ack.await_count == 2, "A later update needs its own acknowledgement"
+                assert bot._CALLBACK_ACK_SCOPE.get() is None, "ACK scope leaked after the update"
+            assert core.draft["wizardState"] == "SITUATION"
+
+    asyncio.run(scenario())

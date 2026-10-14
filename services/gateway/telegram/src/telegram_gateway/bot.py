@@ -6,6 +6,8 @@ import logging
 import os
 import re
 from collections.abc import Callable, Coroutine, Mapping
+from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import IntEnum
 from io import BytesIO
@@ -1453,6 +1455,20 @@ async def _persist_transition(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
+    acknowledgement = _CALLBACK_ACK_SCOPE.set(_CallbackAck())
+    try:
+        if update.callback_query is not None:
+            await _answer_callback(update)
+        return await _persist_selected_transition(handler, update, context)
+    finally:
+        _CALLBACK_ACK_SCOPE.reset(acknowledgement)
+
+
+async def _persist_selected_transition(
+    handler: Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, int]],
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> int:
     data = _wizard_data(context)
     actor_id = _actor_id(update)
     try:
@@ -1601,10 +1617,25 @@ def _actor_id(update: Update) -> int | None:
     return None if update.effective_user is None else update.effective_user.id
 
 
+@dataclass
+class _CallbackAck:
+    query: object | None = None
+    result: str | None = None
+
+
+_CALLBACK_ACK_SCOPE: ContextVar[_CallbackAck | None] = ContextVar(
+    "telegram_callback_ack_scope", default=None,
+)
+
+
 async def _answer_callback(update: Update) -> str | None:
     query = update.callback_query
     if query is None or not isinstance(query.data, str):
         return None
+    acknowledgement = _CALLBACK_ACK_SCOPE.get()
+    if acknowledgement is not None and acknowledgement.query is query:
+        return acknowledgement.result
+    result: str | None = query.data
     try:
         await query.answer()
     except BadRequest:
@@ -1612,8 +1643,11 @@ async def _answer_callback(update: Update) -> str | None:
         # delivered after a short network interruption, but it must not turn
         # into a failed handler or block newer updates from being processed.
         logger.info("ignored an expired Telegram callback")
-        return None
-    return query.data
+        result = None
+    if acknowledgement is not None:
+        acknowledgement.query = query
+        acknowledgement.result = result
+    return result
 
 
 async def case_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
