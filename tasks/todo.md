@@ -5,16 +5,27 @@
 - [x] Diagnose CI mismatch: missing native PDF tools, not a legal-verifier failure.
   Two RED workflow tests; 24 focused GREEN; restored isolated test containers:
   2030 full tests passed / 0 skipped in 76.44s. Remote CI must confirm the fix.
-- [ ] Fix actual case-document dispatch and give explicit unsupported-media guidance.
-- [ ] Bind V2 actions to current prompt/draft; stale controls cannot overwrite facts/material state.
-- [ ] Reauthorize before displaying cached tenant summaries; reconcile ambiguous uploaded material.
-- [ ] Preserve Unicode filenames across HTTP without weakening parser/privacy/tenant guards.
-- [ ] Serialize report version allocation; enforce reference-source expiry before storage cleanup.
+- [x] Fix actual case-document dispatch and give explicit unsupported-media guidance.
+- [x] Bind V1/V2 actions to current prompt/draft; stale controls cannot overwrite facts/material state.
+- [x] Reauthorize before cached output or material consumption; reconcile ambiguous uploads
+  and merge attachment flags only into the current protected server snapshot.
+- [x] Preserve Unicode filenames across HTTP without weakening parser/privacy/tenant guards.
+- [x] Serialize report version allocation; enforce reference-source expiry, including historical replay.
+- [x] ACK before protected reads; retain the successful update-local ACK fact through error handling.
+- [x] Combined final local suite: 2095 passed / 0 skipped in 124.70s with PG/MinIO enabled;
+  Ruff, mypy137, Compose overlays, project Bandit gate, strict dependency audit, actual
+  Core/gateway offline non-root imports and 32 native container parser tests passed.
+- [x] Independent second-cycle review closed both runtime findings and both test-coverage gaps;
+  owner selected current review/tests, without an external CLI invocation.
 - [ ] Resolve reference-package author/reviewer independence with owner (auth-contract decision pending).
-- [ ] Integrate independent RED reproductions, verify all changed paths, CI and release gates.
+- [x] Integrate independent RED reproductions and verify all changed paths locally.
+- [ ] Successful GitHub CI on the final head and explicit owner release approval.
+- [ ] Deploy through the existing reviewed main workflow and run both live synthetic entry paths.
 
 Each implementation slice has a failing reproduction and a separate commit.
 No normative approvals, role grants, model changes or production deployment as part of this audit.
+Evidence and limits: docs/audit/bot-scenarios-2026-10-14.md. Existing incomplete tasks below
+are preserved; technical regression success is not legal validation of private references.
 
 ## Unified entry and action-plan report — owner authorised 2026-10-13
 
