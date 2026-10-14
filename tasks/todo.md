@@ -27,8 +27,9 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
 - Dependencies: approved plan; medium scope. No new persisted data in this task.
 - Evidence: independent RED tests-only eee2e8ac; reader RED 2 failed/9 passed;
   focused GREEN 139 passed, Ruff passed, Core mypy passed (98 source files).
-  Reader baseline is the atomic FC1 implementation commit introducing ADR 0087;
-  resolve it by commit subject `feat: add compatible factual clarification readers`.
+  Source reader baseline is 1c75731. Container rollback additionally requires
+  commit `fix: package shared factual clarification contracts in gateway` because
+  the gateway intentionally copies only the shared Core modules, not all Core.
   No new producer/production write was enabled by FC1.
 
 ### FC2: protect draft and fact inputs
@@ -43,7 +44,8 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
 - Dependencies: FC1; medium scope.
 - Evidence: input RED 5 failed/9 passed; focused GREEN 146 passed; scoped Ruff
   passed and all three services' mypy passed (138 source files). Reader rollback
-  baseline recorded: 1c75731fc3b126ef58a0c83da7077f13ced63a2b. No production write.
+  baseline recorded: 1c75731fc3b126ef58a0c83da7077f13ced63a2b plus the gateway
+  packaging-fix commit recorded in FC1 above. No production write.
 
 ### FC3: carry requests across the model boundary
 
