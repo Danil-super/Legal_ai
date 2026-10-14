@@ -293,7 +293,9 @@ def test_factual_clarification_round_trip_preserves_history_and_core_evidence_ga
                         button.callback_data for row in controls.inline_keyboard for button in row
                         if button.text == "Уточнить факты"
                     ]
-                    assert len(clarification_buttons) == 1, "Blocked questions have no action button"
+                    assert len(clarification_buttons) == 1, (
+                        "Blocked questions have no action button"
+                    )
                     clarification_callback = clarification_buttons[0]
                     await dispatch(f"analysis:status:{blocked['jobId']}")
                     assert any("Как оплачивалась" in item.get("text", "") for item in sent)
