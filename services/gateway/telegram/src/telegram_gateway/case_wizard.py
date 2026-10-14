@@ -841,9 +841,12 @@ class LegalCoreClient:
             "GET", f"/v1/telegram-intake-drafts/{draft_id}", telegram_user_id=telegram_user_id
         )
 
-    async def clarification_preview(self, case_id: UUID, telegram_user_id: int) -> dict[str, Any]:
+    async def clarification_preview(
+        self, case_id: UUID, telegram_user_id: int, *, source_report_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        query = "" if source_report_id is None else f"?report_id={source_report_id}"
         return await self._json_request(
-            "GET", f"/v1/cases/{case_id}/clarification-drafts/preview",
+            "GET", f"/v1/cases/{case_id}/clarification-drafts/preview{query}",
             telegram_user_id=telegram_user_id,
         )
 

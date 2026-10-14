@@ -17,6 +17,7 @@ from legal_core.api_contracts import (
 )
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError, LegalCoreClient
+from telegram_gateway.clarification_intent import encode_clarification_callback
 from telegram_gateway.factual_safety_intake import screening_question
 from test_case_experience import harness
 from test_dialog_isolation import ACTOR, DRAFT
@@ -105,11 +106,12 @@ class VersionedCore:
         # on a recoverable downstream failure after capturing the validated request.
         raise LegalCoreApiError(503, "LEGAL_CORE_UNAVAILABLE", "synthetic report unavailable")
 
-    async def clarification_preview(self, case_id, actor):
+    async def clarification_preview(self, case_id, actor, *, source_report_id=None):
         self.authorize(actor)
         assert case_id == CASE
         if self.source_version == V1:
             raise LegalCoreApiError(409, "CLARIFICATION_SCHEMA_UNSUPPORTED", "new guided case")
+        assert source_report_id in {None, SOURCE_REPORT}
         return {"caseId": str(case_id), "expectedFactSnapshotSha256": SOURCE_HASH,
                 "expectedReportId": str(SOURCE_REPORT), "expectedReportSha256": SOURCE_REPORT_HASH}
 
@@ -381,7 +383,7 @@ def test_v2_post_confirmation_clarification_keeps_immutable_source_on_resume_and
     async def scenario():
         async with versioned_harness() as (app, core, _sent, dispatch):
             before = deepcopy(core.source)
-            await dispatch(f"case:clarify:{CASE}")
+            await dispatch(encode_clarification_callback(CASE, SOURCE_REPORT))
             await dispatch(f"case:draft:{DRAFT}")
             await dispatch("case:v2:single:incomingKind:COMPLAINT")
             assert core.draft["draftData"]["correctionSource"] == {

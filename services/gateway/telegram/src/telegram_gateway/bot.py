@@ -3015,7 +3015,7 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
     application.add_handler(TypeHandler(Update, _require_private_chat), group=-99)
     application.add_handler(TypeHandler(Update, _route_input_mode), group=-90)
     application.add_handler(CallbackQueryHandler(
-        create_clarification, pattern=r"^case:clarify:[0-9a-f-]{36}$",
+        create_clarification, pattern=r"^case:clarify:(?:[A-Za-z0-9_-]{43}|[0-9a-f-]{36})$",
     ), group=-2)
     application.add_handler(
         ConversationHandler(

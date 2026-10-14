@@ -9,6 +9,10 @@ from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError
+from telegram_gateway.clarification_intent import (
+    decode_clarification_callback,
+    encode_clarification_callback,
+)
 from telegram_gateway.ui import back_keyboard
 
 
@@ -18,9 +22,14 @@ async def create_clarification(update: Update, context: ContextTypes.DEFAULT_TYP
     if actor is None or not isinstance(callback, str):
         raise ApplicationHandlerStop
     try:
-        case_id = UUID(callback.removeprefix("case:clarify:"))
+        legacy = re.fullmatch(r"case:clarify:[0-9a-f-]{36}", callback) is not None
+        if legacy:
+            case_id, source_report_id = UUID(callback.removeprefix("case:clarify:")), None
+        else:
+            case_id, source_report_id = decode_clarification_callback(callback)
         client = gateway_bot._legal_core(context)
-        preview = await client.clarification_preview(case_id, actor)
+        preview = await client.clarification_preview(case_id, actor,
+                                                     source_report_id=source_report_id)
         if not isinstance(preview, dict):
             raise ValueError("invalid clarification preview")
         sha = preview.get("expectedFactSnapshotSha256")
@@ -32,6 +41,20 @@ async def create_clarification(update: Update, context: ContextTypes.DEFAULT_TYP
                 or re.fullmatch(r"[0-9a-f]{64}", report_sha) is None):
             raise ValueError("invalid clarification preview")
         report_id = UUID(report_id_value)
+        if source_report_id is not None and report_id != source_report_id:
+            raise ValueError("clarification preview report mismatch")
+        if legacy:
+            await gateway_bot._reply(
+                update, "Эта кнопка уточнения устарела. Проверен последний сохранённый отчёт "
+                f"кейса: {report_id}. Для него можно открыть новый заполненный черновик. "
+                "Старый кейс и отчёты не изменены; исходные файлы не копируются.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("Открыть уточнение этого отчёта",
+                        callback_data=encode_clarification_callback(case_id, report_id))],
+                    *back_keyboard().inline_keyboard,
+                ]),
+            )
+            raise ApplicationHandlerStop
         query = update.callback_query
         message = getattr(query, "message", None)
         message_id = getattr(message, "message_id", None)

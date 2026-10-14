@@ -85,6 +85,7 @@ async def _source(
     session: AsyncSession,
     actor: ActorContext,
     case_id: UUID,
+    report_id: UUID | None = None,
 ) -> tuple[dict[FactKey, object], str, CaseReport, CanonicalReport]:
     case = await session.scalar(select(Case).where(
         Case.id == case_id, Case.clinic_id == actor.clinic_id,
@@ -102,9 +103,14 @@ async def _source(
         )
     facts = _domain_facts(await _current_fact_rows(session, case.id))
     source_hash = fact_snapshot_sha256(facts)
-    report = await session.scalar(select(CaseReport).where(
+    report_query = select(CaseReport).where(
         CaseReport.case_id == case.id, CaseReport.clinic_id == actor.clinic_id,
-    ).order_by(CaseReport.report_version.desc()).limit(1).with_for_update())
+    )
+    if report_id is not None:
+        report_query = report_query.where(CaseReport.id == report_id)
+    report = await session.scalar(
+        report_query.order_by(CaseReport.report_version.desc()).limit(1).with_for_update()
+    )
     if report is None:
         raise ApiError(status_code=409, code="CLARIFICATION_REPORT_UNAVAILABLE",
                        message="The retained source report is unavailable")
@@ -187,10 +193,11 @@ def create_clarification_router(sessions: async_sessionmaker[AsyncSession]) -> A
         case_id: UUID,
         telegram_user_id: TelegramUserId,
         session: Session,
+        report_id: UUID | None = None,
     ) -> ClarificationDraftPreview:
         actor = await resolve_actor(session, telegram_user_id)
         _require_case_intake_actor(actor)
-        _, source_hash, report, _ = await _source(session, actor, case_id)
+        _, source_hash, report, _ = await _source(session, actor, case_id, report_id=report_id)
         return ClarificationDraftPreview(
             caseId=case_id, expectedFactSnapshotSha256=source_hash,
             expectedReportId=report.id, expectedReportSha256=report.content_sha256,

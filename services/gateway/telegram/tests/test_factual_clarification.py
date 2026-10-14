@@ -15,6 +15,7 @@ from telegram_gateway import bot
 from telegram_gateway.analysis_jobs_runtime import JobSnapshot, job_message
 from telegram_gateway.analysis_runtime import analysis_error_message
 from telegram_gateway.case_wizard import LegalCoreApiError, LegalCoreClient
+from telegram_gateway.clarification_intent import encode_clarification_callback
 from telegram_gateway.clarification_runtime import create_clarification
 from test_case_experience import harness
 from test_dialog_isolation import ACTOR, DRAFT
@@ -73,7 +74,8 @@ def test_clarification_retry_and_restart_use_same_intent_and_resume_the_new_draf
     message = SimpleNamespace(message_id=77, reply_text=AsyncMock())
     update = SimpleNamespace(effective_user=SimpleNamespace(id=7000000001),
                              effective_message=message, callback_query=SimpleNamespace(
-                                 data=f"case:clarify:{case}", answer=AsyncMock(), message=message))
+                                 data=encode_clarification_callback(case, REPORT),
+                                 answer=AsyncMock(), message=message))
     for _ in range(2):
         context = SimpleNamespace(user_data={}, bot_data={bot.LEGAL_CORE_CLIENT_KEY: client})
         with pytest.raises(ApplicationHandlerStop):
@@ -102,7 +104,8 @@ def test_expired_clarification_explains_expiry_instead_of_endless_retry():
     message = SimpleNamespace(message_id=77, reply_text=AsyncMock())
     update = SimpleNamespace(effective_user=SimpleNamespace(id=7000000001),
                              effective_message=message, callback_query=SimpleNamespace(
-                                 data=f"case:clarify:{case}", answer=AsyncMock(), message=message))
+                                 data=encode_clarification_callback(case, REPORT),
+                                 answer=AsyncMock(), message=message))
     context = SimpleNamespace(user_data={}, bot_data={bot.LEGAL_CORE_CLIENT_KEY: client})
     with pytest.raises(ApplicationHandlerStop):
         asyncio.run(create_clarification(update, context))
@@ -133,7 +136,8 @@ def clarification_context(*, preview=None, source=None):
     )
     message = SimpleNamespace(message_id=77, reply_text=AsyncMock())
     update = SimpleNamespace(effective_user=SimpleNamespace(id=ACTOR), effective_message=message,
-                             callback_query=SimpleNamespace(data=f"case:clarify:{CASE}",
+                             callback_query=SimpleNamespace(
+                                 data=encode_clarification_callback(CASE, REPORT),
                                  answer=AsyncMock(), message=message))
     context = SimpleNamespace(user_data={}, bot_data={bot.LEGAL_CORE_CLIENT_KEY: client})
     return update, context, client, message
@@ -206,6 +210,7 @@ def test_runtime_passes_report_binding_and_intent_changes_with_report_or_message
             source=SOURCE | {"reportId": str(report_id), "reportSha256": report_hash},
         )
         message.message_id = message_id
+        update.callback_query.data = encode_clarification_callback(CASE, report_id)
         open_clarification(update, context)
         args = client.create_clarification_draft.await_args
         assert args.args == (CASE, ACTOR)
@@ -256,7 +261,7 @@ def test_recovery_continues_through_production_composition_and_requires_new_conf
             core.clarification_preview = AsyncMock(return_value=PREVIEW)
             core.create_clarification_draft = AsyncMock(return_value=deepcopy(recovered))
             core.draft = deepcopy(recovered)
-            await dispatch(f"case:clarify:{CASE}")
+            await dispatch(encode_clarification_callback(CASE, REPORT))
             text = sent[-1]["text"]
             assert "Старый кейс и отчёты не изменены" in text
             assert "Исходные файлы остаются в старом кейсе" in text
