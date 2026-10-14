@@ -6,6 +6,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = spec_from_file_location("hermes_tool_free_guard", ROOT / "ops/hermes/assert_tool_free.py")
@@ -18,7 +19,7 @@ def config(model="synthetic-model"):
     return {"model": {"provider": "custom", "default": model}, "agent": {"api_max_retries": 1}}
 
 
-def runtime_timeouts(monkeypatch, request=29, stale=29):
+def runtime_timeouts(monkeypatch, request=55, stale=55):
     module = ModuleType("hermes_cli.timeouts")
 
     def request_timeout(provider, model):
@@ -38,14 +39,14 @@ def test_guard_accepts_only_the_resolved_pinned_call_budget(monkeypatch):
     runtime_timeouts(monkeypatch)
     assert guard.assert_call_budget(config()) == {
         "apiAttemptsPerCycle": 1,
-        "requestOperationTimeoutSeconds": 29,
-        "configuredStaleTimeoutSeconds": 29,
+        "requestOperationTimeoutSeconds": 55,
+        "configuredStaleTimeoutSeconds": 55,
     }
 
 
 @pytest.mark.parametrize(("request_limit", "stale"), [
-    (None, 29), (1800, 29), (29, None), (29, 300), (True, 29),
-    (29, float("nan")), (29, 29.01),
+    (None, 55), (1800, 55), (55, None), (55, 300), (True, 55),
+    (55, float("nan")), (55, 55.01), (55, True), (29, 29), (29, 55), (55, 29),
 ])
 def test_guard_rejects_missing_or_divergent_resolved_timeouts(monkeypatch, request_limit, stale):
     runtime_timeouts(monkeypatch, request=request_limit, stale=stale)
@@ -83,3 +84,15 @@ def test_guard_loader_failure_is_closed_and_sanitized(monkeypatch):
         guard.assert_call_budget(config())
     assert "SYNTHETIC_PRIVATE_CONFIG_DETAIL" not in str(caught.value)
     assert caught.value.__suppress_context__
+
+
+def test_rendered_production_profile_passes_the_actual_startup_budget_guard(monkeypatch):
+    candidate = yaml.safe_load((ROOT / "ops/hermes/legal-profile.config.yaml").read_text())
+    candidate["model"]["default"] = "synthetic-model"
+    configured = candidate["providers"]["custom"]
+    runtime_timeouts(monkeypatch, request=configured["request_timeout_seconds"],
+                     stale=configured["stale_timeout_seconds"])
+    budget = guard.assert_call_budget(candidate)
+    assert budget["requestOperationTimeoutSeconds"] == configured["request_timeout_seconds"]
+    assert budget["configuredStaleTimeoutSeconds"] == configured["stale_timeout_seconds"]
+    assert budget["apiAttemptsPerCycle"] == 1
