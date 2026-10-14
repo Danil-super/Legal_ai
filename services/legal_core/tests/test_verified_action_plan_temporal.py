@@ -62,4 +62,5 @@ def test_legacy_service_action_uses_real_legacy_dependencies_not_v2_bundle():
     )
     assert result.claims[0].result is VerificationResult.VERIFIED
     assert result.analysis_allowed
-    assert _verified_action_items((claim,), {claim.claim_id: result.claims[0].result}) == [claim.text]
+    actions = _verified_action_items((claim,), {claim.claim_id: result.claims[0].result})
+    assert actions == [claim.text]
