@@ -82,9 +82,9 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
 
 ### Checkpoint A — contracts and model/Core path
 
-- [ ] Strict contracts, empty-claim request transport and real PG persistence pass;
+- [x] Strict contracts, empty-claim request transport and real PG persistence pass;
   incompatible rollout is refused and old histories remain readable.
-- [ ] Independent scoped boundary review; project lint/type/build checks pass.
+- [x] Independent scoped boundary review; project lint/type/build checks pass.
 
 ### FC5: pure question flow and confirmed fact conversion
 
@@ -132,20 +132,28 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
 
 ### FC8: gateway recovery handoff and re-confirmation
 
-- [ ] Existing API client passes the protected preview/recovery intent; user
+- [x] Existing API client passes the protected preview/recovery intent; user
   sees the same filled draft, requested questions and explicit new confirmation.
-- [ ] Lost replies/repeated clicks reuse the same intent; access is rechecked,
+- [x] Lost replies/repeated clicks reuse the same intent; access is rechecked,
   expired content is not restored and files remain in the original case.
 - Files (3): gateway src/telegram_gateway/{case_wizard,clarification_runtime}.py,
   tests/test_factual_clarification.py.
 - Verify: `python -m pytest services/gateway/telegram/tests/test_factual_clarification.py services/gateway/telegram/tests/test_analysis_clarification_runtime.py -q`.
 - Dependencies: FC6–FC7; medium scope.
+- Evidence: independent 76ed0ef integrated as ba8a69c, focused GREEN 91; a fresh
+  adversarial review then reproduced two drafts after lost reply + newer report
+  (independent RED 93fa235, synthetic and real PG). Fixed via immutable displayed-
+  report callback and retained-report metadata selector in bf89c2c → 7831b42.
+  Repair focused PG 50 passed; repeated independent review 50 passed/0 skipped,
+  no remaining Critical/Required findings. Base64 alias mutation killed 2 tests.
+  The actual job CTA was absent for new question reports: vertical RED 8d47195;
+  the producer fix is included in 7831b42, vertical GREEN 5 passed after it.
 
 ### Checkpoint B — complete factual recovery path
 
-- [ ] Real composition → Core → durable draft → restart → answers → recap → new
+- [x] Real composition → Core → durable draft → restart → answers → recap → new
   confirmation passes; old case, report, source objects and role scopes unchanged.
-- [ ] Urgent routing is not delayed; quick/manual parity and independent review pass.
+- [x] Urgent routing is not delayed; quick/manual parity and independent review pass.
 
 ### FC9: enforce service-date limits without a new legal resolver
 
@@ -166,18 +174,20 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
 
 ### FC10: one clear question list in Telegram and PDF
 
-- [ ] Shared CanonicalReport presentation shows specific fixed factual questions
+- [x] Shared CanonicalReport presentation shows specific fixed factual questions
   with service labels; no duplicate menus or unverified advice.
-- [ ] Retain sources/qualifiers, blocked status and historical PDFs; older reports
+- [x] Retain sources/qualifiers, blocked status and historical PDFs; older reports
   with no request field remain readable. Long/multi-service output stays bounded.
 - Files (3): Core src/legal_core/report_presentation.py,
   Core tests/test_report_presentation.py, gateway tests/test_telegram_report_presentation.py.
 - Verify: `python -m pytest services/legal_core/tests/test_report_presentation.py services/legal_core/tests/test_reports.py services/gateway/telegram/tests/test_telegram_report_presentation.py -q` plus synthetic PDF inspection.
 - Dependencies: FC4–FC9; medium scope.
+- Evidence: independent 2826d41 integrated as 5e462f2; actual RED 2 failed/28
+  passed, focused GREEN 39; synthetic PDF visually inspected. Ruff and mypy pass.
 
 ### FC11: readiness evidence and reviewed release
 
-- [ ] Add synthetic composition/integration proofs for both entry paths, recovery,
+- [x] Add synthetic composition/integration proofs for both entry paths, recovery,
   valid/invalid model requests, UNKNOWN, multiple services, temporal denial,
   tenant/creator/expiry/idempotency and unchanged HIGH/CRITICAL routing.
 - [ ] Full PG/MinIO regression, Ruff/mypy, Compose, existing security/container
@@ -192,6 +202,15 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
   `python -m mypy services/legal_core/src services/gateway/telegram/src services/agent_orchestrator/src`;
   `docker compose config --quiet`; existing CI security/container commands.
 - Dependencies: FC1–FC10; medium scope. Live model SUPPORTED alone cannot close it.
+- Evidence: independent 749f7f6 → 4afe25f, strengthened actual-CTA RED 8d47195;
+  GREEN 5 tests with real Core/orchestrator/worker/gateway HTTP and PTB composition,
+  PG, MinIO, immutable originals and cited evidence. Only external model responses
+  and Telegram transport are synthetic. Full combined 2472 passed/0 skipped in
+  117.60s on production-code 7831b42; Core-only CI collection subsequently failed
+  for a sibling harness import, fixed in d17fb63 without skipping a test; standalone
+  vertical test with only the standard three source paths is GREEN (5 passed).
+  Source reader/container-compatible candidate is 7831b42, not f4eaee8/1c75731.
+  Remote main and VPS remain f4eaee8 with 8 healthy containers; no release performed.
 
 Runtime evidence: docs/audit/bot-scenarios-2026-10-14.md. No new production change
 or legal readiness claimed. Online curated reference context remains unimplemented;

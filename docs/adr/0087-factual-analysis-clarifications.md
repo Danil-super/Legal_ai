@@ -71,6 +71,23 @@ inside the new draft; attempted identities cannot be re-proposed by the model.
 No table migration is needed: state is an existing bounded varchar, with no enum
 CHECK, and the extra fields use existing bounded draft JSON.
 
+Independent recovery review reproduced a lost-reply bug: a fresh latest-report
+preview changed the idempotency key behind the same old Telegram button. The
+fixed callback binds case UUID and displayed report UUID in a canonical 56-byte
+base64url identity. A scoped `report_id` preview selector reads that retained
+report's immutable hashes; first-time POST still requires the latest report, while
+an existing completed intent replays before the latest-report mismatch check.
+Thus a newer report does not create a second draft after a lost Telegram reply.
+Legacy case-only buttons perform a read-only preview and offer a new bound button;
+they never silently create a draft. Completed blocked jobs expose the action for
+validated structured questions, not just the older safety-screening error codes.
+
+The vertical integration test consumes the actual job-produced button, not a
+fabricated callback. Core-only CI imports the shared Telegram test harness through
+pytest's test-session-only
+[`pythonpath` configuration](https://docs.pytest.org/en/stable/reference/reference.html#confval-pythonpath).
+Production Python paths, packages, dependency lock and permissions are unchanged.
+
 ## Verification and limits
 
 Synthetic contract tests cover strict slots, extra fields, duplicates, overflow,
