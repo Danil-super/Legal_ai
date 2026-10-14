@@ -9,6 +9,10 @@ from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError
+from telegram_gateway.clarification_intent import (
+    decode_clarification_callback,
+    encode_clarification_callback,
+)
 from telegram_gateway.ui import back_keyboard
 
 
@@ -18,28 +22,62 @@ async def create_clarification(update: Update, context: ContextTypes.DEFAULT_TYP
     if actor is None or not isinstance(callback, str):
         raise ApplicationHandlerStop
     try:
-        case_id = UUID(callback.removeprefix("case:clarify:"))
+        legacy = re.fullmatch(r"case:clarify:[0-9a-f-]{36}", callback) is not None
+        if legacy:
+            case_id, source_report_id = UUID(callback.removeprefix("case:clarify:")), None
+        else:
+            case_id, source_report_id = decode_clarification_callback(callback)
         client = gateway_bot._legal_core(context)
-        preview = await client.clarification_preview(case_id, actor)
-        sha = preview.get("expectedFactSnapshotSha256")
-        if (preview.get("caseId") != str(case_id) or not isinstance(sha, str)
-                or re.fullmatch(r"[0-9a-f]{64}", sha) is None):
+        preview = await client.clarification_preview(case_id, actor,
+                                                     source_report_id=source_report_id)
+        if not isinstance(preview, dict):
             raise ValueError("invalid clarification preview")
+        sha = preview.get("expectedFactSnapshotSha256")
+        report_id_value = preview.get("expectedReportId")
+        report_sha = preview.get("expectedReportSha256")
+        if (preview.get("caseId") != str(case_id) or not isinstance(sha, str)
+                or re.fullmatch(r"[0-9a-f]{64}", sha) is None
+                or not isinstance(report_id_value, str) or not isinstance(report_sha, str)
+                or re.fullmatch(r"[0-9a-f]{64}", report_sha) is None):
+            raise ValueError("invalid clarification preview")
+        report_id = UUID(report_id_value)
+        if source_report_id is not None and report_id != source_report_id:
+            raise ValueError("clarification preview report mismatch")
+        if legacy:
+            await gateway_bot._reply(
+                update, "Эта кнопка уточнения устарела. Проверен последний сохранённый отчёт "
+                f"кейса: {report_id}. Для него можно открыть новый заполненный черновик. "
+                "Старый кейс и отчёты не изменены; исходные файлы не копируются.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("Открыть уточнение этого отчёта",
+                        callback_data=encode_clarification_callback(case_id, report_id))],
+                    *back_keyboard().inline_keyboard,
+                ]),
+            )
+            raise ApplicationHandlerStop
         query = update.callback_query
         message = getattr(query, "message", None)
+        message_id = getattr(message, "message_id", None)
+        if type(message_id) is not int or message_id < 1:
+            raise ValueError("invalid clarification message")
         # One button on one message is one intent, including after gateway restart.
         key = uuid5(NAMESPACE_URL,
-                    f"clarification:v1:{actor}:{case_id}:{sha}:"
-                    f"{getattr(message, 'message_id', None)}")
+                    f"clarification:v2:{actor}:{case_id}:{sha}:{report_id}:{report_sha}:"
+                    f"{message_id}")
         draft = await client.create_clarification_draft(
             case_id, actor, expected_sha256=sha, key=key,
+            expected_report_id=report_id, expected_report_sha256=report_sha,
         )
+        if not isinstance(draft, dict):
+            raise ValueError("invalid clarification draft")
         draft_id = UUID(str(draft["id"]))
         data = draft.get("draftData")
         if (not isinstance(data, dict) or data.get("correctionSource") != {
                 "caseId": str(case_id), "factSnapshotSha256": sha,
+                "reportId": str(report_id), "reportSha256": report_sha,
         }):
             raise ValueError("invalid clarification draft")
+        gateway_bot._saved_draft_selection(draft_id, draft)
     except (KeyError, ValueError, LegalCoreApiError) as exc:
         if isinstance(exc, LegalCoreApiError) and exc.code == "CLARIFICATION_SCHEMA_UNSUPPORTED":
             await gateway_bot._reply(
@@ -51,6 +89,16 @@ async def create_clarification(update: Update, context: ContextTypes.DEFAULT_TYP
                     )],
                     *back_keyboard().inline_keyboard,
                 ]),
+            )
+            raise ApplicationHandlerStop from None
+        if isinstance(exc, LegalCoreApiError) and exc.code in {
+            "CASE_REPORT_STALE", "CLARIFICATION_REPORT_BINDING_REQUIRED",
+            "CLARIFICATION_REPORT_INVALID",
+        }:
+            await gateway_bot._reply(
+                update, "⚠️ Не удалось подтвердить исходный отчёт для уточнения. "
+                "Откройте последний сохранённый отчёт кейса и начните уточнение оттуда. "
+                "Старый кейс и отчёты не изменены.", reply_markup=back_keyboard(),
             )
             raise ApplicationHandlerStop from None
         text = (

@@ -7,6 +7,7 @@ from typing import Any, Literal, TypeAlias
 from uuid import UUID, uuid4
 
 import httpx2
+from legal_core.analysis_clarifications import AnalysisClarificationAnswers
 from legal_core.report_presentation import (
     TELEGRAM_DRAFT_IN_PDF,
     TELEGRAM_SOURCE_LIMITATIONS_IN_PDF,
@@ -301,7 +302,33 @@ def facts_from_v2_data(data: dict[str, Any]) -> list[dict[str, Any]]:
 
         screening = FactualSafetyScreening.model_validate(data["safetyScreening"])
         facts.append(_fact("FACTUAL_SAFETY_SCREENING", "JSON", screening.model_dump(by_alias=True)))
+    answers = confirmed_clarification_answers(data)
+    if answers.answers:
+        facts.append(_fact(
+            "ANALYSIS_CLARIFICATION_ANSWERS", "JSON",
+            answers.model_dump(mode="json", by_alias=True),
+        ))
     return facts
+
+
+def confirmed_clarification_answers(data: dict[str, Any]) -> AnalysisClarificationAnswers:
+    """Read only the explicit answer field and fail closed on malformed service scopes."""
+    answers = AnalysisClarificationAnswers.model_validate(
+        data.get("analysisClarificationAnswers", {"answers": []})
+    )
+    services = data.get("affectedServices")
+    for answer in answers.answers:
+        if answer.service_slot is None:
+            continue
+        if (
+            not isinstance(services, list)
+            or not 1 <= len(services) <= 5
+            or not all(isinstance(item, str) and 2 <= len(item.strip()) <= 500 for item in services)
+            or len(services) != len(set(services))
+            or answer.service_slot >= len(services)
+        ):
+            raise ValueError("clarification answer requires an existing service")
+    return answers
 
 
 def telegram_summary_from_report(report: dict[str, Any]) -> str:
@@ -814,19 +841,33 @@ class LegalCoreClient:
             "GET", f"/v1/telegram-intake-drafts/{draft_id}", telegram_user_id=telegram_user_id
         )
 
-    async def clarification_preview(self, case_id: UUID, telegram_user_id: int) -> dict[str, Any]:
+    async def clarification_preview(
+        self, case_id: UUID, telegram_user_id: int, *, source_report_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        query = "" if source_report_id is None else f"?report_id={source_report_id}"
         return await self._json_request(
-            "GET", f"/v1/cases/{case_id}/clarification-drafts/preview",
+            "GET", f"/v1/cases/{case_id}/clarification-drafts/preview{query}",
             telegram_user_id=telegram_user_id,
         )
 
     async def create_clarification_draft(
         self, case_id: UUID, telegram_user_id: int, *, expected_sha256: str, key: UUID,
+        expected_report_id: UUID | None = None, expected_report_sha256: str | None = None,
     ) -> dict[str, Any]:
+        if (expected_report_id is None) != (expected_report_sha256 is None):
+            raise ValueError("clarification report binding must be provided together")
+        payload = {"expectedFactSnapshotSha256": expected_sha256}
+        if expected_report_id is not None and expected_report_sha256 is not None:
+            if (not isinstance(expected_report_id, UUID)
+                    or len(expected_report_sha256) != 64
+                    or any(char not in "0123456789abcdef" for char in expected_report_sha256)):
+                raise ValueError("invalid clarification report binding")
+            payload.update(expectedReportId=str(expected_report_id),
+                           expectedReportSha256=expected_report_sha256)
         return await self._json_request(
             "POST", f"/v1/cases/{case_id}/clarification-drafts",
             telegram_user_id=telegram_user_id, idempotency_key=key,
-            payload={"expectedFactSnapshotSha256": expected_sha256},
+            payload=payload,
         )
 
     async def save_intake_draft(

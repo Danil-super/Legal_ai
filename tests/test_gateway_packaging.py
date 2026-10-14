@@ -79,6 +79,14 @@ def test_packaging_check_detects_missing_shared_contracts(tmp_path: Path) -> Non
     assert "No module named 'legal_core.contracts'" in result.stderr
 
 
+def test_packaging_check_detects_missing_shared_clarification_contracts(tmp_path: Path) -> None:
+    _copy_runtime(tmp_path)
+    (tmp_path / "services/legal_core/src/legal_core/analysis_clarifications.py").unlink()
+    result = _import_runtime(tmp_path)
+    assert result.returncode != 0
+    assert "No module named 'legal_core.analysis_clarifications'" in result.stderr
+
+
 def test_container_checks_imports_before_polling() -> None:
     dockerfile = DOCKERFILE.read_text()
     assert 'RUN python -c "import telegram_gateway.__main__"' in dockerfile

@@ -186,6 +186,7 @@ class LegalCoreClient:
             expectedRiskPolicyVersion=context.risk_policy_version,
             claims=claims,
             semanticReviews=semantic_reviews,
+            clarificationRequests=list(reasoning.clarification_requests),
         )
         payload = await self._request_json(
             "POST",

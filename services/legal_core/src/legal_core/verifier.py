@@ -14,6 +14,11 @@ from datetime import date
 from enum import StrEnum
 from uuid import UUID
 
+from legal_core.analysis_clarifications import (
+    clarification_answers_are_known,
+    confirmed_answers,
+    exact_service_dates,
+)
 from legal_core.contracts import FactKey
 from legal_core.legal_retrieval import ApprovedLegalFragment
 
@@ -102,6 +107,10 @@ class VerificationDecision:
 
 
 def _is_unknown(facts: Mapping[FactKey, object], fact_key: FactKey) -> bool:
+    if fact_key == FactKey.ANALYSIS_CLARIFICATION_ANSWERS:
+        return not clarification_answers_are_known(
+            {key.value: value for key, value in facts.items()}
+        )
     value = facts.get(fact_key)
     return _contains_unknown(value)
 
@@ -163,6 +172,28 @@ def _structurally_applicable_evidence(
             reason_code="EVIDENCE_NOT_EFFECTIVE_ON_CASE_DATE",
             verified_fragment_ids=(),
         )
+    new_dependency = FactKey.ANALYSIS_CLARIFICATION_ANSWERS in claim.required_fact_keys
+    areas = facts.get(FactKey.SITUATION_AREAS)
+    service_dependent = FactKey.AFFECTED_SERVICES in claim.required_fact_keys
+    if new_dependency:
+        frozen = {key.value: value for key, value in facts.items()}
+        answers = confirmed_answers(frozen)
+        service_dependent = service_dependent or any(
+            answer.service_slot is not None for answer in answers.answers
+        ) or (claim.kind is ClaimKind.LEGAL and isinstance(areas, list) and "TREATMENT" in areas)
+    if facts.get(FactKey.INTAKE_VERSION) == "GUIDED_V2" and service_dependent:
+        dates = exact_service_dates({key.value: value for key, value in facts.items()})
+        if dates is None:
+            return VerifiedClaim(
+                claim_id=claim.claim_id, result=VerificationResult.INSUFFICIENT_FACTS,
+                reason_code="SERVICE_DATE_BINDING_UNKNOWN", verified_fragment_ids=(),
+            )
+        if any(fragment is not None and not _is_effective(fragment, service_date)
+               for fragment in returned for service_date in dates):
+            return VerifiedClaim(
+                claim_id=claim.claim_id, result=VerificationResult.NOT_APPLICABLE,
+                reason_code="EVIDENCE_NOT_EFFECTIVE_ON_SERVICE_DATE", verified_fragment_ids=(),
+            )
     return applicable
 
 

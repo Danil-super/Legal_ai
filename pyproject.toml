@@ -38,6 +38,8 @@ where = [
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
+# Core-only CI also executes the vertical test using the real Telegram test harness.
+pythonpath = ["services/gateway/telegram/tests"]
 testpaths = [
   "services/legal_core/tests",
   "services/gateway/telegram/tests",

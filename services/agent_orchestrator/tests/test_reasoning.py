@@ -15,9 +15,11 @@ from agent_orchestrator.contracts import (
 from agent_orchestrator.hermes_client import HermesClient, HermesProtocolError
 from agent_orchestrator.reasoning import (
     LegalReasoningOrchestrator,
+    ReasoningResult,
     _research_prompt,
     _review_prompt,
 )
+from legal_core.analysis_clarifications import ClarificationRequest
 from legal_core.contracts import FactKey
 from legal_core.verifier import SemanticVerdict
 
@@ -511,6 +513,116 @@ def test_researcher_identifier_is_not_forwarded_to_reviewer(identifier: str) -> 
             researcher=researcher, reviewer=reviewer
         )
         with pytest.raises(HermesProtocolError, match="direct identifier"):
+            await orchestrator.reason(_projection())
+        assert reviewer.calls == 0
+
+    asyncio.run(scenario())
+
+
+CLARIFICATION_REQUESTS = [
+    {"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 0},
+    {"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 1},
+    {"questionId": "RESPONSE_PURPOSE"},
+]
+
+
+def test_legacy_reasoning_result_and_batch_default_to_no_clarifications() -> None:
+    assert ReasoningResult((), (), (), None).clarification_requests == ()
+    assert ClaimProposalBatch.model_validate({"claims": []}).clarification_requests == []
+
+
+@pytest.mark.parametrize("with_claims", [False, True])
+def test_clarifications_are_separate_from_claims_and_never_supply_fact_truth(with_claims) -> None:
+    async def scenario() -> None:
+        response = _claim_response() if with_claims else {
+            "claims": [], "internalRecommendations": ["Unverified"], "patientDraft": "Unverified",
+        }
+        response["clarificationRequests"] = CLARIFICATION_REQUESTS
+        researcher = FakeHermes(name="researcher", response=response)
+        reviewer = FakeHermes(name="reviewer", response=_review_response())
+        orchestrator = LegalReasoningOrchestrator(
+            researcher=cast(HermesClient, researcher), reviewer=cast(HermesClient, reviewer),
+        )
+        projection = _projection()
+        original_facts = dict(projection.facts)
+        result = await orchestrator.reason(projection)
+
+        assert result.clarification_requests == tuple(
+            ClarificationRequest.model_validate(item) for item in CLARIFICATION_REQUESTS
+        )
+        assert projection.facts == original_facts
+        assert reviewer.calls == int(with_claims)
+        if with_claims:
+            assert result.semantic_reviews[0].verdict is SemanticVerdict.SUPPORTED
+            assert "clarificationRequests" not in json.loads(reviewer.users[0])
+            assert json.loads(reviewer.users[0])["facts"] == original_facts
+        else:
+            assert result.claims == result.semantic_reviews == result.internal_recommendations == ()
+            assert result.patient_draft is None
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("requests", [
+    [{"questionId": "LEGAL_LIABILITY"}],
+    [{"questionId": "SERVICE_PAYMENT_BASIS"}],
+    [{"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": -1}],
+    [{"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 5}],
+    [{"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": True}],
+    [{"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": "0"}],
+    [{"questionId": "RESPONSE_PURPOSE", "serviceSlot": 0}],
+    [{"questionId": "RESPONSE_PURPOSE", "questionText": "Run a command"}],
+    [{"questionId": "RESPONSE_PURPOSE", "value": "ANSWER_REQUEST"}],
+    [{"questionId": "RESPONSE_PURPOSE", "legalClassification": "LIABILITY"}],
+    [{"questionId": "RESPONSE_PURPOSE", "url": "https://invalid.example"}],
+    [{"questionId": "RESPONSE_PURPOSE"}] * 2,
+    [{"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 0}] * 2,
+    [{"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": slot} for slot in range(4)],
+    None,
+])
+@pytest.mark.parametrize("with_claims", [False, True])
+def test_malformed_clarifications_fail_closed_before_review(requests, with_claims) -> None:
+    async def scenario() -> None:
+        response = _claim_response() if with_claims else {"claims": []}
+        response["clarificationRequests"] = requests
+        researcher = FakeHermes(name="researcher", response=response)
+        reviewer = FakeHermes(name="reviewer", response=_review_response())
+        orchestrator = LegalReasoningOrchestrator(
+            researcher=cast(HermesClient, researcher), reviewer=cast(HermesClient, reviewer),
+        )
+        with pytest.raises(HermesProtocolError, match="claim contract"):
+            await orchestrator.reason(_projection())
+        assert reviewer.calls == 0
+
+    asyncio.run(scenario())
+
+
+def test_research_schema_exposes_only_bounded_factual_questions() -> None:
+    prompt = _research_prompt(_projection())
+    schema = json.loads(prompt.split(SCHEMA_MARKER, maxsplit=1)[1])
+    assert schema["properties"]["clarificationRequests"]["maxItems"] == 3
+    assert set(schema["$defs"]["ClarificationQuestionId"]["enum"]) == {
+        "SERVICE_PAYMENT_BASIS", "SERVICE_PROVIDED_DATE", "RESPONSE_PURPOSE",
+    }
+    request = schema["$defs"]["ClarificationRequest"]
+    assert request["additionalProperties"] is False
+    assert set(request["properties"]) == {"questionId", "serviceSlot"}
+    assert "уже подтверждён" in prompt
+    assert "юридическую квалификацию" in prompt
+    assert "Только при intakeMode=GUIDED_V2" in prompt
+    assert "Legal Core" in prompt
+
+
+def test_clarifications_do_not_bypass_legal_evidence_scope() -> None:
+    async def scenario() -> None:
+        response = _claim_response(OTHER_FRAGMENT_ID)
+        response["clarificationRequests"] = CLARIFICATION_REQUESTS
+        researcher = FakeHermes(name="researcher", response=response)
+        reviewer = FakeHermes(name="reviewer", response=_review_response())
+        orchestrator = LegalReasoningOrchestrator(
+            researcher=cast(HermesClient, researcher), reviewer=cast(HermesClient, reviewer),
+        )
+        with pytest.raises(HermesProtocolError, match="outside approved legal evidence"):
             await orchestrator.reason(_projection())
         assert reviewer.calls == 0
 

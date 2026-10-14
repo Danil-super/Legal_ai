@@ -15,10 +15,21 @@ from contextlib import suppress
 from datetime import date
 from typing import Any
 
+from legal_core.analysis_clarifications import (
+    AnalysisClarificationAnswers,
+    ClarificationAnswer,
+    ClarificationQuestionId,
+    ClarificationRequest,
+    ClarificationRequestBatch,
+)
 from legal_core.pseudonymization import pseudonymize_text
 
-from telegram_gateway.case_wizard import parse_date_answer
-from telegram_gateway.factual_safety_intake import screening_complete, screening_summary
+from telegram_gateway.case_wizard import confirmed_clarification_answers, parse_date_answer
+from telegram_gateway.factual_safety_intake import (
+    known_urgent_report,
+    screening_complete,
+    screening_summary,
+)
 from telegram_gateway.quick_intake import contains_probable_person_name
 
 V2_INCOMING = "INCOMING"
@@ -31,6 +42,7 @@ V2_CLINIC_ACTIONS = "CLINIC_ACTIONS"
 V2_HEALTH = "HEALTH"
 V2_MATERIALS = "MATERIALS"
 V2_SAFETY = "SAFETY"
+V2_ANALYSIS_CLARIFICATION = "ANALYSIS_CLARIFICATION"
 V2_SUMMARY = "SUMMARY"
 V2_CONFIRM = "V2_CONFIRM"
 
@@ -105,6 +117,228 @@ _TEXT_FIELDS = {
     "eventSummary": (10, 1_500),
     "clinicActionsNote": (2, 500),
 }
+
+_CLARIFICATION_CHOICES: dict[ClarificationQuestionId, tuple[tuple[str, str], ...]] = {
+    ClarificationQuestionId.SERVICE_PAYMENT_BASIS: (
+        ("PAID", "Платно"),
+        ("PUBLICLY_COVERED", "За счёт государственного покрытия (например, ОМС)"),
+        ("OTHER", "Другой или смешанный вариант"),
+        ("UNKNOWN", "Неизвестно"),
+    ),
+    ClarificationQuestionId.RESPONSE_PURPOSE: (
+        ("RECEIVE_AND_EXPLAIN", "Принять обращение и объяснить ситуацию"),
+        ("ANSWER_REQUEST", "Ответить на просьбу или запрос"),
+        ("OTHER", "Другая цель"),
+        ("UNKNOWN", "Неизвестно"),
+    ),
+    ClarificationQuestionId.SERVICE_PROVIDED_DATE: (("UNKNOWN", "Дата неизвестна"),),
+}
+
+
+def _clarification_request(request: ClarificationRequest | dict[str, Any]) -> ClarificationRequest:
+    # Revalidate model instances too: model_construct/model_copy bypass field validators.
+    value = (
+        request.model_dump(by_alias=True) if isinstance(request, ClarificationRequest) else request
+    )
+    return ClarificationRequest.model_validate(value)
+
+
+def _clarification_service(request: ClarificationRequest, data: dict[str, Any]) -> str | None:
+    if request.question_id == ClarificationQuestionId.RESPONSE_PURPOSE:
+        return None
+    services = data.get("affectedServices")
+    slot = request.service_slot
+    if (
+        not isinstance(services, list)
+        or not _valid_services(services)
+        or slot is None
+        or slot >= len(services)
+    ):
+        raise ValueError("Уточнение должно относиться к указанной услуге.")
+    return str(services[slot])
+
+
+def clarification_question(
+    request: ClarificationRequest | dict[str, Any], data: dict[str, Any],
+) -> str:
+    """Render only fixed factual wording for a strict, existing service scope."""
+    validated = _clarification_request(request)
+    service = _clarification_service(validated, data)
+    if validated.question_id == ClarificationQuestionId.SERVICE_PAYMENT_BASIS:
+        return f"Как оплачивалась услуга «{service}»?"
+    if validated.question_id == ClarificationQuestionId.SERVICE_PROVIDED_DATE:
+        return (
+            f"Когда была оказана услуга «{service}»? Укажите дату услуги, а не дату события: "
+            "ГГГГ-ММ-ДД или ДД.ММ.ГГГГ; если дата приблизительная — "
+            "«примерно ГГГГ-ММ-ДД»; если неизвестна — «неизвестно»."
+        )
+    return "Что клинике нужно сделать в связи с обращением?"
+
+
+def clarification_choices(
+    request: ClarificationRequest | dict[str, Any],
+) -> tuple[tuple[str, str], ...]:
+    """Closed button values and neutral labels; dates additionally accept typed input."""
+    return _CLARIFICATION_CHOICES[_clarification_request(request).question_id]
+
+
+def _stored_clarification_requests(data: dict[str, Any]) -> list[ClarificationRequest]:
+    raw = data.get("analysisClarificationRequests", [])
+    if not isinstance(raw, list) or any(
+        not isinstance(item, dict) or "questionId" not in item
+        or not set(item) <= {"questionId", "serviceSlot"}
+        for item in raw
+    ):
+        return []
+    try:
+        return ClarificationRequestBatch.model_validate({"requests": raw}).requests
+    except ValueError:
+        return []
+
+
+def clarification_requests(data: dict[str, Any]) -> list[ClarificationRequest]:
+    """Only a strict persisted list can activate the optional question step."""
+    requests = _stored_clarification_requests(data)
+    try:
+        for request in requests:
+            if request.service_slot is not None and not _needs_services(data):
+                return []
+            _clarification_service(request, data)
+    except ValueError:
+        return []
+    return requests
+
+
+def next_clarification_request(data: dict[str, Any]) -> ClarificationRequest | None:
+    """UNKNOWN is an explicit attempt; never automatically repeat it."""
+    answered = {
+        (answer.question_id, answer.service_slot)
+        for answer in confirmed_clarification_answers(data).answers
+    }
+    return next((request for request in clarification_requests(data)
+                 if (request.question_id, request.service_slot) not in answered), None)
+
+
+def previous_clarification_question(data: dict[str, Any]) -> bool:
+    """Reopen the preceding requested answer in this draft, retaining other facts."""
+    requests = clarification_requests(data)
+    pending = next_clarification_request(data)
+    preceding = requests[:requests.index(pending)] if pending is not None else requests
+    if not preceding:
+        return False
+    previous = preceding[-1]
+    answers = confirmed_clarification_answers(data)
+    retained = AnalysisClarificationAnswers(answers=[
+        answer for answer in answers.answers
+        if (answer.question_id, answer.service_slot) != (
+            previous.question_id, previous.service_slot,
+        )
+    ])
+    data["analysisClarificationAnswers"] = retained.model_dump(mode="json", by_alias=True)
+    return True
+
+
+def parse_clarification_answer(
+    request: ClarificationRequest | dict[str, Any], raw: str,
+) -> ClarificationAnswer:
+    """Parse one explicit user answer without assigning legal or event-date meaning."""
+    validated = _clarification_request(request)
+    if not isinstance(raw, str) or not 1 <= len(raw.strip()) <= 128:
+        raise ValueError("Выберите вариант или укажите дату услуги.")
+    value: object = raw.strip().upper()
+    if validated.question_id == ClarificationQuestionId.SERVICE_PROVIDED_DATE:
+        text = raw.strip()
+        approximate = text.casefold().startswith("примерно ")
+        if approximate:
+            text = text[len("примерно "):].strip()
+        value = parse_answer("eventDate", text)
+        if approximate:
+            if not isinstance(value, dict) or value["precision"] != "EXACT":
+                raise ValueError("Для приблизительной даты укажите календарную дату услуги.")
+            value = {**value, "precision": "APPROXIMATE"}
+    return ClarificationAnswer.model_validate({
+        **validated.model_dump(by_alias=True), "value": value,
+    })
+
+
+def apply_clarification_answer(
+    data: dict[str, Any], request: ClarificationRequest | dict[str, Any], raw: str,
+) -> dict[str, Any]:
+    """Return a new draft containing one confirmed answer; preserve other identities."""
+    validated = _clarification_request(request)
+    _clarification_service(validated, data)
+    answer = parse_clarification_answer(validated, raw)
+    answers = confirmed_clarification_answers(data).answers
+    identity = (answer.question_id, answer.service_slot)
+    replaced = False
+    for index, previous in enumerate(answers):
+        if (previous.question_id, previous.service_slot) == identity:
+            answers[index] = answer
+            replaced = True
+            break
+    if not replaced:
+        answers.append(answer)
+    confirmed = AnalysisClarificationAnswers(answers=answers)
+    return {
+        **data, "analysisClarificationAnswers": confirmed.model_dump(mode="json", by_alias=True),
+    }
+
+
+def invalidate_service_clarification_answers(
+    data: dict[str, Any], services: list[str] | None,
+) -> dict[str, Any]:
+    """Replace/remove services, discarding old scoped answers if the list changed.
+
+    Slots are positions, not stable service identities: even a reordering invalidates
+    all service answers. The global response purpose survives a service edit.
+    """
+    if services is not None and not _valid_services(services):
+        raise ValueError("Укажите от одной до пяти услуг.")
+    updated = dict(data)
+    if services is None:
+        updated.pop("affectedServices", None)
+    else:
+        updated["affectedServices"] = list(services)
+    if services != data.get("affectedServices") and "analysisClarificationAnswers" in data:
+        answers = confirmed_clarification_answers(data)
+        retained = AnalysisClarificationAnswers(answers=[
+            answer for answer in answers.answers if answer.service_slot is None
+        ])
+        updated["analysisClarificationAnswers"] = retained.model_dump(mode="json", by_alias=True)
+    if services != data.get("affectedServices") and "analysisClarificationRequests" in data:
+        updated["analysisClarificationRequests"] = [
+            request.model_dump(mode="json", by_alias=True)
+            for request in _stored_clarification_requests(data) if request.service_slot is None
+        ]
+    return updated
+
+
+def clarification_review_blocks(data: dict[str, Any]) -> list[str]:
+    """Present confirmed factual answers using their individual service labels."""
+    blocks = []
+    for answer in confirmed_clarification_answers(data).answers:
+        request = ClarificationRequest.model_validate({
+            "questionId": answer.question_id, "serviceSlot": answer.service_slot,
+        })
+        service = _clarification_service(request, data)
+        if answer.question_id == ClarificationQuestionId.SERVICE_PROVIDED_DATE:
+            value = answer.value
+            # The strict answer contract requires ServiceProvidedDate for this ID.
+            if isinstance(value, str):
+                raise ValueError("invalid service date answer")
+            label = "неизвестно" if value.precision == "UNKNOWN" else str(value.provided_date)
+            if value.precision == "APPROXIMATE":
+                label = "примерно " + label
+            blocks.append(f"Дата услуги «{service}»: {label}")
+        else:
+            label = dict(_CLARIFICATION_CHOICES[answer.question_id])[str(answer.value)]
+            prefix = (
+                f"Оплата услуги «{service}»"
+                if answer.question_id == ClarificationQuestionId.SERVICE_PAYMENT_BASIS
+                else "Цель ответа"
+            )
+            blocks.append(f"{prefix}: {label}")
+    return blocks
 
 
 def choice_items(field: str) -> tuple[tuple[str, str], ...]:
@@ -233,6 +467,8 @@ def active_states(data: dict[str, Any]) -> list[str]:
     states = list(_BASE_STATES)
     if _needs_services(data):
         states.insert(states.index(V2_EVENT), V2_SERVICES)
+    if clarification_requests(data) and not known_urgent_report(data):
+        states.insert(states.index(V2_SUMMARY), V2_ANALYSIS_CLARIFICATION)
     return states
 
 
@@ -261,6 +497,8 @@ def _input_complete(data: dict[str, Any], state: str) -> bool:
         return _valid_enum(data.get("caseMaterialsStatus"), "caseMaterialsStatus")
     if state == V2_SAFETY:
         return screening_complete(data)
+    if state == V2_ANALYSIS_CLARIFICATION:
+        return next_clarification_request(data) is None
     return True
 
 
@@ -330,6 +568,7 @@ def review_blocks(data: dict[str, Any], *, final: bool = False) -> list[str]:
         + _label(data.get("caseMaterialsStatus"), "caseMaterialsStatus")
     )
     blocks.extend(screening_summary(data))
+    blocks.extend(clarification_review_blocks(data))
     if data.get("eventDate") == {"date": None, "precision": "UNKNOWN"}:
         blocks.append(
             "Чтобы оценить ситуацию по датам, потребуется уточнить хотя бы ориентир времени."

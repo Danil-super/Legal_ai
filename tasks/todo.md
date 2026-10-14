@@ -1,5 +1,221 @@
 # Dental Legal AI task list
 
+## Factual analysis clarification — contract approved 2026-10-14
+
+- [x] Read actual synthetic V2 context; disprove the nested INTAKE_VERSION hypothesis.
+- [x] Repeat researcher read-only and perform bounded in-memory fictional contrast;
+  preserve original failed reports and distinguish model SUPPORTED from Core PASSED.
+- [x] Independent isolated treatment-query RED proposal; baseline is unchanged.
+- [x] Owner approval of SPEC-analysis-factual-clarifications.md on 2026-10-14.
+- [x] Owner approval of the focused plan and FC1–FC11 below on 2026-10-14.
+
+Every task starts with RED, ends with focused GREEN/quality checks and an atomic
+commit. Common verification environment: project venv with
+PYTHONPATH=services/legal_core/src:services/gateway/telegram/src:services/agent_orchestrator/src.
+Core files below are relative to services/legal_core; gateway files to
+services/gateway/telegram; orchestrator files to services/agent_orchestrator.
+
+### FC1: strict shared question/answer and compatible read contracts
+
+- [x] Define three allowlisted question IDs, service-slot rules, bounded typed
+  answers and additive report/submission defaults; preserve strict validation.
+- [x] Verify old payloads and record a reader-compatible rollback revision before
+  any new field is written; unknown/injected/duplicate keys never become facts.
+- Files (5): Core src/legal_core/{analysis_clarifications,contracts,analysis_contracts}.py,
+  Core tests/test_analysis_clarification_contracts.py (new), docs/adr/0087-factual-analysis-clarifications.md (new).
+- Verify: `python -m pytest services/legal_core/tests/test_analysis_clarification_contracts.py services/legal_core/tests/test_api_contracts.py services/legal_core/tests/test_report_readiness_contract.py -q`.
+- Dependencies: approved plan; medium scope. No new persisted data in this task.
+- Evidence: independent RED tests-only eee2e8ac; reader RED 2 failed/9 passed;
+  focused GREEN 139 passed, Ruff passed, Core mypy passed (98 source files).
+  Source reader baseline is 1c75731. Container rollback additionally requires
+  commit `fix: package shared factual clarification contracts in gateway` because
+  the gateway intentionally copies only the shared Core modules, not all Core.
+  No new producer/production write was enabled by FC1.
+
+### FC2: protect draft and fact inputs
+
+- [x] Validate the new partial draft-answer field and JSON fact using the same
+  strict schema; retain byte limits, user-confirmed provenance and V1/V2 separation.
+- [x] Reject illegal service slots/shapes and prove omitted/UNKNOWN answers are
+  not interpreted as known or negative. No schema/backfill unless demonstrated.
+- Files (3): Core src/legal_core/api_contracts.py,
+  tests/{test_api_contracts,test_analysis_clarification_inputs}.py (latter new).
+- Verify: `python -m pytest services/legal_core/tests/test_api_contracts.py services/legal_core/tests/test_analysis_clarification_inputs.py -q`.
+- Dependencies: FC1; medium scope.
+- Evidence: input RED 5 failed/9 passed; focused GREEN 146 passed; scoped Ruff
+  passed and all three services' mypy passed (138 source files). Reader rollback
+  baseline recorded: 1c75731fc3b126ef58a0c83da7077f13ced63a2b plus the gateway
+  packaging-fix commit recorded in FC1 above. No production write.
+
+### FC3: carry requests across the model boundary
+
+- [x] Researcher may emit at most three IDs/slots, not free question text or
+  answers; empty claims still discard recommendations/draft and skip reviewer.
+- [x] Preserve question requests in ReasoningResult and the existing Core client
+  submission. Old batches with no requests retain their exact safe behaviour.
+- Files (5): orchestrator src/agent_orchestrator/{contracts,reasoning,legal_core_client}.py,
+  tests/{test_reasoning,test_legal_core_client}.py.
+- Verify: `python -m pytest services/agent_orchestrator/tests/test_reasoning.py services/agent_orchestrator/tests/test_legal_core_client.py services/agent_orchestrator/tests/test_projection.py -q`.
+- Dependencies: FC1–FC2; medium scope; no provider/model/tools/time-budget change.
+- Evidence: independent FC3 implementation a053ebf integrated as a63af1e;
+  RED 7 failed/56 passed, GREEN 163 orchestrator tests; Ruff and mypy passed.
+  Prompt explicitly limits questions to GUIDED_V2; legacy SERVICE_TYPE is not
+  silently converted into an affected-service slot.
+
+### FC4: persist only Core-validated blocked questions
+
+- [x] Revalidate against frozen tenant case facts, unknown answers and valid
+  service slots; reject invalid requests. Store accepted IDs/slots in the existing
+  immutable canonical report, not model prose or confirmed facts.
+- [x] Preserve context hashes/job fences, retained idempotent replay and safe
+  BLOCKED semantics; log only bounded IDs/counts, never answer values/model bodies.
+- Files (5): Core src/legal_core/{analysis_clarifications,analysis_api,reports}.py,
+  tests/{test_analysis_api,test_analysis_clarification_submission}.py (latter new).
+- Verify: `POSTGRES_INTEGRATION=1 python -m pytest services/legal_core/tests/test_analysis_api.py services/legal_core/tests/test_analysis_clarification_submission.py -q` with disposable DB configuration.
+- Dependencies: FC1–FC3; medium scope.
+- Evidence: scope/builder RED 12 failures; real PG route RED accepted invalid slot;
+  GREEN 98 focused tests including real PG empty-claim and verified-partial-claim
+  batches, invalid slot rejection, foreign-tenant denial, immutable facts/hash,
+  one new blocked report, idempotent replay and metadata-only audit. On-call can
+  distinguish factual block using reasonCode and clarificationRequestCount/IDs
+  correlated with existing reportId/run resource; no answer or service label logged.
+
+### Checkpoint A — contracts and model/Core path
+
+- [x] Strict contracts, empty-claim request transport and real PG persistence pass;
+  incompatible rollout is refused and old histories remain readable.
+- [x] Independent scoped boundary review; project lint/type/build checks pass.
+
+### FC5: pure question flow and confirmed fact conversion
+
+- [x] Fixed Russian questions, bounded service mapping and UNKNOWN-aware parsing
+  share one pure implementation; a changed service set invalidates its answers.
+- [x] Include only user-confirmed answers in V2 facts and factual recap; no
+  inferred legacy labels, dates, deadlines, defect or responsibility.
+- Files (4): gateway src/telegram_gateway/{guided_case_intake_v2,case_wizard}.py,
+  tests/{test_guided_case_intake_v2,test_case_wizard}.py.
+- Verify: `python -m pytest services/gateway/telegram/tests/test_guided_case_intake_v2.py services/gateway/telegram/tests/test_case_wizard.py -q`.
+- Dependencies: FC1–FC2; medium scope.
+- Evidence: independent implementation c152789 integrated as 5416d3e, focused
+  GREEN 85 tests; Ruff and all-service mypy passed. First RED missing helpers,
+  second RED 5 failed plus missing-helper import. Gateway packaging failure found
+  by broader regression was reproduced and fixed separately in 18790cd.
+
+### FC6: durable Telegram question interaction
+
+- [x] Actual application composition supports back/cancel, old-button rejection,
+  per-service questions and fresh optimistic saves without overwriting other facts.
+- [x] Both quick/manual paths, restart/resume and UNKNOWN completion behave
+  identically; no unconditional questions for unrelated cases or infinite loop.
+- Files (3): gateway src/telegram_gateway/bot.py,
+  tests/{test_analysis_clarification_runtime,test_quick_guided_v2}.py (first new).
+- Verify: `python -m pytest services/gateway/telegram/tests/test_analysis_clarification_runtime.py services/gateway/telegram/tests/test_quick_guided_v2.py -q`.
+- Dependencies: FC4–FC5; medium scope; no unrelated bot refactor.
+- Evidence: independent f240492 integrated as 6e604f1; RED 8 failed/10 passed,
+  focused gateway regression 666 passed. Cross-slice omitted global-slot bug
+  reproduced separately (1 failed) and fixed in 2c36a50; combined pure/runtime
+  GREEN 108 passed. Core-normalized optional global slots are not lost silently.
+
+### FC7: protected source-report recovery in Core
+
+- [x] Creator-only preview/new-draft recovery binds the displayed source report,
+  its hash and fact snapshot; stale or cross-tenant recovery fails safely.
+- [x] Preserve confirmed answers, source case/report hashes and original material
+  ownership. UNKNOWN attempts lead to an explicit limit/human route, not a loop.
+- Files (3): Core src/legal_core/case_clarification.py,
+  tests/{test_clarification_recovery,test_analysis_clarification_recovery}.py (latter new).
+- Verify: `POSTGRES_INTEGRATION=1 python -m pytest services/legal_core/tests/test_clarification_recovery.py services/legal_core/tests/test_analysis_clarification_recovery.py -q` with disposable DB configuration.
+- Dependencies: FC4; medium scope; no reopening a finalized case.
+- Evidence: independent 4dc724d integrated as 64db365; real PG RED 12 failed/
+  12 passed, focused real PG GREEN 64 passed. Source report/fact/content hashes,
+  latest-version binding, creator/tenant scope and no file copying are tested.
+
+### FC8: gateway recovery handoff and re-confirmation
+
+- [x] Existing API client passes the protected preview/recovery intent; user
+  sees the same filled draft, requested questions and explicit new confirmation.
+- [x] Lost replies/repeated clicks reuse the same intent; access is rechecked,
+  expired content is not restored and files remain in the original case.
+- Files (3): gateway src/telegram_gateway/{case_wizard,clarification_runtime}.py,
+  tests/test_factual_clarification.py.
+- Verify: `python -m pytest services/gateway/telegram/tests/test_factual_clarification.py services/gateway/telegram/tests/test_analysis_clarification_runtime.py -q`.
+- Dependencies: FC6–FC7; medium scope.
+- Evidence: independent 76ed0ef integrated as ba8a69c, focused GREEN 91; a fresh
+  adversarial review then reproduced two drafts after lost reply + newer report
+  (independent RED 93fa235, synthetic and real PG). Fixed via immutable displayed-
+  report callback and retained-report metadata selector in bf89c2c → 7831b42.
+  Repair focused PG 50 passed; repeated independent review 50 passed/0 skipped,
+  no remaining Critical/Required findings. Base64 alias mutation killed 2 tests.
+  The actual job CTA was absent for new question reports: vertical RED 8d47195;
+  the producer fix is included in 7831b42, vertical GREEN 5 passed after it.
+
+### Checkpoint B — complete factual recovery path
+
+- [x] Real composition → Core → durable draft → restart → answers → recap → new
+  confirmation passes; old case, report, source objects and role scopes unchanged.
+- [x] Urgent routing is not delayed; quick/manual parity and independent review pass.
+
+### FC9: enforce service-date limits without a new legal resolver
+
+- [x] New nested unknown/approximate answers cannot satisfy a declared factual
+  dependency. EVENT_DATE never substitutes for a service date.
+- [x] Service-dependent conclusions require support at the relevant known date;
+  unknown binding or a later-only approved copy stays blocked. Existing case-date
+  evidence checks, unknown recursion and policy remain; no guessed prior edition.
+- Files (4): Core src/legal_core/{analysis_clarifications,verifier}.py,
+  tests/{test_analysis_clarification_temporal,test_verifier}.py (first new).
+- Verify: `python -m pytest services/legal_core/tests/test_analysis_clarification_temporal.py services/legal_core/tests/test_verifier.py -q`.
+- Dependencies: FC1–FC4; medium scope; must pass before integration/release.
+- Evidence: actual temporal RED 6 failed/6 passed; GREEN 27 verifier/temporal
+  tests passed; full intermediate real PG/MinIO regression 2386 passed, 0 skipped
+  (104.37s) covers FC1–FC7 plus FC9 working tree, before FC8/FC10 integration.
+  Ruff and all-service mypy (138 files) passed. FC9 does not claim that undeclared
+  model dependencies or semantic correctness can be proven structurally.
+
+### FC10: one clear question list in Telegram and PDF
+
+- [x] Shared CanonicalReport presentation shows specific fixed factual questions
+  with service labels; no duplicate menus or unverified advice.
+- [x] Retain sources/qualifiers, blocked status and historical PDFs; older reports
+  with no request field remain readable. Long/multi-service output stays bounded.
+- Files (3): Core src/legal_core/report_presentation.py,
+  Core tests/test_report_presentation.py, gateway tests/test_telegram_report_presentation.py.
+- Verify: `python -m pytest services/legal_core/tests/test_report_presentation.py services/legal_core/tests/test_reports.py services/gateway/telegram/tests/test_telegram_report_presentation.py -q` plus synthetic PDF inspection.
+- Dependencies: FC4–FC9; medium scope.
+- Evidence: independent 2826d41 integrated as 5e462f2; actual RED 2 failed/28
+  passed, focused GREEN 39; synthetic PDF visually inspected. Ruff and mypy pass.
+
+### FC11: readiness evidence and reviewed release
+
+- [x] Add synthetic composition/integration proofs for both entry paths, recovery,
+  valid/invalid model requests, UNKNOWN, multiple services, temporal denial,
+  tenant/creator/expiry/idempotency and unchanged HIGH/CRITICAL routing.
+- [ ] Full PG/MinIO regression, Ruff/mypy, Compose, existing security/container
+  gates and independent review pass; no weakened tests or automatic approvals.
+- [ ] After separate immutable-head release approval, normal CI deploy and real
+  fictional owner-channel Core-persisted positive + clarification/negative smoke.
+- Files (3): tests/test_analysis_clarification_e2e.py (new),
+  docs/audit/bot-scenarios-2026-10-14.md, tasks/todo.md. Other earlier tests may be
+  extended only within their respective focused tasks, not hidden in this task.
+- Verify: `POSTGRES_INTEGRATION=1 MINIO_INTEGRATION=1 python -m pytest -q --tb=short`
+  with disposable services; `python -m ruff check .`;
+  `python -m mypy services/legal_core/src services/gateway/telegram/src services/agent_orchestrator/src`;
+  `docker compose config --quiet`; existing CI security/container commands.
+- Dependencies: FC1–FC10; medium scope. Live model SUPPORTED alone cannot close it.
+- Evidence: independent 749f7f6 → 4afe25f, strengthened actual-CTA RED 8d47195;
+  GREEN 5 tests with real Core/orchestrator/worker/gateway HTTP and PTB composition,
+  PG, MinIO, immutable originals and cited evidence. Only external model responses
+  and Telegram transport are synthetic. Full combined 2472 passed/0 skipped in
+  117.60s on production-code 7831b42; Core-only CI collection subsequently failed
+  for a sibling harness import, fixed in d17fb63 without skipping a test; standalone
+  vertical test with only the standard three source paths is GREEN (5 passed).
+  Source reader/container-compatible candidate is 7831b42, not f4eaee8/1c75731.
+  Remote main and VPS remain f4eaee8 with 8 healthy containers; no release performed.
+
+Runtime evidence: docs/audit/bot-scenarios-2026-10-14.md. No new production change
+or legal readiness claimed. Online curated reference context remains unimplemented;
+67 DRAFT evaluation cases are not automatically approved or sent to models.
+
 ## Extended user-scenario audit — owner requested 2026-10-14
 
 - [x] Diagnose CI mismatch: missing native PDF tools, not a legal-verifier failure.
@@ -19,11 +235,19 @@
   owner selected current review/tests, without an external CLI invocation.
 - [ ] Resolve reference-package author/reviewer independence with owner (auth-contract decision pending).
 - [x] Integrate independent RED reproductions and verify all changed paths locally.
-- [ ] Successful GitHub CI on the final head and explicit owner release approval.
-- [ ] Deploy through the existing reviewed main workflow and run both live synthetic entry paths.
+- [x] Successful GitHub CI on the final head and explicit owner release approval.
+  PR94 CI38563480602 and merged-main CI38564977660 successful; owner approved release.
+- [x] Deploy through the existing reviewed main workflow; main f4eaee8 healthy,
+  approval-ledger hashes unchanged (54 normative / 8 reference events).
+- [x] Both live synthetic entry paths created V2 cases; real Hermes calls completed,
+  BLOCKED PDFs persisted/downloaded; quick PDF delivered in Telegram.
+- [ ] Successful evidence-linked legal answers for both live paths: both tests returned
+  EVIDENCE_NOT_VERIFIED with zero claims. Do not mark this gate green or alter verifier
+  to pass it. Diagnose evidence selection/researcher abstention before legal-readiness claim.
 
 Each implementation slice has a failing reproduction and a separate commit.
-No normative approvals, role grants, model changes or production deployment as part of this audit.
+No normative approvals, role grants or model changes. Deployment occurred only after the
+subsequent explicit owner release approval, retaining all original approval history.
 Evidence and limits: docs/audit/bot-scenarios-2026-10-14.md. Existing incomplete tasks below
 are preserved; technical regression success is not legal validation of private references.
 
@@ -40,7 +264,7 @@ are preserved; technical regression success is not legal validation of private r
   Compose and offline non-root gateway container import passed. CI gates remain required.
 - [x] Visually inspect long/READY/HIGH/BLOCKED PDFs; fix long first-page pagination.
   Independent review found and closed truncated legal qualifiers/citations in compact Telegram.
-- [ ] Reviewed GitHub CI and explicit release approval; no production change made yet.
+- [x] Reviewed GitHub CI and explicit release approval; PR94 deployed as f4eaee8 on 2026-10-14.
 - [ ] Live model + persisted synthetic report/PDF checks for both version-aligned entry paths.
 
 No weakening of evidence/risk/privacy gates or retrospective rewriting of case content.

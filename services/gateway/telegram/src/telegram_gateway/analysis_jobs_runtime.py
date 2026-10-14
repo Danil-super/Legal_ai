@@ -14,12 +14,14 @@ from typing import Any, cast
 from uuid import UUID
 
 import httpx2
+from legal_core.analysis_clarifications import ClarificationRequestBatch, validate_request_scope
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest, Forbidden, RetryAfter, TelegramError
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTypes
 
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError
+from telegram_gateway.clarification_intent import encode_clarification_callback
 from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
@@ -142,11 +144,44 @@ def _client(context: ContextTypes.DEFAULT_TYPE) -> AnalysisJobsClient:
     return cast(AnalysisJobsClient, client)
 
 
+def _report_clarification_callback(job: JobSnapshot) -> str | None:
+    from telegram_gateway.analysis_runtime import factual_clarification_code
+
+    result = job.result
+    if result is None:
+        return None
+    response = result.get("report")
+    canonical = response.get("reportJson") if isinstance(response, dict) else None
+    if not isinstance(canonical, dict):
+        return None
+    summary, facts = canonical.get("summary"), canonical.get("facts")
+    availability = summary.get("analysisAvailability") if isinstance(summary, dict) else None
+    if not isinstance(availability, dict) or not isinstance(facts, dict):
+        return None
+    try:
+        requests = ClarificationRequestBatch.model_validate(
+            {"requests": canonical.get("clarificationRequests", [])}
+        ).requests
+        validate_request_scope(requests, facts)
+    except ValueError:
+        requests = []
+    pending = bool(requests) and availability.get("status") == "BLOCKED"
+    if factual_clarification_code(result) is None and not pending:
+        return None
+    assert isinstance(response, dict)
+    report_id = UUID(str(response.get("id")))
+    case = canonical.get("case")
+    if (UUID(str(response.get("caseId"))) != job.case_id
+            or UUID(str(canonical.get("reportId"))) != report_id
+            or not isinstance(case, dict) or UUID(str(case.get("id"))) != job.case_id):
+        raise ValueError("clarification report identity mismatch")
+    return encode_clarification_callback(job.case_id, report_id)
+
+
 def job_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
     from telegram_gateway.analysis_runtime import (
         analysis_error_message,
         escalation_id_from_analysis,
-        factual_clarification_code,
         telegram_analysis_messages,
     )
 
@@ -178,10 +213,13 @@ def job_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
             [InlineKeyboardButton("📄 PDF результата", callback_data=f"analysis:pdf:{job.job_id}")],
         )
         escalation_id = escalation_id_from_analysis(job.result)
-        if (job.result.get("analysisAllowed") is False and escalation_id is None
-                and factual_clarification_code(job.result) is not None):
+        clarification_callback = (
+            _report_clarification_callback(job)
+            if job.result.get("analysisAllowed") is False and escalation_id is None else None
+        )
+        if clarification_callback is not None:
             rows.append([InlineKeyboardButton(
-                "Уточнить факты", callback_data=f"case:clarify:{job.case_id}",
+                "Уточнить факты", callback_data=clarification_callback,
             )])
         if escalation_id is not None:
             rows.insert(

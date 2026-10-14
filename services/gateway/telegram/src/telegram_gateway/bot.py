@@ -59,6 +59,12 @@ from telegram_gateway.guided_case_intake_v2 import (
     V2_EVENT,
     V2_INCOMING,
     V2_SITUATION,
+    apply_clarification_answer,
+    clarification_choices,
+    clarification_question,
+    invalidate_service_clarification_answers,
+    next_clarification_request,
+    previous_clarification_question,
 )
 from telegram_gateway.guided_case_intake_v2 import (
     active_states as v2_active_states,
@@ -158,6 +164,7 @@ class WizardState(IntEnum):
     SUMMARY = 33
     V2_CONFIRM = 34
     SAFETY = 35
+    ANALYSIS_CLARIFICATION = 36
 
 
 def load_token(environment: Mapping[str, str] | None = None) -> str:
@@ -954,6 +961,19 @@ async def _prompt_v2_draft(
                     index == len(pages) - 1
                 ) else []
                 await reply(page, reply_markup=_v2_keyboard(rows))
+    elif state is WizardState.ANALYSIS_CLARIFICATION:
+        request = next_clarification_request(data)
+        if request is None or known_urgent_report(data):
+            await _prompt_v2_draft(update, WizardState.SUMMARY, data)
+            return
+        slot = "global" if request.service_slot is None else str(request.service_slot)
+        prefix = f"case:v2:clarify:{request.question_id}:{slot}:"
+        await reply(
+            clarification_question(request, data),
+            reply_markup=_v2_keyboard([
+                [(label, prefix + value)] for value, label in clarification_choices(request)
+            ]),
+        )
     elif state is WizardState.V2_CONFIRM:
         workflow_id = UUID(str(data["workflow_id"]))
         if message is not None:
@@ -1019,7 +1039,9 @@ async def choose_v2_multi(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await _reply(update, "Выберите хотя бы один вариант, затем нажмите «Продолжить».")
             return current
         if field == "situationAreas" and "TREATMENT" not in data[field]:
-            data.pop("affectedServices", None)
+            updated = invalidate_service_clarification_answers(data, None)
+            data.clear()
+            data.update(updated)
         return await _advance_v2_draft(update, data)
     if value in values:
         values.remove(value)
@@ -1030,6 +1052,10 @@ async def choose_v2_multi(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except ValueError as exc:
         await _reply(update, str(exc))
         return current
+    if field == "situationAreas" and "TREATMENT" not in values:
+        updated = invalidate_service_clarification_answers(data, None)
+        data.clear()
+        data.update(updated)
     if field == "healthSignals":
         data.pop("safetyScreening", None)
     await _prompt_v2_draft(update, current, data)
@@ -1043,10 +1069,47 @@ async def record_v2_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if field is None:
         return state
     try:
-        data[field] = parse_v2_answer(field, _message_text(update))
+        parsed = parse_v2_answer(field, _message_text(update))
+        if field == "affectedServices":
+            updated = invalidate_service_clarification_answers(data, cast(list[str], parsed))
+            data.clear()
+            data.update(updated)
+        else:
+            data[field] = parsed
     except ValueError as exc:
         await _reply_draft_controls(update, data, str(exc), reply_markup=_v2_keyboard([]))
         return state
+    return await _advance_v2_draft(update, data)
+
+
+async def answer_analysis_clarification(
+    update: Update, context: ContextTypes.DEFAULT_TYPE,
+) -> int:
+    data = _wizard_data(context)
+    request = next_clarification_request(data)
+    if request is None or known_urgent_report(data):
+        return await _advance_v2_draft(update, data)
+    callback = await _answer_callback(update)
+    slot = "global" if request.service_slot is None else str(request.service_slot)
+    prefix = f"case:v2:clarify:{request.question_id}:{slot}:"
+    if callback is not None:
+        if not callback.startswith(prefix):
+            await _reply(update, "Выберите ответ под текущим вопросом.")
+            return WizardState.ANALYSIS_CLARIFICATION
+        raw = callback.removeprefix(prefix)
+        if raw not in dict(clarification_choices(request)):
+            await _reply(update, "Выберите ответ под текущим вопросом.")
+            return WizardState.ANALYSIS_CLARIFICATION
+    else:
+        raw = _message_text(update)
+    try:
+        updated = apply_clarification_answer(data, request, raw)
+    except ValueError as exc:
+        await _prompt_v2_draft(update, WizardState.ANALYSIS_CLARIFICATION, data)
+        await _reply(update, str(exc))
+        return WizardState.ANALYSIS_CLARIFICATION
+    data.clear()
+    data.update(updated)
     return await _advance_v2_draft(update, data)
 
 
@@ -1130,6 +1193,9 @@ async def back_v2_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if current_name == "SAFETY" and previous_screening_question(data):
         await _prompt_v2_draft(update, WizardState.SAFETY, data)
         return WizardState.SAFETY
+    if current_name == "ANALYSIS_CLARIFICATION" and previous_clarification_question(data):
+        await _prompt_v2_draft(update, WizardState.ANALYSIS_CLARIFICATION, data)
+        return WizardState.ANALYSIS_CLARIFICATION
     states = v2_active_states(data)
     try:
         index = states.index(current_name)
@@ -1138,6 +1204,8 @@ async def back_v2_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     previous = _v2_state(states[max(index - 1, 0)])
     if previous is WizardState.SAFETY and screening_complete(data):
         previous_screening_question(data)
+    if previous is WizardState.ANALYSIS_CLARIFICATION:
+        previous_clarification_question(data)
     await _prompt_v2_draft(update, previous, data)
     return previous
 
@@ -2048,7 +2116,7 @@ async def resume_intake_draft(update: Update, context: ContextTypes.DEFAULT_TYPE
     _clear_pending_inputs(context)
     data = dict(draft_data)
     if data.get("intakeVersion") == 2 and state in {
-        WizardState.SUMMARY, WizardState.V2_CONFIRM,
+        WizardState.SUMMARY, WizardState.V2_CONFIRM, WizardState.ANALYSIS_CLARIFICATION,
     }:
         state = _v2_state(v2_next_missing_state(data))
     data.update(
@@ -2947,7 +3015,7 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
     application.add_handler(TypeHandler(Update, _require_private_chat), group=-99)
     application.add_handler(TypeHandler(Update, _route_input_mode), group=-90)
     application.add_handler(CallbackQueryHandler(
-        create_clarification, pattern=r"^case:clarify:[0-9a-f-]{36}$",
+        create_clarification, pattern=r"^case:clarify:(?:[A-Za-z0-9_-]{43}|[0-9a-f-]{36})$",
     ), group=-2)
     application.add_handler(
         ConversationHandler(
@@ -3042,6 +3110,15 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
                     ),
                     MessageHandler(filters.TEXT & ~filters.COMMAND,
                                    _persisted(record_factual_amount)),
+                    CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
+                ],
+                WizardState.ANALYSIS_CLARIFICATION: [
+                    CallbackQueryHandler(
+                        _persisted(answer_analysis_clarification), pattern=r"^case:v2:clarify:"
+                    ),
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, _persisted(answer_analysis_clarification)
+                    ),
                     CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
                 ],
                 WizardState.V2_CONFIRM: [

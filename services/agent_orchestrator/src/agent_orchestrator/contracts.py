@@ -8,6 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from legal_core.analysis_clarifications import ClarificationRequest, validate_unique_requests
 from legal_core.contracts import FactKey
 
 
@@ -119,6 +120,16 @@ class ClaimProposalBatch(StrictModel):
         default_factory=list, alias="internalRecommendations", max_length=20
     )
     patient_draft: str | None = Field(default=None, alias="patientDraft", max_length=8_000)
+    clarification_requests: list[ClarificationRequest] = Field(
+        default_factory=list, alias="clarificationRequests", max_length=3
+    )
+
+    @field_validator("clarification_requests")
+    @classmethod
+    def unique_clarification_requests(
+        cls, value: list[ClarificationRequest]
+    ) -> list[ClarificationRequest]:
+        return validate_unique_requests(value)
 
     @field_validator("claims")
     @classmethod
