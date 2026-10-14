@@ -21,6 +21,7 @@ ACTOR_ID = 777
 def context_with_draft(state: bot.WizardState) -> SimpleNamespace:
     client = SimpleNamespace(
         save_intake_draft=AsyncMock(return_value={"revision": 8}),
+        get_intake_draft=AsyncMock(return_value={"id": DRAFT_ID}),
         get_actor=AsyncMock(return_value={"role": "CLINIC_ADMIN"}),
         create_intake_draft=AsyncMock(
             return_value={"id": DRAFT_ID, "wizardState": "INCIDENT", "revision": 1}

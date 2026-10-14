@@ -1368,6 +1368,18 @@ async def _persist_transition(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
     data = _wizard_data(context)
+    actor_id = _actor_id(update)
+    try:
+        draft_id = UUID(str(data[DRAFT_ID_KEY]))
+        if actor_id is None:
+            raise ValueError("draft actor is missing")
+        # Rendering cached clinic facts is a read operation too. Core must check
+        # the current membership, subscription and exact draft before any output.
+        await _legal_core(context).get_intake_draft(draft_id, actor_id)
+    except (KeyError, ValueError, LegalCoreApiError):
+        _clear_wizard(context)
+        await _reply(update, "🔒 Черновик сейчас недоступен. Обновите список через /menu.")
+        return ConversationHandler.END
     before = _draft_payload(data)
     next_state = await handler(update, context)
     if not isinstance(next_state, WizardState):
