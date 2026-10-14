@@ -7,7 +7,10 @@ from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 
-from legal_core.analysis_clarifications import AnalysisClarificationAnswers
+from legal_core.analysis_clarifications import (
+    AnalysisClarificationAnswers,
+    ClarificationRequestBatch,
+)
 from legal_core.contracts import CaseStatus, ContractModel, FactKey, MissingFact
 from legal_core.factual_safety_intake import FactualSafetyScreening
 from legal_core.material_preparation import MaterialGroup, MaterialKind, PreparedPart
@@ -106,6 +109,7 @@ _V2_DRAFT_DATA_KEYS = frozenset(
         "caseMaterialsStatus",
         "safetyScreening",
         "analysisClarificationAnswers",
+        "analysisClarificationRequests",
         "correctionSource",
     }
 )
@@ -122,6 +126,7 @@ _V2_DRAFT_STATES = frozenset(
         "HEALTH",
         "MATERIALS",
         "SAFETY",
+        "ANALYSIS_CLARIFICATION",
         "SUMMARY",
         "V2_CONFIRM",
     }
@@ -160,6 +165,7 @@ TelegramDraftWizardState = Literal[
     "HEALTH",
     "MATERIALS",
     "SAFETY",
+    "ANALYSIS_CLARIFICATION",
     "SUMMARY",
     "V2_CONFIRM",
 ]
@@ -277,6 +283,19 @@ class EscalationQueueResponse(ContractModel):
 class CorrectionSource(ContractModel):
     case_id: UUID = Field(alias="caseId")
     fact_snapshot_sha256: str = Field(alias="factSnapshotSha256", pattern=r"^[0-9a-f]{64}$")
+    report_id: UUID | None = Field(
+        default=None, alias="reportId", exclude_if=lambda value: value is None
+    )
+    report_sha256: str | None = Field(
+        default=None, alias="reportSha256", pattern=r"^[0-9a-f]{64}$",
+        exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def validate_report_binding(self) -> "CorrectionSource":
+        if (self.report_id is None) != (self.report_sha256 is None):
+            raise ValueError("reportId and reportSha256 must be provided together")
+        return self
 
 
 class TelegramIntakeDraftUpdateRequest(ContractModel):
@@ -303,6 +322,10 @@ class TelegramIntakeDraftUpdateRequest(ContractModel):
             CorrectionSource.model_validate(value["correctionSource"])
         if "analysisClarificationAnswers" in value:
             AnalysisClarificationAnswers.model_validate(value["analysisClarificationAnswers"])
+        if "analysisClarificationRequests" in value:
+            ClarificationRequestBatch.model_validate({
+                "requests": value["analysisClarificationRequests"]
+            })
         encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
         if len(encoded.encode()) > 16_384:
             raise ValueError("draftData exceeds 16384 bytes")

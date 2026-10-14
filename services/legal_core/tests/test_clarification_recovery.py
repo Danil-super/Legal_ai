@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from legal_core.database import database_url, owner_database_url
+from legal_core.case_api import _canonical_hash
 from legal_core.draft_retention import purge_expired_intake_drafts
 from legal_core.factual_safety_intake import SCREENING_FIELDS, SCREENING_VERSION
 from legal_core.risk_policy_approval import RiskPolicyApproval, approve_risk_policy
@@ -131,10 +132,16 @@ def _source_rows(case_id: str) -> dict:
         engine.dispose()
 
 
-def _request_draft(client, actor: int, workflow: dict, key: UUID | None = None):
+def _request_draft(
+    client, actor: int, workflow: dict, key: UUID | None = None, *, bound: bool = False,
+):
+    payload = {"expectedFactSnapshotSha256": _source_hash(workflow)}
+    if bound:
+        payload.update(expectedReportId=workflow["report"]["id"],
+                       expectedReportSha256=_canonical_hash(workflow["report"]["reportJson"]))
     return client.post(
         f"/v1/cases/{workflow['case']['id']}/clarification-drafts",
-        json={"expectedFactSnapshotSha256": _source_hash(workflow)},
+        json=payload,
         headers=actor_headers(actor, key or uuid4()),
     )
 
@@ -258,7 +265,9 @@ def test_clarification_prefills_a_fresh_unconfirmed_draft_and_replays(
         assert mismatch.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"
 
 
-@pytest.mark.parametrize("tampering", ["remove", "caseId", "factSnapshotSha256"])
+@pytest.mark.parametrize("tampering", [
+    "remove", "caseId", "factSnapshotSha256", "reportId", "reportSha256",
+])
 def test_correction_source_is_preserved_on_save_and_cannot_be_rewritten(tampering: str) -> None:
     actor = 95_000_000_000 + uuid4().int % 100_000_000
     seed_admin(actor)
@@ -266,7 +275,7 @@ def test_correction_source_is_preserved_on_save_and_cannot_be_rewritten(tamperin
     data["safetyScreening"]["representativeContact"] = "UNKNOWN"
     with application_client() as client:
         workflow = _confirm(client, actor, data)
-        created = _request_draft(client, actor, workflow)
+        created = _request_draft(client, actor, workflow, bound=True)
         assert created.status_code == 201, created.text
         draft = created.json()
         corrected = deepcopy(draft["draftData"])
@@ -284,7 +293,7 @@ def test_correction_source_is_preserved_on_save_and_cannot_be_rewritten(tamperin
             forged.pop("correctionSource")
         else:
             forged["correctionSource"][tampering] = (
-                str(uuid4()) if tampering == "caseId" else "0" * 64
+                str(uuid4()) if tampering in {"caseId", "reportId"} else "0" * 64
             )
         rejected = client.put(f"/v1/telegram-intake-drafts/{draft['id']}",
                               headers=actor_headers(actor, uuid4()),
@@ -296,7 +305,8 @@ def test_correction_source_is_preserved_on_save_and_cannot_be_rewritten(tamperin
         assert readback.json() == saved.json()
 
 
-def test_clarification_never_copies_or_moves_confirmed_materials() -> None:
+@pytest.mark.parametrize("bound", [False, True])
+def test_clarification_never_copies_or_moves_confirmed_materials(bound: bool) -> None:
     actor = 96_000_000_000 + uuid4().int % 100_000_000
     seed_admin(actor)
     store = FakeCaseMaterialStore()
@@ -313,7 +323,7 @@ def test_clarification_never_copies_or_moves_confirmed_materials() -> None:
         workflow = _confirm(client, actor, data, UUID(original["id"]))
         before = _source_rows(workflow["case"]["id"])
         objects = deepcopy(store.objects)
-        response = _request_draft(client, actor, workflow)
+        response = _request_draft(client, actor, workflow, bound=bound)
         assert response.status_code == 201, response.text
         draft = response.json()
         assert draft["draftData"]["incomingSourceStatus"] == "NOT_ATTACHED"
@@ -339,7 +349,11 @@ def test_preview_is_metadata_only_and_new_case_keeps_source_link():
         )
         assert preview.status_code == 200
         assert preview.json() == {"caseId": original["case"]["id"],
-                                  "expectedFactSnapshotSha256": _source_hash(original)}
+                                  "expectedFactSnapshotSha256": _source_hash(original),
+                                  "expectedReportId": original["report"]["id"],
+                                  "expectedReportSha256": _canonical_hash(
+                                      original["report"]["reportJson"]
+                                  )}
         draft = _request_draft(client, actor, original).json()
         corrected = draft["draftData"]
         corrected["safetyScreening"]["representativeContact"] = "NO"
@@ -599,7 +613,10 @@ def test_clarification_rejects_stale_unconfirmed_or_expired_sources(invalid_sour
 
 
 @pytest.mark.parametrize("other_actor", ["foreign", "same_clinic_noncreator"])
-def test_clarification_does_not_grant_access_through_clinic_membership(other_actor: str) -> None:
+@pytest.mark.parametrize("bound", [False, True])
+def test_clarification_does_not_grant_access_through_clinic_membership(
+    other_actor: str, bound: bool,
+) -> None:
     actor = 98_000_000_000 + uuid4().int % 100_000_000
     outsider = actor + 1_000_000_000
     clinic_id, _ = seed_admin(actor)
@@ -622,7 +639,7 @@ def test_clarification_does_not_grant_access_through_clinic_membership(other_act
         engine.dispose()
     with application_client() as client:
         workflow = _confirm(client, actor, _guided_data())
-        response = _request_draft(client, outsider, workflow)
+        response = _request_draft(client, outsider, workflow, bound=bound)
         assert response.status_code == 404, response.text
         assert response.json()["error"]["code"] == "CASE_NOT_FOUND"
         assert client.get("/v1/telegram-intake-drafts",
