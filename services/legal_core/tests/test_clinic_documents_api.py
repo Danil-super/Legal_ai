@@ -96,11 +96,11 @@ def headers(telegram_user_id: int) -> dict[str, str]:
     return {"X-Telegram-User-Id": str(telegram_user_id)}
 
 
-def test_unicode_filename_wire_keeps_clinic_original_name_and_bytes() -> None:
+@pytest.mark.parametrize("filename", ["синтетический-договор.txt", "пример%20.txt"])
+def test_unicode_filename_wire_keeps_clinic_original_name_and_bytes(filename: str) -> None:
     actor = 8_500_000_001 + uuid4().int % 100_000_000
     seed_admin(actor)
     store = FakeRawStore()
-    filename = "синтетический-договор.txt"
     raw = b"Synthetic clinic agreement for an internal document review."
     with client(store) as api:
         document = api.post(

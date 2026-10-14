@@ -11,7 +11,9 @@ from telegram_gateway.case_wizard import LegalCoreClient
 from telegram_gateway.clinic_document_runtime import ClinicDocumentCoreClient
 
 
-@pytest.mark.parametrize("filename", ["example.txt", "пример.txt", "акт 100%.pdf", "🦷.docx"])
+@pytest.mark.parametrize(
+    "filename", ["example.txt", "пример.txt", "пример%20.txt", "акт 100%.pdf", "🦷.docx"]
+)
 def test_filename_wire_roundtrips_without_non_ascii_http_headers(filename: str) -> None:
     headers = source_filename_headers(filename)
     assert all(value.isascii() for value in headers.values())

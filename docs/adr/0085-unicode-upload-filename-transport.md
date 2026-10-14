@@ -30,4 +30,8 @@ Unit checks cover ASCII compatibility, percent literals, Cyrillic/emoji roundtri
 the maximum decoded name and malformed/path/control input. Real PostgreSQL API
 checks cover unchanged bytes, clinic original metadata and rejection before raw
 storage. A decoder-removal mutation caused four endpoint regressions, then was
-restored. Combined regression, container import and CI remain release gates.
+restored. Independent review found a missing exactly-once regression: a Unicode
+name containing a literal valid escape (`пример%20.txt`). Both pure transport and
+clinic API checks now preserve that name literally; a double-decoding mutation
+fails the new unit test and was restored. Combined regression, container import
+and CI remain release gates.
