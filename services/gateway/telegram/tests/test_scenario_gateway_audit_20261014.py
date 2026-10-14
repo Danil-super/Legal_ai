@@ -8,11 +8,13 @@ from uuid import UUID
 
 import httpx2
 import pytest
+from legal_core.api_contracts import TelegramIntakeDraftUpdateRequest
 from legal_core.factual_safety_intake import SCREENING_FIELDS, SCREENING_VERSION
 from telegram import Update
 from telegram.ext import ExtBot
 from telegram_gateway import bot
 from telegram_gateway.case_wizard import LegalCoreApiError, LegalCoreClient
+from test_case_experience import complete_data
 from test_dialog_isolation import ACTOR, DRAFT
 from test_guided_case_intake_v2 import _base_data
 from test_unified_intake_scenarios import versioned_harness
@@ -387,10 +389,15 @@ def test_remote_revision_change_refreshes_selection_before_consuming_an_old_answ
     async def scenario():
         async with versioned_harness() as (app, core, _sent, dispatch):
             await dispatch("case:start")
-            core.draft.update(revision=2, wizardState="SITUATION", draftData={
-                "intakeVersion": 2, "incomingKind": "MESSAGE_OR_REQUEST",
-                "incomingSourceStatus": "NOT_ATTACHED",
-            })
+            core.draft.update(
+                revision=2,
+                wizardState="SITUATION",
+                draftData={
+                    "intakeVersion": 2,
+                    "incomingKind": "MESSAGE_OR_REQUEST",
+                    "incomingSourceStatus": "NOT_ATTACHED",
+                },
+            )
             before = deepcopy(core.draft)
             await dispatch("case:v2:single:incomingKind:COMPLAINT")
             assert core.draft == before
@@ -407,15 +414,21 @@ def test_remote_revision_change_refreshes_selection_before_consuming_an_old_answ
 def test_confirmed_upload_receipt_survives_failed_secondary_draft_save(lost_save):
     async def scenario():
         async with versioned_harness() as (app, core, sent, dispatch):
-            core.draft = {"id": str(DRAFT), "revision": 7, "wizardState": "MATERIALS",
-                          "draftData": _base_data()}
+            core.draft = {
+                "id": str(DRAFT),
+                "revision": 7,
+                "wizardState": "MATERIALS",
+                "draftData": _base_data(),
+            }
             await dispatch(f"case:draft:{DRAFT}")
 
             async def upload(*args, **kwargs):
                 core.draft["revision"] += 1
                 core.draft["draftData"]["caseMaterialsStatus"] = "ATTACHED"
-                return {"draftRevision": core.draft["revision"],
-                        "material": {"id": str(UUID(int=555))}}
+                return {
+                    "draftRevision": core.draft["revision"],
+                    "material": {"id": str(UUID(int=555))},
+                }
 
             original = core._json_request
             fail = True
@@ -453,12 +466,75 @@ def test_back_button_on_current_validation_message_is_usable():
         async with versioned_harness() as (_app, core, _sent, dispatch):
             data = _base_data()
             data.pop("eventDate")
-            core.draft = {"id": str(DRAFT), "revision": 7,
-                          "wizardState": "EVENT_DATE", "draftData": data}
+            core.draft = {
+                "id": str(DRAFT),
+                "revision": 7,
+                "wizardState": "EVENT_DATE",
+                "draftData": data,
+            }
             await dispatch(f"case:draft:{DRAFT}")
             await dispatch("text:not a valid date")
             assert core.draft["wizardState"] == "EVENT_DATE"
             await dispatch("case:v2:back")
             assert core.draft["wizardState"] == "EVENT"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("old_button", [False, True])
+def test_legacy_v1_same_state_buttons_apply_only_to_the_current_prompt(old_button):
+    async def scenario():
+        async with versioned_harness() as (app, core, sent, dispatch):
+            other = UUID(int=124)
+            data = complete_data()
+            data.pop("formal_claim")
+            drafts = {
+                key: {
+                    "id": str(key),
+                    "revision": 1,
+                    "wizardState": "FORMAL_CLAIM",
+                    "draftData": deepcopy(data),
+                }
+                for key in (DRAFT, other)
+            }
+
+            async def get_draft(draft_id, actor):
+                core.authorize(actor)
+                return deepcopy(drafts[draft_id])
+
+            async def save_draft(draft_id, actor, **kwargs):
+                core.authorize(actor)
+                request = TelegramIntakeDraftUpdateRequest.model_validate(
+                    {
+                        "expectedRevision": kwargs["expected_revision"],
+                        "wizardState": kwargs["wizard_state"],
+                        "draftData": kwargs["draft_data"],
+                    }
+                )
+                assert drafts[draft_id]["revision"] == request.expected_revision
+                drafts[draft_id] = {
+                    "id": str(draft_id),
+                    "revision": request.expected_revision + 1,
+                    "wizardState": request.wizard_state,
+                    "draftData": deepcopy(request.draft_data),
+                }
+                return deepcopy(drafts[draft_id])
+
+            core.get_intake_draft = get_draft
+            core.save_intake_draft = save_draft
+            await dispatch(f"case:draft:{DRAFT}")
+            first_prompt = len(sent) + 100
+            await dispatch(f"case:draft:{other}")
+            before = deepcopy(drafts)
+            if old_button:
+                await dispatch_raw(app, content="case:formal:no", message_id=first_prompt)
+                assert drafts == before, "An old V1 card answered a different V1 draft"
+                assert app.user_data[ACTOR][bot.WIZARD_DATA_KEY][bot.DRAFT_ID_KEY] == str(other)
+            else:
+                await dispatch("case:formal:no")
+                assert drafts[DRAFT] == before[DRAFT]
+                assert drafts[other]["draftData"]["formal_claim"] == "NO"
+                assert drafts[other]["wizardState"] == "CONFIRM"
+                assert "intakeVersion" not in drafts[other]["draftData"]
 
     asyncio.run(scenario())

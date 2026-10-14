@@ -241,7 +241,7 @@ def prepare_selected_draft(context: SimpleNamespace, update: SimpleNamespace) ->
             "wizardState": data[bot.DRAFT_STATE_KEY],
             "draftData": bot._draft_payload(data),
         }
-    if data.get("intakeVersion") == 2 and update.callback_query is not None:
+    if update.callback_query is not None:
         data["_v2_prompt_message_id"] = update.callback_query.message.message_id
 
 
@@ -726,11 +726,13 @@ def test_accepted_wizard_transition_saves_the_draft_before_next_question() -> No
                 "workflow_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
                 "draft_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
                 "draft_revision": 1,
+                "draft_state": "HOSPITALIZATION",
                 "harm_claimed": "YES",
             }
         },
     )
 
+    prepare_selected_draft(context, update)
     result = asyncio.run(_persist_transition(choose_hospitalization, update, context))
 
     assert result == WizardState.LAWYER
