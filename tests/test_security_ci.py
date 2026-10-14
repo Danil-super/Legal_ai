@@ -70,6 +70,14 @@ def test_pdf_test_jobs_install_native_tools_before_testing(job: str) -> None:
     assert native_index < test_index
 
 
+def test_integration_suite_keeps_full_scope_and_a_bounded_process_deadline() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    steps = workflow["jobs"]["postgres-integration"]["steps"]
+    test_step = next(step for step in steps if "python -m pytest" in step.get("run", ""))
+    assert test_step["run"] == "timeout 180s python -m pytest -vv services/legal_core/tests"
+    assert not test_step.get("continue-on-error", False)
+
+
 @pytest.mark.parametrize("workflow,job", [
     ("ci.yml", "deploy-production"), ("rollback.yml", "rollback-production"),
 ])

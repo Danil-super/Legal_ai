@@ -302,7 +302,9 @@ jobs:
       - name: PostgreSQL and MinIO integration tests
         env:
           POSTGRES_TEST_CONTAINER: ${{ job.services.postgres.id }}
-        run: timeout 120s python -m pytest -vv services/legal_core/tests
+        # This bounds the complete growing suite, not an application response or parser.
+        # Real network/parser deadlines remain unchanged and are exercised by the tests.
+        run: timeout 180s python -m pytest -vv services/legal_core/tests
 
   codeql:
     name: CodeQL
