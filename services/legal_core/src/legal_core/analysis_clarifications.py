@@ -164,6 +164,45 @@ def clarification_answers_are_known(facts: Mapping[str, object]) -> bool:
     )
 
 
+def complete_service_date_requests(
+    requests: list[ClarificationRequest], facts: Mapping[str, object], *,
+    service_date_binding_unknown: bool,
+) -> list[ClarificationRequest]:
+    """Make an actual verifier date-binding block actionable without inferring dates.
+
+    Preserve validated model questions and the shared batch limit. An attempted
+    UNKNOWN or approximate date is not an unanswered question. Missing slots can
+    progress across batches, but answered slots can never be requested again.
+    """
+    result = list(validate_request_scope(requests, facts))
+    if not service_date_binding_unknown or len(result) == 3:
+        return result
+    try:
+        answers = confirmed_answers(facts)
+    except ValueError:
+        return result
+    services = facts.get("AFFECTED_SERVICES")
+    if not isinstance(services, list) or not 1 <= len(services) <= 5:
+        return result
+    attempted = {(item.question_id, item.service_slot) for item in answers.answers}
+    requested = {(item.question_id, item.service_slot) for item in result}
+    for slot in range(len(services)):
+        candidate = ClarificationRequest(
+            questionId=ClarificationQuestionId.SERVICE_PROVIDED_DATE, serviceSlot=slot,
+        )
+        identity = (candidate.question_id, candidate.service_slot)
+        if identity in attempted or identity in requested:
+            continue
+        try:
+            validate_request_scope([candidate], facts)
+        except ValueError:
+            return result
+        result.append(candidate)
+        if len(result) == 3:
+            break
+    return validate_request_scope(result, facts)
+
+
 def exact_service_dates(facts: Mapping[str, object]) -> tuple[date, ...] | None:
     """The current claim contract has no narrower binding: require each service date.
 

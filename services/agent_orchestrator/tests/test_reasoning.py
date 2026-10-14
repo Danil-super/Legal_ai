@@ -613,6 +613,14 @@ def test_research_schema_exposes_only_bounded_factual_questions() -> None:
     assert "Legal Core" in prompt
 
 
+def test_research_prompt_preserves_attempted_unknown_and_requires_slot_bound_dates() -> None:
+    prompt = _research_prompt(_projection())
+    assert "включая UNKNOWN и APPROXIMATE" in prompt
+    assert "Дата в EVENT_SUMMARY или EVENT_DATE не заменяет такое подтверждение" in prompt
+    assert ("Не добавляй зависимость\n"
+            "ANALYSIS_CLARIFICATION_ANSWERS к claim только ради уточнения") in prompt
+
+
 def test_clarifications_do_not_bypass_legal_evidence_scope() -> None:
     async def scenario() -> None:
         response = _claim_response(OTHER_FRAGMENT_ID)

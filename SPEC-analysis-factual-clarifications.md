@@ -55,6 +55,12 @@ questions alone fix every case or prove legal correctness.
    the old case/report is unchanged and confirms the new intake. Original files
    are not copied or sent to the model. Existing retention periods apply.
 
+Runtime bug-fix clarification (ADR0089): when the unchanged verifier explicitly
+blocks a claim with SERVICE_DATE_BINDING_UNKNOWN, Core may complete the same
+bounded question batch with unattempted service-date slots. This does not infer a
+date, bypass model-request validation, repeat UNKNOWN/APPROXIMATE attempts or
+change any readiness gate. Narrative dates do not become confirmed slot answers.
+
 ## Legal and temporal boundaries
 
 EVENT_DATE is not a service date or receipt date. Neither a payment answer nor

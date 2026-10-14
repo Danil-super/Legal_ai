@@ -15,7 +15,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.analysis import analyze_frozen_case, evidence_trace_sha256
-from legal_core.analysis_clarifications import validate_request_scope
+from legal_core.analysis_clarifications import (
+    complete_service_date_requests,
+    validate_request_scope,
+)
 from legal_core.analysis_contracts import (
     AnalysisContextResponse,
     AnalysisSubmissionRequest,
@@ -503,6 +506,13 @@ def create_analysis_router(
             claims=claims,
             semantic_reviews=reviews,
             risk_policy=state.risk_policy.domain,
+        )
+        clarification_requests = complete_service_date_requests(
+            clarification_requests, {key.value: value for key, value in state.facts.items()},
+            service_date_binding_unknown=any(
+                claim.reason_code == "SERVICE_DATE_BINDING_UNKNOWN"
+                for claim in outcome.verification.claims
+            ),
         )
         # Even verified partial claims cannot make an incomplete factual analysis READY.
         # Pending questions are not confirmed facts, legal evidence or recommendations.
