@@ -621,6 +621,16 @@ def test_research_prompt_preserves_attempted_unknown_and_requires_slot_bound_dat
             "ANALYSIS_CLARIFICATION_ANSWERS к claim только ради уточнения") in prompt
 
 
+def test_supported_plan_steps_are_requested_as_cited_actions_not_unverified_prose() -> None:
+    prompt = _research_prompt(_projection())
+    assert "Конкретные шаги плана помещай в claims с kind=ACTION" in prompt
+    assert "internalRecommendations не заменяет ACTION claims" in prompt
+    assert "Не создавай действие ради заполнения плана" in prompt
+    assert "нет подтверждения в evidence" in prompt
+    assert "зависимость AFFECTED_SERVICES и проверку подтверждённых дат" in prompt
+    assert "Не меняй LEGAL на ACTION, чтобы обойти проверку фактов или дат" in prompt
+
+
 def test_clarifications_do_not_bypass_legal_evidence_scope() -> None:
     async def scenario() -> None:
         response = _claim_response(OTHER_FRAGMENT_ID)
