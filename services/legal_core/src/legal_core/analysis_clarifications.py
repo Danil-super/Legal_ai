@@ -1,5 +1,6 @@
 """Bounded factual clarification contracts; never legal evidence or model prose."""
 
+from collections.abc import Mapping
 from datetime import date
 from enum import StrEnum
 from typing import Literal
@@ -91,3 +92,39 @@ class AnalysisClarificationAnswers(ClarificationModel):
     def validate_unique(self) -> "AnalysisClarificationAnswers":
         validate_unique_requests(list(self.answers))
         return self
+
+
+def validate_request_scope(
+    requests: list[ClarificationRequest], facts: Mapping[str, object]
+) -> list[ClarificationRequest]:
+    """Revalidate model requests against frozen facts, without inferring answers.
+
+    An explicit UNKNOWN is an attempted answer: asking it again would create an
+    automatic retry loop. Missing answers alone may be requested. Tenant selection
+    and context fingerprint validation remain responsibilities of the Core route.
+    """
+    validate_unique_requests(requests)
+    if not requests:
+        return requests
+    if len(requests) > 3 or facts.get("INTAKE_VERSION") != "GUIDED_V2":
+        raise ValueError("clarification requests require a bounded guided-v2 batch")
+    answers = AnalysisClarificationAnswers.model_validate(
+        facts.get("ANALYSIS_CLARIFICATION_ANSWERS", {"answers": []})
+    )
+    answered = {(item.question_id, item.service_slot) for item in answers.answers}
+    services = facts.get("AFFECTED_SERVICES")
+    areas = facts.get("SITUATION_AREAS")
+    for request in requests:
+        if (request.question_id, request.service_slot) in answered:
+            raise ValueError("an attempted clarification cannot be requested again")
+        if request.question_id == ClarificationQuestionId.RESPONSE_PURPOSE:
+            continue
+        if (
+            not isinstance(areas, list) or "TREATMENT" not in areas
+            or not isinstance(services, list) or not 1 <= len(services) <= 5
+            or any(not isinstance(item, str) or not 2 <= len(item.strip()) <= 120
+                   for item in services)
+            or request.service_slot is None or request.service_slot >= len(services)
+        ):
+            raise ValueError("clarification does not match an existing affected service")
+    return requests

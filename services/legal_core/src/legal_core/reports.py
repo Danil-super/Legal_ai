@@ -27,6 +27,7 @@ from reportlab.platypus import (  # type: ignore[import-untyped]
     Spacer,
 )
 
+from legal_core.analysis_clarifications import ClarificationRequest
 from legal_core.contracts import (
     AnalysisAvailability,
     AnalysisSnapshot,
@@ -109,6 +110,7 @@ def build_intake_report(
     facts: Mapping[FactKey, object],
     missing_facts: Sequence[MissingFact],
     block_reason_code: str = "LEGAL_CORPUS_NOT_READY",
+    clarification_requests: Sequence[ClarificationRequest] = (),
 ) -> CanonicalReport:
     serialized_facts, facts_sha256 = _serialized_facts(facts)
     incident_types, summary = _summary_parts(facts)
@@ -128,6 +130,7 @@ def build_intake_report(
         ),
         facts=serialized_facts,
         missingFacts=list(missing_facts),
+        clarificationRequests=list(clarification_requests),
         recommendations=Recommendations(),
         draftResponse=DraftResponse(),
         legalBasis=LegalBasis(),

@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.analysis import analyze_frozen_case, evidence_trace_sha256
+from legal_core.analysis_clarifications import validate_request_scope
 from legal_core.analysis_contracts import (
     AnalysisContextResponse,
     AnalysisSubmissionRequest,
@@ -481,6 +482,18 @@ def create_analysis_router(
                 ),
             )
 
+        try:
+            clarification_requests = validate_request_scope(
+                payload.clarification_requests,
+                {key.value: value for key, value in state.facts.items()},
+            )
+        except ValueError as exc:
+            raise ApiError(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                code="CLARIFICATION_REQUEST_NOT_APPLICABLE",
+                message="Clarification does not match unanswered frozen case facts",
+            ) from exc
+
         claims = _domain_claims(payload)
         reviews = _semantic_reviews(payload)
         outcome = analyze_frozen_case(
@@ -491,6 +504,9 @@ def create_analysis_router(
             semantic_reviews=reviews,
             risk_policy=state.risk_policy.domain,
         )
+        # Even verified partial claims cannot make an incomplete factual analysis READY.
+        # Pending questions are not confirmed facts, legal evidence or recommendations.
+        analysis_allowed = outcome.analysis_allowed and not clarification_requests
 
         risk_record = await record_case_risk_assessment(
             session,
@@ -514,7 +530,7 @@ def create_analysis_router(
             payload=verifier_payload,
         )
 
-        if outcome.analysis_allowed:
+        if analysis_allowed:
             state.case.status = (
                 CaseStatus.ESCALATION_REQUIRED.value
                 if outcome.risk.level in {RiskLevel.HIGH, RiskLevel.CRITICAL}
@@ -531,7 +547,7 @@ def create_analysis_router(
         )
         report_version = int(current_version or 0) + 1
         report_id = uuid4()
-        if outcome.analysis_allowed:
+        if analysis_allowed:
             result_by_claim = {
                 item.claim_id: item.result for item in outcome.verification.claims
             }
@@ -561,6 +577,7 @@ def create_analysis_router(
             )
         else:
             block_reason = (
+                "FACTUAL_CLARIFICATION_REQUIRED" if clarification_requests else
                 verifier_payload.block_reason_codes[0]
                 if verifier_payload.block_reason_codes
                 else outcome.risk.reason_codes[0]
@@ -575,6 +592,7 @@ def create_analysis_router(
                 facts=state.facts,
                 missing_facts=risk_missing_facts(outcome.risk),
                 block_reason_code=block_reason,
+                clarification_requests=clarification_requests,
             )
 
         canonical = canonical.model_copy(
@@ -598,7 +616,7 @@ def create_analysis_router(
         )
         session.add(idempotency)
         response_payload = AnalysisSubmissionResponse(
-            analysisAllowed=outcome.analysis_allowed,
+            analysisAllowed=analysis_allowed,
             riskLevel=outcome.risk.level.value,
             escalationRequired=(
                 outcome.risk.level in {RiskLevel.HIGH, RiskLevel.CRITICAL}
@@ -624,7 +642,7 @@ def create_analysis_router(
                 resource_type="CASE_ANALYSIS_RUN",
                 resource_id=verifier_record.analysis_run_id,
                 metadata={
-                    "analysisAllowed": outcome.analysis_allowed,
+                    "analysisAllowed": analysis_allowed,
                     "reportId": str(report.id),
                     "riskLevel": outcome.risk.level.value,
                     "clinicDocumentContextCount": len(state.clinic_document_context),
@@ -634,6 +652,10 @@ def create_analysis_router(
                     "clinicDocumentExpectationCount": len(state.clinic_document_readiness),
                     "clinicDocumentNotAvailableCount": missing_document_count,
                     "draftPolicyVersion": canonical.draft_response.policy_version,
+                    "clarificationRequestCount": len(clarification_requests),
+                    "clarificationQuestionIds": [
+                        request.question_id.value for request in clarification_requests
+                    ],
                 },
             )
         )

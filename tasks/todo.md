@@ -49,26 +49,36 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
 
 ### FC3: carry requests across the model boundary
 
-- [ ] Researcher may emit at most three IDs/slots, not free question text or
+- [x] Researcher may emit at most three IDs/slots, not free question text or
   answers; empty claims still discard recommendations/draft and skip reviewer.
-- [ ] Preserve question requests in ReasoningResult and the existing Core client
+- [x] Preserve question requests in ReasoningResult and the existing Core client
   submission. Old batches with no requests retain their exact safe behaviour.
 - Files (5): orchestrator src/agent_orchestrator/{contracts,reasoning,legal_core_client}.py,
   tests/{test_reasoning,test_legal_core_client}.py.
 - Verify: `python -m pytest services/agent_orchestrator/tests/test_reasoning.py services/agent_orchestrator/tests/test_legal_core_client.py services/agent_orchestrator/tests/test_projection.py -q`.
 - Dependencies: FC1–FC2; medium scope; no provider/model/tools/time-budget change.
+- Evidence: independent FC3 implementation a053ebf integrated as a63af1e;
+  RED 7 failed/56 passed, GREEN 163 orchestrator tests; Ruff and mypy passed.
+  Prompt explicitly limits questions to GUIDED_V2; legacy SERVICE_TYPE is not
+  silently converted into an affected-service slot.
 
 ### FC4: persist only Core-validated blocked questions
 
-- [ ] Revalidate against frozen tenant case facts, unknown answers and valid
+- [x] Revalidate against frozen tenant case facts, unknown answers and valid
   service slots; reject invalid requests. Store accepted IDs/slots in the existing
   immutable canonical report, not model prose or confirmed facts.
-- [ ] Preserve context hashes/job fences, retained idempotent replay and safe
+- [x] Preserve context hashes/job fences, retained idempotent replay and safe
   BLOCKED semantics; log only bounded IDs/counts, never answer values/model bodies.
 - Files (5): Core src/legal_core/{analysis_clarifications,analysis_api,reports}.py,
   tests/{test_analysis_api,test_analysis_clarification_submission}.py (latter new).
 - Verify: `POSTGRES_INTEGRATION=1 python -m pytest services/legal_core/tests/test_analysis_api.py services/legal_core/tests/test_analysis_clarification_submission.py -q` with disposable DB configuration.
 - Dependencies: FC1–FC3; medium scope.
+- Evidence: scope/builder RED 12 failures; real PG route RED accepted invalid slot;
+  GREEN 98 focused tests including real PG empty-claim and verified-partial-claim
+  batches, invalid slot rejection, foreign-tenant denial, immutable facts/hash,
+  one new blocked report, idempotent replay and metadata-only audit. On-call can
+  distinguish factual block using reasonCode and clarificationRequestCount/IDs
+  correlated with existing reportId/run resource; no answer or service label logged.
 
 ### Checkpoint A — contracts and model/Core path
 
@@ -78,14 +88,18 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
 
 ### FC5: pure question flow and confirmed fact conversion
 
-- [ ] Fixed Russian questions, bounded service mapping and UNKNOWN-aware parsing
+- [x] Fixed Russian questions, bounded service mapping and UNKNOWN-aware parsing
   share one pure implementation; a changed service set invalidates its answers.
-- [ ] Include only user-confirmed answers in V2 facts and factual recap; no
+- [x] Include only user-confirmed answers in V2 facts and factual recap; no
   inferred legacy labels, dates, deadlines, defect or responsibility.
 - Files (4): gateway src/telegram_gateway/{guided_case_intake_v2,case_wizard}.py,
   tests/{test_guided_case_intake_v2,test_case_wizard}.py.
 - Verify: `python -m pytest services/gateway/telegram/tests/test_guided_case_intake_v2.py services/gateway/telegram/tests/test_case_wizard.py -q`.
 - Dependencies: FC1–FC2; medium scope.
+- Evidence: independent implementation c152789 integrated as 5416d3e, focused
+  GREEN 85 tests; Ruff and all-service mypy passed. First RED missing helpers,
+  second RED 5 failed plus missing-helper import. Gateway packaging failure found
+  by broader regression was reproduced and fixed separately in 18790cd.
 
 ### FC6: durable Telegram question interaction
 
