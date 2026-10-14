@@ -43,6 +43,13 @@
   утверждает, что именно последний файл сохранён. Если серверный read также
   недоступен, пользователь получает указание восстановить черновик через меню;
   текст не обещает отсутствия файла. Автоматического повтора upload нет.
+- MATERIALS text/document handlers также читают protected snapshot до parsing или
+  Telegram download. После upload receipt выполняется ещё один protected read:
+  новая revision из upload не разрешает PUT всего устаревшего draftData.
+  Из последнего серверного snapshot меняются только attachment/source flags,
+  secondary PUT использует его optimistic revision. Изменённые eventSummary и
+  другие несвязанные факты не заменяются кешем; последующая гонка даёт conflict
+  и возвращает актуальное состояние через существующее reconciliation.
 
 Не меняются REST/schema, миграции, хранение исходных bytes, юридический evidence,
 policy, approval, сроки хранения и запрет автоматического ответа пациенту.
@@ -81,3 +88,7 @@ legacy production `_ask`/resume текущая кнопка работает, с
 read. После исправления ACK виден до завершения read, protected output отсутствует
 во время блокировки, underlying handler не отправляет второй ACK, следующий
 update получает собственный ACK и область вызова освобождается.
+Независимая дополнительная проверка обнаружила stale MATERIALS overwrite;
+runtime RED воспроизвёл изменения до и во время upload и download/parsing
+после отзыва доступа. Проверки исправления включают также изменение после
+post-receipt GET: optimistic конфликт сохраняет новые факты.

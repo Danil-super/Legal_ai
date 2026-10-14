@@ -573,7 +573,7 @@ def test_callback_acknowledges_before_blocked_core_read_without_cached_output():
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("edit_timing", ["before_upload", "during_upload"])
+@pytest.mark.parametrize("edit_timing", ["before_upload", "during_upload", "after_receipt_read"])
 def test_upload_state_merge_preserves_current_server_facts(edit_timing):
     async def scenario():
         async with versioned_harness() as (app, core, _sent, dispatch):
@@ -592,25 +592,42 @@ def test_upload_state_merge_preserves_current_server_facts(edit_timing):
 
             if edit_timing == "before_upload":
                 edit()
+            uploaded = False
+            original_get = core.get_intake_draft
+            edited_after_read = False
+
+            async def get_current(draft_id, actor):
+                nonlocal edited_after_read
+                snapshot = await original_get(draft_id, actor)
+                if uploaded and edit_timing == "after_receipt_read" and not edited_after_read:
+                    edited_after_read = True
+                    edit()
+                return snapshot
 
             async def upload(*args, **kwargs):
+                nonlocal uploaded
                 if edit_timing == "during_upload":
                     edit()
                 core.draft["revision"] += 1
                 core.draft["draftData"]["caseMaterialsStatus"] = "ATTACHED"
+                uploaded = True
                 return {
                     "draftRevision": core.draft["revision"],
                     "material": {"id": str(UUID(int=555))},
                 }
 
             core.upload_case_material = upload
+            core.get_intake_draft = get_current
             await dispatch("text:Fixed synthetic material without identifying information.")
             assert core.draft["draftData"]["eventSummary"] == replacement, (
                 "A secondary attachment PUT overwrote newer unrelated facts with cached data"
             )
             assert core.draft["draftData"]["caseMaterialsStatus"] == "ATTACHED"
-            assert core.draft["draftData"]["incomingSourceStatus"] == "TEXT_ATTACHED"
             assert app.user_data[ACTOR][bot.WIZARD_DATA_KEY]["eventSummary"] == replacement
+            await dispatch("case:v2:material:done")
+            assert core.draft["draftData"]["incomingSourceStatus"] == "TEXT_ATTACHED"
+            assert core.draft["draftData"]["eventSummary"] == replacement
+            assert all(item["draftData"]["eventSummary"] == replacement for item in core.saved)
 
     asyncio.run(scenario())
 

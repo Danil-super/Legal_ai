@@ -1151,20 +1151,33 @@ async def _save_v2_material_state(
     data: dict[str, Any],
     source_status: str,
 ) -> int:
-    data["caseMaterialsStatus"] = "ATTACHED"
-    data["incomingSourceStatus"] = source_status
-    saved = await _legal_core(context).save_intake_draft(
+    client = _legal_core(context)
+    # Upload advances the server revision but does not refresh our other facts.
+    # Read again after its receipt, then merge only the observed attachment flags.
+    current = _saved_draft_selection(
+        draft_id, await client.get_intake_draft(draft_id, actor_id),
+    )
+    current_revision = int(current[DRAFT_REVISION_KEY])
+    if current_revision < revision or current.get("caseMaterialsStatus") != "ATTACHED":
+        raise ValueError("material receipt does not match current draft")
+    if current[DRAFT_STATE_KEY] != WizardState.MATERIALS.name:
+        raise LegalCoreApiError(409, "INTAKE_DRAFT_REVISION_CONFLICT", "draft step changed")
+    current["caseMaterialsStatus"] = "ATTACHED"
+    current["incomingSourceStatus"] = source_status
+    payload = _draft_payload(current)
+    saved = await client.save_intake_draft(
         draft_id,
         actor_id,
-        expected_revision=revision,
+        expected_revision=current_revision,
         wizard_state=WizardState.MATERIALS.name,
-        draft_data=_draft_payload(data),
+        draft_data=payload,
     )
-    saved_revision = saved.get("revision")
-    if not isinstance(saved_revision, int) or saved_revision <= revision:
+    saved_selection = _saved_draft_selection(draft_id, saved)
+    saved_revision = int(saved_selection[DRAFT_REVISION_KEY])
+    if saved_revision <= current_revision or _draft_payload(saved_selection) != payload:
         raise ValueError("material state save response is invalid")
-    data[DRAFT_REVISION_KEY] = saved_revision
-    data[DRAFT_STATE_KEY] = WizardState.MATERIALS.name
+    data.clear()
+    data.update(saved_selection)
     return saved_revision
 
 
@@ -1275,10 +1288,38 @@ async def _upload_v2_material(
     return WizardState.MATERIALS
 
 
+async def _prepare_v2_material_input(
+    update: Update, context: ContextTypes.DEFAULT_TYPE,
+) -> int | None:
+    data, actor_id = _wizard_data(context), _actor_id(update)
+    try:
+        if actor_id is None:
+            raise ValueError("material actor is missing")
+        draft_id = UUID(str(data[DRAFT_ID_KEY]))
+        current = _saved_draft_selection(
+            draft_id, await _legal_core(context).get_intake_draft(draft_id, actor_id),
+        )
+    except (KeyError, ValueError, LegalCoreApiError):
+        _clear_wizard(context)
+        await _reply(update, "🔒 Черновик сейчас недоступен. Обновите список через /menu.")
+        return ConversationHandler.END
+    state = WizardState[str(current[DRAFT_STATE_KEY])]
+    changed = current[DRAFT_REVISION_KEY] != data.get(DRAFT_REVISION_KEY)
+    if changed or state is not WizardState.MATERIALS:
+        data.clear()
+        data.update(current)
+        await _prompt_v2_draft(update, state, data)
+    # Do not consume this file/text for a different server-owned step.
+    return None if state is WizardState.MATERIALS else state
+
+
 async def receive_v2_material_document(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
+    blocked = await _prepare_v2_material_input(update, context)
+    if blocked is not None:
+        return blocked
     message = update.effective_message
     document = None if message is None else message.document
     if document is None or not document.file_name:
@@ -1320,6 +1361,9 @@ async def receive_v2_material_text(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
+    blocked = await _prepare_v2_material_input(update, context)
+    if blocked is not None:
+        return blocked
     value = _message_text(update)
     if contains_probable_person_name(value) or pseudonymize_text(value).changed:
         await _reply(
