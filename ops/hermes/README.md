@@ -18,8 +18,10 @@ loads the actual pinned Hermes builtin/plugin registries and the final model-too
 non-zero unless both the resolved toolset list and tool schema are empty.
 
 The same preflight verifies the pinned provider/model timeout resolvers: both legal profiles
-use `agent.api_max_retries: 1`, and custom provider request/stale timeouts of 29 seconds.
-The orchestrator uses SSE with total stage walls of 30 seconds for research and 50 seconds for
+use `agent.api_max_retries: 1`, and custom provider request/stale timeouts of 55 seconds.
+This owner-approved bounded trial and its matching startup guard are documented in
+[ADR-0088](../../docs/adr/0088-bounded-hermes-provider-wait-trial.md).
+The orchestrator uses SSE with total stage walls of 65 seconds for each of research and
 review, inside one shared 115-second analysis deadline (including Legal Core context/submission).
 The worker's HTTP operation timeout remains 120 seconds, wall deadline 125 seconds and lease
 180 seconds. Request timeouts apply to HTTP operations, not the total turn. The configured stale
@@ -110,7 +112,7 @@ At minimum verify all of the following on the actual deployment host:
 1. `docker image inspect` shows the local pinned image tag built by the helper script.
 2. Both Hermes container logs contain a successful zero-tool preflight result with empty
    `enabledToolsets` and `toolSchemas`, and `callBudget.apiAttemptsPerCycle: 1`,
-   `requestOperationTimeoutSeconds: 29` and `configuredStaleTimeoutSeconds: 29`. These are
+   `requestOperationTimeoutSeconds: 55` and `configuredStaleTimeoutSeconds: 55`. These are
    resolved configuration values, not an effective stale threshold, total turn deadline or
    single upstream call guarantee.
 3. Neither Hermes container has a published host port.
