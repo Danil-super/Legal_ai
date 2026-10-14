@@ -91,9 +91,11 @@ def test_builder_retains_questions_but_no_legal_advice_or_inferred_answer() -> N
 
 @pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1", reason="requires disposable PG")
 @pytest.mark.usefixtures("isolated_database")
-@pytest.mark.parametrize("partial_claims", [False, True])
+@pytest.mark.parametrize("mode", [
+    "questions_only", "verified_partial", "date_gap", "date_gap_existing", "answer_bundle_unknown",
+])
 def test_real_submission_persists_blocked_questions_and_idempotent_replay(
-    tmp_path, partial_claims: bool,
+    tmp_path, mode: str,
 ) -> None:
     actor = 76_000_000_000 + uuid4().int % 1_000_000_000
     other = actor + 2_000_000_000
@@ -134,7 +136,11 @@ def test_real_submission_persists_blocked_questions_and_idempotent_replay(
         context_response = client.get(f"/v1/cases/{case_id}/analysis-context", headers=internal)
         assert context_response.status_code == 200, context_response.text
         context = context_response.json()
-        questions = [{"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 0}]
+        questions = [] if mode in {"date_gap", "answer_bundle_unknown"} else [
+            {"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 0}]
+        expected_questions = questions + ([{
+            "questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 0,
+        }] if mode.startswith("date_gap") else [])
         payload = {
             "asOfDate": context["asOfDate"],
             "expectedFactSnapshotSha256": context["factSnapshotSha256"],
@@ -143,12 +149,14 @@ def test_real_submission_persists_blocked_questions_and_idempotent_replay(
             "expectedRiskPolicyVersion": context["riskPolicyVersion"],
             "claims": [], "semanticReviews": [], "clarificationRequests": questions,
         }
-        if partial_claims:
+        if mode != "questions_only":
             fragment = context["evidence"][0]["fragmentId"]
             payload.update(claims=[{
                 "claimId": "synthetic-action", "kind": "ACTION",
                 "text": "Зафиксировать обращение пациента во внутреннем журнале.",
-                "evidenceFragmentIds": [fragment], "requiredFactKeys": [],
+                "evidenceFragmentIds": [fragment],
+                "requiredFactKeys": ["AFFECTED_SERVICES"] if mode.startswith("date_gap") else
+                ["ANALYSIS_CLARIFICATION_ANSWERS"] if mode == "answer_bundle_unknown" else [],
             }], semanticReviews=[{
                 "claimId": "synthetic-action", "verdict": "SUPPORTED",
                 "reviewedFragmentIds": [fragment],
@@ -167,9 +175,10 @@ def test_real_submission_persists_blocked_questions_and_idempotent_replay(
         report = first.json()["report"]["reportJson"]
         assert first.json()["analysisAllowed"] is False
         assert report["summary"]["analysisAvailability"] == {
-            "status": "BLOCKED", "reasonCode": "FACTUAL_CLARIFICATION_REQUIRED",
+            "status": "BLOCKED", "reasonCode": "ANALYSIS_CLARIFICATION_ANSWERS_UNKNOWN"
+            if mode == "answer_bundle_unknown" else "FACTUAL_CLARIFICATION_REQUIRED",
         }
-        assert report["clarificationRequests"] == questions
+        assert report.get("clarificationRequests", []) == expected_questions
         assert report["recommendations"]["items"] == []
         assert report["legalConclusions"] == []
         assert report["factSnapshotSha256"] == context["factSnapshotSha256"]
@@ -185,8 +194,9 @@ def test_real_submission_persists_blocked_questions_and_idempotent_replay(
                 "SELECT metadata_json FROM audit_events WHERE action='CASE_ANALYSIS_COMPLETED' "
                 "AND metadata_json->>'reportId'=:report"
             ), {"report": report["reportId"]})
-            assert metadata["clarificationRequestCount"] == 1
-            assert metadata["clarificationQuestionIds"] == ["SERVICE_PAYMENT_BASIS"]
+            assert metadata["clarificationRequestCount"] == len(expected_questions)
+            assert metadata["clarificationQuestionIds"] == [
+                q["questionId"] for q in expected_questions]
             assert "answers" not in metadata
             assert "Синтетическая услуга" not in str(metadata)
         engine.dispose()
