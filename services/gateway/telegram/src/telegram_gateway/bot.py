@@ -815,16 +815,26 @@ async def _prompt_v2_draft(
     data: dict[str, Any],
 ) -> None:
     message = update.effective_message
+    data.pop("_v2_prompt_message_id", None)
+
+    async def reply(text: str, *, reply_markup: InlineKeyboardMarkup) -> None:
+        if message is None:
+            return
+        sent = await message.reply_text(text, reply_markup=reply_markup)
+        message_id = getattr(sent, "message_id", None)
+        if type(message_id) is int and message_id > 0:
+            data["_v2_prompt_message_id"] = message_id
+
     if state is WizardState.INCOMING:
         if message is not None:
-            await message.reply_text(
+            await reply(
                 "1/7. Что поступило от пациента? Выберите самое близкое описание.",
                 reply_markup=_v2_single_keyboard("incomingKind"),
             )
     elif state is WizardState.SITUATION:
         if message is not None:
             selected = data.get("situationAreas")
-            await message.reply_text(
+            await reply(
                 "2/7. С чем связана ситуация? Можно выбрать несколько вариантов, "
                 "затем «Продолжить».",
                 reply_markup=_v2_multi_keyboard(
@@ -832,21 +842,18 @@ async def _prompt_v2_draft(
                 ),
             )
     elif state is WizardState.SERVICES:
-        await _reply(
-            update,
+        await reply(
             "2/7. Какие услуги затронуты? Укажите от одной до пяти через точку с запятой. "
             "Если точная услуга неизвестна, так и напишите.",
             reply_markup=_v2_keyboard([]),
         )
     elif state is WizardState.EVENT:
-        await _reply(
-            update,
+        await reply(
             "3/7. Кратко опишите, что произошло, только фактами (10–1500 символов, без ФИО).",
             reply_markup=_v2_keyboard([]),
         )
     elif state is WizardState.EVENT_DATE:
-        await _reply(
-            update,
+        await reply(
             "3/7. Когда это произошло? Укажите точную дату ГГГГ-ММ-ДД или ДД.ММ.ГГГГ. "
             "Если дата неизвестна, напишите «неизвестно» — соберём остальные факты. "
             "Для юридического анализа дату потребуется уточнить; срочный кейс "
@@ -855,14 +862,14 @@ async def _prompt_v2_draft(
         )
     elif state is WizardState.CHRONOLOGY:
         if message is not None:
-            await message.reply_text(
+            await reply(
                 "3/7. Это первое обращение по ситуации или конфликт уже продолжается?",
                 reply_markup=_v2_single_keyboard("conflictStage"),
             )
     elif state is WizardState.CLINIC_ACTIONS:
         if message is not None:
             selected = data.get("clinicActions")
-            await message.reply_text(
+            await reply(
                 "4/7. Что клиника уже сделала? Выберите всё подходящее, затем «Продолжить».",
                 reply_markup=_v2_multi_keyboard(
                     "clinicActions", selected if isinstance(selected, list) else []
@@ -871,7 +878,7 @@ async def _prompt_v2_draft(
     elif state is WizardState.HEALTH:
         if message is not None:
             selected = data.get("healthSignals")
-            await message.reply_text(
+            await reply(
                 "5/7. Есть ли известные последствия для здоровья? «Недостаточно сведений» "
                 "не означает, что последствий не было.",
                 reply_markup=_v2_multi_keyboard(
@@ -890,7 +897,7 @@ async def _prompt_v2_draft(
             prompt = "6/7. Обезличенный материал добавлен. Можно добавить ещё один или продолжить."
             rows = [[("Продолжить", "case:v2:material:done")]]
         if message is not None:
-            await message.reply_text(prompt, reply_markup=_v2_keyboard(rows))
+            await reply(prompt, reply_markup=_v2_keyboard(rows))
     elif state is WizardState.SAFETY:
         question = screening_question(data)
         if question is None:
@@ -904,8 +911,7 @@ async def _prompt_v2_draft(
         if known_urgent_report(data):
             rows.append([("Подтвердить известное без других уточнений",
                           "case:safety:known:confirm")])
-        await _reply(
-            update,
+        await reply(
             "Уточнение фактов перед фабулой. Юридическую оценку делать не нужно.\n\n"
             + prompt + "\n«Не знаю» не считается отрицательным ответом. "
             "При подтверждении только известного остальные уточнения останутся неизвестными.",
@@ -918,11 +924,11 @@ async def _prompt_v2_draft(
                 rows = [[("✅ Всё верно", "case:v2:summary:confirm")]] if (
                     index == len(pages) - 1
                 ) else []
-                await message.reply_text(page, reply_markup=_v2_keyboard(rows))
+                await reply(page, reply_markup=_v2_keyboard(rows))
     elif state is WizardState.V2_CONFIRM:
         workflow_id = UUID(str(data["workflow_id"]))
         if message is not None:
-            await message.reply_text(
+            await reply(
                 "Фактическая карточка подтверждена. Сформировать внутренний отчёт?",
                 reply_markup=confirm_keyboard(workflow_id),
             )
@@ -1358,7 +1364,10 @@ def _draft_payload(data: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value
         for key, value in data.items()
-        if key not in {"workflow_id", DRAFT_ID_KEY, DRAFT_REVISION_KEY, DRAFT_STATE_KEY}
+        if key not in {
+            "workflow_id", DRAFT_ID_KEY, DRAFT_REVISION_KEY, DRAFT_STATE_KEY,
+            "_v2_prompt_message_id",
+        }
     }
 
 
@@ -1380,6 +1389,21 @@ async def _persist_transition(
         _clear_wizard(context)
         await _reply(update, "🔒 Черновик сейчас недоступен. Обновите список через /menu.")
         return ConversationHandler.END
+    query = update.callback_query
+    if _is_v2_draft(data) and query is not None:
+        message = query.message
+        expected_message = data.get("_v2_prompt_message_id")
+        if (
+            type(expected_message) is not int or message is None
+            or message.message_id != expected_message
+        ):
+            await _answer_callback(update)
+            await _reply(
+                update, "Эта карточка устарела. Используйте кнопки последнего вопроса "
+                "или откройте текущий черновик заново.",
+                reply_markup=_keyboard([[("Открыть текущий черновик", f"case:draft:{draft_id}")]]),
+            )
+            return WizardState[str(data[DRAFT_STATE_KEY])]
     before = _draft_payload(data)
     next_state = await handler(update, context)
     if not isinstance(next_state, WizardState):

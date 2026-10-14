@@ -217,6 +217,14 @@ async def harness():
                                             "length": len(content)}]
                 body["message"] = message
             else:
+                for index in range(len(sent) - 1, -1, -1):
+                    markup = sent[index].get("reply_markup")
+                    if markup is not None and any(
+                        button.callback_data == content
+                        for row in markup.inline_keyboard for button in row
+                    ):
+                        message["message_id"] = index + 101
+                        break
                 body["callback_query"] = {"id": str(counter), "chat_instance": "synthetic",
                                           "from": user, "message": message, "data": content}
             await asyncio.wait_for(app.process_update(Update.de_json(body, app.bot)), 2)

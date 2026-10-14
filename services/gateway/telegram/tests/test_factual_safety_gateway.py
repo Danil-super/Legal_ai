@@ -20,7 +20,7 @@ from telegram_gateway.factual_safety_intake import (
     screening_summary,
 )
 from telegram_gateway.guided_case_intake_v2 import V2_SAFETY, next_missing_state
-from test_case_wizard import FakeMessage, FakeQuery, FakeReportPipeline
+from test_case_wizard import FakeMessage, FakeQuery, FakeReportPipeline, prepare_selected_draft
 from test_guided_case_intake_v2 import _base_data
 
 
@@ -125,6 +125,7 @@ def runtime_context(data, callback):
     context = SimpleNamespace(
         bot_data={bot.LEGAL_CORE_CLIENT_KEY: pipeline}, user_data={bot.WIZARD_DATA_KEY: data}
     )
+    prepare_selected_draft(context, update)
     return update, context, pipeline, message
 
 

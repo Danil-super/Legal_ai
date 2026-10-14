@@ -45,10 +45,12 @@ def fake_update(*, text: str = "", callback: str | None = None) -> SimpleNamespa
     return SimpleNamespace(
         effective_user=SimpleNamespace(id=ACTOR_ID),
         effective_message=SimpleNamespace(
-            text=text, reply_text=AsyncMock(), reply_document=AsyncMock()
+            text=text, message_id=3, reply_text=AsyncMock(), reply_document=AsyncMock()
         ),
         callback_query=(
-            None if callback is None else SimpleNamespace(data=callback, answer=AsyncMock())
+            None if callback is None else SimpleNamespace(
+                data=callback, answer=AsyncMock(), message=SimpleNamespace(message_id=3),
+            )
         ),
     )
 
@@ -209,6 +211,7 @@ def test_v2_delivery_failure_preserves_guided_confirmation_for_safe_retry(
         bot.DRAFT_REVISION_KEY: 7,
         bot.DRAFT_STATE_KEY: "V2_CONFIRM",
         "intakeVersion": 2,
+        "_v2_prompt_message_id": 3,
         "incomingKind": "COMPLAINT",
         "incomingSourceStatus": "NOT_ATTACHED",
         "situationAreas": ["TREATMENT"],

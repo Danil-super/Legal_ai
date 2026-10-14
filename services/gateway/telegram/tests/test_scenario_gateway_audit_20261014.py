@@ -366,3 +366,16 @@ def test_wrong_text_at_button_step_does_not_change_or_echo_the_draft():
             assert not any(raw in item.get("text", "") for item in sent[count:])
 
     asyncio.run(scenario())
+
+
+def test_latest_checked_button_can_deselect_an_answer():
+    async def scenario():
+        async with versioned_harness() as (_app, core, _sent, dispatch):
+            await dispatch("case:start")
+            await dispatch("case:v2:single:incomingKind:COMPLAINT")
+            await dispatch("case:v2:multi:situationAreas:TREATMENT")
+            assert core.draft["draftData"]["situationAreas"] == ["TREATMENT"]
+            await dispatch("case:v2:multi:situationAreas:TREATMENT")
+            assert core.draft["draftData"]["situationAreas"] == []
+
+    asyncio.run(scenario())
