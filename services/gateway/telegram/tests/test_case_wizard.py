@@ -53,14 +53,18 @@ from telegram_gateway.update_processor import ActorSerialUpdateProcessor
 
 
 class FakeMessage:
+    last_reply_id = 1
+
     def __init__(self) -> None:
         self.text_replies: list[str] = []
         self.text_reply_markups: list[object | None] = []
         self.documents: list[dict[str, object]] = []
 
-    async def reply_text(self, text: str, **kwargs: object) -> None:
+    async def reply_text(self, text: str, **kwargs: object) -> SimpleNamespace:
         self.text_replies.append(text)
         self.text_reply_markups.append(kwargs.get("reply_markup"))
+        FakeMessage.last_reply_id += 1
+        return SimpleNamespace(message_id=FakeMessage.last_reply_id)
 
     async def reply_document(self, **kwargs: object) -> None:
         self.documents.append(kwargs)
@@ -69,6 +73,7 @@ class FakeMessage:
 class FakeQuery:
     def __init__(self, data: str) -> None:
         self.data = data
+        self.message = SimpleNamespace(message_id=FakeMessage.last_reply_id)
         self.answers: list[tuple[str | None, bool]] = []
 
     async def answer(self, text: str | None = None, show_alert: bool = False) -> None:
@@ -78,6 +83,7 @@ class FakeQuery:
 class FakeLegalCore:
     def __init__(self, response: dict[str, Any] | Exception) -> None:
         self.response = response
+        self.saved_draft: dict[str, Any] | None = None
 
     async def get_actor(self, telegram_user_id: int) -> dict[str, Any]:
         del telegram_user_id
@@ -109,10 +115,13 @@ class FakeLegalCore:
         }
 
     async def save_intake_draft(self, *args: object, **kwargs: object) -> dict[str, Any]:
-        del args, kwargs
         if isinstance(self.response, Exception):
             raise self.response
-        return {"revision": 2}
+        self.saved_draft = {
+            "id": str(args[0]), "revision": int(kwargs["expected_revision"]) + 1,
+            "wizardState": kwargs["wizard_state"], "draftData": kwargs["draft_data"],
+        }
+        return self.saved_draft
 
     async def archive_intake_draft(self, *args: object, **kwargs: object) -> dict[str, Any]:
         del args, kwargs
@@ -130,6 +139,8 @@ class FakeLegalCore:
         del telegram_user_id
         if isinstance(self.response, Exception):
             raise self.response
+        if self.saved_draft is not None:
+            return self.saved_draft
         return {
             "id": str(draft_id),
             "wizardState": "SERVICE_TYPE",
@@ -186,9 +197,10 @@ class FakeReportPipeline:
         draft_data: dict[str, Any],
         **kwargs: object,
     ) -> dict[str, Any]:
-        del args, kwargs
+        del kwargs
         self.steps.append("save")
         self.saved_draft = {
+            "id": str(args[0]),
             "wizardState": wizard_state,
             "revision": expected_revision + 1,
             "draftData": dict(draft_data),
@@ -214,6 +226,23 @@ class FakeReportPipeline:
         del args, kwargs
         self.steps.append("archive")
         return {"revision": 3}
+
+
+def prepare_selected_draft(context: SimpleNamespace, update: SimpleNamespace) -> None:
+    """Seed the server boundary and the originating prompt for direct handler tests."""
+    from telegram_gateway import bot
+
+    data = context.user_data[bot.WIZARD_DATA_KEY]
+    client = context.bot_data[bot.LEGAL_CORE_CLIENT_KEY]
+    if isinstance(client, FakeReportPipeline | FakeLegalCore) and client.saved_draft is None:
+        client.saved_draft = {
+            "id": data[bot.DRAFT_ID_KEY],
+            "revision": data[bot.DRAFT_REVISION_KEY],
+            "wizardState": data[bot.DRAFT_STATE_KEY],
+            "draftData": bot._draft_payload(data),
+        }
+    if update.callback_query is not None:
+        data["_v2_prompt_message_id"] = update.callback_query.message.message_id
 
 
 def test_parse_iso_date_accepts_only_real_non_future_iso_dates() -> None:
@@ -697,11 +726,13 @@ def test_accepted_wizard_transition_saves_the_draft_before_next_question() -> No
                 "workflow_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
                 "draft_id": "9d0dd02f-cfd9-498a-85e4-c30b53abca88",
                 "draft_revision": 1,
+                "draft_state": "HOSPITALIZATION",
                 "harm_claimed": "YES",
             }
         },
     )
 
+    prepare_selected_draft(context, update)
     result = asyncio.run(_persist_transition(choose_hospitalization, update, context))
 
     assert result == WizardState.LAWYER
@@ -800,6 +831,7 @@ def test_v2_choice_flow_persists_plain_language_values_without_legal_qualificati
         effective_message=message,
     )
 
+    prepare_selected_draft(context, incoming)
     result = asyncio.run(_persist_transition(choose_v2_single, incoming, context))
 
     assert result == WizardState.SITUATION
@@ -864,6 +896,7 @@ def test_v2_confirmation_submits_plain_language_facts_without_legacy_qualificati
         },
     )
 
+    prepare_selected_draft(context, update)
     result = asyncio.run(_persist_transition(confirm_case, update, context))
 
     assert result == ConversationHandler.END
@@ -892,6 +925,7 @@ def test_v2_confirmation_does_not_finalize_unknown_event_date() -> None:
         }},
     )
 
+    prepare_selected_draft(context, update)
     result = asyncio.run(_persist_transition(confirm_case, update, context))
 
     assert result == WizardState.EVENT_DATE
@@ -931,6 +965,7 @@ def test_legacy_confirmation_keeps_all_unknown_dates_in_editable_draft() -> None
         }},
     )
 
+    prepare_selected_draft(context, update)
     result = asyncio.run(_persist_transition(confirm_case, update, context))
 
     assert result == WizardState.CONFIRM
@@ -1004,6 +1039,7 @@ def test_stale_v2_summary_button_collects_safety_before_date_gate() -> None:
         }},
     )
 
+    prepare_selected_draft(context, update)
     result = asyncio.run(_persist_transition(confirm_v2_summary, update, context))
 
     assert result == WizardState.SAFETY

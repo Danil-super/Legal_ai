@@ -48,6 +48,36 @@ def test_container_smoke_covers_real_images_without_network() -> None:
     assert "assert os.getuid() != 0" in text
 
 
+@pytest.mark.parametrize("job", ["quality", "postgres-integration"])
+def test_pdf_test_jobs_install_native_tools_before_testing(job: str) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    steps = workflow["jobs"][job]["steps"]
+    native_steps = [
+        (index, step) for index, step in enumerate(steps)
+        if step.get("name") == "Install native PDF test dependencies"
+    ]
+    assert len(native_steps) == 1, "Clean runners must explicitly install PDF tools"
+    native_index, native_step = native_steps[0]
+    command = native_step["run"]
+    assert "poppler-utils" in command and "fonts-dejavu-core" in command
+    assert "command -v pdftotext" in command
+    assert "command -v pdfinfo" in command
+    assert not native_step.get("continue-on-error", False)
+    test_index = next(
+        index for index, step in enumerate(steps)
+        if "python -m pytest" in step.get("run", "")
+    )
+    assert native_index < test_index
+
+
+def test_integration_suite_keeps_full_scope_and_a_bounded_process_deadline() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    steps = workflow["jobs"]["postgres-integration"]["steps"]
+    test_step = next(step for step in steps if "python -m pytest" in step.get("run", ""))
+    assert test_step["run"] == "timeout 180s python -m pytest -vv services/legal_core/tests"
+    assert not test_step.get("continue-on-error", False)
+
+
 @pytest.mark.parametrize("workflow,job", [
     ("ci.yml", "deploy-production"), ("rollback.yml", "rollback-production"),
 ])

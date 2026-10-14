@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from legal_core.clinic_document_store import case_material_object_key
+from legal_core.upload_filename import source_filename_headers
 from test_case_api import actor_headers, application_client, seed_admin, workflow_submission
 
 pytestmark = pytest.mark.skipif(
@@ -59,6 +60,49 @@ def _upload_headers(actor: int, key: UUID, filename: str = "synthetic-note.txt")
         "X-Source-Filename": filename,
         "Content-Type": "text/plain",
     }
+
+
+@pytest.mark.parametrize(
+    "filename", ["пример.txt", "🦷" * 251 + ".txt"], ids=["cyrillic", "maximum-unicode"]
+)
+def test_unicode_filename_transport_keeps_original_material_bytes(filename: str) -> None:
+    actor = 8_400_000_000 + uuid4().int % 100_000_000
+    seed_admin(actor)
+    store = FakeCaseMaterialStore()
+    raw = b"Synthetic anonymised clinic appointment material."
+    with application_client(case_material_store=store) as client:
+        draft = _new_draft(client, actor)
+        response = client.post(
+            f"/v1/telegram-intake-drafts/{draft['id']}/case-materials",
+            headers={
+                **actor_headers(actor, uuid4()), **source_filename_headers(filename),
+                "Content-Type": "text/plain",
+            },
+            content=raw,
+        )
+        assert response.status_code == 201, response.text
+        assert len(store.objects) == 1
+        assert next(iter(store.objects.values())) == (raw, "text/plain")
+        assert filename not in response.text
+
+
+@pytest.mark.parametrize("filename", ["%FF.txt", "../a.txt", "a%00.txt", "a%QQ.txt"])
+def test_invalid_encoded_filename_is_rejected_before_storage(filename: str) -> None:
+    actor = 8_400_000_000 + uuid4().int % 100_000_000
+    seed_admin(actor)
+    store = FakeCaseMaterialStore()
+    with application_client(case_material_store=store) as client:
+        draft = _new_draft(client, actor)
+        response = client.post(
+            f"/v1/telegram-intake-drafts/{draft['id']}/case-materials",
+            headers={
+                **actor_headers(actor, uuid4()), "X-Source-Filename": filename,
+                "X-Source-Filename-Encoding": "percent-utf8", "Content-Type": "text/plain",
+            },
+            content=b"Synthetic anonymised content.",
+        )
+    assert response.status_code == 422
+    assert store.objects == {}
 
 
 def test_owner_can_upload_replay_list_download_and_delete_without_filename_leakage() -> None:

@@ -1712,7 +1712,8 @@ def create_case_router(
     ) -> ReportResponse:
         actor = await resolve_actor(session, telegram_user_id)
         _require_case_intake_actor(actor)
-        case = await _tenant_case(session, actor, case_id)
+        # Serialize report versions with every writer that locks this case.
+        case = await _tenant_case(session, actor, case_id, for_update=True)
         _require_finalized_case(case)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         scope = f"cases:{case_id}:reports"

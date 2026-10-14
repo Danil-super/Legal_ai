@@ -1,5 +1,50 @@
 # Dental Legal AI task list
 
+## Extended user-scenario audit — owner requested 2026-10-14
+
+- [x] Diagnose CI mismatch: missing native PDF tools, not a legal-verifier failure.
+  Two RED workflow tests; 24 focused GREEN; restored isolated test containers:
+  2030 full tests passed / 0 skipped in 76.44s. Remote CI must confirm the fix.
+- [x] Fix actual case-document dispatch and give explicit unsupported-media guidance.
+- [x] Bind V1/V2 actions to current prompt/draft; stale controls cannot overwrite facts/material state.
+- [x] Reauthorize before cached output or material consumption; reconcile ambiguous uploads
+  and merge attachment flags only into the current protected server snapshot.
+- [x] Preserve Unicode filenames across HTTP without weakening parser/privacy/tenant guards.
+- [x] Serialize report version allocation; enforce reference-source expiry, including historical replay.
+- [x] ACK before protected reads; retain the successful update-local ACK fact through error handling.
+- [x] Combined final local suite: 2095 passed / 0 skipped in 124.70s with PG/MinIO enabled;
+  Ruff, mypy137, Compose overlays, project Bandit gate, strict dependency audit, actual
+  Core/gateway offline non-root imports and 32 native container parser tests passed.
+- [x] Independent second-cycle review closed both runtime findings and both test-coverage gaps;
+  owner selected current review/tests, without an external CLI invocation.
+- [ ] Resolve reference-package author/reviewer independence with owner (auth-contract decision pending).
+- [x] Integrate independent RED reproductions and verify all changed paths locally.
+- [ ] Successful GitHub CI on the final head and explicit owner release approval.
+- [ ] Deploy through the existing reviewed main workflow and run both live synthetic entry paths.
+
+Each implementation slice has a failing reproduction and a separate commit.
+No normative approvals, role grants, model changes or production deployment as part of this audit.
+Evidence and limits: docs/audit/bot-scenarios-2026-10-14.md. Existing incomplete tasks below
+are preserved; technical regression success is not legal validation of private references.
+
+## Unified entry and action-plan report — owner authorised 2026-10-13
+
+- [x] Record approved six-section report and preservation boundaries in SPEC-report-action-plan.md.
+- [x] Reproduce quick V1 divergence with independent production-composition tests (14 RED failures).
+- [x] Create quick V2 partial draft, preserve unknowns/summary, stable retry and existing V1 resume.
+- [x] Validate actual response version/data and provide actionable unsupported V1 clarification.
+  Focused local: 75 passed; independent boundary/diff review no actionable findings.
+- [x] Shared canonical-only PDF/Telegram view; retain legal/source limitations and blocked state.
+- [x] Real PG/MinIO, full regression/security/container gates and independent renderer review.
+  Combined suite: 2028 passed, no skips; Ruff/mypy (136 source files), strict pip-audit,
+  Compose and offline non-root gateway container import passed. CI gates remain required.
+- [x] Visually inspect long/READY/HIGH/BLOCKED PDFs; fix long first-page pagination.
+  Independent review found and closed truncated legal qualifiers/citations in compact Telegram.
+- [ ] Reviewed GitHub CI and explicit release approval; no production change made yet.
+- [ ] Live model + persisted synthetic report/PDF checks for both version-aligned entry paths.
+
+No weakening of evidence/risk/privacy gates or retrospective rewriting of case content.
+
 ## Release audit remediation — owner-authorised 2026-10-13
 
 - [x] Reproduce public-country-name false positive; preserve identifier guards.

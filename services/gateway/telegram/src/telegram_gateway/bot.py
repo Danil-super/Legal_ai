@@ -6,6 +6,8 @@ import logging
 import os
 import re
 from collections.abc import Callable, Coroutine, Mapping
+from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import IntEnum
 from io import BytesIO
@@ -809,22 +811,59 @@ def _is_v2_draft(data: dict[str, Any]) -> bool:
     return data.get("intakeVersion") == 2
 
 
+def _saved_draft_selection(
+    draft_id: UUID, draft: dict[str, Any], *, is_v2: bool = True,
+) -> dict[str, Any]:
+    revision, state_name = draft.get("revision"), draft.get("wizardState")
+    payload = draft.get("draftData")
+    if (
+        draft.get("id") != str(draft_id) or type(revision) is not int or revision < 1
+        or not isinstance(state_name, str) or not isinstance(payload, dict)
+        or (payload.get("intakeVersion") != 2 if is_v2 else "intakeVersion" in payload)
+    ):
+        raise ValueError("invalid selected draft")
+    state = WizardState[state_name]
+    if (state.value >= WizardState.INCOMING.value) != is_v2:
+        raise ValueError("draft state does not match its version")
+    return {
+        **payload, "workflow_id": str(draft_id), DRAFT_ID_KEY: str(draft_id),
+        DRAFT_REVISION_KEY: revision, DRAFT_STATE_KEY: state.name,
+    }
+
+
+async def _reply_draft_controls(
+    update: Update, data: dict[str, Any], text: str, *, reply_markup: InlineKeyboardMarkup,
+) -> None:
+    message = update.effective_message
+    if message is None:
+        return
+    sent = await message.reply_text(text, reply_markup=reply_markup)
+    message_id = getattr(sent, "message_id", None)
+    if type(message_id) is int and message_id > 0:
+        data["_v2_prompt_message_id"] = message_id
+
+
 async def _prompt_v2_draft(
     update: Update,
     state: WizardState,
     data: dict[str, Any],
 ) -> None:
     message = update.effective_message
+    data.pop("_v2_prompt_message_id", None)
+
+    async def reply(text: str, *, reply_markup: InlineKeyboardMarkup) -> None:
+        await _reply_draft_controls(update, data, text, reply_markup=reply_markup)
+
     if state is WizardState.INCOMING:
         if message is not None:
-            await message.reply_text(
+            await reply(
                 "1/7. Что поступило от пациента? Выберите самое близкое описание.",
                 reply_markup=_v2_single_keyboard("incomingKind"),
             )
     elif state is WizardState.SITUATION:
         if message is not None:
             selected = data.get("situationAreas")
-            await message.reply_text(
+            await reply(
                 "2/7. С чем связана ситуация? Можно выбрать несколько вариантов, "
                 "затем «Продолжить».",
                 reply_markup=_v2_multi_keyboard(
@@ -832,21 +871,18 @@ async def _prompt_v2_draft(
                 ),
             )
     elif state is WizardState.SERVICES:
-        await _reply(
-            update,
+        await reply(
             "2/7. Какие услуги затронуты? Укажите от одной до пяти через точку с запятой. "
             "Если точная услуга неизвестна, так и напишите.",
             reply_markup=_v2_keyboard([]),
         )
     elif state is WizardState.EVENT:
-        await _reply(
-            update,
+        await reply(
             "3/7. Кратко опишите, что произошло, только фактами (10–1500 символов, без ФИО).",
             reply_markup=_v2_keyboard([]),
         )
     elif state is WizardState.EVENT_DATE:
-        await _reply(
-            update,
+        await reply(
             "3/7. Когда это произошло? Укажите точную дату ГГГГ-ММ-ДД или ДД.ММ.ГГГГ. "
             "Если дата неизвестна, напишите «неизвестно» — соберём остальные факты. "
             "Для юридического анализа дату потребуется уточнить; срочный кейс "
@@ -855,14 +891,14 @@ async def _prompt_v2_draft(
         )
     elif state is WizardState.CHRONOLOGY:
         if message is not None:
-            await message.reply_text(
+            await reply(
                 "3/7. Это первое обращение по ситуации или конфликт уже продолжается?",
                 reply_markup=_v2_single_keyboard("conflictStage"),
             )
     elif state is WizardState.CLINIC_ACTIONS:
         if message is not None:
             selected = data.get("clinicActions")
-            await message.reply_text(
+            await reply(
                 "4/7. Что клиника уже сделала? Выберите всё подходящее, затем «Продолжить».",
                 reply_markup=_v2_multi_keyboard(
                     "clinicActions", selected if isinstance(selected, list) else []
@@ -871,7 +907,7 @@ async def _prompt_v2_draft(
     elif state is WizardState.HEALTH:
         if message is not None:
             selected = data.get("healthSignals")
-            await message.reply_text(
+            await reply(
                 "5/7. Есть ли известные последствия для здоровья? «Недостаточно сведений» "
                 "не означает, что последствий не было.",
                 reply_markup=_v2_multi_keyboard(
@@ -890,7 +926,7 @@ async def _prompt_v2_draft(
             prompt = "6/7. Обезличенный материал добавлен. Можно добавить ещё один или продолжить."
             rows = [[("Продолжить", "case:v2:material:done")]]
         if message is not None:
-            await message.reply_text(prompt, reply_markup=_v2_keyboard(rows))
+            await reply(prompt, reply_markup=_v2_keyboard(rows))
     elif state is WizardState.SAFETY:
         question = screening_question(data)
         if question is None:
@@ -904,8 +940,7 @@ async def _prompt_v2_draft(
         if known_urgent_report(data):
             rows.append([("Подтвердить известное без других уточнений",
                           "case:safety:known:confirm")])
-        await _reply(
-            update,
+        await reply(
             "Уточнение фактов перед фабулой. Юридическую оценку делать не нужно.\n\n"
             + prompt + "\n«Не знаю» не считается отрицательным ответом. "
             "При подтверждении только известного остальные уточнения останутся неизвестными.",
@@ -918,11 +953,11 @@ async def _prompt_v2_draft(
                 rows = [[("✅ Всё верно", "case:v2:summary:confirm")]] if (
                     index == len(pages) - 1
                 ) else []
-                await message.reply_text(page, reply_markup=_v2_keyboard(rows))
+                await reply(page, reply_markup=_v2_keyboard(rows))
     elif state is WizardState.V2_CONFIRM:
         workflow_id = UUID(str(data["workflow_id"]))
         if message is not None:
-            await message.reply_text(
+            await reply(
                 "Фактическая карточка подтверждена. Сформировать внутренний отчёт?",
                 reply_markup=confirm_keyboard(workflow_id),
             )
@@ -1010,7 +1045,7 @@ async def record_v2_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         data[field] = parse_v2_answer(field, _message_text(update))
     except ValueError as exc:
-        await _reply(update, str(exc), reply_markup=_v2_keyboard([]))
+        await _reply_draft_controls(update, data, str(exc), reply_markup=_v2_keyboard([]))
         return state
     return await _advance_v2_draft(update, data)
 
@@ -1116,21 +1151,70 @@ async def _save_v2_material_state(
     data: dict[str, Any],
     source_status: str,
 ) -> int:
-    data["caseMaterialsStatus"] = "ATTACHED"
-    data["incomingSourceStatus"] = source_status
-    saved = await _legal_core(context).save_intake_draft(
+    client = _legal_core(context)
+    # Upload advances the server revision but does not refresh our other facts.
+    # Read again after its receipt, then merge only the observed attachment flags.
+    current = _saved_draft_selection(
+        draft_id, await client.get_intake_draft(draft_id, actor_id),
+    )
+    current_revision = int(current[DRAFT_REVISION_KEY])
+    if current_revision < revision or current.get("caseMaterialsStatus") != "ATTACHED":
+        raise ValueError("material receipt does not match current draft")
+    if current[DRAFT_STATE_KEY] != WizardState.MATERIALS.name:
+        raise LegalCoreApiError(409, "INTAKE_DRAFT_REVISION_CONFLICT", "draft step changed")
+    current["caseMaterialsStatus"] = "ATTACHED"
+    current["incomingSourceStatus"] = source_status
+    payload = _draft_payload(current)
+    saved = await client.save_intake_draft(
         draft_id,
         actor_id,
-        expected_revision=revision,
+        expected_revision=current_revision,
         wizard_state=WizardState.MATERIALS.name,
-        draft_data=_draft_payload(data),
+        draft_data=payload,
     )
-    saved_revision = saved.get("revision")
-    if not isinstance(saved_revision, int) or saved_revision <= revision:
+    saved_selection = _saved_draft_selection(draft_id, saved)
+    saved_revision = int(saved_selection[DRAFT_REVISION_KEY])
+    if saved_revision <= current_revision or _draft_payload(saved_selection) != payload:
         raise ValueError("material state save response is invalid")
-    data[DRAFT_REVISION_KEY] = saved_revision
-    data[DRAFT_STATE_KEY] = WizardState.MATERIALS.name
+    data.clear()
+    data.update(saved_selection)
     return saved_revision
+
+
+async def _reconcile_v2_material(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, data: dict[str, Any], *,
+    actor_id: int, source_status: str, receipt_confirmed: bool,
+) -> int:
+    try:
+        draft_id = UUID(str(data[DRAFT_ID_KEY]))
+        recovered = _saved_draft_selection(
+            draft_id, await _legal_core(context).get_intake_draft(draft_id, actor_id),
+        )
+    except (KeyError, ValueError, LegalCoreApiError):
+        _clear_wizard(context)
+        await _reply(
+            update, "⚠️ Не удалось проверить сохранение материала. Он мог сохраниться. "
+            "Откройте /menu → «Мои черновики» перед повтором.",
+        )
+        return ConversationHandler.END
+    data.clear()
+    data.update(recovered)
+    if receipt_confirmed and data.get("caseMaterialsStatus") == "ATTACHED":
+        # The upload itself returned a validated receipt. Keep its observed source
+        # kind for the next guarded save even if the secondary state PUT failed.
+        data["incomingSourceStatus"] = source_status
+    notice = (
+        "Материал сохранён. Обновление карточки не удалось подтвердить полностью. "
+        if receipt_confirmed
+        else "Последнее сохранение материала не удалось подтвердить полностью. "
+    )
+    await _reply(
+        update, "⚠️ " + notice + "Состояние материалов и карточки обновлено с сервера. "
+        "Повтор того же файла безопасен; сохранённые материалы остаются в карточке.",
+    )
+    state = WizardState[str(data[DRAFT_STATE_KEY])]
+    await _prompt_v2_draft(update, state, data)
+    return state
 
 
 async def _upload_v2_material(
@@ -1146,6 +1230,8 @@ async def _upload_v2_material(
     data = _wizard_data(context)
     if actor_id is None or not _is_v2_draft(data):
         return ConversationHandler.END
+    uploaded: dict[str, Any] | None = None
+    receipt_confirmed = False
     try:
         draft_id = UUID(str(data[DRAFT_ID_KEY]))
         uploaded = await _legal_core(context).upload_case_material(
@@ -1159,6 +1245,8 @@ async def _upload_v2_material(
         material = uploaded.get("material")
         if not isinstance(revision, int) or revision < 1 or not isinstance(material, dict):
             raise ValueError("material upload response is invalid")
+        UUID(str(material["id"]))
+        receipt_confirmed = True
         await _save_v2_material_state(
             context,
             actor_id=actor_id,
@@ -1169,16 +1257,26 @@ async def _upload_v2_material(
         )
     except LegalCoreApiError as exc:
         logger.warning("v2 case material upload rejected: %s", exc.code)
+        if uploaded is not None or exc.status_code >= 500:
+            return await _reconcile_v2_material(
+                update, context, data, actor_id=actor_id, source_status=source_status,
+                receipt_confirmed=receipt_confirmed,
+            )
         message = (
             "⚠️ Файл не добавлен: в нём обнаружены персональные данные или он не прошёл "
             "проверку формата. Обезличьте его и попробуйте снова."
             if exc.code == "CASE_MATERIAL_DIRECT_IDENTIFIER_NOT_ALLOWED"
             else "⚠️ Файл не добавлен. Проверьте формат, размер и обезличивание, затем повторите."
         )
-        await _reply(update, message, reply_markup=_v2_keyboard([]))
+        await _reply_draft_controls(update, data, message, reply_markup=_v2_keyboard([]))
         return WizardState.MATERIALS
     except (KeyError, ValueError) as exc:
         logger.warning("v2 case material upload response invalid: %s", type(exc).__name__)
+        if uploaded is not None:
+            return await _reconcile_v2_material(
+                update, context, data, actor_id=actor_id, source_status=source_status,
+                receipt_confirmed=receipt_confirmed,
+            )
         await _reply(update, "⚠️ Не удалось безопасно сохранить материал. Попробуйте позже.")
         return WizardState.MATERIALS
     await _reply(
@@ -1190,10 +1288,38 @@ async def _upload_v2_material(
     return WizardState.MATERIALS
 
 
+async def _prepare_v2_material_input(
+    update: Update, context: ContextTypes.DEFAULT_TYPE,
+) -> int | None:
+    data, actor_id = _wizard_data(context), _actor_id(update)
+    try:
+        if actor_id is None:
+            raise ValueError("material actor is missing")
+        draft_id = UUID(str(data[DRAFT_ID_KEY]))
+        current = _saved_draft_selection(
+            draft_id, await _legal_core(context).get_intake_draft(draft_id, actor_id),
+        )
+    except (KeyError, ValueError, LegalCoreApiError):
+        _clear_wizard(context)
+        await _reply(update, "🔒 Черновик сейчас недоступен. Обновите список через /menu.")
+        return ConversationHandler.END
+    state = WizardState[str(current[DRAFT_STATE_KEY])]
+    changed = current[DRAFT_REVISION_KEY] != data.get(DRAFT_REVISION_KEY)
+    if changed or state is not WizardState.MATERIALS:
+        data.clear()
+        data.update(current)
+        await _prompt_v2_draft(update, state, data)
+    # Do not consume this file/text for a different server-owned step.
+    return None if state is WizardState.MATERIALS else state
+
+
 async def receive_v2_material_document(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
+    blocked = await _prepare_v2_material_input(update, context)
+    if blocked is not None:
+        return blocked
     message = update.effective_message
     document = None if message is None else message.document
     if document is None or not document.file_name:
@@ -1235,6 +1361,9 @@ async def receive_v2_material_text(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
+    blocked = await _prepare_v2_material_input(update, context)
+    if blocked is not None:
+        return blocked
     value = _message_text(update)
     if contains_probable_person_name(value) or pseudonymize_text(value).changed:
         await _reply(
@@ -1259,6 +1388,18 @@ async def receive_v2_material_text(
         content_type="text/plain",
         source_status="TEXT_ATTACHED",
     )
+
+
+async def reject_v2_material_media(
+    update: Update, context: ContextTypes.DEFAULT_TYPE,
+) -> int:
+    del context
+    await _reply(
+        update,
+        "Этот вид сообщения не поддерживается. Отправьте обезличенный файл "
+        ".txt, .pdf или .docx до 15 МБ либо выберите продолжение без файла.",
+    )
+    return WizardState.MATERIALS
 
 
 def _signal_answer(callback: str, name: str) -> str | None:
@@ -1346,7 +1487,10 @@ def _draft_payload(data: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value
         for key, value in data.items()
-        if key not in {"workflow_id", DRAFT_ID_KEY, DRAFT_REVISION_KEY, DRAFT_STATE_KEY}
+        if key not in {
+            "workflow_id", DRAFT_ID_KEY, DRAFT_REVISION_KEY, DRAFT_STATE_KEY,
+            "_v2_prompt_message_id",
+        }
     }
 
 
@@ -1355,7 +1499,65 @@ async def _persist_transition(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
+    receipt = _CallbackAck()
+    acknowledgement = _CALLBACK_ACK_SCOPE.set(receipt)
+    try:
+        if update.callback_query is not None:
+            await _answer_callback(update)
+        return await _persist_selected_transition(handler, update, context)
+    except Exception as error:
+        if receipt.query is update.callback_query and receipt.result is not None:
+            # PTB constructs a new error context after this scope has unwound.
+            # Carry one exact-query ACK fact with this update's escaping error;
+            # preserve its original type for transport failure accounting.
+            error.__dict__["_telegram_acknowledged_callback"] = receipt.query
+        raise
+    finally:
+        _CALLBACK_ACK_SCOPE.reset(acknowledgement)
+
+
+async def _persist_selected_transition(
+    handler: Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, int]],
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> int:
     data = _wizard_data(context)
+    actor_id = _actor_id(update)
+    try:
+        draft_id = UUID(str(data[DRAFT_ID_KEY]))
+        if actor_id is None:
+            raise ValueError("draft actor is missing")
+        # Rendering cached clinic facts is a read operation too. Core must check
+        # the current membership, subscription and exact draft before any output.
+        remote = await _legal_core(context).get_intake_draft(draft_id, actor_id)
+        latest = _saved_draft_selection(draft_id, remote, is_v2=_is_v2_draft(data))
+    except (KeyError, ValueError, LegalCoreApiError):
+        _clear_wizard(context)
+        await _reply(update, "🔒 Черновик сейчас недоступен. Обновите список через /menu.")
+        return ConversationHandler.END
+    if latest[DRAFT_REVISION_KEY] != data.get(DRAFT_REVISION_KEY):
+        data.clear()
+        data.update(latest)
+        await _reply(update, "Карточка изменилась на сервере. Обновил сохранённый шаг; "
+                     "ответьте на текущий вопрос.")
+        state = WizardState[str(data[DRAFT_STATE_KEY])]
+        await _prompt_resumed_draft(update, state, data)
+        return state
+    query = update.callback_query
+    if query is not None:
+        message = query.message
+        expected_message = data.get("_v2_prompt_message_id")
+        if (
+            type(expected_message) is not int or message is None
+            or message.message_id != expected_message
+        ):
+            await _answer_callback(update)
+            await _reply(
+                update, "Эта карточка устарела. Используйте кнопки последнего вопроса "
+                "или откройте текущий черновик заново.",
+                reply_markup=_keyboard([[("Открыть текущий черновик", f"case:draft:{draft_id}")]]),
+            )
+            return WizardState[str(data[DRAFT_STATE_KEY])]
     before = _draft_payload(data)
     next_state = await handler(update, context)
     if not isinstance(next_state, WizardState):
@@ -1467,10 +1669,25 @@ def _actor_id(update: Update) -> int | None:
     return None if update.effective_user is None else update.effective_user.id
 
 
+@dataclass
+class _CallbackAck:
+    query: object | None = None
+    result: str | None = None
+
+
+_CALLBACK_ACK_SCOPE: ContextVar[_CallbackAck | None] = ContextVar(
+    "telegram_callback_ack_scope", default=None,
+)
+
+
 async def _answer_callback(update: Update) -> str | None:
     query = update.callback_query
     if query is None or not isinstance(query.data, str):
         return None
+    acknowledgement = _CALLBACK_ACK_SCOPE.get()
+    if acknowledgement is not None and acknowledgement.query is query:
+        return acknowledgement.result
+    result: str | None = query.data
     try:
         await query.answer()
     except BadRequest:
@@ -1478,8 +1695,11 @@ async def _answer_callback(update: Update) -> str | None:
         # delivered after a short network interruption, but it must not turn
         # into a failed handler or block newer updates from being processed.
         logger.info("ignored an expired Telegram callback")
-        return None
-    return query.data
+        result = None
+    if acknowledgement is not None:
+        acknowledgement.query = query
+        acknowledgement.result = result
+    return result
 
 
 async def case_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1733,8 +1953,8 @@ async def _prompt_resumed_draft(update: Update, state: WizardState, data: dict[s
         await _prompt_v2_draft(update, state, data)
     elif state == WizardState.INCIDENT:
         if message is not None:
-            await message.reply_text(
-                "Выберите основной тип ситуации:", reply_markup=INCIDENT_KEYBOARD
+            await _reply_draft_controls(
+                update, data, "Выберите основной тип ситуации:", reply_markup=INCIDENT_KEYBOARD
             )
     elif state == WizardState.SERVICE_TYPE:
         await _reply(update, "1/10. Какая стоматологическая услуга была оказана? Кратко, без ФИО.")
@@ -1750,34 +1970,36 @@ async def _prompt_resumed_draft(update: Update, state: WizardState, data: dict[s
         )
     elif state == WizardState.PATIENT_DEMAND:
         if message is not None:
-            await message.reply_text("6/10. Чего требует пациент?", reply_markup=DEMAND_KEYBOARD)
+            await _reply_draft_controls(
+                update, data, "6/10. Чего требует пациент?", reply_markup=DEMAND_KEYBOARD,
+            )
     elif state == WizardState.DEMAND_AMOUNT:
         await _reply(update, "Укажите требуемую сумму в рублях, только число:")
     elif state == WizardState.FORMAL_CLAIM:
-        await _ask_formal_claim(update)
+        await _ask_formal_claim(update, data)
     elif state == WizardState.CLAIM_RECEIVED_AT:
         await _reply(update, "Дата получения письменной претензии, ГГГГ-ММ-ДД:")
     elif state == WizardState.CLAIM_DEADLINE:
         await _reply(update, "Срок ответа из документа, ГГГГ-ММ-ДД:")
     elif state == WizardState.HARM:
-        await _ask_harm(update)
+        await _ask_harm(update, data)
     elif state == WizardState.HOSPITALIZATION:
         if message is not None:
-            await message.reply_text(
-                "Была госпитализация?", reply_markup=YES_NO_KEYBOARDS["hospital"]
+            await _reply_draft_controls(
+                update, data, "Была госпитализация?", reply_markup=YES_NO_KEYBOARDS["hospital"]
             )
     elif state == WizardState.LAWYER:
-        await _ask_lawyer(update)
+        await _ask_lawyer(update, data)
     elif state == WizardState.REPRESENTATIVE_AUTHORITY:
         if message is not None:
-            await message.reply_text(
-                "Подтверждены полномочия представителя?",
+            await _reply_draft_controls(
+                update, data, "Подтверждены полномочия представителя?",
                 reply_markup=YES_NO_KEYBOARDS["representative"],
             )
     elif state == WizardState.LAWYER_DEADLINE:
         await _reply(update, "Срок ответа представителю, ГГГГ-ММ-ДД или «неизвестно»:")
     elif state == WizardState.AUTHORITY:
-        await _ask_authority(update)
+        await _ask_authority(update, data)
     elif state == WizardState.AUTHORITY_KIND:
         await _reply(update, "Какой орган или суд направил документ? Без персональных данных.")
     elif state == WizardState.AUTHORITY_DATE:
@@ -1785,14 +2007,14 @@ async def _prompt_resumed_draft(update: Update, state: WizardState, data: dict[s
     elif state == WizardState.AUTHORITY_DEADLINE:
         await _reply(update, "Срок ответа из документа, ГГГГ-ММ-ДД:")
     elif state == WizardState.REGULATOR_THREAT:
-        await _ask_regulator_threat(update)
+        await _ask_regulator_threat(update, data)
     elif state == WizardState.DOCUMENTS:
-        await _ask_documents(update)
+        await _ask_documents(update, data)
     else:
         workflow_id = UUID(str(data["workflow_id"]))
         if message is not None:
-            await message.reply_text(
-                "Карточка заполнена. Сформировать единый PDF-отчёт?",
+            await _reply_draft_controls(
+                update, data, "Карточка заполнена. Сформировать единый PDF-отчёт?",
                 reply_markup=confirm_keyboard(workflow_id),
             )
 
@@ -1906,8 +2128,8 @@ async def _record_date(
             )
             return current
         data[field] = value
-        await _reply(
-            update,
+        await _reply_draft_controls(
+            update, data,
             f"Дата {_DATE_QUESTION_LABELS[field]}: {value['date']}. "
             "Остальные сведения не изменены. Сформировать внутренний отчёт?",
             reply_markup=confirm_keyboard(UUID(str(data["workflow_id"]))),
@@ -1962,7 +2184,10 @@ async def record_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     _wizard_data(context)["problem_summary"] = value
     message = update.effective_message
     if message is not None:
-        await message.reply_text("6/10. Чего требует пациент?", reply_markup=DEMAND_KEYBOARD)
+        await _reply_draft_controls(
+            update, _wizard_data(context), "6/10. Чего требует пациент?",
+            reply_markup=DEMAND_KEYBOARD,
+        )
     return WizardState.PATIENT_DEMAND
 
 
@@ -1983,7 +2208,7 @@ async def choose_demand(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if value in {"REFUND_DEMAND", "COMPENSATION_DEMAND"}:
         await _reply(update, "Укажите требуемую сумму в рублях, только число:")
         return WizardState.DEMAND_AMOUNT
-    await _ask_formal_claim(update)
+    await _ask_formal_claim(update, _wizard_data(context))
     return WizardState.FORMAL_CLAIM
 
 
@@ -1996,16 +2221,13 @@ async def record_demand_amount(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return WizardState.DEMAND_AMOUNT
     _wizard_data(context)["demand_amount_kopecks"] = amount_kopecks
-    await _ask_formal_claim(update)
+    await _ask_formal_claim(update, _wizard_data(context))
     return WizardState.FORMAL_CLAIM
 
 
-async def _ask_formal_claim(update: Update) -> None:
-    message = update.effective_message
-    if message is not None:
-        await message.reply_text(
-            "7/10. Поступила письменная претензия?", reply_markup=YES_NO_KEYBOARDS["formal"]
-        )
+async def _ask_formal_claim(update: Update, data: dict[str, Any]) -> None:
+    await _reply_draft_controls(update, data, "7/10. Поступила письменная претензия?",
+                             reply_markup=YES_NO_KEYBOARDS["formal"])
 
 
 async def choose_formal_claim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -2017,7 +2239,7 @@ async def choose_formal_claim(update: Update, context: ContextTypes.DEFAULT_TYPE
     if formal == "YES":
         await _reply(update, "Дата получения письменной претензии, ГГГГ-ММ-ДД:")
         return WizardState.CLAIM_RECEIVED_AT
-    await _ask_harm(update)
+    await _ask_harm(update, _wizard_data(context))
     return WizardState.HARM
 
 
@@ -2043,19 +2265,16 @@ async def record_claim_deadline(update: Update, context: ContextTypes.DEFAULT_TY
         allow_future=True,
     )
     if result == WizardState.HARM and update.effective_message is not None:
-        await update.effective_message.reply_text(
-            "Выберите вариант:", reply_markup=YES_NO_KEYBOARDS["harm"]
+        await _reply_draft_controls(
+            update, _wizard_data(context), "Выберите вариант:",
+            reply_markup=YES_NO_KEYBOARDS["harm"],
         )
     return result
 
 
-async def _ask_harm(update: Update) -> None:
-    message = update.effective_message
-    if message is not None:
-        await message.reply_text(
-            "8/10. Заявляет ли пациент о вреде здоровью?",
-            reply_markup=YES_NO_KEYBOARDS["harm"],
-        )
+async def _ask_harm(update: Update, data: dict[str, Any]) -> None:
+    await _reply_draft_controls(update, data, "8/10. Заявляет ли пациент о вреде здоровью?",
+                             reply_markup=YES_NO_KEYBOARDS["harm"])
 
 
 async def choose_harm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -2067,11 +2286,12 @@ async def choose_harm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if harm in {"YES", "UNKNOWN"}:
         message = update.effective_message
         if message is not None:
-            await message.reply_text(
-                "Была госпитализация?", reply_markup=YES_NO_KEYBOARDS["hospital"]
+            await _reply_draft_controls(
+                update, _wizard_data(context), "Была госпитализация?",
+                reply_markup=YES_NO_KEYBOARDS["hospital"]
             )
         return WizardState.HOSPITALIZATION
-    await _ask_lawyer(update)
+    await _ask_lawyer(update, _wizard_data(context))
     return WizardState.LAWYER
 
 
@@ -2081,17 +2301,15 @@ async def choose_hospitalization(update: Update, context: ContextTypes.DEFAULT_T
     if hospitalization is None:
         return WizardState.HOSPITALIZATION
     _wizard_data(context)["hospitalization"] = hospitalization
-    await _ask_lawyer(update)
+    await _ask_lawyer(update, _wizard_data(context))
     return WizardState.LAWYER
 
 
-async def _ask_lawyer(update: Update) -> None:
-    message = update.effective_message
-    if message is not None:
-        await message.reply_text(
-            "9/12. Связывался ли с клиникой представитель или юрист пациента?",
-            reply_markup=YES_NO_KEYBOARDS["lawyer"],
-        )
+async def _ask_lawyer(update: Update, data: dict[str, Any]) -> None:
+    await _reply_draft_controls(
+        update, data, "9/12. Связывался ли с клиникой представитель или юрист пациента?",
+        reply_markup=YES_NO_KEYBOARDS["lawyer"],
+    )
 
 
 async def choose_lawyer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -2103,12 +2321,12 @@ async def choose_lawyer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if lawyer == "YES":
         message = update.effective_message
         if message is not None:
-            await message.reply_text(
-                "Подтверждены полномочия представителя?",
+            await _reply_draft_controls(
+                update, _wizard_data(context), "Подтверждены полномочия представителя?",
                 reply_markup=YES_NO_KEYBOARDS["representative"],
             )
         return WizardState.REPRESENTATIVE_AUTHORITY
-    await _ask_authority(update)
+    await _ask_authority(update, _wizard_data(context))
     return WizardState.AUTHORITY
 
 
@@ -2141,17 +2359,18 @@ async def record_lawyer_deadline(update: Update, context: ContextTypes.DEFAULT_T
     await _reply(update, "10/12. Есть обращение в суд или контролирующий орган?")
     message = update.effective_message
     if message is not None:
-        await message.reply_text("Выберите вариант:", reply_markup=YES_NO_KEYBOARDS["authority"])
+        await _reply_draft_controls(
+            update, _wizard_data(context), "Выберите вариант:",
+            reply_markup=YES_NO_KEYBOARDS["authority"],
+        )
     return WizardState.AUTHORITY
 
 
-async def _ask_authority(update: Update) -> None:
-    message = update.effective_message
-    if message is not None:
-        await message.reply_text(
-            "10/12. Есть обращение в суд или контролирующий орган?",
-            reply_markup=YES_NO_KEYBOARDS["authority"],
-        )
+async def _ask_authority(update: Update, data: dict[str, Any]) -> None:
+    await _reply_draft_controls(
+        update, data, "10/12. Есть обращение в суд или контролирующий орган?",
+        reply_markup=YES_NO_KEYBOARDS["authority"],
+    )
 
 
 async def choose_authority(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -2163,7 +2382,7 @@ async def choose_authority(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if authority == "YES":
         await _reply(update, "Какой орган или суд направил документ? Без персональных данных.")
         return WizardState.AUTHORITY_KIND
-    await _ask_regulator_threat(update)
+    await _ask_regulator_threat(update, _wizard_data(context))
     return WizardState.REGULATOR_THREAT
 
 
@@ -2203,17 +2422,15 @@ async def record_authority_deadline(update: Update, context: ContextTypes.DEFAUL
             f"В карточке учтён ближайший: {value['date']}.",
         )
     data["response_deadline"] = value
-    await _ask_regulator_threat(update)
+    await _ask_regulator_threat(update, _wizard_data(context))
     return WizardState.REGULATOR_THREAT
 
 
-async def _ask_regulator_threat(update: Update) -> None:
-    message = update.effective_message
-    if message is not None:
-        await message.reply_text(
-            "11/12. Есть угроза обращения в суд или контролирующий орган?",
-            reply_markup=YES_NO_KEYBOARDS["regulator_threat"],
-        )
+async def _ask_regulator_threat(update: Update, data: dict[str, Any]) -> None:
+    await _reply_draft_controls(
+        update, data, "11/12. Есть угроза обращения в суд или контролирующий орган?",
+        reply_markup=YES_NO_KEYBOARDS["regulator_threat"],
+    )
 
 
 async def choose_regulator_threat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -2222,18 +2439,15 @@ async def choose_regulator_threat(update: Update, context: ContextTypes.DEFAULT_
     if threat is None:
         return WizardState.REGULATOR_THREAT
     _wizard_data(context)["regulator_threat"] = threat
-    await _ask_documents(update)
+    await _ask_documents(update, _wizard_data(context))
     return WizardState.DOCUMENTS
 
 
-async def _ask_documents(update: Update) -> None:
-    message = update.effective_message
-    if message is not None:
-        await message.reply_text(
-            "12/12. Есть договор, медкарта и информированное согласие?\n"
-            "Сами файлы сюда не загружайте.",
-            reply_markup=DOCUMENTS_KEYBOARD,
-        )
+async def _ask_documents(update: Update, data: dict[str, Any]) -> None:
+    await _reply_draft_controls(
+        update, data, "12/12. Есть договор, медкарта и информированное согласие?\n"
+        "Сами файлы сюда не загружайте.", reply_markup=DOCUMENTS_KEYBOARD,
+    )
 
 
 def _draft_date_value(data: dict[str, Any], field: str) -> str | DateFactValue:
@@ -2339,8 +2553,8 @@ async def choose_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     message = update.effective_message
     if message is not None:
         workflow_id = UUID(str(data["workflow_id"]))
-        await message.reply_text(
-            "Сформировать единый PDF-отчёт?",
+        await _reply_draft_controls(
+            update, data, "Сформировать единый PDF-отчёт?",
             reply_markup=confirm_keyboard(workflow_id),
         )
     return WizardState.CONFIRM
@@ -2466,8 +2680,8 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                 for field in date_questions
             ]
             rows.append([("💾 Сохранить черновик", "case:cancel")])
-            await _reply(
-                update,
+            await _reply_draft_controls(
+                update, data,
                 "Для анализа нужна точная дата. Выберите, какую можете уточнить. "
                 "До этого кейс не будет подтверждён; черновик сохранён.",
                 reply_markup=_keyboard(rows),
@@ -2693,7 +2907,7 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
             failures = _record_telegram_api_failure(application)
             if failures == TELEGRAM_API_FAILURE_LIMIT:
                 _mark_telegram_transport_unready(failures=failures)
-    if query is None:
+    if query is None or getattr(context.error, "_telegram_acknowledged_callback", None) is query:
         return
     try:
         await query.answer(
@@ -2813,6 +3027,7 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
                         filters.TEXT & ~filters.COMMAND, receive_v2_material_text
                     ),
                     CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
+                    MessageHandler(~filters.TEXT & ~filters.Document.ALL, reject_v2_material_media),
                 ],
                 WizardState.SUMMARY: [
                     CallbackQueryHandler(

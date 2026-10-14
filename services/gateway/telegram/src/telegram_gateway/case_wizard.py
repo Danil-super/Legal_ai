@@ -7,6 +7,12 @@ from typing import Any, Literal, TypeAlias
 from uuid import UUID, uuid4
 
 import httpx2
+from legal_core.report_presentation import (
+    TELEGRAM_DRAFT_IN_PDF,
+    TELEGRAM_SOURCE_LIMITATIONS_IN_PDF,
+    present_report,
+)
+from legal_core.upload_filename import source_filename_headers
 
 INTAKE_SCHEMA_VERSION = "dental-case-intake.v1"
 V2_INTAKE_SCHEMA_VERSION = "dental-case-intake.v2"
@@ -330,26 +336,55 @@ def telegram_summary_from_report(report: dict[str, Any]) -> str:
         raise ValueError("invalid canonical report")
     if not isinstance(missing_facts, list) or len(missing_facts) > 30:
         raise ValueError("invalid canonical report")
-    if len(neutral_description) > 1_500 or len(disclaimer) > 500:
+    if len(disclaimer) > 500:
         raise ValueError("invalid canonical report")
 
-    missing_count = len(missing_facts)
-    analysis_label = (
-        "АНАЛИЗ ЗАБЛОКИРОВАН"
-        if {recommendations_status, draft_status, legal_status} == {"NOT_AVAILABLE"}
-        else "ТРЕБУЕТ ПРОВЕРКИ"
-    )
-    rendered = (
-        f"📋 {public_number}\n"
-        f"Статус: {status}\n\n"
-        f"Что произошло:\n{neutral_description}\n\n"
-        f"Недостающих фактов: {missing_count}\n"
-        f"⚖️ {analysis_label}\n\n"
-        f"{disclaimer}"
-    )
-    if len(rendered) > 4_000:
+    presentation = present_report(report)
+    parts = ["\n".join(presentation.header)]
+    parts.extend(block.title + "\n" + "\n".join(block.lines) for block in presentation.blocks)
+    parts.append(presentation.disclaimer)
+    rendered = "\n\n".join(parts)
+    if _telegram_units(rendered) <= 4_000:
+        return rendered
+
+    # Keep all six blocks and the safety notices when the complete saved report needs PDF.
+    parts = ["\n".join(presentation.header), "Длинный отчёт: содержание полностью в PDF."]
+    for index, block in enumerate(presentation.blocks):
+        if index == 2:
+            # Preserve the next-step line even when there are many risk reasons or gaps.
+            steps = [line for line in block.lines if line.startswith("Следующий шаг:")]
+            reasons = [line for line in block.lines if line not in steps]
+            content = _short_report_text("\n".join(reasons), 500) + "\n" + "\n".join(steps)
+        elif index == 5 and len(block.lines) > 1:
+            content = block.lines[0] + "\n" + TELEGRAM_DRAFT_IN_PDF
+        elif index in {3, 4}:
+            # A shortened legal claim/action could lose its condition or source citation.
+            content = block.title + " полностью в PDF."
+        else:
+            content = _short_report_text("\n".join(block.lines), 350)
+        if index == 4 and presentation.source_caveats:
+            caveats = "\n".join(presentation.source_caveats)
+            content += "\n" + _short_report_text(caveats, 600)
+            if _telegram_units(caveats) > 600:
+                content += "\n" + TELEGRAM_SOURCE_LIMITATIONS_IN_PDF
+        parts.append(block.title + "\n" + content)
+    parts.append(presentation.disclaimer)
+    rendered = "\n\n".join(parts)
+    if _telegram_units(rendered) > 4_000:
         raise ValueError("invalid canonical report")
     return rendered
+
+
+def _telegram_units(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _short_report_text(text: str, limit: int) -> str:
+    if _telegram_units(text) <= limit:
+        return text
+    suffix = "… (полностью в PDF)"
+    available = limit - _telegram_units(suffix)
+    return text.encode("utf-16-le")[:available * 2].decode("utf-16-le", errors="ignore") + suffix
 
 
 class LegalCoreClient:
@@ -589,7 +624,7 @@ class LegalCoreClient:
                 f"/v1/reference-evaluations/{case_id}/material",
                 headers={
                     **self._headers(telegram_user_id, idempotency_key),
-                    "X-Source-Filename": source_filename,
+                    **source_filename_headers(source_filename),
                     "Content-Type": content_type,
                 },
                 content=content,
@@ -871,7 +906,7 @@ class LegalCoreClient:
                 f"/v1/telegram-intake-drafts/{draft_id}/case-materials",
                 headers={
                     **self._headers(telegram_user_id, uuid4()),
-                    "X-Source-Filename": source_filename,
+                    **source_filename_headers(source_filename),
                     "Content-Type": content_type,
                 },
                 content=content,

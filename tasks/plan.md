@@ -338,3 +338,22 @@ Release order: clean PostgreSQL/MinIO verification → GitHub PR quality gates �
 release approval → existing main autodeploy → read-only health/migration/queue checks → explicit
 risk-policy activation if approved → owner/lawyer private-chat smoke test. Normative approvals
 are never part of deployment: lawyers must review and approve the relevant legal versions.
+# Unified entry and action-plan report: authorised continuation 2026-10-13
+
+Order: reproduce entry divergence → shared V2 collection and fail-closed save →
+canonical-only report view → full integration/visual/review gates → reviewed release
+and live synthetic checks. Report implementation and independent scenario tests
+use separate branches; main owns intake/clarification and reconciliation.
+No storage/schema/model/policy changes. Existing incomplete project work below
+is retained, not closed or replaced by this task. Contract: ADR0082 and approved
+SPEC-report-action-plan.md; executable checklist is the new section in tasks/todo.md.
+
+## Extended audit continuation (2026-10-14)
+
+Continue the same release audit, preserving every earlier incomplete task. Order:
+clean-runner PDF dependencies → reproduced gateway dispatch/stale-action/cache
+boundary failures → Unicode upload wire contract → report allocation and expired
+reference-content guards → combined regression/CI/review → separately approved release.
+Root owns CI and upload wire; isolated gateway and Core agents own their narrow
+reproductions/fixes. Reference package independence requires an explicit owner
+auth-contract choice; no roles or legal approvals are changed implicitly.

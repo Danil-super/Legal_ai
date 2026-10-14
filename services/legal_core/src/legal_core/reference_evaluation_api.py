@@ -9,7 +9,7 @@ import asyncio
 import hashlib
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
@@ -60,6 +60,7 @@ from legal_core.reference_evaluation_contracts import (
     ReferenceExpectedRoute,
     ReferenceMaterialMimeType,
 )
+from legal_core.upload_filename import MAX_FILENAME_HEADER_CHARS, decode_source_filename
 
 _DRAFT_RETENTION = timedelta(days=30)
 _RETIRED_RETENTION = timedelta(days=90)
@@ -78,7 +79,14 @@ def _display_name(case: ReferenceEvaluationCase, scenario_text: str | None = Non
 
 
 def _content_available(version: ReferenceEvaluationCaseVersion) -> bool:
-    return version.content_purged_at is None and version.scenario_text is not None
+    return (
+        version.content_purged_at is None
+        and version.scenario_text is not None
+        and (
+            version.content_expires_at is None
+            or version.content_expires_at > datetime.now(UTC)
+        )
+    )
 
 
 def _summary(
@@ -93,7 +101,7 @@ def _summary(
         groupKey=cast(ReferenceEvaluationGroup, case.group_key),
         status=cast(ReferenceEvaluationStatus, case.status),
         currentVersion=case.current_version,
-        hasMaterial=version.raw_object_key is not None and version.content_purged_at is None,
+        hasMaterial=version.raw_object_key is not None and _content_available(version),
         createdAt=case.created_at,
         updatedAt=case.updated_at,
     )
@@ -187,12 +195,52 @@ async def _current_version(
 
 
 def _require_live_version(version: ReferenceEvaluationCaseVersion) -> None:
-    if not _content_available(version):
+    if version.content_purged_at is not None or version.scenario_text is None:
         raise ApiError(
             status_code=status.HTTP_410_GONE,
             code="REFERENCE_EVALUATION_CONTENT_PURGED",
             message="Reference evaluation content is no longer available",
         )
+    if (
+        version.content_expires_at is not None
+        and version.content_expires_at <= datetime.now(UTC)
+    ):
+        raise ApiError(
+            status_code=status.HTTP_410_GONE,
+            code="REFERENCE_EVALUATION_CONTENT_EXPIRED",
+            message="Reference evaluation content has expired",
+        )
+
+
+async def _reference_replay(
+    session: AsyncSession,
+    *,
+    actor: ActorContext,
+    scope: str,
+    key: UUID,
+    request_hash: str,
+) -> dict[str, Any] | None:
+    replay = await _idempotency_replay(
+        session, actor=actor, scope=scope, key=key, request_hash=request_hash
+    )
+    if replay is not None:
+        # A revision replay identifies its historical version, not today's current one.
+        body = replay.get("case", replay)
+        version = await session.scalar(
+            select(ReferenceEvaluationCaseVersion).where(
+                ReferenceEvaluationCaseVersion.clinic_id == actor.clinic_id,
+                ReferenceEvaluationCaseVersion.reference_case_id == UUID(body["id"]),
+                ReferenceEvaluationCaseVersion.version == body["currentVersion"],
+            )
+        )
+        if version is None:
+            raise ApiError(
+                status_code=410,
+                code="REFERENCE_EVALUATION_CONTENT_PURGED",
+                message="Reference evaluation content is no longer available",
+            )
+        _require_live_version(version)
+    return replay
 
 
 def _reject_identifiers(value: str, *, code: str) -> str:
@@ -255,7 +303,10 @@ def create_reference_evaluation_router(
     Session = Annotated[AsyncSession, Depends(get_session)]
     SourceFilename = Annotated[
         str,
-        Header(alias="X-Source-Filename", min_length=1, max_length=255),
+        Header(alias="X-Source-Filename", min_length=1, max_length=MAX_FILENAME_HEADER_CHARS),
+    ]
+    SourceFilenameEncoding = Annotated[
+        Literal["percent-utf8"] | None, Header(alias="X-Source-Filename-Encoding")
     ]
 
     @router.get("/access", response_model=ReferenceEvaluationAccessResponse)
@@ -294,7 +345,7 @@ def create_reference_evaluation_router(
                 "scenarioSha256": hashlib.sha256(scenario_text.encode("utf-8")).hexdigest(),
             }
         )
-        replay = await _idempotency_replay(
+        replay = await _reference_replay(
             session,
             actor=actor,
             scope="reference-evaluations:create",
@@ -442,7 +493,7 @@ def create_reference_evaluation_router(
             }
         )
         scope = f"reference-evaluations:revision:{case_id}"
-        replay = await _idempotency_replay(
+        replay = await _reference_replay(
             session, actor=actor, scope=scope, key=idempotency_key, request_hash=request_hash
         )
         if replay is not None:
@@ -534,11 +585,13 @@ def create_reference_evaluation_router(
         telegram_user_id: TelegramUserId,
         idempotency_key: IdempotencyKey,
         session: Session,
+        source_filename_encoding: SourceFilenameEncoding = None,
     ) -> ReferenceEvaluationMaterialResponse:
         actor = await resolve_actor(session, telegram_user_id)
         await _require_workspace(session, actor, contribute=True)
         raw = await _read_bounded_material_upload(request)
         try:
+            source_filename = decode_source_filename(source_filename, source_filename_encoding)
             parsed = await asyncio.to_thread(
                 parse_clinic_document_upload,
                 raw,
@@ -568,7 +621,7 @@ def create_reference_evaluation_router(
             {"caseId": str(case_id), "rawSha256": parsed.raw_sha256, "mimeType": parsed.mime_type}
         )
         scope = f"reference-evaluations:material:{case_id}"
-        replay = await _idempotency_replay(
+        replay = await _reference_replay(
             session, actor=actor, scope=scope, key=idempotency_key, request_hash=request_hash
         )
         if replay is not None:
@@ -696,7 +749,7 @@ def create_reference_evaluation_router(
         await _require_workspace(session, actor, contribute=True)
         request_hash = _canonical_hash({"caseId": str(case_id), "action": "submit"})
         scope = f"reference-evaluations:submit:{case_id}"
-        replay = await _idempotency_replay(
+        replay = await _reference_replay(
             session, actor=actor, scope=scope, key=idempotency_key, request_hash=request_hash
         )
         if replay is not None:
@@ -756,7 +809,7 @@ def create_reference_evaluation_router(
             {"caseId": str(case_id), "decision": payload.decision, "note": note}
         )
         scope = f"reference-evaluations:review:{case_id}"
-        replay = await _idempotency_replay(
+        replay = await _reference_replay(
             session, actor=actor, scope=scope, key=idempotency_key, request_hash=request_hash
         )
         if replay is not None:

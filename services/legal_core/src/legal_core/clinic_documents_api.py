@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import date
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
@@ -27,6 +27,7 @@ from legal_core.clinic_document_store import (
     minio_store_from_environment,
 )
 from legal_core.clinic_documents import PreparedClinicDocumentText, prepare_clinic_document_text
+from legal_core.upload_filename import MAX_FILENAME_HEADER_CHARS, decode_source_filename
 
 
 async def _tenant_document_row(
@@ -286,7 +287,10 @@ def create_clinic_documents_router(
     AsOfDate = Annotated[date | None, Query(alias="as_of_date")]
     SourceFilename = Annotated[
         str,
-        Header(alias="X-Source-Filename", min_length=1, max_length=255),
+        Header(alias="X-Source-Filename", min_length=1, max_length=MAX_FILENAME_HEADER_CHARS),
+    ]
+    SourceFilenameEncoding = Annotated[
+        Literal["percent-utf8"] | None, Header(alias="X-Source-Filename-Encoding")
     ]
     ValidFrom = Annotated[date | None, Query(alias="valid_from")]
     ValidTo = Annotated[date | None, Query(alias="valid_to")]
@@ -464,6 +468,7 @@ def create_clinic_documents_router(
         session: Session,
         valid_from: ValidFrom = None,
         valid_to: ValidTo = None,
+        source_filename_encoding: SourceFilenameEncoding = None,
     ) -> ClinicDocumentVersionResponse:
         actor = await resolve_actor(session, telegram_user_id)
         document = await _tenant_document_row(
@@ -482,6 +487,7 @@ def create_clinic_documents_router(
         raw = await _read_bounded_upload(request)
         content_type = request.headers.get("content-type", "")
         try:
+            source_filename = decode_source_filename(source_filename, source_filename_encoding)
             parsed = await asyncio.to_thread(
                 parse_clinic_document_upload,
                 raw,

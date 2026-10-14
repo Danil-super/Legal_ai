@@ -21,12 +21,13 @@ ACTOR_ID = 777
 def context_with_draft(state: bot.WizardState) -> SimpleNamespace:
     client = SimpleNamespace(
         save_intake_draft=AsyncMock(return_value={"revision": 8}),
+        get_intake_draft=AsyncMock(return_value={"id": DRAFT_ID}),
         get_actor=AsyncMock(return_value={"role": "CLINIC_ADMIN"}),
         create_intake_draft=AsyncMock(
             return_value={"id": DRAFT_ID, "wizardState": "INCIDENT", "revision": 1}
         ),
     )
-    return SimpleNamespace(
+    context = SimpleNamespace(
         bot_data={bot.LEGAL_CORE_CLIENT_KEY: client},
         user_data={
             bot.WIZARD_DATA_KEY: {
@@ -38,16 +39,26 @@ def context_with_draft(state: bot.WizardState) -> SimpleNamespace:
             }
         },
     )
+    async def current_draft(*args: object) -> dict[str, object]:
+        data = context.user_data[bot.WIZARD_DATA_KEY]
+        return {
+            "id": data[bot.DRAFT_ID_KEY], "revision": data[bot.DRAFT_REVISION_KEY],
+            "wizardState": data[bot.DRAFT_STATE_KEY], "draftData": bot._draft_payload(data),
+        }
+    client.get_intake_draft = AsyncMock(side_effect=current_draft)
+    return context
 
 
 def fake_update(*, text: str = "", callback: str | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         effective_user=SimpleNamespace(id=ACTOR_ID),
         effective_message=SimpleNamespace(
-            text=text, reply_text=AsyncMock(), reply_document=AsyncMock()
+            text=text, message_id=3, reply_text=AsyncMock(), reply_document=AsyncMock()
         ),
         callback_query=(
-            None if callback is None else SimpleNamespace(data=callback, answer=AsyncMock())
+            None if callback is None else SimpleNamespace(
+                data=callback, answer=AsyncMock(), message=SimpleNamespace(message_id=3),
+            )
         ),
     )
 
@@ -208,6 +219,7 @@ def test_v2_delivery_failure_preserves_guided_confirmation_for_safe_retry(
         bot.DRAFT_REVISION_KEY: 7,
         bot.DRAFT_STATE_KEY: "V2_CONFIRM",
         "intakeVersion": 2,
+        "_v2_prompt_message_id": 3,
         "incomingKind": "COMPLAINT",
         "incomingSourceStatus": "NOT_ATTACHED",
         "situationAreas": ["TREATMENT"],
@@ -266,7 +278,7 @@ def test_long_analysis_preserves_the_entire_draft_and_review_warning() -> None:
     assert all(len(message.encode("utf-16-le")) // 2 <= 4_000 for message in messages)
     combined = "".join(messages)
     assert draft in combined
-    assert "Перед отправкой текст должен проверить" in combined
+    assert "обязательна проверка человеком перед отправкой" in combined
     assert combined.endswith("Автоматическая отправка пациенту отключена.")
 
 

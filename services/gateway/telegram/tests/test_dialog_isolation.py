@@ -72,14 +72,17 @@ class Core:
 
     async def create_intake_draft(self, actor, *, intake_schema_version):
         assert intake_schema_version == "dental-case-intake.v2"
-        return {
+        self.draft = {
             "id": str(DRAFT),
             "revision": 1,
             "wizardState": "INCOMING",
             "draftData": {"intakeVersion": 2},
         }
+        return self.draft
 
     async def get_intake_draft(self, draft, actor):
+        if hasattr(self, "draft"):
+            return self.draft
         return {
             "id": str(DRAFT),
             "revision": 1,
@@ -89,12 +92,13 @@ class Core:
 
     async def save_intake_draft(self, draft, actor, **kwargs):
         self.saved.append(kwargs)
-        return {
+        self.draft = {
             "id": str(DRAFT),
             "revision": kwargs["expected_revision"] + 1,
             "wizardState": kwargs["wizard_state"],
             "draftData": kwargs["draft_data"],
         }
+        return self.draft
 
 
 @pytest.mark.parametrize(
@@ -156,7 +160,7 @@ def test_switching_from_discussion_does_not_send_new_case_text_to_old_case(
                 return True
             sent.append(data)
             return {
-                "message_id": 10,
+                "message_id": len(sent) + 100,
                 "date": 1,
                 "chat": {"id": ACTOR, "type": "private"},
                 "text": (data or {}).get("text", ""),
@@ -187,6 +191,14 @@ def test_switching_from_discussion_does_not_send_new_case_text_to_old_case(
                         message["text"] = content.removeprefix("text:")
                         payload["message"] = message
                     else:
+                        for index in range(len(sent) - 1, -1, -1):
+                            markup = sent[index].get("reply_markup")
+                            if markup is not None and any(
+                                button.callback_data == content
+                                for row in markup.inline_keyboard for button in row
+                            ):
+                                message["message_id"] = index + 101
+                                break
                         payload["callback_query"] = {
                             "id": str(i),
                             "chat_instance": "test",
@@ -212,7 +224,11 @@ def test_switching_from_discussion_does_not_send_new_case_text_to_old_case(
                 elif expected == "quick":
                     assert "quick_intake_candidate" in app.user_data[ACTOR], sent
                 elif expected == "analysis":
-                    assert core.jobs == [(DRAFT, ACTOR, 10)]
+                    queued_message_id = next(
+                        index + 101 for index, item in enumerate(sent)
+                        if item.get("text") == "⏳ Сохраняю запрос анализа…"
+                    )
+                    assert core.jobs == [(DRAFT, ACTOR, queued_message_id)]
                     assert "escalation_discussion_id" not in app.user_data[ACTOR]
                     assert "меню" in sent[-1]["text"].lower() or "/menu" in sent[-1]["text"]
                 else:

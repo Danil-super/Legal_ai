@@ -21,11 +21,10 @@ from reportlab.lib.units import mm  # type: ignore[import-untyped]
 from reportlab.pdfbase import pdfmetrics  # type: ignore[import-untyped]
 from reportlab.pdfbase.ttfonts import TTFont  # type: ignore[import-untyped]
 from reportlab.platypus import (  # type: ignore[import-untyped]
+    CondPageBreak,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
-    Table,
-    TableStyle,
 )
 
 from legal_core.contracts import (
@@ -46,6 +45,7 @@ from legal_core.contracts import (
     ReportSummary,
     RiskSummary,
 )
+from legal_core.report_presentation import present_report
 from legal_core.risk_engine import RiskAssessment, RiskLevel
 from legal_core.safe_patient_draft import build_safe_patient_draft
 from legal_core.verifier import VerificationDecision, VerificationResult
@@ -337,7 +337,7 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
         "ReportTitle",
         parent=styles["Title"],
         fontName=FONT_NAME,
-        fontSize=18,
+        fontSize=17,
         leading=22,
         textColor=colors.HexColor("#173F5F"),
         alignment=TA_CENTER,
@@ -352,6 +352,7 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
         textColor=colors.HexColor("#173F5F"),
         spaceBefore=5 * mm,
         spaceAfter=2 * mm,
+        keepWithNext=False,
     )
     body = ParagraphStyle(
         "ReportBody",
@@ -367,180 +368,16 @@ def render_report_pdf(report: CanonicalReport) -> bytes:
         fontSize=8,
     )
 
-    story: list[Any] = [
-        Paragraph("DENTAL LEGAL AI", title),
-        Paragraph(f"Карточка кейса {escape(report.case.public_number)}", heading),
-        Table(
-            [
-                ["Версия", str(report.report_version)],
-                ["Статус", report.case.status.value],
-                ["Сформировано", report.generated_at.isoformat()],
-            ],
-            colWidths=[42 * mm, 118 * mm],
-            style=TableStyle(
-                [
-                    ("FONTNAME", (0, 0), (-1, -1), FONT_NAME),
-                    ("FONTSIZE", (0, 0), (-1, -1), 9),
-                    ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#EAF3F7")),
-                    ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#B8CBD5")),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("PADDING", (0, 0), (-1, -1), 5),
-                ]
-            ),
-        ),
-        Paragraph("Что произошло", heading),
-        Paragraph(escape(report.summary.neutral_description), body),
-        Paragraph("Недостающая информация", heading),
-    ]
-    if report.missing_facts:
-        for missing_item in report.missing_facts:
-            story.append(Paragraph(f"• {escape(missing_item.fact_key.value)}", body))
-    else:
-        story.append(Paragraph("Критичные пробелы не выявлены.", body))
-
-    if report.summary.analysis_availability.status == "READY":
-        if report.risk is None or report.analysis is None:  # pragma: no cover - contract guards it.
-            raise ValueError("READY report is missing analysis snapshots")
-        story.extend(
-            [
-                Paragraph("Юридический анализ", heading),
-                Paragraph(
-                    f"Уровень риска: <b>{escape(report.risk.level)}</b>",
-                    body,
-                ),
-            ]
-        )
-        for reason in report.risk.reason_codes:
-            story.append(Paragraph(f"• {escape(reason)}", body))
-
-        story.append(Paragraph("Юридическая оценка", heading))
-        if report.legal_conclusions:
-            source_numbers = {
-                source.fragment_id: index
-                for index, source in enumerate(report.legal_basis.sources, start=1)
-            }
-            for index, conclusion in enumerate(report.legal_conclusions, start=1):
-                story.append(Paragraph(f"{index}. {escape(conclusion.text)}", body))
-                citations = ", ".join(
-                    f"[{source_numbers[fragment_id]}]"
-                    for fragment_id in conclusion.evidence_fragment_ids
-                )
-                story.append(Paragraph(f"Основание: {citations}.", muted))
-        else:
-            story.append(
-                Paragraph(
-                    "Отдельные проверенные юридические выводы в этом отчёте не сохранены.", body
-                )
-            )
-
-        story.append(Paragraph("Рекомендованные действия", heading))
-        for recommendation_item in report.recommendations.items:
-            story.append(Paragraph(f"• {escape(recommendation_item)}", body))
-
-        story.append(Paragraph("Черновик ответа пациенту", heading))
-        if report.draft_response.status == "AVAILABLE" and report.draft_response.text:
-            story.append(Paragraph(escape(report.draft_response.text), body))
-        else:
-            reason = report.draft_response.reason_code or "NOT_AVAILABLE"
-            story.append(Paragraph(f"Не сформирован: {escape(reason)}.", body))
-        if report.draft_response.policy_version:
-            story.append(
-                Paragraph(
-                    f"Draft policy: {escape(report.draft_response.policy_version)}",
-                    muted,
-                )
-            )
-
-        story.append(Paragraph("Правовая основа", heading))
-        for source_index, legal_source in enumerate(report.legal_basis.sources, start=1):
-            applicability_label = (
-                "проверенная применимость начиная с даты"
-                if legal_source.date_basis == "LAWYER_CURRENT_COPY"
-                else "действует с"
-            )
-            number = (
-                f" № {escape(legal_source.official_number)}" if legal_source.official_number else ""
-            )
-            story.append(
-                Paragraph(
-                    f"[{source_index}] {escape(legal_source.document_title)}{number}; "
-                    f"{escape(legal_source.structural_path)}; {applicability_label} "
-                    f"{legal_source.effective_from.isoformat()}.<br/>"
-                    f"Источник: {escape(legal_source.source_url)}",
-                    body,
-                )
-            )
-            if legal_source.date_basis == "LAWYER_CURRENT_COPY":
-                story.append(
-                    Paragraph(
-                        "Дата редакции и публикации не установлена; более ранняя "
-                        "применимость этой копии не подтверждена.",
-                        muted,
-                    )
-                )
-                for limitation in legal_source.extraction_limitations:
-                    story.append(Paragraph(escape(limitation), muted))
-
-        if report.clinic_documents.status == "USED":
-            story.append(Paragraph("Документы клиники — внутренний контекст", heading))
-            story.append(
-                Paragraph(
-                    "Эти документы не являются нормативной правовой основой и не заменяют закон.",
-                    muted,
-                )
-            )
-            for clinic_source in report.clinic_documents.sources:
-                period = ""
-                if clinic_source.valid_from is not None:
-                    period = f"; действует с {clinic_source.valid_from.isoformat()}"
-                if clinic_source.valid_to is not None:
-                    period += f" до {clinic_source.valid_to.isoformat()}"
-                story.append(
-                    Paragraph(
-                        f"• {escape(clinic_source.document_title)}; v{clinic_source.version_no}; "
-                        f"{escape(clinic_source.document_type)}; "
-                        f"{escape(clinic_source.structural_path)}{period}.",
-                        body,
-                    )
-                )
-
-        story.append(
-            Paragraph(
-                f"Evidence trace SHA-256: {report.analysis.evidence_trace_sha256}",
-                muted,
-            )
-        )
-        if report.analysis.clinic_document_context_trace_sha256:
-            story.append(
-                Paragraph(
-                    "Clinic context trace SHA-256: "
-                    f"{report.analysis.clinic_document_context_trace_sha256}",
-                    muted,
-                )
-            )
-    else:
-        reason = report.summary.analysis_availability.reason_code or "ANALYSIS_BLOCKED"
-        story.extend(
-            [
-                Paragraph("Юридический анализ", heading),
-                Paragraph(
-                    f"НЕ СФОРМИРОВАНО: {escape(reason)}. "
-                    "Рекомендации, оценка риска и черновик ответа недоступны.",
-                    body,
-                ),
-            ]
-        )
-
-    story.extend(
-        [
-            Spacer(1, 8 * mm),
-            Paragraph(escape(report.disclaimer), muted),
-            Paragraph(
-                f"Fact snapshot SHA-256: {report.fact_snapshot_sha256}",
-                muted,
-            ),
-        ]
-    )
+    presentation = present_report(report.model_dump(mode="json", by_alias=True))
+    story: list[Any] = [Paragraph(escape(presentation.header[0]), title)]
+    for line in presentation.header[1:]:
+        story.append(Paragraph(escape(line), body))
+    for block in presentation.blocks:
+        story.append(CondPageBreak(28 * mm))
+        story.append(Paragraph(escape(block.title), heading))
+        for line in block.lines:
+            story.append(Paragraph(escape(line).replace("\n", "<br/>"), body))
+    story.extend([Spacer(1, 8 * mm), Paragraph(escape(presentation.disclaimer), muted)])
     document.build(story)
     rendered = output.getvalue()
     # ReportLab 5 still varies only the trailer document ID between identical renders.
