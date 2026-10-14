@@ -7,6 +7,7 @@ from typing import Any, Literal, TypeAlias
 from uuid import UUID, uuid4
 
 import httpx2
+from legal_core.analysis_clarifications import AnalysisClarificationAnswers
 from legal_core.report_presentation import (
     TELEGRAM_DRAFT_IN_PDF,
     TELEGRAM_SOURCE_LIMITATIONS_IN_PDF,
@@ -301,7 +302,33 @@ def facts_from_v2_data(data: dict[str, Any]) -> list[dict[str, Any]]:
 
         screening = FactualSafetyScreening.model_validate(data["safetyScreening"])
         facts.append(_fact("FACTUAL_SAFETY_SCREENING", "JSON", screening.model_dump(by_alias=True)))
+    answers = confirmed_clarification_answers(data)
+    if answers.answers:
+        facts.append(_fact(
+            "ANALYSIS_CLARIFICATION_ANSWERS", "JSON",
+            answers.model_dump(mode="json", by_alias=True),
+        ))
     return facts
+
+
+def confirmed_clarification_answers(data: dict[str, Any]) -> AnalysisClarificationAnswers:
+    """Read only the explicit answer field and fail closed on malformed service scopes."""
+    answers = AnalysisClarificationAnswers.model_validate(
+        data.get("analysisClarificationAnswers", {"answers": []})
+    )
+    services = data.get("affectedServices")
+    for answer in answers.answers:
+        if answer.service_slot is None:
+            continue
+        if (
+            not isinstance(services, list)
+            or not 1 <= len(services) <= 5
+            or not all(isinstance(item, str) and 2 <= len(item.strip()) <= 500 for item in services)
+            or len(services) != len(set(services))
+            or answer.service_slot >= len(services)
+        ):
+            raise ValueError("clarification answer requires an existing service")
+    return answers
 
 
 def telegram_summary_from_report(report: dict[str, Any]) -> str:

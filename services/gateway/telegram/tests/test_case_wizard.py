@@ -287,6 +287,65 @@ def test_v2_mapping_never_infers_legacy_claim_or_harm_facts() -> None:
     assert keys.isdisjoint({"FORMAL_CLAIM", "HARM_CLAIMED", "RESPONSE_DEADLINE"})
 
 
+def _clarification_v2_data() -> dict[str, Any]:
+    return {
+        "intakeVersion": 2,
+        "incomingKind": "COMPLAINT",
+        "incomingSourceStatus": "NOT_ATTACHED",
+        "situationAreas": ["TREATMENT"],
+        "affectedServices": ["лечение", "протезирование"],
+        "eventSummary": "Клиент сообщил о дискомфорте после лечения.",
+        "eventDate": {"date": "2026-09-01", "precision": "EXACT"},
+        "conflictStage": "ONGOING",
+        "clinicActions": ["INVITED_FOR_EXAMINATION"],
+        "healthSignals": ["UNKNOWN"],
+        "caseMaterialsStatus": "NOT_ATTACHED",
+    }
+
+
+def test_confirmed_clarification_fact_is_strict_user_statement_without_inferred_facts() -> None:
+    answers = {"answers": [
+        {"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 0, "value": "PAID"},
+        {"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 1, "value": "UNKNOWN"},
+        {"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 1,
+         "value": {"date": "2020-01-01", "precision": "APPROXIMATE"}},
+        {"questionId": "RESPONSE_PURPOSE", "serviceSlot": None, "value": "UNKNOWN"},
+    ]}
+    base = _clarification_v2_data()
+    facts = facts_from_v2_data(base | {"analysisClarificationAnswers": answers})
+    assert facts[-1] == {
+        "factKey": "ANALYSIS_CLARIFICATION_ANSWERS", "valueType": "JSON",
+        "value": answers, "sourceType": "USER_STATEMENT",
+    }
+    assert facts[:-1] == facts_from_v2_data(base)
+    event = next(fact for fact in facts if fact["factKey"] == "EVENT_DATE")
+    assert event["value"] == base["eventDate"]
+
+
+@pytest.mark.parametrize("answers", [None, {"answers": []}])
+def test_unanswered_clarifications_never_create_a_fact(answers: object) -> None:
+    data = _clarification_v2_data() | {"analysisClarificationRequests": [
+        {"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 0},
+    ]}
+    if answers is not None:
+        data["analysisClarificationAnswers"] = answers
+    facts = facts_from_v2_data(data)
+    assert all(fact["factKey"] != "ANALYSIS_CLARIFICATION_ANSWERS" for fact in facts)
+
+
+@pytest.mark.parametrize("answer", [
+    {"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 2, "value": "PAID"},
+    {"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 0, "value": "DEADLINE_EXISTS"},
+    {"questionId": "RESPONSE_PURPOSE", "serviceSlot": 0, "value": "OTHER"},
+    {"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 1,
+     "value": {"date": "2020-01-01", "precision": "UNKNOWN"}},
+])
+def test_fact_conversion_rejects_malformed_or_out_of_service_scope_answers(answer: object) -> None:
+    data = _clarification_v2_data() | {"analysisClarificationAnswers": {"answers": [answer]}}
+    with pytest.raises(ValueError):
+        facts_from_v2_data(data)
+
+
 def test_ruble_amount_is_finite_and_converted_to_integer_kopecks() -> None:
     assert parse_ruble_amount_to_kopecks("12,34") == 1_234
     assert parse_ruble_amount_to_kopecks("0.01") == 1
