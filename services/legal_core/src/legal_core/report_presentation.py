@@ -8,6 +8,13 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
+from legal_core.analysis_clarifications import (
+    ClarificationQuestionId,
+    ClarificationRequest,
+    ClarificationRequestBatch,
+    validate_request_scope,
+)
+
 
 @dataclass(frozen=True)
 class ReportBlock:
@@ -110,6 +117,7 @@ _RISK_REASONS = {
     "RELEVANT_DOCUMENT_MISSING": "Отсутствует относящийся к ситуации документ.",
 }
 _BLOCK_REASONS = {
+    "FACTUAL_CLARIFICATION_REQUIRED": "Для повторного анализа нужны фактические уточнения.",
     "LEGAL_CORPUS_NOT_READY": "Проверенные нормативные источники для анализа пока недоступны.",
     "INSUFFICIENT_FACTS": "Недостаточно сведений для юридического анализа.",
     "CRITICAL_FACTS_MISSING": "Недостаточно критичных сведений для юридического анализа.",
@@ -191,10 +199,47 @@ def risk_reason_description(code: str) -> str:
     )
 
 
+def _pending_clarifications(
+    report: Mapping[str, Any], facts: Mapping[str, Any],
+) -> tuple[list[ClarificationRequest], list[str]]:
+    availability = _object(_object(report.get("summary")).get("analysisAvailability"))
+    if availability.get("status") != "BLOCKED":
+        return [], []
+    try:
+        requests = ClarificationRequestBatch.model_validate(
+            {"requests": report.get("clarificationRequests", [])}
+        ).requests
+        validate_request_scope(requests, facts)
+    except ValueError:
+        return [], []
+    services = _texts(facts.get("AFFECTED_SERVICES"))
+    questions = []
+    for index, request in enumerate(requests, 1):
+        if request.question_id == ClarificationQuestionId.RESPONSE_PURPOSE:
+            question = "Что нужно сделать клинике по обращению?"
+        else:
+            slot = request.service_slot
+            assert slot is not None  # The strict request contract and scope validated it.
+            label = " ".join(services[slot].split())
+            encoded = label.encode("utf-16-le")
+            if len(encoded) > 40:
+                label = encoded[:38].decode("utf-16-le", errors="ignore") + "…"
+            prefix = f"Услуга {slot + 1}: "
+            question = (
+                f"Как оплачивалась услуга «{label}»?"
+                if request.question_id == ClarificationQuestionId.SERVICE_PAYMENT_BASIS
+                else f"Когда была оказана услуга «{label}» (точно, примерно или неизвестно)?"
+            )
+            question = prefix + question
+        questions.append(f"{index}. {question}")
+    return requests, questions
+
+
 def present_report(report: Mapping[str, Any]) -> ReportPresentation:
     """Format known saved fields; unknown internal identifiers never become advice."""
     case, summary = _object(report.get("case")), _object(report.get("summary"))
     facts = _object(report.get("facts"))
+    requests, questions = _pending_clarifications(report, facts)
     availability = _object(summary.get("analysisAvailability"))
     ready = availability.get("status") == "READY"
     description = summary.get("neutralDescription")
@@ -264,6 +309,10 @@ def present_report(report: Mapping[str, Any]) -> ReportPresentation:
                 )
 
     missing = report.get("missingFacts", [])
+    requested_ids = {item.question_id for item in requests}
+    requested_keys = {"ANALYSIS_CLARIFICATION_ANSWERS"} if requests else set()
+    if ClarificationQuestionId.SERVICE_PROVIDED_DATE in requested_ids:
+        requested_keys.add("SERVICE_DATE")
     gaps = (
         [
             "Уточните: "
@@ -272,6 +321,8 @@ def present_report(report: Mapping[str, Any]) -> ReportPresentation:
             )
             + "."
             for item in missing
+            if _object(item).get("questionId") not in requested_ids
+            and _object(item).get("factKey") not in requested_keys
         ]
         if isinstance(missing, list)
         else []
@@ -303,12 +354,20 @@ def present_report(report: Mapping[str, Any]) -> ReportPresentation:
                 str(availability.get("reasonCode")), "Причина недоступности анализа не распознана."
             ),
         ]
-        risk_lines.extend(
-            gaps or ["Отсутствие списка пробелов не подтверждает достаточность сведений."]
-        )
+        if questions:
+            risk_lines.extend(["Уточните факты:", *questions])
+            risk_lines.append(
+                "Ответ «неизвестно» допустим; уточнение фактов не подтверждает юридические выводы."
+            )
+            risk_lines.append("Юридические выводы требуют проверенных применимых доказательств.")
+            risk_lines.extend(gaps)
+        else:
+            risk_lines.extend(
+                gaps or ["Отсутствие списка пробелов не подтверждает достаточность сведений."]
+            )
         risk_lines.append(
             "Следующий шаг: Уточните недостающие сведения и повторите анализ."
-            if gaps
+            if gaps or questions
             else "Следующий шаг: уточните доступность анализа через ответственного сотрудника."
         )
 

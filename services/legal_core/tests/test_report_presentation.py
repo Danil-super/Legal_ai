@@ -9,6 +9,7 @@ import pytest
 
 from legal_core.contracts import CanonicalReport
 from legal_core.reports import render_report_pdf
+from legal_core.report_presentation import present_report
 from telegram_gateway.analysis_runtime import telegram_analysis_summary
 from telegram_gateway.case_wizard import telegram_summary_from_report
 
@@ -267,3 +268,66 @@ def test_compact_telegram_does_not_drop_legal_conditions_or_source_citations() -
     assert "Дата редакции и публикации не установлена" in text
     assert "Таблица не извлечена" in text
     assert len(text.encode("utf-16-le")) // 2 <= 4000
+
+
+def clarification_report() -> CanonicalReport:
+    payload = presentation_report(guided=True).model_dump(mode="json", by_alias=True)
+    payload.update(
+        risk=None, analysis=None, legalConclusions=[],
+        recommendations={"status": "NOT_AVAILABLE", "items": []},
+        legalBasis={"status": "NOT_AVAILABLE", "sources": []},
+        draftResponse={"status": "NOT_AVAILABLE"},
+        clarificationRequests=[
+            {"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 0},
+            {"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 1},
+            {"questionId": "RESPONSE_PURPOSE", "serviceSlot": None},
+        ],
+    )
+    payload["summary"]["analysisAvailability"] = {
+        "status": "BLOCKED", "reasonCode": "FACTUAL_CLARIFICATION_REQUIRED",
+    }
+    payload["facts"].update(
+        SITUATION_AREAS=["TREATMENT"],
+        AFFECTED_SERVICES=["Синтетическая коронка", "Синтетическая чистка"],
+    )
+    payload["missingFacts"] = [{
+        "factKey": "ANALYSIS_CLARIFICATION_ANSWERS", "severity": "IMPORTANT",
+        "reasonCode": "FACTUAL_CLARIFICATION_REQUIRED", "questionId": "RESPONSE_PURPOSE",
+    }]
+    return CanonicalReport.model_validate(payload)
+
+
+def test_pending_factual_questions_are_shared_once_by_pdf_and_both_telegram_paths(
+    tmp_path: Path,
+) -> None:
+    report = clarification_report()
+    payload = report.model_dump(mode="json", by_alias=True)
+    for text in (
+        pdf_text(report, tmp_path),
+        telegram_summary_from_report(payload),
+        telegram_analysis_summary({"analysisAllowed": False, "report": {"reportJson": payload}}),
+    ):
+        text = re.sub(r"\s+", " ", text)
+        for question in (
+            "Как оплачивалась услуга", "Когда была оказана услуга",
+            "Что нужно сделать клинике по обращению?",
+        ):
+            assert text.count(question) == 1
+        assert "Услуга 1" in text and "Синтетическая коронка" in text
+        assert "Услуга 2" in text and "Синтетическая чистка" in text
+        assert text.index("Уточните факты:") < text.index("Юридические выводы")
+        assert "Ответ «неизвестно» допустим" in text
+        assert "АНАЛИЗ ЗАБЛОКИРОВАН" in text
+        assert "не распознан" not in text
+        assert "Синтетическая проверка" not in text
+        assert "FACTUAL_CLARIFICATION_REQUIRED" not in text
+        assert "Уточните: сведения" not in text
+
+
+def test_legacy_report_without_requests_preserves_presentation_and_pdf() -> None:
+    report = presentation_report()
+    payload = report.model_dump(mode="json", by_alias=True)
+    assert "clarificationRequests" not in payload
+    assert present_report(payload) == present_report({**payload, "clarificationRequests": []})
+    restored = CanonicalReport.model_validate({**payload, "clarificationRequests": []})
+    assert render_report_pdf(report) == render_report_pdf(restored)
