@@ -1,5 +1,66 @@
 # Аудит сценариев бота — 14 октября 2026
 
+## Выпуск PR95 и живая приёмка
+
+Владелец разрешил выпуск `9ebfab1a725f8cbae80e783d229b2b3d05bc2a10`.
+PR95 CI38612321085 успешен; окончательный локальный head: 2472 passed,
+0 skipped, 298 неподавленных PTB warnings, 117.48 s с PostgreSQL/MinIO.
+GitHub unit job: 2150 passed / 322 integration skips; отдельный integration
+job: 1291 passed / 0 skipped, 152.01 s. Эти пересекающиеся наборы не суммируются.
+Согласованный merge `fea949f534779bfc0057ff78f8e472f51fc1a60e` прошёл main
+CI38615867992 и штатный Deploy production. На VPS этот commit; восемь сервисов
+healthy, у Core/gateway/orchestrator restarts=0 и OOM=false. Новых миграций,
+изменений прав, моделей, провайдера, policy или legal approval нет.
+
+Server-local custom-format backup до замены контейнеров: mode0600,
+85,709,118 bytes, 935 TOC lines, SHA256
+`c88132dee638cf7bf07ad2e79bd118cf792f181eaa9d6d7c200f3534a01876aa`.
+Это проверка артефакта/TOC, не новый restore drill или подтверждение шифрования.
+Содержимое не скопировано локально. Full-row approval-ledger MD5 до/после
+совпадает: 54 normative events (`aa73a7b681b4198193bd63983f17eeb2`),
+8 reference events (`a1e8f8cb1acf90e3ade6ed295e8495cd`). Эти MD5 используются
+для контроля равенства снимков, не как криптографическая подпись или legal approval.
+
+Оба способа создания прошли production PTB composition → реальные Core HTTP
+и durable workflow. Промежуточные prompt/ACK синтетические; дополнительного
+polling/getUpdates нет. Конечные placeholders в owner-channel настоящие.
+Только фиксированные вымышленные описания, без реальных пациентов/вложений:
+
+| Путь | Сохранённый кейс | Job | Итог живого анализа |
+| --- | --- | --- | --- |
+| Один текст, неполная ситуация | 8303bc4d-0698-4fcd-9a8d-b362df6fc716 | 96c22aab-e94c-4c72-8aa4-240def420903 | FAILED / ANALYSIS_PROVIDER_INVALID, 42.31 s |
+| Пошаговый, описаны оплата/дата/цель | f61ca402-a648-461e-ae94-7b893d245355 | 8edd2ae8-2927-4be9-9c9c-85660f3c2dcc | FAILED / ANALYSIS_PROVIDER_INVALID, 39.23 s |
+
+Нового юридического отчёта/PDF эти jobs не создали. Прежние кейсы, утверждения
+и история не переписаны. Живые positive, typed clarification/re-confirmation,
+UNKNOWN/no-loop и конечная PDF-доставка пока не подтверждены. Не заменять этот
+результат предыдущими mocked positive tests или состоянием healthy.
+
+Read-only повтор на первом вымышленном кейсе: 14 approved/date-applicable
+фрагментов, system=8858 chars, input=52154 chars. Исследователь отклонён на
+границе Hermes за 29.39 s: `Hermes response did not complete successfully`.
+Следующий bounded diagnostic получил `finish_reason=error`, error присутствует,
+`completed=false / failed=true / partial=false` за 1.07 s; это отказ потока,
+не доказанная ошибка JSON Schema. Ни одна диагностическая proposal не submitted
+в Core. Server-local классификация без raw log/body показывает timeout, APIError,
+ReadError и 403; reviewer не вызывался. Причина отдельных отказов 403 не установлена.
+
+Текущий provider host — `ai.externcashpn.cv`, модель `gpt-6.1-sol`.
+Read-only `/models`: HTTP200, 33 модели, настроенная модель присутствует.
+Один короткий технический запрос через тот же production Hermes/profile вернул
+точный `{"ok":true}` за 6.97 s. Это подтверждает базовый model transport, не
+юридическую готовность. Actual rendered profile: reasoning=high, custom request
+timeout=29 s, stale timeout=29 s. Настройки не менялись. Совпадение длительности
+отказа с profile timeout — основание проверить бюджет, не доказательство, что
+увеличение ожидания устранит все 403 или обеспечит legal PASSED.
+
+Предложение следующего отдельного среза: после согласования владельцем проверить
+request/stale 29→55 s, сохранив high, те же модели/провайдера и внешние fences
+(stage65 / analysis115 / worker125 / lease180 s). Это не включено автоматически
+в одобренный FC-контракт без изменений budgets. Затем снова нужны живые Core-
+persisted positive и безопасное уточнение/отказ. Online curated reference context
+по-прежнему отдельный незавершённый контракт; 67 DRAFT не стали online evidence.
+
 ## Доработка фактических уточнений — состояние до выпуска
 
 FC1–FC10 реализованы в изолированной ветке
