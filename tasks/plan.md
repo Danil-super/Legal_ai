@@ -1,5 +1,95 @@
 # Implementation Plan: Dental Legal AI MVP
 
+## Factual analysis clarification — contract approved 2026-10-14
+
+Status: plan and FC1–FC11 tasks approved by the owner on 2026-10-14. This extends the
+ongoing case-readiness work; all pre-existing incomplete plans/tasks below remain.
+Contract: SPEC-analysis-factual-clarifications.md. No application code or
+production configuration is changed by this planning step.
+
+### Delivery order
+
+Use the existing modules and storage. Dependency order:
+strict shared contracts → protected draft/fact validation → model/Core request
+transport → persisted blocked questions → durable user answers → creator-only
+recovery → temporal verification → shared report presentation → end-to-end gates.
+
+1. **FC1–FC4: make a blocked analysis actionable.** Define bounded request IDs and
+   service slots, retaining strict extra-forbid contracts. Add optional empty
+   lists for old reports/model responses; introduce a typed clarification-answer
+   JSON fact and draft field, never a guessed legacy claim/date. Model requests
+   travel separately from claims through the existing internal submission API.
+   Core validates them against its frozen case facts, not the supplied tenant,
+   and stores only accepted IDs/slots in its canonical blocked report. Reject
+   invalid/duplicate/out-of-scope requests. Unverified recommendations/drafts
+   remain discarded. No request alone produces a legal conclusion or READY.
+2. **FC5–FC8: answer the questions through the existing wizard.** Fixed neutral
+   Russian questions collect only the approved business/date/purpose facts.
+   Bind service answers to the unchanged affected-service slot set; reset them
+   when that set changes. Both entry paths share parsing, durable saves, summary
+   and explicit confirmation. A completed case is immutable: use the existing
+   creator-only new-draft recovery, now bound to the displayed source report and
+   facts. Preserve file ownership and do not copy originals. UNKNOWN is allowed,
+   but recorded as attempted so it does not trigger an automatic repeated loop.
+3. **FC9–FC11: prove safety, present results and prepare release.** Check relevant
+   service dates without changing the current retrieval anchor or policy. Unknown,
+   approximate or unsupported historical applicability cannot pass as known
+   merely because EVENT_DATE is exact. Shared CanonicalReport presentation shows
+   the concrete questions in Telegram/PDF. Verify both complete entry paths,
+   positive and negative results, urgent routing, isolation and recovery on
+   disposable PostgreSQL/MinIO, then reviewed CI/release and a real Core smoke.
+
+### Storage, compatibility and scope decisions
+
+- Reuse CaseFact JSON, TelegramIntakeDraft JSON and immutable CaseReport JSON.
+  Existing clinic_id/RLS, actor checks, revisions, idempotency and 30/90-day
+  retention continue. No new table or data backfill is planned. If an existing
+  database constraint needs an additive change, require Alembic tests; a new
+  table or new sensitive data category requires separate agreement.
+- SERVICE_PAYMENT_BASIS and SERVICE_PROVIDED_DATE questions require a valid
+  service slot; RESPONSE_PURPOSE is case-level. At most three requests per model
+  batch; at most five affected services. Core chooses fixed question wording.
+  Exact answer storage shape is tested in FC1/FC2, not an unrestricted JSON bag.
+- Old readers are strict: `_domain_facts` converts stored keys through FactKey,
+  and CanonicalReport forbids unknown fields. Do not call writes rollback-safe
+  merely because no table changed. Establish and test a reader-compatible
+  revision before emitting new persisted fields; record that revision as the
+  minimum rollback target. After new writes, f4eaee8 alone is not a proven safe
+  rollback. No ignoring unknown facts or weakening schema validators to mask it.
+- A valid unanswered clarification keeps the result blocked; confirmed urgent
+  facts still use the existing early HIGH/CRITICAL route immediately. The
+  payment answer does not change risk policy or the 10,000 RUB threshold.
+- Keep the single EVENT_DATE retrieval anchor. A known service date does not
+  make a later LAWYER_CURRENT_COPY applicable to an earlier service. For a
+  service-dependent claim, require validated temporal support from the cited
+  fragments; if dependency/date binding cannot be established, block that legal
+  analysis for clarification/human review rather than infer applicability.
+- Do not automatically rerun a finalized case, publish model advice, infer
+  answers from a narrative, send raw attachments to models, approve norms or
+  references, change providers/models, widen roles or edit personal features.
+  Treatment-query expansion and online curated reference context remain separate.
+
+### Checkpoints, collaboration and release
+
+FC1–FC4, FC5–FC8 and FC9–FC11 each have a regression checkpoint. Shared contracts,
+state changes and database work are sequential. During implementation, isolated
+branches may be used for independent RED tests and scoped reviews; no parallel
+writers on shared contracts. No agent run/completion is claimed by this plan.
+
+The full release gate uses the existing project quality/security/container and
+GitHub workflows, without skipped tests or lower thresholds. Add bounded existing-
+style audit events for accepted clarification IDs/counts/status only: no answers,
+case narrative or provider body in telemetry. A real positive Core-persisted report
+with cited approved norms is required; process-local SUPPORTED is insufficient.
+Live probes use fictional cases and the owner channel, not notifications to real
+lawyers unless separately authorised. Actual release/activation needs reviewed
+immutable-head approval; this plan is not a deployment authorisation.
+
+Plan and FC1–FC11 task approval received; reviewed release remains separate. If compatibility
+or storage cannot satisfy the approved boundaries, report the exact blocker before
+changing the contract. Successful technical tests still do not certify legal
+quality of all 67 unreviewed historical cases or unrestricted commercial readiness.
+
 ## Authorized immediate lawyer alerts — 2026-10-07
 
 Implement `SPEC-lawyer-notifications.md` in a separate branch: privacy-minimal

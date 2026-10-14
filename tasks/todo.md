@@ -1,5 +1,166 @@
 # Dental Legal AI task list
 
+## Factual analysis clarification — contract approved 2026-10-14
+
+- [x] Read actual synthetic V2 context; disprove the nested INTAKE_VERSION hypothesis.
+- [x] Repeat researcher read-only and perform bounded in-memory fictional contrast;
+  preserve original failed reports and distinguish model SUPPORTED from Core PASSED.
+- [x] Independent isolated treatment-query RED proposal; baseline is unchanged.
+- [x] Owner approval of SPEC-analysis-factual-clarifications.md on 2026-10-14.
+- [x] Owner approval of the focused plan and FC1–FC11 below on 2026-10-14.
+
+Every task starts with RED, ends with focused GREEN/quality checks and an atomic
+commit. Common verification environment: project venv with
+PYTHONPATH=services/legal_core/src:services/gateway/telegram/src:services/agent_orchestrator/src.
+Core files below are relative to services/legal_core; gateway files to
+services/gateway/telegram; orchestrator files to services/agent_orchestrator.
+
+### FC1: strict shared question/answer and compatible read contracts
+
+- [ ] Define three allowlisted question IDs, service-slot rules, bounded typed
+  answers and additive report/submission defaults; preserve strict validation.
+- [ ] Verify old payloads and record a reader-compatible rollback revision before
+  any new field is written; unknown/injected/duplicate keys never become facts.
+- Files (5): Core src/legal_core/{analysis_clarifications,contracts,analysis_contracts}.py,
+  Core tests/test_analysis_clarification_contracts.py (new), docs/adr/0087-factual-analysis-clarifications.md (new).
+- Verify: `python -m pytest services/legal_core/tests/test_analysis_clarification_contracts.py services/legal_core/tests/test_api_contracts.py services/legal_core/tests/test_report_readiness_contract.py -q`.
+- Dependencies: approved plan; medium scope. No new persisted data in this task.
+
+### FC2: protect draft and fact inputs
+
+- [ ] Validate the new partial draft-answer field and JSON fact using the same
+  strict schema; retain byte limits, user-confirmed provenance and V1/V2 separation.
+- [ ] Reject illegal service slots/shapes and prove omitted/UNKNOWN answers are
+  not interpreted as known or negative. No schema/backfill unless demonstrated.
+- Files (3): Core src/legal_core/api_contracts.py,
+  tests/{test_api_contracts,test_analysis_clarification_inputs}.py (latter new).
+- Verify: `python -m pytest services/legal_core/tests/test_api_contracts.py services/legal_core/tests/test_analysis_clarification_inputs.py -q`.
+- Dependencies: FC1; medium scope.
+
+### FC3: carry requests across the model boundary
+
+- [ ] Researcher may emit at most three IDs/slots, not free question text or
+  answers; empty claims still discard recommendations/draft and skip reviewer.
+- [ ] Preserve question requests in ReasoningResult and the existing Core client
+  submission. Old batches with no requests retain their exact safe behaviour.
+- Files (5): orchestrator src/agent_orchestrator/{contracts,reasoning,legal_core_client}.py,
+  tests/{test_reasoning,test_legal_core_client}.py.
+- Verify: `python -m pytest services/agent_orchestrator/tests/test_reasoning.py services/agent_orchestrator/tests/test_legal_core_client.py services/agent_orchestrator/tests/test_projection.py -q`.
+- Dependencies: FC1–FC2; medium scope; no provider/model/tools/time-budget change.
+
+### FC4: persist only Core-validated blocked questions
+
+- [ ] Revalidate against frozen tenant case facts, unknown answers and valid
+  service slots; reject invalid requests. Store accepted IDs/slots in the existing
+  immutable canonical report, not model prose or confirmed facts.
+- [ ] Preserve context hashes/job fences, retained idempotent replay and safe
+  BLOCKED semantics; log only bounded IDs/counts, never answer values/model bodies.
+- Files (5): Core src/legal_core/{analysis_clarifications,analysis_api,reports}.py,
+  tests/{test_analysis_api,test_analysis_clarification_submission}.py (latter new).
+- Verify: `POSTGRES_INTEGRATION=1 python -m pytest services/legal_core/tests/test_analysis_api.py services/legal_core/tests/test_analysis_clarification_submission.py -q` with disposable DB configuration.
+- Dependencies: FC1–FC3; medium scope.
+
+### Checkpoint A — contracts and model/Core path
+
+- [ ] Strict contracts, empty-claim request transport and real PG persistence pass;
+  incompatible rollout is refused and old histories remain readable.
+- [ ] Independent scoped boundary review; project lint/type/build checks pass.
+
+### FC5: pure question flow and confirmed fact conversion
+
+- [ ] Fixed Russian questions, bounded service mapping and UNKNOWN-aware parsing
+  share one pure implementation; a changed service set invalidates its answers.
+- [ ] Include only user-confirmed answers in V2 facts and factual recap; no
+  inferred legacy labels, dates, deadlines, defect or responsibility.
+- Files (4): gateway src/telegram_gateway/{guided_case_intake_v2,case_wizard}.py,
+  tests/{test_guided_case_intake_v2,test_case_wizard}.py.
+- Verify: `python -m pytest services/gateway/telegram/tests/test_guided_case_intake_v2.py services/gateway/telegram/tests/test_case_wizard.py -q`.
+- Dependencies: FC1–FC2; medium scope.
+
+### FC6: durable Telegram question interaction
+
+- [ ] Actual application composition supports back/cancel, old-button rejection,
+  per-service questions and fresh optimistic saves without overwriting other facts.
+- [ ] Both quick/manual paths, restart/resume and UNKNOWN completion behave
+  identically; no unconditional questions for unrelated cases or infinite loop.
+- Files (3): gateway src/telegram_gateway/bot.py,
+  tests/{test_analysis_clarification_runtime,test_quick_guided_v2}.py (first new).
+- Verify: `python -m pytest services/gateway/telegram/tests/test_analysis_clarification_runtime.py services/gateway/telegram/tests/test_quick_guided_v2.py -q`.
+- Dependencies: FC4–FC5; medium scope; no unrelated bot refactor.
+
+### FC7: protected source-report recovery in Core
+
+- [ ] Creator-only preview/new-draft recovery binds the displayed source report,
+  its hash and fact snapshot; stale or cross-tenant recovery fails safely.
+- [ ] Preserve confirmed answers, source case/report hashes and original material
+  ownership. UNKNOWN attempts lead to an explicit limit/human route, not a loop.
+- Files (3): Core src/legal_core/case_clarification.py,
+  tests/{test_clarification_recovery,test_analysis_clarification_recovery}.py (latter new).
+- Verify: `POSTGRES_INTEGRATION=1 python -m pytest services/legal_core/tests/test_clarification_recovery.py services/legal_core/tests/test_analysis_clarification_recovery.py -q` with disposable DB configuration.
+- Dependencies: FC4; medium scope; no reopening a finalized case.
+
+### FC8: gateway recovery handoff and re-confirmation
+
+- [ ] Existing API client passes the protected preview/recovery intent; user
+  sees the same filled draft, requested questions and explicit new confirmation.
+- [ ] Lost replies/repeated clicks reuse the same intent; access is rechecked,
+  expired content is not restored and files remain in the original case.
+- Files (3): gateway src/telegram_gateway/{case_wizard,clarification_runtime}.py,
+  tests/test_factual_clarification.py.
+- Verify: `python -m pytest services/gateway/telegram/tests/test_factual_clarification.py services/gateway/telegram/tests/test_analysis_clarification_runtime.py -q`.
+- Dependencies: FC6–FC7; medium scope.
+
+### Checkpoint B — complete factual recovery path
+
+- [ ] Real composition → Core → durable draft → restart → answers → recap → new
+  confirmation passes; old case, report, source objects and role scopes unchanged.
+- [ ] Urgent routing is not delayed; quick/manual parity and independent review pass.
+
+### FC9: enforce service-date limits without a new legal resolver
+
+- [ ] New nested unknown/approximate answers cannot satisfy a declared factual
+  dependency. EVENT_DATE never substitutes for a service date.
+- [ ] Service-dependent conclusions require support at the relevant known date;
+  unknown binding or a later-only approved copy stays blocked. Existing case-date
+  evidence checks, unknown recursion and policy remain; no guessed prior edition.
+- Files (4): Core src/legal_core/{analysis_clarifications,verifier}.py,
+  tests/{test_analysis_clarification_temporal,test_verifier}.py (first new).
+- Verify: `python -m pytest services/legal_core/tests/test_analysis_clarification_temporal.py services/legal_core/tests/test_verifier.py -q`.
+- Dependencies: FC1–FC4; medium scope; must pass before integration/release.
+
+### FC10: one clear question list in Telegram and PDF
+
+- [ ] Shared CanonicalReport presentation shows specific fixed factual questions
+  with service labels; no duplicate menus or unverified advice.
+- [ ] Retain sources/qualifiers, blocked status and historical PDFs; older reports
+  with no request field remain readable. Long/multi-service output stays bounded.
+- Files (3): Core src/legal_core/report_presentation.py,
+  Core tests/test_report_presentation.py, gateway tests/test_telegram_report_presentation.py.
+- Verify: `python -m pytest services/legal_core/tests/test_report_presentation.py services/legal_core/tests/test_reports.py services/gateway/telegram/tests/test_telegram_report_presentation.py -q` plus synthetic PDF inspection.
+- Dependencies: FC4–FC9; medium scope.
+
+### FC11: readiness evidence and reviewed release
+
+- [ ] Add synthetic composition/integration proofs for both entry paths, recovery,
+  valid/invalid model requests, UNKNOWN, multiple services, temporal denial,
+  tenant/creator/expiry/idempotency and unchanged HIGH/CRITICAL routing.
+- [ ] Full PG/MinIO regression, Ruff/mypy, Compose, existing security/container
+  gates and independent review pass; no weakened tests or automatic approvals.
+- [ ] After separate immutable-head release approval, normal CI deploy and real
+  fictional owner-channel Core-persisted positive + clarification/negative smoke.
+- Files (3): tests/test_analysis_clarification_e2e.py (new),
+  docs/audit/bot-scenarios-2026-10-14.md, tasks/todo.md. Other earlier tests may be
+  extended only within their respective focused tasks, not hidden in this task.
+- Verify: `POSTGRES_INTEGRATION=1 MINIO_INTEGRATION=1 python -m pytest -q --tb=short`
+  with disposable services; `python -m ruff check .`;
+  `python -m mypy services/legal_core/src services/gateway/telegram/src services/agent_orchestrator/src`;
+  `docker compose config --quiet`; existing CI security/container commands.
+- Dependencies: FC1–FC10; medium scope. Live model SUPPORTED alone cannot close it.
+
+Runtime evidence: docs/audit/bot-scenarios-2026-10-14.md. No new production change
+or legal readiness claimed. Online curated reference context remains unimplemented;
+67 DRAFT evaluation cases are not automatically approved or sent to models.
+
 ## Extended user-scenario audit — owner requested 2026-10-14
 
 - [x] Diagnose CI mismatch: missing native PDF tools, not a legal-verifier failure.
