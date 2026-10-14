@@ -27,6 +27,8 @@ V2 = "dental-case-intake.v2"
 V1 = "dental-case-intake.v1"
 CASE = UUID("00000000-0000-0000-0000-000000000456")
 SOURCE_HASH = "a" * 64
+SOURCE_REPORT = UUID("00000000-0000-0000-0000-000000000457")
+SOURCE_REPORT_HASH = "b" * 64
 
 
 class VersionedCore:
@@ -108,15 +110,20 @@ class VersionedCore:
         assert case_id == CASE
         if self.source_version == V1:
             raise LegalCoreApiError(409, "CLARIFICATION_SCHEMA_UNSUPPORTED", "new guided case")
-        return {"caseId": str(case_id), "expectedFactSnapshotSha256": SOURCE_HASH}
+        return {"caseId": str(case_id), "expectedFactSnapshotSha256": SOURCE_HASH,
+                "expectedReportId": str(SOURCE_REPORT), "expectedReportSha256": SOURCE_REPORT_HASH}
 
-    async def create_clarification_draft(self, case_id, actor, *, expected_sha256, key):
+    async def create_clarification_draft(self, case_id, actor, *, expected_sha256, key,
+                                       expected_report_id, expected_report_sha256):
         self.authorize(actor)
         assert (case_id, expected_sha256) == (CASE, SOURCE_HASH)
+        assert (expected_report_id, expected_report_sha256) == (SOURCE_REPORT, SOURCE_REPORT_HASH)
         self.clarification_creates.append((case_id, expected_sha256, key))
         data = {
             "intakeVersion": 2, "eventSummary": DESCRIPTION,
-            "correctionSource": {"caseId": str(CASE), "factSnapshotSha256": SOURCE_HASH},
+            "correctionSource": {"caseId": str(CASE), "factSnapshotSha256": SOURCE_HASH,
+                                 "reportId": str(SOURCE_REPORT),
+                                 "reportSha256": SOURCE_REPORT_HASH},
         }
         request = TelegramIntakeDraftUpdateRequest.model_validate({
             "expectedRevision": 1, "wizardState": "INCOMING", "draftData": data,
@@ -379,6 +386,7 @@ def test_v2_post_confirmation_clarification_keeps_immutable_source_on_resume_and
             await dispatch("case:v2:single:incomingKind:COMPLAINT")
             assert core.draft["draftData"]["correctionSource"] == {
                 "caseId": str(CASE), "factSnapshotSha256": SOURCE_HASH,
+                "reportId": str(SOURCE_REPORT), "reportSha256": SOURCE_REPORT_HASH,
             }
             assert core.draft["draftData"]["eventSummary"] == DESCRIPTION
             assert core.source == before

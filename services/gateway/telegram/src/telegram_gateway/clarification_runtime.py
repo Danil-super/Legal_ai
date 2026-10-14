@@ -21,25 +21,40 @@ async def create_clarification(update: Update, context: ContextTypes.DEFAULT_TYP
         case_id = UUID(callback.removeprefix("case:clarify:"))
         client = gateway_bot._legal_core(context)
         preview = await client.clarification_preview(case_id, actor)
-        sha = preview.get("expectedFactSnapshotSha256")
-        if (preview.get("caseId") != str(case_id) or not isinstance(sha, str)
-                or re.fullmatch(r"[0-9a-f]{64}", sha) is None):
+        if not isinstance(preview, dict):
             raise ValueError("invalid clarification preview")
+        sha = preview.get("expectedFactSnapshotSha256")
+        report_id_value = preview.get("expectedReportId")
+        report_sha = preview.get("expectedReportSha256")
+        if (preview.get("caseId") != str(case_id) or not isinstance(sha, str)
+                or re.fullmatch(r"[0-9a-f]{64}", sha) is None
+                or not isinstance(report_id_value, str) or not isinstance(report_sha, str)
+                or re.fullmatch(r"[0-9a-f]{64}", report_sha) is None):
+            raise ValueError("invalid clarification preview")
+        report_id = UUID(report_id_value)
         query = update.callback_query
         message = getattr(query, "message", None)
+        message_id = getattr(message, "message_id", None)
+        if type(message_id) is not int or message_id < 1:
+            raise ValueError("invalid clarification message")
         # One button on one message is one intent, including after gateway restart.
         key = uuid5(NAMESPACE_URL,
-                    f"clarification:v1:{actor}:{case_id}:{sha}:"
-                    f"{getattr(message, 'message_id', None)}")
+                    f"clarification:v2:{actor}:{case_id}:{sha}:{report_id}:{report_sha}:"
+                    f"{message_id}")
         draft = await client.create_clarification_draft(
             case_id, actor, expected_sha256=sha, key=key,
+            expected_report_id=report_id, expected_report_sha256=report_sha,
         )
+        if not isinstance(draft, dict):
+            raise ValueError("invalid clarification draft")
         draft_id = UUID(str(draft["id"]))
         data = draft.get("draftData")
         if (not isinstance(data, dict) or data.get("correctionSource") != {
                 "caseId": str(case_id), "factSnapshotSha256": sha,
+                "reportId": str(report_id), "reportSha256": report_sha,
         }):
             raise ValueError("invalid clarification draft")
+        gateway_bot._saved_draft_selection(draft_id, draft)
     except (KeyError, ValueError, LegalCoreApiError) as exc:
         if isinstance(exc, LegalCoreApiError) and exc.code == "CLARIFICATION_SCHEMA_UNSUPPORTED":
             await gateway_bot._reply(
@@ -51,6 +66,16 @@ async def create_clarification(update: Update, context: ContextTypes.DEFAULT_TYP
                     )],
                     *back_keyboard().inline_keyboard,
                 ]),
+            )
+            raise ApplicationHandlerStop from None
+        if isinstance(exc, LegalCoreApiError) and exc.code in {
+            "CASE_REPORT_STALE", "CLARIFICATION_REPORT_BINDING_REQUIRED",
+            "CLARIFICATION_REPORT_INVALID",
+        }:
+            await gateway_bot._reply(
+                update, "⚠️ Не удалось подтвердить исходный отчёт для уточнения. "
+                "Откройте последний сохранённый отчёт кейса и начните уточнение оттуда. "
+                "Старый кейс и отчёты не изменены.", reply_markup=back_keyboard(),
             )
             raise ApplicationHandlerStop from None
         text = (

@@ -849,11 +849,22 @@ class LegalCoreClient:
 
     async def create_clarification_draft(
         self, case_id: UUID, telegram_user_id: int, *, expected_sha256: str, key: UUID,
+        expected_report_id: UUID | None = None, expected_report_sha256: str | None = None,
     ) -> dict[str, Any]:
+        if (expected_report_id is None) != (expected_report_sha256 is None):
+            raise ValueError("clarification report binding must be provided together")
+        payload = {"expectedFactSnapshotSha256": expected_sha256}
+        if expected_report_id is not None and expected_report_sha256 is not None:
+            if (not isinstance(expected_report_id, UUID)
+                    or len(expected_report_sha256) != 64
+                    or any(char not in "0123456789abcdef" for char in expected_report_sha256)):
+                raise ValueError("invalid clarification report binding")
+            payload.update(expectedReportId=str(expected_report_id),
+                           expectedReportSha256=expected_report_sha256)
         return await self._json_request(
             "POST", f"/v1/cases/{case_id}/clarification-drafts",
             telegram_user_id=telegram_user_id, idempotency_key=key,
-            payload={"expectedFactSnapshotSha256": expected_sha256},
+            payload=payload,
         )
 
     async def save_intake_draft(
