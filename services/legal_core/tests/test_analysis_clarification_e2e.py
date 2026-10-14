@@ -30,7 +30,9 @@ from legal_core.factual_safety_risk import SCREENING_SIGNALS
 from legal_core.main import create_app
 from legal_core.risk_policy_approval import RiskPolicyApproval, approve_risk_policy
 from telegram_gateway import bot
-from telegram_gateway.analysis_jobs_runtime import AnalysisJobsClient, JOBS_CLIENT_KEY
+from telegram_gateway.analysis_jobs_runtime import (
+    AnalysisJobsClient, JOBS_CLIENT_KEY, JobSnapshot, job_message,
+)
 from telegram_gateway.case_wizard import LegalCoreClient as GatewayCoreClient
 from test_case_api import actor_headers, seed_admin
 from test_case_experience import harness
@@ -67,14 +69,14 @@ def _run_status(case_id):
         engine.dispose()
 
 
-async def _clarification_intent(app, case_id, update_id):
+async def _clarification_intent(app, callback, update_id):
     # The shared harness infers message IDs from its delivery list. A persisted
     # button intent instead needs the same Telegram message ID on both retries.
     await app.process_update(Update.de_json({
         "update_id": update_id,
         "callback_query": {
             "id": str(update_id), "chat_instance": "synthetic",
-            "data": f"case:clarify:{case_id}",
+            "data": callback,
             "from": {"id": ACTOR, "is_bot": False, "first_name": "Synthetic"},
             "message": {"message_id": 610, "date": 1,
                         "chat": {"id": ACTOR, "type": "private"}},
@@ -286,6 +288,13 @@ def test_factual_clarification_round_trip_preserves_history_and_core_evidence_ga
                     assert report["recommendations"]["status"] == "NOT_AVAILABLE"
                     assert "UNVERIFIED SENTINEL" not in json.dumps(report)
                     assert model_calls == ["researcher"]
+                    _, controls = job_message(JobSnapshot.parse(blocked))
+                    clarification_buttons = [
+                        button.callback_data for row in controls.inline_keyboard for button in row
+                        if button.text == "Уточнить факты"
+                    ]
+                    assert len(clarification_buttons) == 1, "Blocked questions have no action button"
+                    clarification_callback = clarification_buttons[0]
                     await dispatch(f"analysis:status:{blocked['jobId']}")
                     assert any("Как оплачивалась" in item.get("text", "") for item in sent)
                     original = _source_rows(case_id)
@@ -296,7 +305,7 @@ def test_factual_clarification_round_trip_preserves_history_and_core_evidence_ga
                         headers=actor_headers(outsider),
                     )
                     assert denied.status_code == 404
-                    await _clarification_intent(app, case_id, 10000)
+                    await _clarification_intent(app, clarification_callback, 10000)
                     drafts = await gateway.list_intake_drafts(ACTOR)
                     draft_id = drafts["items"][0]["id"]
                     draft = await gateway.get_intake_draft(UUID(draft_id), ACTOR)
@@ -307,7 +316,7 @@ def test_factual_clarification_round_trip_preserves_history_and_core_evidence_ga
                     assert draft["draftData"]["correctionSource"]["reportId"] == (
                         preview["expectedReportId"]
                     )
-                    await _clarification_intent(app, case_id, 10001)
+                    await _clarification_intent(app, clarification_callback, 10001)
                     assert clarification_posts[0] == clarification_posts[1]
                     replayed = await gateway.list_intake_drafts(ACTOR)
                     assert replayed["items"][0]["id"] == draft_id
