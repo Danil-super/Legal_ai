@@ -20,11 +20,16 @@ from legal_core.analysis_clarifications import (
     ClarificationAnswer,
     ClarificationQuestionId,
     ClarificationRequest,
+    ClarificationRequestBatch,
 )
 from legal_core.pseudonymization import pseudonymize_text
 
 from telegram_gateway.case_wizard import confirmed_clarification_answers, parse_date_answer
-from telegram_gateway.factual_safety_intake import screening_complete, screening_summary
+from telegram_gateway.factual_safety_intake import (
+    known_urgent_report,
+    screening_complete,
+    screening_summary,
+)
 from telegram_gateway.quick_intake import contains_probable_person_name
 
 V2_INCOMING = "INCOMING"
@@ -37,6 +42,7 @@ V2_CLINIC_ACTIONS = "CLINIC_ACTIONS"
 V2_HEALTH = "HEALTH"
 V2_MATERIALS = "MATERIALS"
 V2_SAFETY = "SAFETY"
+V2_ANALYSIS_CLARIFICATION = "ANALYSIS_CLARIFICATION"
 V2_SUMMARY = "SUMMARY"
 V2_CONFIRM = "V2_CONFIRM"
 
@@ -176,6 +182,61 @@ def clarification_choices(
     return _CLARIFICATION_CHOICES[_clarification_request(request).question_id]
 
 
+def _stored_clarification_requests(data: dict[str, Any]) -> list[ClarificationRequest]:
+    raw = data.get("analysisClarificationRequests", [])
+    if not isinstance(raw, list) or any(
+        not isinstance(item, dict) or set(item) != {"questionId", "serviceSlot"}
+        for item in raw
+    ):
+        return []
+    try:
+        return ClarificationRequestBatch.model_validate({"requests": raw}).requests
+    except ValueError:
+        return []
+
+
+def clarification_requests(data: dict[str, Any]) -> list[ClarificationRequest]:
+    """Only a strict persisted list can activate the optional question step."""
+    requests = _stored_clarification_requests(data)
+    try:
+        for request in requests:
+            if request.service_slot is not None and not _needs_services(data):
+                return []
+            _clarification_service(request, data)
+    except ValueError:
+        return []
+    return requests
+
+
+def next_clarification_request(data: dict[str, Any]) -> ClarificationRequest | None:
+    """UNKNOWN is an explicit attempt; never automatically repeat it."""
+    answered = {
+        (answer.question_id, answer.service_slot)
+        for answer in confirmed_clarification_answers(data).answers
+    }
+    return next((request for request in clarification_requests(data)
+                 if (request.question_id, request.service_slot) not in answered), None)
+
+
+def previous_clarification_question(data: dict[str, Any]) -> bool:
+    """Reopen the preceding requested answer in this draft, retaining other facts."""
+    requests = clarification_requests(data)
+    pending = next_clarification_request(data)
+    preceding = requests[:requests.index(pending)] if pending is not None else requests
+    if not preceding:
+        return False
+    previous = preceding[-1]
+    answers = confirmed_clarification_answers(data)
+    retained = AnalysisClarificationAnswers(answers=[
+        answer for answer in answers.answers
+        if (answer.question_id, answer.service_slot) != (
+            previous.question_id, previous.service_slot,
+        )
+    ])
+    data["analysisClarificationAnswers"] = retained.model_dump(mode="json", by_alias=True)
+    return True
+
+
 def parse_clarification_answer(
     request: ClarificationRequest | dict[str, Any], raw: str,
 ) -> ClarificationAnswer:
@@ -243,6 +304,11 @@ def invalidate_service_clarification_answers(
             answer for answer in answers.answers if answer.service_slot is None
         ])
         updated["analysisClarificationAnswers"] = retained.model_dump(mode="json", by_alias=True)
+    if services != data.get("affectedServices") and "analysisClarificationRequests" in data:
+        updated["analysisClarificationRequests"] = [
+            request.model_dump(mode="json", by_alias=True)
+            for request in _stored_clarification_requests(data) if request.service_slot is None
+        ]
     return updated
 
 
@@ -400,6 +466,8 @@ def active_states(data: dict[str, Any]) -> list[str]:
     states = list(_BASE_STATES)
     if _needs_services(data):
         states.insert(states.index(V2_EVENT), V2_SERVICES)
+    if clarification_requests(data) and not known_urgent_report(data):
+        states.insert(states.index(V2_SUMMARY), V2_ANALYSIS_CLARIFICATION)
     return states
 
 
@@ -428,6 +496,8 @@ def _input_complete(data: dict[str, Any], state: str) -> bool:
         return _valid_enum(data.get("caseMaterialsStatus"), "caseMaterialsStatus")
     if state == V2_SAFETY:
         return screening_complete(data)
+    if state == V2_ANALYSIS_CLARIFICATION:
+        return next_clarification_request(data) is None
     return True
 
 
