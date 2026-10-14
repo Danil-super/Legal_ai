@@ -192,7 +192,7 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
   tenant/creator/expiry/idempotency and unchanged HIGH/CRITICAL routing.
 - [x] Full PG/MinIO regression, Ruff/mypy, Compose, existing security/container
   gates and independent review pass; no weakened tests or automatic approvals.
-- [ ] After separate immutable-head release approval, normal CI deploy and real
+- [x] After separate immutable-head release approval, normal CI deploy and real
   fictional owner-channel Core-persisted positive + clarification/negative smoke.
 - Files (3): tests/test_analysis_clarification_e2e.py (new),
   docs/audit/bot-scenarios-2026-10-14.md, tasks/todo.md. Other earlier tests may be
@@ -218,10 +218,18 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
   Hermes emits failed/incomplete SSE; read-only diagnostics show timeouts and 403.
   Same-profile minimal technical call passes (6.97s), not legal readiness.
   Rendered request/stale budgets are 29s/high; changing them requires a separate
-  owner decision. Approval ledger 54/8 unchanged. The live FC11 gate remains open.
+  owner decision. Approval ledger 54/8 unchanged. The live FC11 gate remained open
+  at that historical checkpoint. Subsequent approved PR97/98/99 releases and live
+  proof close this technical gate on2026-10-15: mainb052f40, CI38641834332 passed,
+  all eight services healthy;2501 full local tests passed without skips. Fresh
+  quick/guided clarification recovery produced concrete verified cited plans/PDFs;
+  fresh confirmed UNKNOWN produced a persisted safe block without repeated questions.
+  See docs/audit/verified-case-plan-acceptance-2026-10-15.md for all seven PR99 jobs,
+  report IDs, timings, source/approval checks and remaining legal-readiness limits.
 
-Runtime evidence: docs/audit/bot-scenarios-2026-10-14.md. No new production change
-or legal readiness claimed. Online curated reference context remains unimplemented;
+Original runtime evidence: docs/audit/bot-scenarios-2026-10-14.md; subsequent release
+and acceptance: docs/audit/verified-case-plan-acceptance-2026-10-15.md. Technical
+gate closure is not full legal readiness. Online curated reference context remains unimplemented;
 67 DRAFT evaluation cases are not automatically approved or sent to models.
 
 ## Extended user-scenario audit — owner requested 2026-10-14
