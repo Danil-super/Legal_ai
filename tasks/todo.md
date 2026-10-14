@@ -19,11 +19,19 @@
   owner selected current review/tests, without an external CLI invocation.
 - [ ] Resolve reference-package author/reviewer independence with owner (auth-contract decision pending).
 - [x] Integrate independent RED reproductions and verify all changed paths locally.
-- [ ] Successful GitHub CI on the final head and explicit owner release approval.
-- [ ] Deploy through the existing reviewed main workflow and run both live synthetic entry paths.
+- [x] Successful GitHub CI on the final head and explicit owner release approval.
+  PR94 CI38563480602 and merged-main CI38564977660 successful; owner approved release.
+- [x] Deploy through the existing reviewed main workflow; main f4eaee8 healthy,
+  approval-ledger hashes unchanged (54 normative / 8 reference events).
+- [x] Both live synthetic entry paths created V2 cases; real Hermes calls completed,
+  BLOCKED PDFs persisted/downloaded; quick PDF delivered in Telegram.
+- [ ] Successful evidence-linked legal answers for both live paths: both tests returned
+  EVIDENCE_NOT_VERIFIED with zero claims. Do not mark this gate green or alter verifier
+  to pass it. Diagnose evidence selection/researcher abstention before legal-readiness claim.
 
 Each implementation slice has a failing reproduction and a separate commit.
-No normative approvals, role grants, model changes or production deployment as part of this audit.
+No normative approvals, role grants or model changes. Deployment occurred only after the
+subsequent explicit owner release approval, retaining all original approval history.
 Evidence and limits: docs/audit/bot-scenarios-2026-10-14.md. Existing incomplete tasks below
 are preserved; technical regression success is not legal validation of private references.
 
@@ -40,7 +48,7 @@ are preserved; technical regression success is not legal validation of private r
   Compose and offline non-root gateway container import passed. CI gates remain required.
 - [x] Visually inspect long/READY/HIGH/BLOCKED PDFs; fix long first-page pagination.
   Independent review found and closed truncated legal qualifiers/citations in compact Telegram.
-- [ ] Reviewed GitHub CI and explicit release approval; no production change made yet.
+- [x] Reviewed GitHub CI and explicit release approval; PR94 deployed as f4eaee8 on 2026-10-14.
 - [ ] Live model + persisted synthetic report/PDF checks for both version-aligned entry paths.
 
 No weakening of evidence/risk/privacy gates or retrospective rewriting of case content.
