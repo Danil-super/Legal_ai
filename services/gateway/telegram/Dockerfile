@@ -17,6 +17,7 @@ COPY services/legal_core/src/legal_core/__init__.py ./services/legal_core/src/le
 COPY services/legal_core/src/legal_core/pseudonymization.py ./services/legal_core/src/legal_core/pseudonymization.py
 COPY services/legal_core/src/legal_core/contracts.py ./services/legal_core/src/legal_core/contracts.py
 COPY services/legal_core/src/legal_core/report_presentation.py ./services/legal_core/src/legal_core/report_presentation.py
+COPY services/legal_core/src/legal_core/upload_filename.py ./services/legal_core/src/legal_core/upload_filename.py
 COPY services/legal_core/src/legal_core/factual_safety_intake.py ./services/legal_core/src/legal_core/factual_safety_intake.py
 
 USER app

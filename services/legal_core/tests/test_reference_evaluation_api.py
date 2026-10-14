@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, text
 
 from legal_core.clinic_document_store import reference_evaluation_object_key
 from legal_core.database import owner_database_url
+from legal_core.upload_filename import source_filename_headers
 from test_case_api import actor_headers, application_client, seed_admin
 
 pytestmark = pytest.mark.skipif(
@@ -106,6 +107,34 @@ def _create_payload() -> dict[str, str]:
         "expectedRoute": "HUMAN_ESCALATION",
         "scenarioText": "После лечения пациент сообщил о сохраняющейся чувствительности зуба.",
     }
+
+
+def test_unicode_reference_filename_transport_does_not_change_source_bytes() -> None:
+    actor = 8_900_000_000 + uuid4().int % 100_000_000
+    clinic_id, membership_id = seed_admin(actor, role="CLINIC_OWNER")
+    _grant(clinic_id, membership_id, "CONTRIBUTOR")
+    store = FakeReferenceEvaluationStore()
+    raw = b"Synthetic anonymised historical source for review."
+    with application_client(reference_evaluation_store=store) as client:
+        created = client.post(
+            "/v1/reference-evaluations", headers=actor_headers(actor, uuid4()),
+            json=_create_payload(),
+        )
+        assert created.status_code == 201, created.text
+        case_id = created.json()["case"]["id"]
+        uploaded = client.post(
+            f"/v1/reference-evaluations/{case_id}/material",
+            headers={
+                **actor_headers(actor, uuid4()), **source_filename_headers("эталонный-пример.txt"),
+                "Content-Type": "text/plain",
+            },
+            content=raw,
+        )
+        assert uploaded.status_code == 201, uploaded.text
+        downloaded = client.get(
+            f"/v1/reference-evaluations/{case_id}/material", headers=actor_headers(actor)
+        )
+    assert downloaded.status_code == 200 and downloaded.content == raw
 
 
 def test_only_explicit_grants_can_upload_and_a_distinct_reviewer_can_approve() -> None:

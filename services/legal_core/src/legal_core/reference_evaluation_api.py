@@ -9,7 +9,7 @@ import asyncio
 import hashlib
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
@@ -60,6 +60,7 @@ from legal_core.reference_evaluation_contracts import (
     ReferenceExpectedRoute,
     ReferenceMaterialMimeType,
 )
+from legal_core.upload_filename import MAX_FILENAME_HEADER_CHARS, decode_source_filename
 
 _DRAFT_RETENTION = timedelta(days=30)
 _RETIRED_RETENTION = timedelta(days=90)
@@ -255,7 +256,10 @@ def create_reference_evaluation_router(
     Session = Annotated[AsyncSession, Depends(get_session)]
     SourceFilename = Annotated[
         str,
-        Header(alias="X-Source-Filename", min_length=1, max_length=255),
+        Header(alias="X-Source-Filename", min_length=1, max_length=MAX_FILENAME_HEADER_CHARS),
+    ]
+    SourceFilenameEncoding = Annotated[
+        Literal["percent-utf8"] | None, Header(alias="X-Source-Filename-Encoding")
     ]
 
     @router.get("/access", response_model=ReferenceEvaluationAccessResponse)
@@ -534,11 +538,13 @@ def create_reference_evaluation_router(
         telegram_user_id: TelegramUserId,
         idempotency_key: IdempotencyKey,
         session: Session,
+        source_filename_encoding: SourceFilenameEncoding = None,
     ) -> ReferenceEvaluationMaterialResponse:
         actor = await resolve_actor(session, telegram_user_id)
         await _require_workspace(session, actor, contribute=True)
         raw = await _read_bounded_material_upload(request)
         try:
+            source_filename = decode_source_filename(source_filename, source_filename_encoding)
             parsed = await asyncio.to_thread(
                 parse_clinic_document_upload,
                 raw,

@@ -17,6 +17,7 @@ from typing import Any
 from uuid import UUID
 
 import httpx2
+from legal_core.upload_filename import source_filename_headers
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     ApplicationHandlerStop,
@@ -213,7 +214,7 @@ class ClinicDocumentCoreClient:
         if content_type is not None:
             headers["Content-Type"] = content_type
         if source_filename is not None:
-            headers["X-Source-Filename"] = source_filename
+            headers.update(source_filename_headers(source_filename))
         try:
             response = await self._http.request(
                 method,

@@ -12,6 +12,7 @@ from legal_core.report_presentation import (
     TELEGRAM_SOURCE_LIMITATIONS_IN_PDF,
     present_report,
 )
+from legal_core.upload_filename import source_filename_headers
 
 INTAKE_SCHEMA_VERSION = "dental-case-intake.v1"
 V2_INTAKE_SCHEMA_VERSION = "dental-case-intake.v2"
@@ -623,7 +624,7 @@ class LegalCoreClient:
                 f"/v1/reference-evaluations/{case_id}/material",
                 headers={
                     **self._headers(telegram_user_id, idempotency_key),
-                    "X-Source-Filename": source_filename,
+                    **source_filename_headers(source_filename),
                     "Content-Type": content_type,
                 },
                 content=content,
@@ -905,7 +906,7 @@ class LegalCoreClient:
                 f"/v1/telegram-intake-drafts/{draft_id}/case-materials",
                 headers={
                     **self._headers(telegram_user_id, uuid4()),
-                    "X-Source-Filename": source_filename,
+                    **source_filename_headers(source_filename),
                     "Content-Type": content_type,
                 },
                 content=content,

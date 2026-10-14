@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from legal_core.clinic_document_parser import sha256_bytes
 from legal_core.database import database_url, owner_database_url
 from legal_core.main import create_app
+from legal_core.upload_filename import source_filename_headers
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -93,6 +94,33 @@ def client(raw_store: object | None = None) -> TestClient:
 
 def headers(telegram_user_id: int) -> dict[str, str]:
     return {"X-Telegram-User-Id": str(telegram_user_id)}
+
+
+def test_unicode_filename_wire_keeps_clinic_original_name_and_bytes() -> None:
+    actor = 8_500_000_001 + uuid4().int % 100_000_000
+    seed_admin(actor)
+    store = FakeRawStore()
+    filename = "синтетический-договор.txt"
+    raw = b"Synthetic clinic agreement for an internal document review."
+    with client(store) as api:
+        document = api.post(
+            "/v1/clinic-documents", headers=headers(actor),
+            json={
+                "documentKey": "wire-" + uuid4().hex,
+                "documentType": "CONTRACT", "title": "Synthetic document",
+            },
+        )
+        assert document.status_code == 201, document.text
+        response = api.post(
+            f"/v1/clinic-documents/{document.json()['id']}/file-versions",
+            headers={
+                **headers(actor), **source_filename_headers(filename), "Content-Type": "text/plain",
+            },
+            content=raw,
+        )
+    assert response.status_code == 201, response.text
+    assert response.json()["sourceFilename"] == filename
+    assert store.calls[0]["content"] == raw
 
 
 def test_clinic_document_text_version_requires_approval_and_stays_in_tenant() -> None:
