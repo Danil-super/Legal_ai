@@ -19,6 +19,7 @@ from agent_orchestrator.contracts import (
     SemanticReviewBatch,
 )
 from agent_orchestrator.hermes_client import HermesClient, HermesProtocolError
+from legal_core.analysis_clarifications import ClarificationRequest
 from legal_core.contracts import FactKey
 from legal_core.pseudonymization import contains_obvious_direct_identifier
 from legal_core.verifier import (
@@ -78,6 +79,22 @@ requiredFactKeys содержит реальные зависимости кон
 предлагаешь зависящий от них claim, укажи зависимость честно — Legal Core заблокирует анализ.
 Нельзя убирать реальную зависимость, чтобы получить разрешение на ответ.
 
+clarificationRequests — отдельные предложения фактических уточнений, максимум три, в том числе
+при claims: []. Только при intakeMode=GUIDED_V2 можно предлагать эти вопросы; для прежней
+анкеты верни clarificationRequests: [], не преобразуй SERVICE_TYPE в слот услуги.
+Допустимы только SERVICE_PAYMENT_BASIS (основание оплаты услуги),
+SERVICE_PROVIDED_DATE (дата оказания услуги), RESPONSE_PURPOSE (что сотрудник хочет разрешить).
+Для первых двух укажи serviceSlot: индекс от 0 до 4 реально присутствующей релевантной услуги
+в AFFECTED_SERVICES. Если подходящей услуги во входе нет, не предлагай вопрос об услуге.
+RESPONSE_PURPOSE относится ко всему кейсу и не имеет serviceSlot. Предлагай только вопросы,
+существенные для этого кейса, на которые facts ещё не дают известного ответа. Проверяй
+ANALYSIS_CLARIFICATION_ANSWERS: если ответ уже подтверждён пользователем и не UNKNOWN,
+не запрашивай его повторно. Не переноси ответ или дату одной услуги на другую; EVENT_DATE
+не является SERVICE_PROVIDED_DATE. Если уточнения не помогут, верни clarificationRequests: [].
+Не добавляй текст вопроса, команды, URL, предполагаемый ответ или юридическую квалификацию.
+Предложенный вопрос не устанавливает факт, обязанность или ответственность. Только пользователь
+подтверждает ответы; Legal Core повторно проверяет допустимость и область вопросов.
+
 Каждый claim обязан ссылаться только на fragmentId из evidence. Если доказательств недостаточно,
 не придумывай claim: верни claims: []. Укажи в requiredFactKeys все факты, от которых зависит
 применимость вывода. patientDraft — только черновик спокойного ответа без признания ответственности.
@@ -113,6 +130,7 @@ class ReasoningResult:
     semantic_reviews: tuple[SemanticReview, ...]
     internal_recommendations: tuple[str, ...]
     patient_draft: str | None
+    clarification_requests: tuple[ClarificationRequest, ...] = ()
 
 
 def _endpoint_origin(url: str) -> tuple[str, str, int | None]:
@@ -192,7 +210,9 @@ class LegalReasoningOrchestrator:
         if not proposal.claims:
             # An evidence-based abstention is a valid blocked analysis. Never publish the
             # accompanying unverified recommendations/draft or ask a reviewer to invent claims.
-            return ReasoningResult((), (), (), None)
+            return ReasoningResult(
+                (), (), (), None, clarification_requests=tuple(proposal.clarification_requests)
+            )
 
         if contains_obvious_direct_identifier(
             json.dumps(
@@ -276,4 +296,5 @@ class LegalReasoningOrchestrator:
             semantic_reviews=semantic_reviews,
             internal_recommendations=tuple(proposal.internal_recommendations),
             patient_draft=proposal.patient_draft,
+            clarification_requests=tuple(proposal.clarification_requests),
         )
