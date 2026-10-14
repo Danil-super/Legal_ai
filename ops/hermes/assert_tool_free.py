@@ -12,6 +12,7 @@ import sys
 from typing import Any
 
 EXPECTED_HERMES_VERSION = "0.20.6"
+EXPECTED_CALL_TIMEOUT_SECONDS = 55
 
 
 def assert_call_budget(config: dict[str, Any]) -> dict[str, int]:
@@ -36,12 +37,12 @@ def assert_call_budget(config: dict[str, Any]) -> dict[str, int]:
         # Loader/adapter errors must not print private configuration values.
         raise SystemExit(error) from None
     for timeout in (request_timeout, stale_timeout):
-        if type(timeout) not in (int, float) or timeout != 29:
+        if type(timeout) not in (int, float) or timeout != EXPECTED_CALL_TIMEOUT_SECONDS:
             raise SystemExit(error)
     return {
         "apiAttemptsPerCycle": 1,
-        "requestOperationTimeoutSeconds": 29,
-        "configuredStaleTimeoutSeconds": 29,
+        "requestOperationTimeoutSeconds": EXPECTED_CALL_TIMEOUT_SECONDS,
+        "configuredStaleTimeoutSeconds": EXPECTED_CALL_TIMEOUT_SECONDS,
     }
 
 
