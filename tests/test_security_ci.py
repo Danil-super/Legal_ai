@@ -48,6 +48,28 @@ def test_container_smoke_covers_real_images_without_network() -> None:
     assert "assert os.getuid() != 0" in text
 
 
+@pytest.mark.parametrize("job", ["quality", "postgres-integration"])
+def test_pdf_test_jobs_install_native_tools_before_testing(job: str) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    steps = workflow["jobs"][job]["steps"]
+    native_steps = [
+        (index, step) for index, step in enumerate(steps)
+        if step.get("name") == "Install native PDF test dependencies"
+    ]
+    assert len(native_steps) == 1, "Clean runners must explicitly install PDF tools"
+    native_index, native_step = native_steps[0]
+    command = native_step["run"]
+    assert "poppler-utils" in command and "fonts-dejavu-core" in command
+    assert "command -v pdftotext" in command
+    assert "command -v pdfinfo" in command
+    assert not native_step.get("continue-on-error", False)
+    test_index = next(
+        index for index, step in enumerate(steps)
+        if "python -m pytest" in step.get("run", "")
+    )
+    assert native_index < test_index
+
+
 @pytest.mark.parametrize("workflow,job", [
     ("ci.yml", "deploy-production"), ("rollback.yml", "rollback-production"),
 ])

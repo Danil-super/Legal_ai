@@ -82,3 +82,15 @@ validators и отдельными настоящими PG/MinIO-интегра�
 живой Hermes-анализ обеих веток этим прогоном не доказаны. Read-only production
 baseline: main0b0a882, все восемь сервисов healthy. Новые изменения не развёрнуты:
 необходимы GitHub CI, согласованный release и post-deploy synthetic checks.
+
+### CI correction, 2026-10-14
+
+Run 38461782981 exposed an environment mismatch: quality and PostgreSQL suites
+failed because the clean runner lacked pdftotext (12 PDF failures); security,
+container imports, Ruff/mypy and dependency audit passed. Neither tests nor the
+gate are disabled. Both host test jobs now explicitly install poppler-utils and
+fonts-dejavu-core, verify tool availability before testing, and have two RED/GREEN
+workflow regression tests. After restoring the stopped disposable tmpfs test
+services, the unchanged application plus CI checks passed 2030 tests with no
+skips (76.44 seconds). Remote CI and the extended scenario audit remain pending;
+this does not claim that PR94 has deployed or that every user behaviour is proven.

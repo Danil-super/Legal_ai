@@ -1,5 +1,21 @@
 # Dental Legal AI task list
 
+## Extended user-scenario audit — owner requested 2026-10-14
+
+- [x] Diagnose CI mismatch: missing native PDF tools, not a legal-verifier failure.
+  Two RED workflow tests; 24 focused GREEN; restored isolated test containers:
+  2030 full tests passed / 0 skipped in 76.44s. Remote CI must confirm the fix.
+- [ ] Fix actual case-document dispatch and give explicit unsupported-media guidance.
+- [ ] Bind V2 actions to current prompt/draft; stale controls cannot overwrite facts/material state.
+- [ ] Reauthorize before displaying cached tenant summaries; reconcile ambiguous uploaded material.
+- [ ] Preserve Unicode filenames across HTTP without weakening parser/privacy/tenant guards.
+- [ ] Serialize report version allocation; enforce reference-source expiry before storage cleanup.
+- [ ] Resolve reference-package author/reviewer independence with owner (auth-contract decision pending).
+- [ ] Integrate independent RED reproductions, verify all changed paths, CI and release gates.
+
+Each implementation slice has a failing reproduction and a separate commit.
+No normative approvals, role grants, model changes or production deployment as part of this audit.
+
 ## Unified entry and action-plan report — owner authorised 2026-10-13
 
 - [x] Record approved six-section report and preservation boundaries in SPEC-report-action-plan.md.
