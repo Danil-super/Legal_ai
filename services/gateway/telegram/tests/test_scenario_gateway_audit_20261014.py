@@ -11,6 +11,7 @@ import pytest
 from legal_core.api_contracts import TelegramIntakeDraftUpdateRequest
 from legal_core.factual_safety_intake import SCREENING_FIELDS, SCREENING_VERSION
 from telegram import Update
+from telegram.error import TimedOut
 from telegram.ext import ExtBot
 from telegram_gateway import bot
 from telegram_gateway.case_wizard import LegalCoreApiError, LegalCoreClient
@@ -568,5 +569,121 @@ def test_callback_acknowledges_before_blocked_core_read_without_cached_output():
                 assert ack.await_count == 2, "A later update needs its own acknowledgement"
                 assert bot._CALLBACK_ACK_SCOPE.get() is None, "ACK scope leaked after the update"
             assert core.draft["wizardState"] == "SITUATION"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("edit_timing", ["before_upload", "during_upload"])
+def test_upload_state_merge_preserves_current_server_facts(edit_timing):
+    async def scenario():
+        async with versioned_harness() as (app, core, _sent, dispatch):
+            core.draft = {
+                "id": str(DRAFT),
+                "revision": 7,
+                "wizardState": "MATERIALS",
+                "draftData": _base_data(),
+            }
+            await dispatch(f"case:draft:{DRAFT}")
+            replacement = "The current synthetic description was edited from another session."
+
+            def edit():
+                core.draft["revision"] += 1
+                core.draft["draftData"]["eventSummary"] = replacement
+
+            if edit_timing == "before_upload":
+                edit()
+
+            async def upload(*args, **kwargs):
+                if edit_timing == "during_upload":
+                    edit()
+                core.draft["revision"] += 1
+                core.draft["draftData"]["caseMaterialsStatus"] = "ATTACHED"
+                return {
+                    "draftRevision": core.draft["revision"],
+                    "material": {"id": str(UUID(int=555))},
+                }
+
+            core.upload_case_material = upload
+            await dispatch("text:Fixed synthetic material without identifying information.")
+            assert core.draft["draftData"]["eventSummary"] == replacement, (
+                "A secondary attachment PUT overwrote newer unrelated facts with cached data"
+            )
+            assert core.draft["draftData"]["caseMaterialsStatus"] == "ATTACHED"
+            assert core.draft["draftData"]["incomingSourceStatus"] == "TEXT_ATTACHED"
+            assert app.user_data[ACTOR][bot.WIZARD_DATA_KEY]["eventSummary"] == replacement
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("media_kind", ["document", "text"])
+def test_revoked_material_access_is_checked_before_download_or_text_consumption(media_kind):
+    async def scenario():
+        async with versioned_harness() as (app, core, _sent, dispatch):
+            core.draft = {
+                "id": str(DRAFT),
+                "revision": 7,
+                "wizardState": "MATERIALS",
+                "draftData": _base_data(),
+            }
+            await dispatch(f"case:draft:{DRAFT}")
+            core.deny = True
+            core.upload_case_material = AsyncMock(
+                side_effect=LegalCoreApiError(
+                    403,
+                    "ACTOR_NOT_AUTHORIZED",
+                    "synthetic denial",
+                )
+            )
+            file = type(
+                "SyntheticFile",
+                (),
+                {
+                    "download_as_bytearray": AsyncMock(
+                        return_value=bytearray(b"Fixed synthetic content.")
+                    )
+                },
+            )()
+            with (
+                patch.object(ExtBot, "get_file", AsyncMock(return_value=file)) as download,
+                patch.object(bot, "parse_v2_answer", wraps=bot.parse_v2_answer) as parser,
+            ):
+                if media_kind == "document":
+                    await dispatch_raw(
+                        app,
+                        media={
+                            "document": {
+                                "file_id": "synthetic",
+                                "file_unique_id": "synthetic",
+                                "file_name": "example.txt",
+                                "mime_type": "text/plain",
+                                "file_size": 24,
+                            }
+                        },
+                    )
+                else:
+                    await dispatch("text:Fixed synthetic material without identifying information.")
+                assert download.await_count == 0
+                assert parser.call_count == 0
+                assert core.upload_case_material.await_count == 0
+            assert bot.WIZARD_DATA_KEY not in app.user_data[ACTOR]
+
+    asyncio.run(scenario())
+
+
+def test_error_handler_does_not_send_second_ack_after_acked_reply_timeout():
+    async def scenario():
+        async with versioned_harness() as (app, core, sent, dispatch):
+            await dispatch("case:start")
+            source_message = len(sent) + 100
+            with patch.object(ExtBot, "answer_callback_query", AsyncMock(return_value=True)) as ack:
+                with patch.object(ExtBot, "send_message", AsyncMock(side_effect=TimedOut())):
+                    await dispatch_raw(
+                        app,
+                        content="case:v2:single:incomingKind:COMPLAINT",
+                        message_id=source_message,
+                    )
+                assert ack.await_count == 1, "on_error sent an alert ACK after the blank ACK"
+            assert app.bot_data[bot.TELEGRAM_API_FAILURES_KEY] == 1
+            assert core.saved == []
 
     asyncio.run(scenario())
