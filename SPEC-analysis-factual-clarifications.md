@@ -3,7 +3,9 @@
 ## Status and objective
 
 Approved by the owner in chat on 2026-10-14; the owner subsequently approved the
-implementation plan and FC1–FC11 tasks. Implementation is in progress. This is one vertical
+implementation plan and FC1–FC11 tasks. FC1–FC10 implementation and local vertical
+integration are complete; reviewed CI/release and live legal-readiness gates remain pending.
+This is one vertical
 capability within the existing `case-core`, `agent-orchestration` and
 `telegram-gateway` modules of CAPABILITY_MAP.md: make a blocked analysis actionable
 without asking the clinic to perform legal qualification.
