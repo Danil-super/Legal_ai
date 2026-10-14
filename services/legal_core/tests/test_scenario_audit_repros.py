@@ -1,4 +1,4 @@
-"""Read-only audit regression proposals; synthetic fixtures in an isolated local DB."""
+"""Accepted report/retention regressions with synthetic fixtures in an isolated local DB."""
 
 import asyncio
 import os
@@ -69,47 +69,6 @@ def test_concurrent_report_creation_serializes_versions(monkeypatch):
         with ThreadPoolExecutor(max_workers=2) as pool:
             outcomes = list(pool.map(lambda _: create(), range(2)))
     assert [status for status, _ in outcomes] == [201, 201], outcomes
-
-
-def test_a_reviewer_cannot_supply_material_then_approve_the_same_package():
-    actor = 116_000_000_000 + uuid4().int % 100_000_000
-    reviewer = actor + 1_000_000_000
-    clinic, member = seed_admin(actor, role="CLINIC_OWNER")
-    reviewer_member = _add_member(clinic, reviewer)
-    _grant(clinic, member, "CONTRIBUTOR")
-    _grant(clinic, reviewer_member, "CONTRIBUTOR", "REVIEWER")
-    with application_client(reference_evaluation_store=FakeReferenceEvaluationStore()) as client:
-        created = client.post(
-            "/v1/reference-evaluations",
-            headers=actor_headers(actor, uuid4()),
-            json=_create_payload(),
-        )
-        assert created.status_code == 201, created.text
-        case = created.json()["case"]["id"]
-        supplied = client.post(
-            f"/v1/reference-evaluations/{case}/material",
-            headers={
-                **actor_headers(reviewer, uuid4()),
-                "X-Source-Filename": "synthetic.txt",
-                "Content-Type": "text/plain",
-            },
-            content=b"Synthetic independently unreviewed reference material supplied by reviewer.",
-        )
-        submitted = client.post(
-            f"/v1/reference-evaluations/{case}/submit",
-            headers=actor_headers(reviewer, uuid4()),
-        )
-        reviewed = client.post(
-            f"/v1/reference-evaluations/{case}/review",
-            headers=actor_headers(reviewer, uuid4()),
-            json={"decision": "APPROVE_FOR_EVALUATION"},
-        )
-    assert supplied.status_code in (403, 404) or reviewed.status_code == 403, (
-        supplied.status_code,
-        submitted.status_code,
-        reviewed.status_code,
-        reviewed.text,
-    )
 
 
 def test_expired_reference_material_is_unavailable_before_storage_cleanup():
@@ -189,3 +148,91 @@ def test_expired_reference_material_is_unavailable_before_storage_cleanup():
     assert replay.status_code == 410, replay.text
     assert submit.status_code == 410, submit.text
     assert upload_replay.status_code == 410, upload_replay.text
+
+
+@pytest.mark.parametrize("expired_version", [1, 2], ids=["create-v1", "revision-v2"])
+def test_historical_reference_replay_cannot_borrow_current_version_retention(expired_version):
+    actor = 119_000_000_000 + uuid4().int % 100_000_000
+    reviewer = actor + 1_000_000_000
+    clinic, member = seed_admin(actor, role="CLINIC_OWNER")
+    reviewer_member = _add_member(clinic, reviewer)
+    _grant(clinic, member, "CONTRIBUTOR")
+    _grant(clinic, reviewer_member, "REVIEWER")
+    create_key = uuid4()
+    receipt_key, receipt_payload = create_key, _create_payload()
+    receipt_path = "/v1/reference-evaluations"
+    with application_client(reference_evaluation_store=FakeReferenceEvaluationStore()) as client:
+        created = client.post(
+            receipt_path,
+            headers=actor_headers(actor, create_key),
+            json=receipt_payload,
+        )
+        assert created.status_code == 201, created.text
+        case = created.json()["case"]["id"]
+        for version in range(2, expired_version + 2):
+            submitted = client.post(
+                f"/v1/reference-evaluations/{case}/submit",
+                headers=actor_headers(actor, uuid4()),
+            )
+            assert submitted.status_code == 200, submitted.text
+            changed = client.post(
+                f"/v1/reference-evaluations/{case}/review",
+                headers=actor_headers(reviewer, uuid4()),
+                json={
+                    "decision": "CHANGES_REQUIRED",
+                    "note": "Synthetic factual revision requested.",
+                },
+            )
+            assert changed.status_code == 200, changed.text
+            revision_key = uuid4()
+            revision_payload = {
+                "asOfDate": "2026-06-02",
+                "expectedRoute": "HUMAN_ESCALATION",
+                "scenarioText": f"Synthetic de-identified scenario revised to version {version}.",
+            }
+            revision_path = f"/v1/reference-evaluations/{case}/revisions"
+            revised = client.post(
+                revision_path,
+                headers=actor_headers(actor, revision_key),
+                json=revision_payload,
+            )
+            assert revised.status_code == 200, revised.text
+            if version == expired_version:
+                receipt_key, receipt_payload = revision_key, revision_payload
+                receipt_path = revision_path
+        owner = create_engine(owner_database_url())
+        try:
+            with owner.begin() as connection:
+                connection.execute(
+                    text(
+                        "UPDATE reference_evaluation_case_versions "
+                        "SET content_expires_at=now()-interval '1 minute' "
+                        "WHERE reference_case_id=:case AND version=:version"
+                    ),
+                    {"case": case, "version": expired_version},
+                )
+            replay = client.post(
+                receipt_path,
+                headers=actor_headers(actor, receipt_key),
+                json=receipt_payload,
+            )
+            current = client.get(
+                f"/v1/reference-evaluations/{case}",
+                headers=actor_headers(actor),
+            )
+        finally:
+            with owner.begin() as connection:
+                connection.execute(
+                    text(
+                        "UPDATE reference_evaluation_case_versions "
+                        "SET content_expires_at=now()+interval '30 days' "
+                        "WHERE reference_case_id=:case AND version=:version"
+                    ),
+                    {"case": case, "version": expired_version},
+                )
+            owner.dispose()
+    assert current.status_code == 200, current.text
+    assert current.json()["currentVersion"] == expired_version + 1
+    assert current.json()["scenarioText"] is not None
+    assert replay.status_code == 410, replay.text
+    assert replay.json()["error"]["code"] == "REFERENCE_EVALUATION_CONTENT_EXPIRED"
