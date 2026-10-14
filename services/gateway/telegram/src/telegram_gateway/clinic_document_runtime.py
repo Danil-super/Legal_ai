@@ -456,6 +456,14 @@ async def receive_clinic_document(
     message = update.effective_message
     actor_id = _actor_id(update)
     pending = _pending(context)
+    wizard = (context.user_data or {}).get(gateway_bot.WIZARD_DATA_KEY)
+    if (
+        isinstance(wizard, dict)
+        and wizard.get("intakeVersion") == 2
+        and wizard.get(gateway_bot.DRAFT_STATE_KEY) == "MATERIALS"
+    ):
+        # Case materials belong to the durable V2 conversation, not the clinic library.
+        return
     if message is None or actor_id is None:
         raise ApplicationHandlerStop
     if pending is None:

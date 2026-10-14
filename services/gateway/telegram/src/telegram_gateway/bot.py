@@ -1261,6 +1261,18 @@ async def receive_v2_material_text(
     )
 
 
+async def reject_v2_material_media(
+    update: Update, context: ContextTypes.DEFAULT_TYPE,
+) -> int:
+    del context
+    await _reply(
+        update,
+        "Этот вид сообщения не поддерживается. Отправьте обезличенный файл "
+        ".txt, .pdf или .docx до 15 МБ либо выберите продолжение без файла.",
+    )
+    return WizardState.MATERIALS
+
+
 def _signal_answer(callback: str, name: str) -> str | None:
     prefix = f"case:{name}:"
     if not callback.startswith(prefix):
@@ -2813,6 +2825,7 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
                         filters.TEXT & ~filters.COMMAND, receive_v2_material_text
                     ),
                     CallbackQueryHandler(_persisted(back_v2_draft), pattern=r"^case:v2:back$"),
+                    MessageHandler(~filters.TEXT & ~filters.Document.ALL, reject_v2_material_media),
                 ],
                 WizardState.SUMMARY: [
                     CallbackQueryHandler(
