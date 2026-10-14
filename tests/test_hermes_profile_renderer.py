@@ -46,3 +46,24 @@ def test_sol_high_is_model_scoped_and_keeps_secrets_unresolved() -> None:
     assert "reasoning_effort" not in config["agent"]
     assert config["model"]["api_key"] == "${OPENAI_API_KEY}"
     assert config["platform_toolsets"]["api_server"] == []
+
+
+def test_approved_provider_wait_fits_unchanged_outer_analysis_fences() -> None:
+    from agent_orchestrator.main import (
+        ANALYSIS_WALL_TIMEOUT_SECONDS,
+        HERMES_STAGE_TIMEOUT_SECONDS,
+    )
+
+    template = (ROOT / "ops/hermes/legal-profile.config.yaml").read_text()
+    config = yaml.safe_load(renderer.render_profile(template, "gpt-6.1-sol"))
+    custom = config["providers"]["custom"]
+    assert custom["request_timeout_seconds"] == 55
+    assert custom["stale_timeout_seconds"] == 55
+    assert HERMES_STAGE_TIMEOUT_SECONDS == 65
+    assert ANALYSIS_WALL_TIMEOUT_SECONDS == 115
+    assert custom["request_timeout_seconds"] < HERMES_STAGE_TIMEOUT_SECONDS
+    assert 2 * custom["request_timeout_seconds"] < ANALYSIS_WALL_TIMEOUT_SECONDS
+    assert config["agent"]["api_max_retries"] == 1
+    assert config["agent"]["reasoning_overrides"] == {"gpt-6.1-sol": "high"}
+    assert config["memory"]["memory_enabled"] is False
+    assert config["model"]["api_key"] == "${OPENAI_API_KEY}"
