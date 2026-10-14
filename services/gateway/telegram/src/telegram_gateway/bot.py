@@ -1499,11 +1499,19 @@ async def _persist_transition(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
-    acknowledgement = _CALLBACK_ACK_SCOPE.set(_CallbackAck())
+    receipt = _CallbackAck()
+    acknowledgement = _CALLBACK_ACK_SCOPE.set(receipt)
     try:
         if update.callback_query is not None:
             await _answer_callback(update)
         return await _persist_selected_transition(handler, update, context)
+    except Exception as error:
+        if receipt.query is update.callback_query and receipt.result is not None:
+            # PTB constructs a new error context after this scope has unwound.
+            # Carry one exact-query ACK fact with this update's escaping error;
+            # preserve its original type for transport failure accounting.
+            error.__dict__["_telegram_acknowledged_callback"] = receipt.query
+        raise
     finally:
         _CALLBACK_ACK_SCOPE.reset(acknowledgement)
 
@@ -2899,7 +2907,7 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
             failures = _record_telegram_api_failure(application)
             if failures == TELEGRAM_API_FAILURE_LIMIT:
                 _mark_telegram_transport_unready(failures=failures)
-    if query is None:
+    if query is None or getattr(context.error, "_telegram_acknowledged_callback", None) is query:
         return
     try:
         await query.answer(
