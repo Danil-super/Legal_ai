@@ -5,7 +5,9 @@ from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from legal_core.analysis_clarifications import ClarificationRequest, validate_unique_requests
 
 
 class ContractModel(BaseModel):
@@ -39,6 +41,7 @@ class FactKey(StrEnum):
     HEALTH_CONSEQUENCE_SIGNALS = "HEALTH_CONSEQUENCE_SIGNALS"
     CASE_MATERIALS_STATUS = "CASE_MATERIALS_STATUS"
     FACTUAL_SAFETY_SCREENING = "FACTUAL_SAFETY_SCREENING"
+    ANALYSIS_CLARIFICATION_ANSWERS = "ANALYSIS_CLARIFICATION_ANSWERS"
     INCIDENT_TYPES = "INCIDENT_TYPES"
     PRIMARY_INCIDENT_TYPE = "PRIMARY_INCIDENT_TYPE"
     SERVICE_TYPE = "SERVICE_TYPE"
@@ -259,6 +262,10 @@ class CanonicalReport(ContractModel):
     summary: ReportSummary
     facts: dict[str, Any]
     missing_facts: list[MissingFact] = Field(alias="missingFacts")
+    clarification_requests: list[ClarificationRequest] = Field(
+        default_factory=list, alias="clarificationRequests", max_length=3,
+        exclude_if=lambda requests: not requests,
+    )
     recommendations: Recommendations
     draft_response: DraftResponse = Field(alias="draftResponse")
     legal_basis: LegalBasis = Field(alias="legalBasis")
@@ -279,9 +286,18 @@ class CanonicalReport(ContractModel):
     fact_snapshot_sha256: str = Field(alias="factSnapshotSha256", pattern=r"^[0-9a-f]{64}$")
     disclaimer: str
 
+    @field_validator("clarification_requests")
+    @classmethod
+    def clarification_ids_are_unique(
+        cls, value: list[ClarificationRequest]
+    ) -> list[ClarificationRequest]:
+        return validate_unique_requests(value)
+
     @model_validator(mode="after")
     def validate_analysis_consistency(self) -> "CanonicalReport":
         ready = self.summary.analysis_availability.status == "READY"
+        if ready and self.clarification_requests:
+            raise ValueError("READY report cannot contain pending clarification requests")
         if ready and (self.risk is None or self.analysis is None):
             raise ValueError("READY report requires risk and analysis snapshots")
         if not ready and (self.risk is not None or self.analysis is not None):

@@ -17,14 +17,19 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
 
 ### FC1: strict shared question/answer and compatible read contracts
 
-- [ ] Define three allowlisted question IDs, service-slot rules, bounded typed
+- [x] Define three allowlisted question IDs, service-slot rules, bounded typed
   answers and additive report/submission defaults; preserve strict validation.
-- [ ] Verify old payloads and record a reader-compatible rollback revision before
+- [x] Verify old payloads and record a reader-compatible rollback revision before
   any new field is written; unknown/injected/duplicate keys never become facts.
 - Files (5): Core src/legal_core/{analysis_clarifications,contracts,analysis_contracts}.py,
   Core tests/test_analysis_clarification_contracts.py (new), docs/adr/0087-factual-analysis-clarifications.md (new).
 - Verify: `python -m pytest services/legal_core/tests/test_analysis_clarification_contracts.py services/legal_core/tests/test_api_contracts.py services/legal_core/tests/test_report_readiness_contract.py -q`.
 - Dependencies: approved plan; medium scope. No new persisted data in this task.
+- Evidence: independent RED tests-only eee2e8ac; reader RED 2 failed/9 passed;
+  focused GREEN 139 passed, Ruff passed, Core mypy passed (98 source files).
+  Reader baseline is the atomic FC1 implementation commit introducing ADR 0087;
+  resolve it by commit subject `feat: add compatible factual clarification readers`.
+  No new producer/production write was enabled by FC1.
 
 ### FC2: protect draft and fact inputs
 

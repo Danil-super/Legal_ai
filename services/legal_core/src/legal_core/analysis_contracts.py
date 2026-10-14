@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import Field, field_validator, model_validator
 
 from legal_core.api_contracts import LegalFragmentResponse, ReportResponse
+from legal_core.analysis_clarifications import ClarificationRequest, validate_unique_requests
 from legal_core.contracts import ContractModel, FactKey
 
 
@@ -128,6 +129,17 @@ class AnalysisSubmissionRequest(ContractModel):
     semantic_reviews: list[SemanticReviewInput] = Field(
         alias="semanticReviews", max_length=30
     )
+    clarification_requests: list[ClarificationRequest] = Field(
+        default_factory=list, alias="clarificationRequests", max_length=3,
+        exclude_if=lambda requests: not requests,
+    )
+
+    @field_validator("clarification_requests")
+    @classmethod
+    def clarification_ids_are_unique(
+        cls, value: list[ClarificationRequest]
+    ) -> list[ClarificationRequest]:
+        return validate_unique_requests(value)
 
     @model_validator(mode="after")
     def reviews_reference_submitted_claims(self) -> AnalysisSubmissionRequest:
