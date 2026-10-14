@@ -117,10 +117,11 @@ def test_expired_reference_material_is_unavailable_before_storage_cleanup():
     clinic, member = seed_admin(actor, role="CLINIC_OWNER")
     _grant(clinic, member, "CONTRIBUTOR")
     store = FakeReferenceEvaluationStore()
+    create_key, upload_key = uuid4(), uuid4()
     with application_client(reference_evaluation_store=store) as client:
         created = client.post(
             "/v1/reference-evaluations",
-            headers=actor_headers(actor, uuid4()),
+            headers=actor_headers(actor, create_key),
             json=_create_payload(),
         )
         assert created.status_code == 201, created.text
@@ -128,7 +129,7 @@ def test_expired_reference_material_is_unavailable_before_storage_cleanup():
         uploaded = client.post(
             f"/v1/reference-evaluations/{case}/material",
             headers={
-                **actor_headers(actor, uuid4()),
+                **actor_headers(actor, upload_key),
                 "X-Source-Filename": "synthetic.txt",
                 "Content-Type": "text/plain",
             },
@@ -152,4 +153,39 @@ def test_expired_reference_material_is_unavailable_before_storage_cleanup():
             f"/v1/reference-evaluations/{case}/material",
             headers=actor_headers(actor),
         )
+        detail = client.get(f"/v1/reference-evaluations/{case}", headers=actor_headers(actor))
+        replay = client.post(
+            "/v1/reference-evaluations",
+            headers=actor_headers(actor, create_key),
+            json=_create_payload(),
+        )
+        submit = client.post(
+            f"/v1/reference-evaluations/{case}/submit",
+            headers=actor_headers(actor, uuid4()),
+        )
+        upload_replay = client.post(
+            f"/v1/reference-evaluations/{case}/material",
+            headers={
+                **actor_headers(actor, upload_key),
+                "X-Source-Filename": "synthetic.txt",
+                "Content-Type": "text/plain",
+            },
+            content=b"Synthetic reference source whose retention period has expired.",
+        )
+        # Leave this synthetic version outside the global retention worker's due queue.
+        with owner.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE reference_evaluation_case_versions "
+                    "SET content_expires_at=now()+interval '30 days' "
+                    "WHERE reference_case_id=:case"
+                ),
+                {"case": case},
+            )
+        owner.dispose()
     assert response.status_code == 410, (response.status_code, response.text)
+    assert detail.status_code == 200 and detail.json()["scenarioText"] is None
+    assert detail.json()["hasMaterial"] is False
+    assert replay.status_code == 410, replay.text
+    assert submit.status_code == 410, submit.text
+    assert upload_replay.status_code == 410, upload_replay.text
