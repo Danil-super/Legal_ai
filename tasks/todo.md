@@ -33,14 +33,17 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
 
 ### FC2: protect draft and fact inputs
 
-- [ ] Validate the new partial draft-answer field and JSON fact using the same
+- [x] Validate the new partial draft-answer field and JSON fact using the same
   strict schema; retain byte limits, user-confirmed provenance and V1/V2 separation.
-- [ ] Reject illegal service slots/shapes and prove omitted/UNKNOWN answers are
+- [x] Reject illegal service slots/shapes and prove omitted/UNKNOWN answers are
   not interpreted as known or negative. No schema/backfill unless demonstrated.
 - Files (3): Core src/legal_core/api_contracts.py,
   tests/{test_api_contracts,test_analysis_clarification_inputs}.py (latter new).
 - Verify: `python -m pytest services/legal_core/tests/test_api_contracts.py services/legal_core/tests/test_analysis_clarification_inputs.py -q`.
 - Dependencies: FC1; medium scope.
+- Evidence: input RED 5 failed/9 passed; focused GREEN 146 passed; scoped Ruff
+  passed and all three services' mypy passed (138 source files). Reader rollback
+  baseline recorded: 1c75731fc3b126ef58a0c83da7077f13ced63a2b. No production write.
 
 ### FC3: carry requests across the model boundary
 

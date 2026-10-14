@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 
+from legal_core.analysis_clarifications import AnalysisClarificationAnswers
 from legal_core.contracts import CaseStatus, ContractModel, FactKey, MissingFact
 from legal_core.factual_safety_intake import FactualSafetyScreening
 from legal_core.material_preparation import MaterialGroup, MaterialKind, PreparedPart
@@ -104,6 +105,7 @@ _V2_DRAFT_DATA_KEYS = frozenset(
         "healthSignals",
         "caseMaterialsStatus",
         "safetyScreening",
+        "analysisClarificationAnswers",
         "correctionSource",
     }
 )
@@ -299,6 +301,8 @@ class TelegramIntakeDraftUpdateRequest(ContractModel):
             validate_partial_screening(value["safetyScreening"])
         if "correctionSource" in value:
             CorrectionSource.model_validate(value["correctionSource"])
+        if "analysisClarificationAnswers" in value:
+            AnalysisClarificationAnswers.model_validate(value["analysisClarificationAnswers"])
         encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
         if len(encoded.encode()) > 16_384:
             raise ValueError("draftData exceeds 16384 bytes")
@@ -836,6 +840,9 @@ class FactInput(ContractModel):
         elif self.fact_key == FactKey.FACTUAL_SAFETY_SCREENING:
             expected_type = "JSON"
             FactualSafetyScreening.model_validate(self.value)
+        elif self.fact_key == FactKey.ANALYSIS_CLARIFICATION_ANSWERS:
+            expected_type = "JSON"
+            AnalysisClarificationAnswers.model_validate(self.value)
         elif self.fact_key == FactKey.CLINIC_DOCUMENTS:
             expected_type = "DOCUMENT_INVENTORY"
             if not 1 <= len(self.value) <= len(_DOCUMENT_KEYS):
