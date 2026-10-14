@@ -809,6 +809,36 @@ def _is_v2_draft(data: dict[str, Any]) -> bool:
     return data.get("intakeVersion") == 2
 
 
+def _v2_saved_selection(draft_id: UUID, draft: dict[str, Any]) -> dict[str, Any]:
+    revision, state_name = draft.get("revision"), draft.get("wizardState")
+    payload = draft.get("draftData")
+    if (
+        draft.get("id") != str(draft_id) or type(revision) is not int or revision < 1
+        or not isinstance(state_name, str) or not isinstance(payload, dict)
+        or payload.get("intakeVersion") != 2
+    ):
+        raise ValueError("invalid selected v2 draft")
+    state = WizardState[state_name]
+    if state.value < WizardState.INCOMING.value:
+        raise ValueError("invalid v2 draft state")
+    return {
+        **payload, "workflow_id": str(draft_id), DRAFT_ID_KEY: str(draft_id),
+        DRAFT_REVISION_KEY: revision, DRAFT_STATE_KEY: state.name,
+    }
+
+
+async def _reply_v2_controls(
+    update: Update, data: dict[str, Any], text: str, *, reply_markup: InlineKeyboardMarkup,
+) -> None:
+    message = update.effective_message
+    if message is None:
+        return
+    sent = await message.reply_text(text, reply_markup=reply_markup)
+    message_id = getattr(sent, "message_id", None)
+    if type(message_id) is int and message_id > 0:
+        data["_v2_prompt_message_id"] = message_id
+
+
 async def _prompt_v2_draft(
     update: Update,
     state: WizardState,
@@ -818,12 +848,7 @@ async def _prompt_v2_draft(
     data.pop("_v2_prompt_message_id", None)
 
     async def reply(text: str, *, reply_markup: InlineKeyboardMarkup) -> None:
-        if message is None:
-            return
-        sent = await message.reply_text(text, reply_markup=reply_markup)
-        message_id = getattr(sent, "message_id", None)
-        if type(message_id) is int and message_id > 0:
-            data["_v2_prompt_message_id"] = message_id
+        await _reply_v2_controls(update, data, text, reply_markup=reply_markup)
 
     if state is WizardState.INCOMING:
         if message is not None:
@@ -1016,7 +1041,7 @@ async def record_v2_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         data[field] = parse_v2_answer(field, _message_text(update))
     except ValueError as exc:
-        await _reply(update, str(exc), reply_markup=_v2_keyboard([]))
+        await _reply_v2_controls(update, data, str(exc), reply_markup=_v2_keyboard([]))
         return state
     return await _advance_v2_draft(update, data)
 
@@ -1139,6 +1164,42 @@ async def _save_v2_material_state(
     return saved_revision
 
 
+async def _reconcile_v2_material(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, data: dict[str, Any], *,
+    actor_id: int, source_status: str, receipt_confirmed: bool,
+) -> int:
+    try:
+        draft_id = UUID(str(data[DRAFT_ID_KEY]))
+        recovered = _v2_saved_selection(
+            draft_id, await _legal_core(context).get_intake_draft(draft_id, actor_id),
+        )
+    except (KeyError, ValueError, LegalCoreApiError):
+        _clear_wizard(context)
+        await _reply(
+            update, "⚠️ Не удалось проверить сохранение материала. Он мог сохраниться. "
+            "Откройте /menu → «Мои черновики» перед повтором.",
+        )
+        return ConversationHandler.END
+    data.clear()
+    data.update(recovered)
+    if receipt_confirmed and data.get("caseMaterialsStatus") == "ATTACHED":
+        # The upload itself returned a validated receipt. Keep its observed source
+        # kind for the next guarded save even if the secondary state PUT failed.
+        data["incomingSourceStatus"] = source_status
+    notice = (
+        "Материал сохранён. Обновление карточки не удалось подтвердить полностью. "
+        if receipt_confirmed
+        else "Последнее сохранение материала не удалось подтвердить полностью. "
+    )
+    await _reply(
+        update, "⚠️ " + notice + "Состояние материалов и карточки обновлено с сервера. "
+        "Повтор того же файла безопасен; сохранённые материалы остаются в карточке.",
+    )
+    state = WizardState[str(data[DRAFT_STATE_KEY])]
+    await _prompt_v2_draft(update, state, data)
+    return state
+
+
 async def _upload_v2_material(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -1152,6 +1213,8 @@ async def _upload_v2_material(
     data = _wizard_data(context)
     if actor_id is None or not _is_v2_draft(data):
         return ConversationHandler.END
+    uploaded: dict[str, Any] | None = None
+    receipt_confirmed = False
     try:
         draft_id = UUID(str(data[DRAFT_ID_KEY]))
         uploaded = await _legal_core(context).upload_case_material(
@@ -1165,6 +1228,8 @@ async def _upload_v2_material(
         material = uploaded.get("material")
         if not isinstance(revision, int) or revision < 1 or not isinstance(material, dict):
             raise ValueError("material upload response is invalid")
+        UUID(str(material["id"]))
+        receipt_confirmed = True
         await _save_v2_material_state(
             context,
             actor_id=actor_id,
@@ -1175,16 +1240,26 @@ async def _upload_v2_material(
         )
     except LegalCoreApiError as exc:
         logger.warning("v2 case material upload rejected: %s", exc.code)
+        if uploaded is not None or exc.status_code >= 500:
+            return await _reconcile_v2_material(
+                update, context, data, actor_id=actor_id, source_status=source_status,
+                receipt_confirmed=receipt_confirmed,
+            )
         message = (
             "⚠️ Файл не добавлен: в нём обнаружены персональные данные или он не прошёл "
             "проверку формата. Обезличьте его и попробуйте снова."
             if exc.code == "CASE_MATERIAL_DIRECT_IDENTIFIER_NOT_ALLOWED"
             else "⚠️ Файл не добавлен. Проверьте формат, размер и обезличивание, затем повторите."
         )
-        await _reply(update, message, reply_markup=_v2_keyboard([]))
+        await _reply_v2_controls(update, data, message, reply_markup=_v2_keyboard([]))
         return WizardState.MATERIALS
     except (KeyError, ValueError) as exc:
         logger.warning("v2 case material upload response invalid: %s", type(exc).__name__)
+        if uploaded is not None:
+            return await _reconcile_v2_material(
+                update, context, data, actor_id=actor_id, source_status=source_status,
+                receipt_confirmed=receipt_confirmed,
+            )
         await _reply(update, "⚠️ Не удалось безопасно сохранить материал. Попробуйте позже.")
         return WizardState.MATERIALS
     await _reply(
@@ -1384,11 +1459,20 @@ async def _persist_transition(
             raise ValueError("draft actor is missing")
         # Rendering cached clinic facts is a read operation too. Core must check
         # the current membership, subscription and exact draft before any output.
-        await _legal_core(context).get_intake_draft(draft_id, actor_id)
+        remote = await _legal_core(context).get_intake_draft(draft_id, actor_id)
+        latest = _v2_saved_selection(draft_id, remote) if _is_v2_draft(data) else None
     except (KeyError, ValueError, LegalCoreApiError):
         _clear_wizard(context)
         await _reply(update, "🔒 Черновик сейчас недоступен. Обновите список через /menu.")
         return ConversationHandler.END
+    if latest is not None and latest[DRAFT_REVISION_KEY] != data.get(DRAFT_REVISION_KEY):
+        data.clear()
+        data.update(latest)
+        await _reply(update, "Карточка изменилась на сервере. Обновил сохранённый шаг; "
+                     "ответьте на текущий вопрос.")
+        state = WizardState[str(data[DRAFT_STATE_KEY])]
+        await _prompt_v2_draft(update, state, data)
+        return state
     query = update.callback_query
     if _is_v2_draft(data) and query is not None:
         message = query.message

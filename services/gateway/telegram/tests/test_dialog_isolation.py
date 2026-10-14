@@ -72,14 +72,17 @@ class Core:
 
     async def create_intake_draft(self, actor, *, intake_schema_version):
         assert intake_schema_version == "dental-case-intake.v2"
-        return {
+        self.draft = {
             "id": str(DRAFT),
             "revision": 1,
             "wizardState": "INCOMING",
             "draftData": {"intakeVersion": 2},
         }
+        return self.draft
 
     async def get_intake_draft(self, draft, actor):
+        if hasattr(self, "draft"):
+            return self.draft
         return {
             "id": str(DRAFT),
             "revision": 1,
@@ -89,12 +92,13 @@ class Core:
 
     async def save_intake_draft(self, draft, actor, **kwargs):
         self.saved.append(kwargs)
-        return {
+        self.draft = {
             "id": str(DRAFT),
             "revision": kwargs["expected_revision"] + 1,
             "wizardState": kwargs["wizard_state"],
             "draftData": kwargs["draft_data"],
         }
+        return self.draft
 
 
 @pytest.mark.parametrize(

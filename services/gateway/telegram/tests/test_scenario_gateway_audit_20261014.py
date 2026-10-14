@@ -265,7 +265,9 @@ def test_ambiguous_committed_attachment_does_not_break_next_material_action():
             assert bot.WIZARD_DATA_KEY in app.user_data[ACTOR], (
                 "Upload committed, but the stale gateway revision ended the conversation"
             )
-            assert core.draft["wizardState"] != "MATERIALS"
+            assert core.draft["draftData"]["caseMaterialsStatus"] == "ATTACHED"
+            await dispatch("case:v2:material:done")
+            assert core.draft["wizardState"] == "SAFETY"
 
     asyncio.run(scenario())
 
@@ -377,5 +379,86 @@ def test_latest_checked_button_can_deselect_an_answer():
             assert core.draft["draftData"]["situationAreas"] == ["TREATMENT"]
             await dispatch("case:v2:multi:situationAreas:TREATMENT")
             assert core.draft["draftData"]["situationAreas"] == []
+
+    asyncio.run(scenario())
+
+
+def test_remote_revision_change_refreshes_selection_before_consuming_an_old_answer():
+    async def scenario():
+        async with versioned_harness() as (app, core, _sent, dispatch):
+            await dispatch("case:start")
+            core.draft.update(revision=2, wizardState="SITUATION", draftData={
+                "intakeVersion": 2, "incomingKind": "MESSAGE_OR_REQUEST",
+                "incomingSourceStatus": "NOT_ATTACHED",
+            })
+            before = deepcopy(core.draft)
+            await dispatch("case:v2:single:incomingKind:COMPLAINT")
+            assert core.draft == before
+            current = app.user_data[ACTOR][bot.WIZARD_DATA_KEY]
+            assert current[bot.DRAFT_REVISION_KEY] == 2
+            assert current[bot.DRAFT_STATE_KEY] == "SITUATION"
+            assert current["incomingKind"] == "MESSAGE_OR_REQUEST"
+            assert core.saved == []
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("lost_save", ["before_commit", "after_commit", "invalid_response"])
+def test_confirmed_upload_receipt_survives_failed_secondary_draft_save(lost_save):
+    async def scenario():
+        async with versioned_harness() as (app, core, sent, dispatch):
+            core.draft = {"id": str(DRAFT), "revision": 7, "wizardState": "MATERIALS",
+                          "draftData": _base_data()}
+            await dispatch(f"case:draft:{DRAFT}")
+
+            async def upload(*args, **kwargs):
+                core.draft["revision"] += 1
+                core.draft["draftData"]["caseMaterialsStatus"] = "ATTACHED"
+                return {"draftRevision": core.draft["revision"],
+                        "material": {"id": str(UUID(int=555))}}
+
+            original = core._json_request
+            fail = True
+
+            async def save(method, path, **kwargs):
+                nonlocal fail
+                if method == "PUT" and fail:
+                    fail = False
+                    if lost_save == "before_commit":
+                        raise LegalCoreApiError(503, "LEGAL_CORE_UNAVAILABLE", "synthetic timeout")
+                    result = await original(method, path, **kwargs)
+                    if lost_save == "invalid_response":
+                        return result | {"revision": "invalid"}
+                    raise LegalCoreApiError(503, "LEGAL_CORE_UNAVAILABLE", "synthetic timeout")
+                return await original(method, path, **kwargs)
+
+            core.upload_case_material = upload
+            core._json_request = save
+            await dispatch("text:Fixed synthetic material without identifying information.")
+            data = app.user_data[ACTOR][bot.WIZARD_DATA_KEY]
+            assert data[bot.DRAFT_REVISION_KEY] == core.draft["revision"]
+            assert data["caseMaterialsStatus"] == "ATTACHED"
+            assert data["incomingSourceStatus"] == "TEXT_ATTACHED"
+            assert any("Материал сохранён" in item.get("text", "") for item in sent)
+            assert not any("Файл не добавлен" in item.get("text", "") for item in sent)
+            await dispatch("case:v2:material:done")
+            assert core.draft["wizardState"] == "SAFETY"
+            assert core.draft["draftData"]["incomingSourceStatus"] == "TEXT_ATTACHED"
+
+    asyncio.run(scenario())
+
+
+def test_back_button_on_current_validation_message_is_usable():
+    async def scenario():
+        async with versioned_harness() as (_app, core, _sent, dispatch):
+            data = _base_data()
+            data.pop("eventDate")
+            core.draft = {"id": str(DRAFT), "revision": 7,
+                          "wizardState": "EVENT_DATE", "draftData": data}
+            await dispatch(f"case:draft:{DRAFT}")
+            await dispatch("text:not a valid date")
+            assert core.draft["wizardState"] == "EVENT_DATE"
+            await dispatch("case:v2:back")
+            assert core.draft["wizardState"] == "EVENT"
 
     asyncio.run(scenario())

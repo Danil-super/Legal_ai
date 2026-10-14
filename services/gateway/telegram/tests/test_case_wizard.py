@@ -83,6 +83,7 @@ class FakeQuery:
 class FakeLegalCore:
     def __init__(self, response: dict[str, Any] | Exception) -> None:
         self.response = response
+        self.saved_draft: dict[str, Any] | None = None
 
     async def get_actor(self, telegram_user_id: int) -> dict[str, Any]:
         del telegram_user_id
@@ -114,10 +115,13 @@ class FakeLegalCore:
         }
 
     async def save_intake_draft(self, *args: object, **kwargs: object) -> dict[str, Any]:
-        del args, kwargs
         if isinstance(self.response, Exception):
             raise self.response
-        return {"revision": 2}
+        self.saved_draft = {
+            "id": str(args[0]), "revision": int(kwargs["expected_revision"]) + 1,
+            "wizardState": kwargs["wizard_state"], "draftData": kwargs["draft_data"],
+        }
+        return self.saved_draft
 
     async def archive_intake_draft(self, *args: object, **kwargs: object) -> dict[str, Any]:
         del args, kwargs
@@ -135,6 +139,8 @@ class FakeLegalCore:
         del telegram_user_id
         if isinstance(self.response, Exception):
             raise self.response
+        if self.saved_draft is not None:
+            return self.saved_draft
         return {
             "id": str(draft_id),
             "wizardState": "SERVICE_TYPE",
@@ -191,9 +197,10 @@ class FakeReportPipeline:
         draft_data: dict[str, Any],
         **kwargs: object,
     ) -> dict[str, Any]:
-        del args, kwargs
+        del kwargs
         self.steps.append("save")
         self.saved_draft = {
+            "id": str(args[0]),
             "wizardState": wizard_state,
             "revision": expected_revision + 1,
             "draftData": dict(draft_data),
@@ -227,7 +234,7 @@ def prepare_selected_draft(context: SimpleNamespace, update: SimpleNamespace) ->
 
     data = context.user_data[bot.WIZARD_DATA_KEY]
     client = context.bot_data[bot.LEGAL_CORE_CLIENT_KEY]
-    if isinstance(client, FakeReportPipeline) and client.saved_draft is None:
+    if isinstance(client, FakeReportPipeline | FakeLegalCore) and client.saved_draft is None:
         client.saved_draft = {
             "id": data[bot.DRAFT_ID_KEY],
             "revision": data[bot.DRAFT_REVISION_KEY],

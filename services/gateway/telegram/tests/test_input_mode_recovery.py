@@ -27,7 +27,7 @@ def context_with_draft(state: bot.WizardState) -> SimpleNamespace:
             return_value={"id": DRAFT_ID, "wizardState": "INCIDENT", "revision": 1}
         ),
     )
-    return SimpleNamespace(
+    context = SimpleNamespace(
         bot_data={bot.LEGAL_CORE_CLIENT_KEY: client},
         user_data={
             bot.WIZARD_DATA_KEY: {
@@ -39,6 +39,14 @@ def context_with_draft(state: bot.WizardState) -> SimpleNamespace:
             }
         },
     )
+    async def current_draft(*args: object) -> dict[str, object]:
+        data = context.user_data[bot.WIZARD_DATA_KEY]
+        return {
+            "id": data[bot.DRAFT_ID_KEY], "revision": data[bot.DRAFT_REVISION_KEY],
+            "wizardState": data[bot.DRAFT_STATE_KEY], "draftData": bot._draft_payload(data),
+        }
+    client.get_intake_draft = AsyncMock(side_effect=current_draft)
+    return context
 
 
 def fake_update(*, text: str = "", callback: str | None = None) -> SimpleNamespace:
