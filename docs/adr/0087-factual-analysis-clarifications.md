@@ -34,12 +34,42 @@ exist, rollback requires that baseline or a later compatible reader, not the old
 production revision which rejects unknown fields/keys. No historical report/PDF
 or confirmed fact snapshot is rewritten to manufacture compatibility.
 
+The source-reader foundation is 1c75731; its gateway packaging fix is 18790cd.
+Those revisions alone are not a full rollback target once recovery drafts contain
+the new state/request list/report pointer. A production rollback must also read
+FC6–FC8 draft and report-bound recovery contracts. Record a complete compatible
+revision at the release gate, before new production payloads are enabled; never
+roll back to f4eaee8 after those writes. No production writes have occurred during
+these local implementation/test increments.
+
 Subsequent tasks must validate model requests against the frozen Core facts and
 tenant, bind recovery to the displayed source report and its hashes, and produce
 a creator-only new draft. Original cases/files remain unchanged. Known answers
 are not requested again; a confirmed UNKNOWN attempt must not trigger an infinite
 loop. EVENT_DATE does not become SERVICE_PROVIDED_DATE. Earlier or unknown service
 dates cannot be justified by later-only evidence. Urgent routing is unchanged.
+
+FC9 reads answer values through the shared strict schema instead of recursively
+treating an optional global serviceSlot:null as an unknown answer. UNKNOWN and
+approximate service dates still cannot satisfy declared dependencies. For V2
+claims declaring affected services, or the new answer bundle with service answers,
+require exact dates for all affected services: the existing claim contract cannot
+prove a narrower per-service binding. LEGAL treatment claims declaring the bundle
+also require that binding; an unrelated global-purpose ACTION does not. Every
+cited fragment must remain effective on the event date and each relevant service
+date. This intentionally abstains where narrower binding/historical evidence is
+unavailable; it does not change retrieval anchors, create a multi-date resolver,
+weaken semantic review or infer missing dates/dependencies from text.
+
+FC7 extends recovery with paired expectedReportId/expectedReportSha256. New
+previews identify the latest retained immutable report; a question-bearing report
+cannot be recovered through an old unbound request. Existing no-question recovery
+payloads remain readable. The server-produced new draft carries bounded requests
+and confirmed answers separately, including UNKNOWN attempts, plus its source
+report pointer. The wizard retains requested identities for explicit Back editing
+inside the new draft; attempted identities cannot be re-proposed by the model.
+No table migration is needed: state is an existing bounded varchar, with no enum
+CHECK, and the extra fields use existing bounded draft JSON.
 
 ## Verification and limits
 

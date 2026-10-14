@@ -103,25 +103,32 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
 
 ### FC6: durable Telegram question interaction
 
-- [ ] Actual application composition supports back/cancel, old-button rejection,
+- [x] Actual application composition supports back/cancel, old-button rejection,
   per-service questions and fresh optimistic saves without overwriting other facts.
-- [ ] Both quick/manual paths, restart/resume and UNKNOWN completion behave
+- [x] Both quick/manual paths, restart/resume and UNKNOWN completion behave
   identically; no unconditional questions for unrelated cases or infinite loop.
 - Files (3): gateway src/telegram_gateway/bot.py,
   tests/{test_analysis_clarification_runtime,test_quick_guided_v2}.py (first new).
 - Verify: `python -m pytest services/gateway/telegram/tests/test_analysis_clarification_runtime.py services/gateway/telegram/tests/test_quick_guided_v2.py -q`.
 - Dependencies: FC4–FC5; medium scope; no unrelated bot refactor.
+- Evidence: independent f240492 integrated as 6e604f1; RED 8 failed/10 passed,
+  focused gateway regression 666 passed. Cross-slice omitted global-slot bug
+  reproduced separately (1 failed) and fixed in 2c36a50; combined pure/runtime
+  GREEN 108 passed. Core-normalized optional global slots are not lost silently.
 
 ### FC7: protected source-report recovery in Core
 
-- [ ] Creator-only preview/new-draft recovery binds the displayed source report,
+- [x] Creator-only preview/new-draft recovery binds the displayed source report,
   its hash and fact snapshot; stale or cross-tenant recovery fails safely.
-- [ ] Preserve confirmed answers, source case/report hashes and original material
+- [x] Preserve confirmed answers, source case/report hashes and original material
   ownership. UNKNOWN attempts lead to an explicit limit/human route, not a loop.
 - Files (3): Core src/legal_core/case_clarification.py,
   tests/{test_clarification_recovery,test_analysis_clarification_recovery}.py (latter new).
 - Verify: `POSTGRES_INTEGRATION=1 python -m pytest services/legal_core/tests/test_clarification_recovery.py services/legal_core/tests/test_analysis_clarification_recovery.py -q` with disposable DB configuration.
 - Dependencies: FC4; medium scope; no reopening a finalized case.
+- Evidence: independent 4dc724d integrated as 64db365; real PG RED 12 failed/
+  12 passed, focused real PG GREEN 64 passed. Source report/fact/content hashes,
+  latest-version binding, creator/tenant scope and no file copying are tested.
 
 ### FC8: gateway recovery handoff and re-confirmation
 
@@ -142,15 +149,20 @@ services/gateway/telegram; orchestrator files to services/agent_orchestrator.
 
 ### FC9: enforce service-date limits without a new legal resolver
 
-- [ ] New nested unknown/approximate answers cannot satisfy a declared factual
+- [x] New nested unknown/approximate answers cannot satisfy a declared factual
   dependency. EVENT_DATE never substitutes for a service date.
-- [ ] Service-dependent conclusions require support at the relevant known date;
+- [x] Service-dependent conclusions require support at the relevant known date;
   unknown binding or a later-only approved copy stays blocked. Existing case-date
   evidence checks, unknown recursion and policy remain; no guessed prior edition.
 - Files (4): Core src/legal_core/{analysis_clarifications,verifier}.py,
   tests/{test_analysis_clarification_temporal,test_verifier}.py (first new).
 - Verify: `python -m pytest services/legal_core/tests/test_analysis_clarification_temporal.py services/legal_core/tests/test_verifier.py -q`.
 - Dependencies: FC1–FC4; medium scope; must pass before integration/release.
+- Evidence: actual temporal RED 6 failed/6 passed; GREEN 27 verifier/temporal
+  tests passed; full intermediate real PG/MinIO regression 2386 passed, 0 skipped
+  (104.37s) covers FC1–FC7 plus FC9 working tree, before FC8/FC10 integration.
+  Ruff and all-service mypy (138 files) passed. FC9 does not claim that undeclared
+  model dependencies or semantic correctness can be proven structurally.
 
 ### FC10: one clear question list in Telegram and PDF
 
