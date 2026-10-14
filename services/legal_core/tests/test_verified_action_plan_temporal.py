@@ -43,3 +43,23 @@ def test_service_dependent_action_plan_retains_unknown_and_historical_date_denia
     actions = _verified_action_items((claim,), {claim.claim_id: result.claims[0].result})
     expected_actions = [claim.text] if expected is VerificationResult.VERIFIED else []
     assert actions == expected_actions
+
+
+def test_legacy_service_action_uses_real_legacy_dependencies_not_v2_bundle():
+    facts = {
+        FactKey.SERVICE_TYPE: "Синтетическая услуга",
+        FactKey.SERVICE_DATE: "2026-10-14",
+    }
+    claim = ProposedClaim(
+        claim_id="claim-1", kind=ClaimKind.ACTION, text="Синтетический шаг по услуге.",
+        evidence_fragment_ids=(FRAGMENT_ID,),
+        required_fact_keys=(FactKey.SERVICE_TYPE, FactKey.SERVICE_DATE),
+    )
+    result = verify_claims(
+        [claim], facts=facts, as_of_date=date(2026, 10, 14),
+        evidence=[_evidence(effective_from=date(2026, 10, 8))],
+        semantic_reviews=[_supported_review()],
+    )
+    assert result.claims[0].result is VerificationResult.VERIFIED
+    assert result.analysis_allowed
+    assert _verified_action_items((claim,), {claim.claim_id: result.claims[0].result}) == [claim.text]

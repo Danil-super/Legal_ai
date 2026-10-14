@@ -17,6 +17,8 @@ Explicitly ask the researcher to represent concrete, nonduplicative supported pl
 steps as ACTION claims, with exact evidence IDs and honest fact dependencies.
 No forced action/count when facts or evidence are insufficient. Preserve service
 dependencies and exact-date gates: do not reclassify LEGAL as ACTION to bypass them.
+The AFFECTED_SERVICES dependency instruction applies only to GUIDED_V2; legacy
+actions keep genuine SERVICE_TYPE/SERVICE_DATE dependencies, not an absent V2 bundle.
 The current schema cap is30 claims, not12; no cap, model/high, provider, request55,
 stage/shared budgets, riskv4/10k, sources, approvals, roles/auth or storage changes.
 

@@ -628,6 +628,9 @@ def test_supported_plan_steps_are_requested_as_cited_actions_not_unverified_pros
     assert "Не создавай действие ради заполнения плана" in prompt
     assert "нет подтверждения в evidence" in prompt
     assert "зависимость AFFECTED_SERVICES и проверку подтверждённых дат" in prompt
+    assert "Только при intakeMode=GUIDED_V2" in prompt
+    assert "Для прежней анкеты используй реальные зависимости SERVICE_TYPE/SERVICE_DATE" in prompt
+    assert "не добавляй отсутствующий AFFECTED_SERVICES" in prompt
     assert "Не меняй LEGAL на ACTION, чтобы обойти проверку фактов или дат" in prompt
 
 
