@@ -185,7 +185,8 @@ def clarification_choices(
 def _stored_clarification_requests(data: dict[str, Any]) -> list[ClarificationRequest]:
     raw = data.get("analysisClarificationRequests", [])
     if not isinstance(raw, list) or any(
-        not isinstance(item, dict) or set(item) != {"questionId", "serviceSlot"}
+        not isinstance(item, dict) or "questionId" not in item
+        or not set(item) <= {"questionId", "serviceSlot"}
         for item in raw
     ):
         return []

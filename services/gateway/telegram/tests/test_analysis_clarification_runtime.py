@@ -311,3 +311,13 @@ def test_revoked_access_prevents_cached_question_output_or_answer_save():
             assert not any("терапевтическое лечение" in item.get("text", "")
                            for item in sent[output_count:])
     asyncio.run(scenario())
+def test_core_global_request_without_optional_slot_remains_a_pending_question() -> None:
+    from telegram_gateway.guided_case_intake_v2 import next_clarification_request
+
+    request = next_clarification_request({
+        "intakeVersion": 2,
+        "analysisClarificationRequests": [{"questionId": "RESPONSE_PURPOSE"}],
+    })
+    assert request is not None
+    assert request.question_id.value == "RESPONSE_PURPOSE"
+    assert request.service_slot is None
