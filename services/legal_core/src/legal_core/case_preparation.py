@@ -158,6 +158,8 @@ async def store_preparation_result(
     wire = result.model_dump(mode="json", by_alias=True)
     record = _new_idempotency_record(actor=actor, scope=scope, key=idempotency_key,
                                      request_hash=request_hash)
+    # Writers hold the case lock: assign source order now, not at transaction start.
+    record.created_at = (await session.execute(select(func.clock_timestamp()))).scalar_one()
     if result.root.source.context is None:
         # Before legal retrieval there is no verifier run. The durable operation
         # is this actual receipt row, not a fabricated analysis-run identity.

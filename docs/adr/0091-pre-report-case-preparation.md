@@ -475,3 +475,17 @@ Cross-tenant access, retention expiry, request/key/cache substitution and change
 late payloads remain rejected. No actual external model/provider was called.
 Author focused integration totals111 Core and63 agent tests; the full immutable
 regression run is recorded separately in the audit checkpoint.
+
+### Preparation source ordering prerequisite
+
+Case-owned preparation writers already serialize under the case lock. Their
+receipt.created_at is now assigned from PostgreSQL clock_timestamp at storage,
+not the transaction-start default now(). Otherwise an older transaction that
+waited for the case could commit a fresh result ordered before its predecessor.
+Source recovery orders these receipts by(created_at,id), then validates status
+and origin; it never filters out a newer final/human result to revive older work.
+This is not a schema expansion or a legal/evidence timestamp. Existing receipts
+are not rewritten. The actual runtime-role PostgreSQL test starts an older
+transaction, waits, stores and reads back its receipt; it was RED on the default
+transaction timestamp. Normal production writers hold the case lock; the test
+directly exercises storage with a synthetic result only.
