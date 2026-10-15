@@ -16,6 +16,12 @@ down_revision: str | None = "c4a0c3f6e852"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+_LOCK_EXPIRED_DRAFT_OWNERS = """
+    PERFORM d.id FROM public.telegram_intake_drafts AS d
+     WHERE d.status <> 'DRAFT' OR d.purge_after <= timezone('utc', now())
+     ORDER BY d.id FOR UPDATE;
+"""
+
 _CLEAR_EXPIRED_PREPARATION = """
     UPDATE public.idempotency_records AS i
        SET response_json = NULL, lease_token = NULL, lease_until = NULL,
@@ -43,8 +49,11 @@ def _draft_retention_function(expanded: bool) -> str:
         return definition
     if definition.count("BEGIN\n") != 1:
         raise RuntimeError("unexpected predecessor retention function")
-    # Scrub before the material-gated DELETE, also covering submitted/missing owners.
-    return definition.replace("BEGIN\n", "BEGIN\n" + _CLEAR_EXPIRED_PREPARATION, 1)
+    # Match the runtime draft→operation order, including a draft expiring during a wait.
+    # Missing owners have no parent to lock and remain covered by the scrub below.
+    return definition.replace(
+        "BEGIN\n", "BEGIN\n" + _LOCK_EXPIRED_DRAFT_OWNERS + _CLEAR_EXPIRED_PREPARATION, 1,
+    )
 
 
 def upgrade() -> None:

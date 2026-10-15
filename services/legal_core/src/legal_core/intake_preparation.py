@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -21,7 +21,7 @@ from legal_core.case_api import (
 )
 from legal_core.case_preparation_contracts import DraftPreparationIntent
 from legal_core.intake_preparation_contracts import DraftSuggestions
-from legal_core.models import IdempotencyRecord, TelegramIntakeDraft
+from legal_core.models import IdempotencyRecord, SubscriptionEntitlement, TelegramIntakeDraft
 from legal_core.pseudonymization import contains_obvious_direct_identifier
 
 OperationKind = Literal["UNDERSTAND_INTAKE", "INTERPRET_ANSWER"]
@@ -90,6 +90,48 @@ def _result(record: IdempotencyRecord) -> PreparationOperation:
     return PreparationOperation(record.id, "MANUAL_CONTINUATION")
 
 
+def _validate_binding(
+    actor: ActorContext, draft: TelegramIntakeDraft, record: IdempotencyRecord,
+) -> DraftPreparationIntent:
+    if record.response_json is None:
+        raise ApiError(status_code=410, code="PREPARATION_EXPIRED", message="Operation expired")
+    try:
+        intent = DraftPreparationIntent.model_validate(record.response_json["intent"])
+    except (KeyError, ValueError) as error:
+        raise ApiError(status_code=409, code="PREPARATION_INTENT_INVALID",
+                       message="Operation intent is not valid") from error
+    if (
+        intent != _intent(actor, draft, intent.operation_kind) or record.scope != intent.scope
+        or record.key != str(intent.idempotency_key)
+        or record.request_sha256 != intent.request_sha256
+        or record.resource_id != draft.id or record.resource_type != RESOURCE_TYPE
+    ):
+        raise ApiError(status_code=409, code="PREPARATION_INPUT_STALE", message="Draft has changed")
+    return intent
+
+
+async def _recheck_after_locks(
+    session: AsyncSession, telegram_user_id: int, actor: ActorContext, draft: TelegramIntakeDraft,
+) -> None:
+    if await resolve_actor(session, telegram_user_id) != actor:
+        raise ApiError(
+            status_code=403, code="ACTOR_CONTEXT_CHANGED", message="Actor access changed",
+        )
+    # now() is the transaction start; a blocked lock may outlive the entitlement.
+    entitlement = await session.scalar(select(SubscriptionEntitlement.id).where(
+        SubscriptionEntitlement.clinic_id == actor.clinic_id,
+        SubscriptionEntitlement.user_id == actor.user_id,
+        SubscriptionEntitlement.status == "ACTIVE",
+        SubscriptionEntitlement.starts_at <= func.clock_timestamp(),
+        (SubscriptionEntitlement.ends_at.is_(None))
+        | (SubscriptionEntitlement.ends_at > func.clock_timestamp()),
+    ))
+    if entitlement is None:
+        raise ApiError(status_code=403, code="SUBSCRIPTION_INACTIVE", message="Access is inactive")
+    if draft.purge_after <= datetime.now(UTC):
+        raise ApiError(status_code=410, code="INTAKE_DRAFT_EXPIRED", message="Draft expired")
+
+
 async def _owned_operation(
     session: AsyncSession, telegram_user_id: int, operation_id: UUID,
 ) -> tuple[ActorContext, TelegramIntakeDraft, IdempotencyRecord]:
@@ -105,16 +147,10 @@ async def _owned_operation(
     # Same lock order as reservation: draft first, then operation. No lock crosses model I/O.
     draft = await _draft(session, actor, resource_id)
     record = await session.scalar(select(IdempotencyRecord).where(*criteria).with_for_update())
-    if record is None or record.response_json is None:
+    if record is None:
         raise ApiError(status_code=410, code="PREPARATION_EXPIRED", message="Operation expired")
-    intent = DraftPreparationIntent.model_validate(record.response_json["intent"])
-    current = _intent(actor, draft, intent.operation_kind)
-    if (
-        intent != current or record.scope != intent.scope
-        or record.key != str(intent.idempotency_key)
-        or record.request_sha256 != intent.request_sha256
-    ):
-        raise ApiError(status_code=409, code="PREPARATION_INPUT_STALE", message="Draft has changed")
+    _validate_binding(actor, draft, record)
+    await _recheck_after_locks(session, telegram_user_id, actor, draft)
     return actor, draft, record
 
 
@@ -151,7 +187,11 @@ async def reserve_preparation(
         if record is None or record.request_sha256 != intent.request_sha256:
             raise ApiError(status_code=409, code="PREPARATION_INTENT_CONFLICT",
                            message="Operation intent conflict")
+        _validate_binding(actor, draft, record)
+        await _recheck_after_locks(session, telegram_user_id, actor, draft)
         result = _result(record)
+        if result.suggestions is not None:
+            result.suggestions.validate_source(_source(draft))
         if inserted is not None:
             result = PreparationOperation(record.id, "PENDING", lease_token=token)
             session.add(_audit(actor=actor, action="INTAKE_PREPARATION_RESERVED",

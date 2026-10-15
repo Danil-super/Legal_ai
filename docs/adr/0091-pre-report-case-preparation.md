@@ -196,3 +196,20 @@ record reservation/proposal/manual failure counts, not input or model output.
 The new Python proposal contract is a supporting PRC2 split, not another schema or
 storage expansion. There are no new tables, HTTP routes or enabled model producers.
 This shared service does not replace the later HTTP authz/race/acceptance tests.
+
+Independent runtime review reproduced two actionable failures before activation.
+Duplicate reservations now use the same intent/resource/source binding checks as
+reads and completions; four retained-row tampering cases failed before the fix.
+The unreleased d10 migration candidate also makes retention lock expired draft
+owners before operation rows, matching the runtime parent→operation lock order.
+A real two-connection regression reproduces expiry while completion holds the
+parent and retention is waiting; completion must refuse with410 and cleanup must
+finish without40P01, erasing the retained proposal. This edits an unreleased
+migration candidate, not deployed migration history.
+
+After locks are acquired, actor membership, entitlement and draft expiry are
+checked again. Entitlement deadlines use clock_timestamp(), not transaction-start
+now(); natural expiry while waiting must not permit a stale completion. Tests also
+withdraw membership or suspend access between the initial check and completion.
+No access rules or subscription terms are changed by these repeated checks.
+Lock ordering follows [PostgreSQL deadlock prevention](https://www.postgresql.org/docs/16/explicit-locking.html#LOCKING-DEADLOCKS).

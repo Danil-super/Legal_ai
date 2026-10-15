@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from legal_core.case_api import ApiError
+import legal_core.intake_preparation as preparation
 from legal_core.database import database_url, owner_database_url
 from legal_core.intake_preparation import (
     complete_preparation,
@@ -280,3 +281,142 @@ def test_constructed_mutated_suggestion_cannot_bypass_storage_boundary(draft_own
     assert _run(lambda sessions: read_preparation(
         sessions, telegram_user_id=actor, operation_id=lease.operation_id,
     )).state == "PENDING"
+
+
+@pytest.mark.parametrize("tamper", ["intent", "owner", "resource_type", "span"])
+def test_reservation_replay_revalidates_the_persisted_binding_and_grounding(draft_owner, tamper):
+    actor, _, _, draft = draft_owner
+    lease = _run(lambda sessions: _reserve(sessions, actor, draft))
+    _run(lambda sessions: complete_preparation(
+        sessions, telegram_user_id=actor, operation_id=lease.operation_id,
+        lease_token=lease.lease_token, suggestions=_suggestions(),
+    ))
+    assignments = {
+        "intent": "response_json=jsonb_set(response_json,'{intent,draftRevision}','99'::jsonb)",
+        "owner": "resource_id=gen_random_uuid()",
+        "resource_type": "resource_type='TELEGRAM_INTAKE_DRAFT'",
+        "span": "response_json=jsonb_set(response_json,"
+                "'{suggestions,sourceSpans,clinicActions,0,end}','1499'::jsonb)",
+    }
+    engine = create_engine(owner_database_url())
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(
+                f"UPDATE idempotency_records SET {assignments[tamper]} WHERE id=:id"
+            ), {"id": lease.operation_id})
+        with pytest.raises((ApiError, ValueError)):
+            _run(lambda sessions: _reserve(sessions, actor, draft))
+    finally:
+        engine.dispose()
+
+
+def test_retention_and_expiring_completion_share_lock_order_and_never_publish_expired_data(
+    draft_owner, monkeypatch,
+):
+    actor, _, _, draft = draft_owner
+    lease = _run(lambda sessions: _reserve(sessions, actor, draft))
+    owner = create_engine(owner_database_url())
+    label = "preparation-retention-test-" + uuid4().hex
+    try:
+        with owner.begin() as connection:
+            expires_at = connection.scalar(text(
+                "UPDATE telegram_intake_drafts "
+                "SET purge_after=clock_timestamp()+interval '2 seconds' "
+                "WHERE id=:id RETURNING purge_after"
+            ), {"id": draft["id"]})
+
+        async def scenario(sessions):
+            locked, resume = asyncio.Event(), asyncio.Event()
+            original = preparation._draft
+
+            async def delayed(*args, **kwargs):
+                result = await original(*args, **kwargs)
+                locked.set()
+                await resume.wait()
+                return result
+
+            monkeypatch.setattr(preparation, "_draft", delayed)
+
+            async def purge():
+                async with sessions() as session:
+                    await session.execute(
+                        text("SELECT set_config('application_name', :label, true)"),
+                        {"label": label},
+                    )
+                    await session.execute(text(
+                        "SELECT public.purge_expired_telegram_intake_drafts()",
+                    ))
+                    await session.commit()
+
+            completion = asyncio.create_task(complete_preparation(
+                sessions, telegram_user_id=actor, operation_id=lease.operation_id,
+                lease_token=lease.lease_token, suggestions=_suggestions(),
+            ))
+            await asyncio.wait_for(locked.wait(), timeout=3)
+            await asyncio.sleep(max(0, (expires_at-datetime.now(UTC)).total_seconds()) + 0.03)
+            retention = asyncio.create_task(purge())
+            try:
+                for _ in range(100):
+                    with owner.connect() as connection:
+                        waiting = connection.scalar(text(
+                            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE "
+                            "application_name=:label AND wait_event_type='Lock')"
+                        ), {"label": label})
+                    if waiting:
+                        break
+                    await asyncio.sleep(0.02)
+                else:
+                    pytest.fail("retention did not reach its conflicting draft lock")
+            finally:
+                resume.set()
+            results = await asyncio.wait_for(
+                asyncio.gather(completion, retention, return_exceptions=True), timeout=8,
+            )
+            assert isinstance(results[0], ApiError) and results[0].status_code == 410
+            assert results[1] is None, f"retention must not deadlock: {type(results[1]).__name__}"
+
+        _run(scenario)
+        with owner.connect() as connection:
+            response = connection.scalar(text(
+                "SELECT response_json FROM idempotency_records WHERE id=:id"
+            ), {"id": lease.operation_id})
+            assert response is None
+    finally:
+        owner.dispose()
+
+
+@pytest.mark.parametrize("withdraw", ["membership", "subscription", "natural_expiry"])
+def test_access_is_rechecked_after_waiting_for_the_draft_lock(draft_owner, monkeypatch, withdraw):
+    actor, clinic, _, draft = draft_owner
+    lease = _run(lambda sessions: _reserve(sessions, actor, draft))
+    original = preparation._draft
+    engine = create_engine(owner_database_url())
+
+    async def withdraw_after_gate(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        statement = {
+            "membership": "UPDATE clinic_users SET status='REVOKED' WHERE clinic_id=:id",
+            "subscription": (
+                "UPDATE subscription_entitlements SET status='SUSPENDED' WHERE clinic_id=:id"
+            ),
+            "natural_expiry": (
+                "UPDATE subscription_entitlements "
+                "SET ends_at=clock_timestamp()+interval '0.1 seconds' WHERE clinic_id=:id"
+            ),
+        }[withdraw]
+        with engine.begin() as connection:
+            connection.execute(text(statement), {"id": clinic})
+        if withdraw == "natural_expiry":
+            await asyncio.sleep(0.15)
+        return result
+
+    monkeypatch.setattr(preparation, "_draft", withdraw_after_gate)
+    try:
+        with pytest.raises(ApiError) as error:
+            _run(lambda sessions: complete_preparation(
+                sessions, telegram_user_id=actor, operation_id=lease.operation_id,
+                lease_token=lease.lease_token, suggestions=_suggestions(),
+            ))
+        assert error.value.status_code == 403
+    finally:
+        engine.dispose()
