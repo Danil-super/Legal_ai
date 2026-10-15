@@ -31,8 +31,14 @@ urgent routing and authenticated retained-result replay. Independent final revie
 verified86 focused tests with no outstanding Required/Critical finding. Immutable
 f87d41c full PostgreSQL/MinIO run:2975 passed/0 skipped,189.68s; Ruff/mypy143/Compose
 pass. The new gate preserves safe-stop and does not repeat model work on replay.
-NEXT: finish PRC6b/6c source-bound form
-recovery, followed by PRC7–11 understanding/acceptance/shared UI/end-to-end tests.
+PRC6b recovery7c2dbef (ordering prerequisite9a6ec75) binds intermediate origins
+and draft creation to immutable audit, preserves attempts and original files,
+and checks latest source/access/retention before replay. Independent review found
+same-origin receipt substitution; corrected regression and follow-up41 tests pass.
+Author99 focused tests pass. Final immutable tree91764b7/commit7c2dbef:
+3010 passed/0 skipped,224.57s on isolated PostgreSQL+MinIO; quality checks pass.
+NEXT: PRC6c source-bound Telegram callbacks, followed by PRC7–11
+understanding/acceptance/shared UI/end-to-end tests.
 The V2 writer is opt-in/internal only: ordinary queues remain V1. No server
 migration or complete pre-report dialogue is activated. See
 docs/audit/pre-report-late-preparation-2026-10-15.md.

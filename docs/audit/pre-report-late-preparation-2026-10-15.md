@@ -58,7 +58,7 @@ zero-dependency results are not used as proof of isolation.
 
 ## Remaining before user-facing completion
 
-PRC6b/6c source-bound recovery/callbacks,
+PRC6c source-bound Telegram callbacks,
 PRC7 report-free initial receipts, PRC8/9 protected Hermes understanding, PRC10
 shared confirmed form and PRC11 full-flow acceptance remain open. No claim that
 new quick/guided cases already use this complete dialogue. Server rollout requires
@@ -93,3 +93,50 @@ reindex:569 nodes/568 edges; Python impact limitations still apply.
 
 No external provider/model was called, no complete new Telegram intake claimed,
 and no server migration, release, normative approval or feature activation made.
+
+## Core intermediate-origin recovery checkpoint
+
+Ordering prerequisite9a6ec75 uses PostgreSQL storage clock under the existing case
+lock, not transaction-start time. Independent real A/B blocking test confirms
+that an older transaction storing second becomes the latest source. No schema
+expansion, timestamp backfill or external I/O was added.
+
+Recovery7c2dbef extends the existing clarification API with paired operation ID/
+whole-result hash, exclusive of report origin and omitted for legacy payloads.
+The audit-validated latest result must match current facts and be NEEDS_FACTS or
+LIMITED. Newer READY/HUMAN_REVIEW and corrupt latest results cannot revive older
+origins. Attempted UNKNOWN/APPROXIMATE values and analysis answers survive prefill;
+no original case/file is rewritten or copied. Current role/creator/tenant/access/
+retention checks apply after actual case/member waits and before replay.
+
+Independent review found a valid same-origin draft substitution via mutable
+receipt.resource_id/response_json. New-origin creation/replay now checks immutable
+request-bound creation audit. The author reproduction was RED200→GREEN502; normal
+replay and resuming user edits remain supported. Legacy report origin/audit shape
+is unchanged. No remaining Required/Critical was demonstrated in scoped follow-up.
+
+Verification:
+
+- Author35 new/prerequisite plus64 existing recovery tests: **99 passed**,52.32s.
+- Independent exact fixed-artifact follow-up: **41 passed**,41.38s, zero skips.
+  Includes own same-origin substitution, missing audit, moved key, changed request
+  hash, current edited draft and archived-target checks. Durable evidence:
+  `/home/danil/.cache/dental-prc-verify.pLetxJ/prc6b-final-review.md`.
+- Earlier uncorrected tree d87bb0b passed3009 tests; it is not final clearance.
+- A parallel author test run and reviewer probes on the shared cluster hit
+  PostgreSQL `tuple concurrently updated` in ALTER ROLE for the shared runtime
+  login. Actual server log identified the setup race. The incomplete full run
+  was stopped and is not counted as passing; source/tests were not weakened or
+  retried around assertions. Reviewer repeated its checks sequentially.
+- Final full run used a separate disposable PostgreSQL cluster on localhost55487
+  (`dental-prc-postgres-full-20261015`) plus task MinIO. Immutable source/test tree
+  **91764b7974a0ceeca103c43863ed2f8a94c8bed7**, commit7c2dbef:
+  **3010 passed,0 skipped,224.57s**,298 existing Telegram warnings. JUnit:
+  `/home/danil/.cache/dental-prc-verify.pLetxJ/prc6b-final-isolated-cluster.xml`.
+- Ruff/all-three-service mypy143/Compose pass. Exact-worktree Code Graph refreshed:
+  572 nodes/571 edges. New material recovery checks use actual PostgreSQL and the
+  existing synthetic object-store double; full suite also runs existing MinIO tests.
+
+This completes PRC6b Core recovery only. New Telegram callbacks/shared form,
+report-free initial workflow and confirmed Hermes interpretation remain open.
+No external model/provider, SSH or production changes occurred in this checkpoint.

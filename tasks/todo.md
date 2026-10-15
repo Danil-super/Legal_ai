@@ -124,13 +124,13 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
   194.05s; Ruff/all-three-service mypy142/Compose and actual gateway image pass.
   No production release or full Telegram dialogue completion is claimed.
 
-### PRC6: persist late clarification without a report/PDF — late writer implemented
+### PRC6: persist late clarification without a report/PDF — Core writer complete
 
 - [x] Core validates questions and fingerprints, persists verifier/risk/audit
   evidence and the preparation result, but creates zero CaseReport/PDF artifacts.
-- [ ] UNKNOWN/APPROXIMATE, no valid evidence and HIGH/CRITICAL remain honest
+- [x] UNKNOWN/APPROXIMATE, no valid evidence and HIGH/CRITICAL remain honest
   limited/human paths; never invent missing facts or turn an empty batch READY.
-- [ ] Bind persisted intermediate data to the actual immutable case snapshot;
+- [x] Bind persisted intermediate data to the actual immutable case snapshot;
   no dummy report or invented verifier-run identity for pre-context stops.
 - Files(3): Core src/legal_core/analysis_api.py, src/legal_core/case_preparation.py (new),
   tests/test_preparation_analysis.py (new).
@@ -173,18 +173,29 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
   2975 passed/0 skipped,189.68s; Ruff/all-three-service mypy143/Compose pass.
   Ordinary queues remain V1, initial legacy finalization is unchanged; no deploy.
 
-### PRC6b: Core recovery bound to intermediate source
+### PRC6b: Core recovery bound to intermediate source — complete, UI not activated
 
-- [ ] Add a strict operation-result origin alongside legacy report-bound origin:
+- [x] Add a strict operation-result origin alongside legacy report-bound origin:
   operation ID/hash, case/fact hash and available context fingerprints, server-validated.
-- [ ] Creator/tenant/expiry/latest-source checks and stable confirmation keys
+- [x] Creator/tenant/expiry/latest-source checks and stable confirmation keys
   preserve immutable originals and original material ACLs; do not copy files.
-- [ ] Preserve UNKNOWN/APPROXIMATE attempts during prefill; old report callbacks
+- [x] Preserve UNKNOWN/APPROXIMATE attempts during prefill; old report callbacks
   and correctionSource still validate without treating a stale report as a new result.
 - Files(4): Core src/legal_core/case_clarification.py, src/legal_core/api_contracts.py,
   tests/test_preparation_recovery.py (new), tests/test_preparation_recovery_authz.py (new).
 - Verify: `python -m pytest -q services/legal_core/tests/test_preparation_recovery.py services/legal_core/tests/test_preparation_recovery_authz.py` with PostgreSQL/MinIO.
 - Dependencies: PRC3,PRC6a. Scope M.
+- Prerequisite9a6ec75 assigns receipt storage time after the serialized case lock;
+  real independent A/B wait proves an older transaction completed later is latest.
+  Recovery7c2dbef binds actual source operation/result/facts and creation request
+  to immutable audit. Independent review reproduced same-origin draft substitution;
+  the committed regression was RED200→GREEN502 after request-bound audit checking.
+- Author99 focused/legacy PostgreSQL tests pass; independent fixed-artifact
+  follow-up41 pass/0 skips, no remaining Required/Critical in scope. Full immutable
+  tree91764b7 (commit7c2dbef):3010 passed/0 skipped,224.57s on isolated PostgreSQL
+  cluster and MinIO; Ruff/mypy143/Compose pass. An earlier parallel test-cluster
+  role-provisioning error was diagnosed and the incomplete run was not counted.
+  Gateway operation callbacks, form/confirmation changes and Hermes remain PRC6c–11.
 
 ### PRC6c: versioned Telegram clarification intent
 
