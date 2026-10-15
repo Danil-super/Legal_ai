@@ -4,8 +4,10 @@
 
 Contract: SPEC-pre-report-intake-understanding.md, owner approval15Oct.
 This extends the existing case-readiness/FC work, not another product. Preserve
-all earlier unfinished work below. Plan/task approval is pending; no new application
-implementation, production call, migration or deployment is performed by planning.
+all earlier unfinished work below. Owner approved execution after clarifying
+Hermes' semantic role on15Oct: it interprets the narrative and subsequent answers,
+suggests factual mappings/questions and the next step; Core enforces the boundaries.
+Implementation starts with PRC1. Approval is not a production deployment or legal approval.
 The earlier isolated UI fix6624084 remains unreleased.
 
 ### Architecture and dependency order
@@ -57,7 +59,7 @@ an isolated branch; no parallel implementation of the same contracts.
   result_version(default1) on AnalysisJob. Keep existing tenant/case/actor FKs
   and legacy non-null report semantics. PRC1 specifies exact constraints;
   PRC2 proves the Alembic expansion before producers. These explicit existing-
-  table changes are part of the requested plan approval, not already authorized.
+  table changes are within the approved plan; exact constraints and proofs precede writes.
 - Reuse existing draft/idempotency/job storage only after a concrete proof.
   Early understanding cannot borrow a fake finalized case, a fake report FK,
   an unowned cache or an unlimited in-memory task. Test atomically claimed intent,

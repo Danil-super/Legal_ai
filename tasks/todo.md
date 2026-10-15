@@ -4,7 +4,8 @@
 
 - [x] Owner approved SPEC-pre-report-intake-understanding.md on15Oct.
 - [x] Preserve isolated UI fix6624084 and original dirty worktree; no deploy claimed.
-- [ ] Owner approval of the following plan/tasks; implementation starts afterwards.
+- [x] Owner approved execution of this plan/tasks after clarifying Hermes' semantic
+  role on15Oct ("да, ты правильно меня понял, работай"). No release/legal approval implied.
 
 This extends the existing FC work without closing unrelated tasks. File paths
 below are service-relative unless marked root; new paths are planned, not present.
