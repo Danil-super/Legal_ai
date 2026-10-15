@@ -567,6 +567,18 @@ def test_workflow_client_uses_durable_uuid_and_never_sends_clinic_context() -> N
             json={
                 "workflowId": "00a55604-acbd-4a26-9252-102f25cfa9c6",
                 "state": "SUCCEEDED",
+                "case": {
+                    "id": "00a55604-acbd-4a26-9252-102f25cfa9c7",
+                    "publicNumber": "SYNTHETIC-LEGACY", "status": "ANALYSIS_BLOCKED",
+                    "intakeSchemaVersion": "dental-case-intake.v1",
+                    "createdAt": "2026-10-01T00:00:00Z",
+                },
+                "report": {
+                    "id": "00a55604-acbd-4a26-9252-102f25cfa9c8",
+                    "caseId": "00a55604-acbd-4a26-9252-102f25cfa9c7",
+                    "reportVersion": 1, "reportJson": {}, "pdfSha256": "a" * 64,
+                    "createdAt": "2026-10-01T00:00:00Z",
+                },
             },
         )
 

@@ -8,12 +8,14 @@ from uuid import UUID, uuid4
 
 import httpx2
 from legal_core.analysis_clarifications import AnalysisClarificationAnswers
+from legal_core.api_contracts import TelegramWorkflowReceipt, TelegramWorkflowResponse
 from legal_core.report_presentation import (
     TELEGRAM_DRAFT_IN_PDF,
     TELEGRAM_SOURCE_LIMITATIONS_IN_PDF,
     present_report,
 )
 from legal_core.upload_filename import source_filename_headers
+from pydantic import TypeAdapter, ValidationError
 
 INTAKE_SCHEMA_VERSION = "dental-case-intake.v1"
 V2_INTAKE_SCHEMA_VERSION = "dental-case-intake.v2"
@@ -21,6 +23,22 @@ MAX_PDF_BYTES = 8 * 1024 * 1024
 DateFactValue: TypeAlias = dict[str, str | None]
 SignalAnswer: TypeAlias = bool | Literal["YES", "NO", "UNKNOWN"]
 _UNKNOWN_DATE_ANSWERS = frozenset({"неизвестно", "не известно", "не знаю", "unknown"})
+_WORKFLOW_RECEIPT: TypeAdapter[TelegramWorkflowReceipt] = TypeAdapter(TelegramWorkflowReceipt)
+
+
+def _validated_workflow_receipt(payload: dict[str, Any], workflow_id: UUID) -> dict[str, Any]:
+    try:
+        receipt = _WORKFLOW_RECEIPT.validate_python(payload)
+        if receipt.workflow_id != workflow_id:
+            raise ValueError("workflow identity mismatch")
+        if (
+            isinstance(receipt, TelegramWorkflowResponse)
+            and receipt.report.case_id != receipt.case.id
+        ):
+            raise ValueError("report case identity mismatch")
+    except (ValidationError, ValueError) as error:
+        raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response") from error
+    return receipt.model_dump(mode="json", by_alias=True)
 
 
 class LegalCoreApiError(Exception):
@@ -912,7 +930,7 @@ class LegalCoreClient:
     ) -> dict[str, Any]:
         if intake_schema_version not in {INTAKE_SCHEMA_VERSION, V2_INTAKE_SCHEMA_VERSION}:
             raise ValueError("unsupported intake schema version")
-        return await self._json_request(
+        receipt = await self._json_request(
             "POST",
             f"/v1/telegram-case-workflows/{workflow_id}/submissions",
             telegram_user_id=telegram_user_id,
@@ -922,6 +940,7 @@ class LegalCoreClient:
                 "facts": facts,
             },
         )
+        return _validated_workflow_receipt(receipt, workflow_id)
 
     async def upload_case_material(
         self,
@@ -980,11 +999,12 @@ class LegalCoreClient:
     async def get_workflow(
         self, workflow_id: UUID, telegram_user_id: int
     ) -> dict[str, Any]:
-        return await self._json_request(
+        receipt = await self._json_request(
             "GET",
             f"/v1/telegram-case-workflows/{workflow_id}",
             telegram_user_id=telegram_user_id,
         )
+        return _validated_workflow_receipt(receipt, workflow_id)
 
     async def download_pdf(self, report_id: UUID, telegram_user_id: int) -> bytes:
         try:
