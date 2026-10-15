@@ -489,3 +489,43 @@ are not rewritten. The actual runtime-role PostgreSQL test starts an older
 transaction, waits, stores and reads back its receipt; it was RED on the default
 transaction timestamp. Normal production writers hold the case lock; the test
 directly exercises storage with a synthetic result only.
+
+### PRC6b report-free clarification origin
+
+ClarificationDraftRequest/Preview add paired expectedOperationId and
+expectedOperationSha256, mutually exclusive with report origin. Absent optional
+fields are excluded, preserving old canonical request hashes. GET preview accepts
+explicit operation_id; an unavailable preparation never falls back to an old report.
+Legacy report-bound recovery retains its existing shape and prefill behavior.
+
+Under the creator/tenant case lock Core selects the latest SUCCEEDED receipt in
+the case preparation scope across all statuses, ordered by storage clock and UUID.
+The existing immutable audit reader checks actor/resource/operation/full-result
+binding; a late source operation is its real verifier run, not the receipt row ID.
+Frozen facts must match. Only NEEDS_FACTS/LIMITED can recover: a newer READY or
+HUMAN_REVIEW closes the older origin. Actual question scopes are revalidated.
+No new retrieval/policy evaluation occurs; the result hash binds its real context.
+
+Confirmation validates current origin/fact/result hashes before replay too. Access
+and retention are rechecked after case/member lock waits using the current clock.
+The immutable correctionSource carries case/fact/operation/result hashes. Prefill
+deep-copies existing factual fields and attempted UNKNOWN/APPROXIMATE/analysis
+answers without moving/copying attachments. Actual questions select
+ANALYSIS_CLARIFICATION; absent date/incomplete safety select that existing step;
+otherwise V2_CONFIRM allows explicit correction, never legal READY.
+
+Creation replay reads the owned durable draft through the receipt resource ID,
+not cached factual text. Malformed/mismatched cached origins fail bounded; expired
+or closed drafts cannot replay. Active edited drafts resume their current revision
+instead of overwriting edits with an old cache. Audit holds only IDs/hashes/counts.
+Telegram callbacks and the initial report-free producer remain subsequent tasks.
+
+Independent review reproduced same-origin draft substitution through mutable
+creation receipt.resource_id/response_json. Operation-bound creation now adds an
+immutable audit digest of scope/key/request hash, and replay checks that exact
+creation event plus its case/fact/operation/result identities. A different valid
+draft for the same source cannot stand in for this intent. The author regression
+was RED200 with the substituted draft, then GREEN502 with no source/draft changes.
+The current edited active draft remains authoritative; legacy audit shape stays
+unchanged. Earlier full3009-pass evidence predates this correction and is not the
+final fixed snapshot.

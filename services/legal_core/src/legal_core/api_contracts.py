@@ -304,11 +304,22 @@ class CorrectionSource(ContractModel):
         default=None, alias="reportSha256", pattern=r"^[0-9a-f]{64}$",
         exclude_if=lambda value: value is None,
     )
+    operation_id: UUID | None = Field(
+        default=None, alias="operationId", exclude_if=lambda value: value is None,
+    )
+    operation_sha256: str | None = Field(
+        default=None, alias="operationSha256", pattern=r"^[0-9a-f]{64}$",
+        exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def validate_report_binding(self) -> "CorrectionSource":
         if (self.report_id is None) != (self.report_sha256 is None):
             raise ValueError("reportId and reportSha256 must be provided together")
+        if (self.operation_id is None) != (self.operation_sha256 is None):
+            raise ValueError("operationId and operationSha256 must be provided together")
+        if self.operation_id is not None and self.report_id is not None:
+            raise ValueError("operation and report origins are mutually exclusive")
         return self
 
 
