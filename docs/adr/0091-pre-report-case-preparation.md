@@ -169,3 +169,30 @@ to emit V2. No production schema/configuration/data change is part of this check
 Migration patterns checked against [Alembic operations](https://alembic.sqlalchemy.org/en/latest/ops.html),
 [PostgreSQL16 CHECK constraints](https://www.postgresql.org/docs/16/ddl-constraints.html#DDL-CONSTRAINTS-CHECK-CONSTRAINTS)
 and [CREATE OR REPLACE FUNCTION ownership/permissions](https://www.postgresql.org/docs/16/sql-createfunction.html).
+
+### PRC2 runtime lifecycle and bounded proposals
+
+The reusable lifecycle now reserves, reads, completes and fails early operations
+using existing draft/idempotency rows. Every call resolves the current actor and
+entitlement; creator, clinic, active status and retention are checked before content.
+Consistent draft→operation locking and atomic INSERT ON CONFLICT deduplicate one
+actor/draft/revision/content/kind intent. Transactions commit before returning a
+model claim; only the first reservation receives the180-second completion token.
+An expired/failed call offers manual continuation and is never automatically
+reclaimed. A different explicit draft revision/input creates a different intent.
+
+Completion checks token/deadline plus the current revision, full draft/wizard
+fingerprint, owner and access again. Edits, archive, submit or expiry cannot publish
+stale suggestions. Invalid payloads roll back without changing confirmed data.
+DraftSuggestions is deliberately separate from draft facts: nine allowed existing
+fields, bounded choices/dates/services/screening/clarification answers, no narrative
+copy, legal text, actor/clinic, URLs or confirmation flags. Every non-null field
+requires1–3 source offsets within the actual de-identified1500-character input.
+Offsets prove an anchor, not semantic entailment; PRC8 adds model interpretation
+and PRC9/10 add authorized explicit acceptance and service-scope checks. No model
+proposal becomes a USER_STATEMENT by persistence alone. Closed PII-free audit codes
+record reservation/proposal/manual failure counts, not input or model output.
+
+The new Python proposal contract is a supporting PRC2 split, not another schema or
+storage expansion. There are no new tables, HTTP routes or enabled model producers.
+This shared service does not replace the later HTTP authz/race/acceptance tests.
