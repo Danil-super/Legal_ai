@@ -1,8 +1,10 @@
 """Additive schema checkpoint; not a claim that preparation writers are enabled."""
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from time import monotonic, sleep
 from uuid import uuid4
 
 import pytest
@@ -12,7 +14,7 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from legal_core.analysis_jobs import AnalysisJob
-from legal_core.database import database_url
+from legal_core.database import database_url, owner_database_url
 from legal_core.models import (
     Case,
     CaseMaterial,
@@ -237,3 +239,39 @@ def test_downgrade_refuses_to_erase_retained_preparation_records(runtime_storage
         command.downgrade(alembic_config(), "c4a0c3f6e852")
     with tenant_session() as session:
         assert session.scalar(text("SELECT version_num FROM alembic_version")) == "d10a6b3e7f91"
+
+
+def test_downgrade_waits_for_inflight_preparation_before_checking_retained_data(runtime_storage):
+    _, clinic, actor, tenant_session = runtime_storage
+    owner = create_engine(owner_database_url())
+    config = alembic_config()
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with tenant_session() as session:
+                session.add(IdempotencyRecord(
+                    clinic_id=clinic, actor_membership_id=actor, scope="synthetic-inflight-check",
+                    key=str(uuid4()), request_sha256="a" * 64, state="IN_PROGRESS",
+                    resource_type="INTAKE_PREPARATION", resource_id=uuid4(),
+                ))
+                session.flush()  # Hold the write transaction open while downgrade starts.
+                future = executor.submit(command.downgrade, config, "c4a0c3f6e852")
+                blocked = False
+                deadline = monotonic() + 5
+                with owner.connect() as connection:
+                    while monotonic() < deadline and not future.done():
+                        blocked = bool(connection.scalar(text(
+                            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                            "WHERE datname=current_database() AND wait_event_type='Lock' "
+                            "AND query LIKE 'LOCK TABLE public.analysis_jobs%')"
+                        )))
+                        connection.commit()  # Do not retain a statistics snapshot across polls.
+                        if blocked:
+                            break
+                        sleep(0.025)
+                assert blocked, "downgrade must lock all affected tables before its data guard"
+            # The committed in-flight record must now be seen, preventing data loss.
+            with pytest.raises(ProgrammingError, match="cannot downgrade"):
+                future.result(timeout=10)
+    finally:
+        owner.dispose()
+        command.upgrade(config, "head")

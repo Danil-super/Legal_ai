@@ -144,13 +144,22 @@ its SECURITY DEFINER owner/execute ACL/search_path and material deletion orderin
 Clearing content/leases covers expired, missing, submitted and archived owners in
 all three operation states; a live owned draft is untouched. Tombstones survive.
 
-The runtime-role schema/constraint/retention tests pass33 cases. Actual empty-data
+The runtime-role schema/constraint/retention tests pass34 cases. Actual empty-data
 upgrade→downgrade→upgrade succeeded on a separate disposable database. A downgrade
 with retained preparation data refuses transactionally rather than dropping it.
 Mutation evidence: installing the previous retention function causes12 failures
 (expired/archived/submitted/missing × three states); restoring the expanded
-function returns all33 cases to GREEN. The fact-digest guard mutation likewise
+function returned the original33 cases to GREEN. The fact-digest guard mutation likewise
 caused its tampering regression to fail and was restored, with no mutation committed.
+
+Independent review suggested hardening downgrade against in-flight writes. It now
+locks all three affected tables before checking retained data. A two-connection
+PostgreSQL regression failed without that ordering, then passed with the lock: an
+uncommitted preparation writer blocks downgrade; once committed it is seen by the
+guard, which refuses to remove the expanded storage. This is not a reservation/
+completion lease test. The historical c4a0c3f6e852 backfill test targets that exact
+migration (not future head) and retains its full metadata-equality/content-erasure
+assertions; finally restores head. Additive lease columns do not weaken that test.
 
 This checkpoint does NOT implement reservation, completion fencing, actor recheck,
 replay expiry guards or understanding calls; PRC2 remains incomplete until those

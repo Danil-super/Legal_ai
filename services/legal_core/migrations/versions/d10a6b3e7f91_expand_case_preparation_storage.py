@@ -76,6 +76,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Never silently erase V2 receipts, result versions, leases or replay tombstones.
+    # Fence in-flight writers BEFORE checking data, not only at each later ALTER.
+    op.execute("LOCK TABLE public.analysis_jobs, public.idempotency_records, "
+               "public.telegram_case_workflows IN ACCESS EXCLUSIVE MODE")
     op.execute("""
         DO $$ BEGIN
             IF EXISTS (SELECT 1 FROM public.telegram_case_workflows WHERE receipt_version = 2)
