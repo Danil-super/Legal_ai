@@ -233,3 +233,30 @@ foreign clinics, another creator, revoked membership and expired content. Legacy
 submission/replay and gateway transport remain covered. This is transport reader
 compatibility only: the Telegram report consumer is not yet a V2 dialogue, so this
 checkpoint is NOT the minimum rollback revision for enabling report-free producers.
+
+### PRC4 queue readers and retained-result reconciliation
+
+AnalysisJobResponse remains the legacy shape. PreparationJobResponse uses an
+explicit exact integer resultVersion2 and typed PreparationResult, with coherent
+terminal state and matching source/case. The saved job version selects the cache
+namespace: legacy cases:<uuid>:analysis-submissions versus V2
+cases:<uuid>:preparation-submissions. V2 also requires CASE_PREPARATION/resource_id
+equal to the actual case. No legacy cache is silently reinterpreted as V2.
+
+Workers reconcile retained intermediate results as SUCCEEDED without another model
+call and keep existing lease/notification ACK fencing. Invalid cache content raises
+a bounded error and is quarantined as a deliverable terminal failure rather than
+an endless RUNNING job or repeated parsing failure. A missing V2 success payload is
+shown as ANALYSIS_RESULT_MISSING, not a fake report. Reads still enforce current
+actor, clinic/creator and case retention before exposing content. The result's
+operation/evidence/fact bindings to persisted preparation artifacts remain PRC6/6b
+producer/recovery requirements, not claims made by this syntactic reader.
+
+Gateway validates versioned envelopes, preserves NEEDS_FACTS/LIMITED/HUMAN_REVIEW
+as intermediate statuses and does not offer a PDF for them. Only validated READY
+is adapted to existing final-report presentation. Stale PDF callbacks re-read and
+refuse intermediate results. Existing notifier delivery/ACK/retry and legacy PDF
+paths remain covered. Source-bound clarification controls are added in PRC6c/10;
+no legacy report-based clarification button is invented without a report. No V2
+job is enqueued by the current producer; request transport/production activation
+are later PRC5–12 steps. This is not a complete user-facing dialogue release.

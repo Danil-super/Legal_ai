@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header
-from pydantic import Field
+from pydantic import Field, ValidationError, field_validator, model_validator
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
@@ -28,17 +28,19 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
-from legal_core.analysis_contracts import AnalysisSubmissionResponse
+from legal_core.analysis_contracts import AnalysisSubmissionResponse, PreparationResult
 from legal_core.analysis_safe_stop import require_analysis_running
 from legal_core.case_api import (
     ActorContext,
     ApiError,
     TelegramUserId,
     _audit,
+    _require_case_content_available,
     _require_finalized_case,
     _tenant_case,
     resolve_actor,
 )
+from legal_core.case_preparation_contracts import PreparationModel
 from legal_core.contracts import ContractModel
 from legal_core.models import Base, Case, IdempotencyRecord
 
@@ -88,6 +90,45 @@ class AnalysisJobResponse(ContractModel):
     result: AnalysisSubmissionResponse | None = None
 
 
+class PreparationJobResponse(PreparationModel):
+    result_version: Literal[2] = Field(alias="resultVersion")
+    job_id: UUID = Field(alias="jobId")
+    case_id: UUID = Field(alias="caseId")
+    state: JobState
+    error_code: str | None = Field(default=None, alias="errorCode", max_length=80)
+    result: PreparationResult | None = None
+
+    @field_validator("result_version", mode="before")
+    @classmethod
+    def exact_version(cls, value: object) -> object:
+        if type(value) is not int or value != 2:
+            raise ValueError("unsupported preparation job version")
+        return value
+
+    @model_validator(mode="after")
+    def coherent_result(self) -> PreparationJobResponse:
+        if (self.state == "SUCCEEDED") != (self.result is not None):
+            raise ValueError("only a completed job can contain a result")
+        if self.result is not None and self.result.root.source.case_id != self.case_id:
+            raise ValueError("preparation result case mismatch")
+        if self.state == "SUCCEEDED" and self.error_code is not None:
+            raise ValueError("successful preparation cannot include a failure")
+        return self
+
+
+AnalysisJobReceipt = AnalysisJobResponse | PreparationJobResponse
+
+
+def analysis_result_scope(case_id: UUID, result_version: int) -> str:
+    if result_version == 1:
+        return f"cases:{case_id}:analysis-submissions"
+    if result_version == 2:
+        return f"cases:{case_id}:preparation-submissions"
+    raise ApiError(
+        status_code=502, code="ANALYSIS_RESULT_INVALID", message="Invalid result version",
+    )
+
+
 @dataclass(frozen=True)
 class ClaimedJob:
     id: UUID
@@ -109,19 +150,39 @@ async def claim_job(sessions: async_sessionmaker[AsyncSession]) -> ClaimedJob | 
     return ClaimedJob(**row) if row is not None else None
 
 
-async def job_result(session: AsyncSession, job: AnalysisJob) -> AnalysisSubmissionResponse | None:
+async def job_result(
+    session: AsyncSession, job: AnalysisJob,
+) -> AnalysisSubmissionResponse | PreparationResult | None:
     record = await session.scalar(
         select(IdempotencyRecord).where(
             IdempotencyRecord.clinic_id == job.clinic_id,
             IdempotencyRecord.actor_membership_id == job.actor_membership_id,
-            IdempotencyRecord.scope == f"cases:{job.case_id}:analysis-submissions",
+            IdempotencyRecord.scope == analysis_result_scope(job.case_id, job.result_version),
             IdempotencyRecord.key == str(job.id),
             IdempotencyRecord.state == "SUCCEEDED",
         )
     )
     if record is None or record.response_json is None:
         return None
-    return AnalysisSubmissionResponse.model_validate(record.response_json)
+    case = await session.scalar(select(Case).where(
+        Case.id == job.case_id, Case.clinic_id == job.clinic_id,
+    ))
+    if case is None:
+        raise ApiError(status_code=404, code="CASE_NOT_FOUND", message="Case not found")
+    _require_case_content_available(case)
+    try:
+        if job.result_version == 2:
+            result = PreparationResult.model_validate(record.response_json)
+            if (
+                record.resource_type != "CASE_PREPARATION" or record.resource_id != job.case_id
+                or result.root.source.case_id != job.case_id
+            ):
+                raise ValueError("preparation resource mismatch")
+            return result
+        return AnalysisSubmissionResponse.model_validate(record.response_json)
+    except (ValidationError, ValueError) as error:
+        raise ApiError(status_code=502, code="ANALYSIS_RESULT_INVALID",
+                       message="Stored result is unavailable") from error
 
 
 async def require_job_lease(
@@ -156,8 +217,22 @@ async def require_job_lease(
     return job
 
 
-async def _response(session: AsyncSession, job: AnalysisJob) -> AnalysisJobResponse:
-    result = await job_result(session, job)
+async def _response(session: AsyncSession, job: AnalysisJob) -> AnalysisJobReceipt:
+    # A worker already quarantined this malformed result. Deliver its terminal
+    # failure without reparsing the same corrupt cache on every notification poll.
+    result = None if (
+        job.state == "FAILED" and job.error_code == "ANALYSIS_RESULT_INVALID"
+    ) else await job_result(session, job)
+    if job.result_version == 2:
+        assert result is None or isinstance(result, PreparationResult)
+        missing = result is None and job.state == "SUCCEEDED"
+        return PreparationJobResponse(
+            resultVersion=2, jobId=job.id, caseId=job.case_id,
+            state="SUCCEEDED" if result else "FAILED" if missing else job.state,
+            errorCode=None if result else "ANALYSIS_RESULT_MISSING" if missing else job.error_code,
+            result=result,
+        )
+    assert result is None or isinstance(result, AnalysisSubmissionResponse)
     return AnalysisJobResponse(
         jobId=job.id,
         caseId=job.case_id,
@@ -194,14 +269,14 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
         return job
 
     @router.post(
-        "/cases/{case_id}/analysis-jobs", response_model=AnalysisJobResponse, status_code=202
+        "/cases/{case_id}/analysis-jobs", response_model=AnalysisJobReceipt, status_code=202
     )
     async def enqueue(
         case_id: UUID,
         payload: AnalysisJobRequest,
         telegram_user_id: TelegramUserId,
         session: AsyncSession = session_dep,
-    ) -> AnalysisJobResponse:
+    ) -> AnalysisJobReceipt:
         from legal_core.analysis_job_worker import WorkerSettings
 
         actor = await resolve_actor(session, telegram_user_id)
@@ -270,10 +345,10 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
         await session.commit()
         return response
 
-    @router.get("/analysis-jobs/{job_id}", response_model=AnalysisJobResponse)
+    @router.get("/analysis-jobs/{job_id}", response_model=AnalysisJobReceipt)
     async def status(
         job_id: UUID, telegram_user_id: TelegramUserId, session: AsyncSession = session_dep
-    ) -> AnalysisJobResponse:
+    ) -> AnalysisJobReceipt:
         actor = await resolve_actor(session, telegram_user_id)
         return await _response(session, await owned_job(session, actor, job_id))
 

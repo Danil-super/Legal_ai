@@ -112,7 +112,11 @@ async def finish_job(
         )
         if job is None or job.state != "RUNNING" or job.lease_token != claimed.lease_token:
             return
-        result = await job_result(session, job)
+        try:
+            result = await job_result(session, job)
+        except ApiError as exc:
+            # A corrupt/expired retained result is terminal, not an endless RUNNING lease.
+            result, error = None, exc.code
         job.state = "SUCCEEDED" if result is not None else "FAILED"
         job.error_code = None if result is not None else error or "ANALYSIS_RESULT_MISSING"
         job.lease_token = None
