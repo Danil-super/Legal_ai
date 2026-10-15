@@ -135,3 +135,28 @@ Official references: [discriminated unions](https://docs.pydantic.dev/latest/con
 [PostgreSQL16 foreign-key constraints](https://www.postgresql.org/docs/16/ddl-constraints.html#DDL-CONSTRAINTS-FOREIGN-KEYS).
 Existing nested contract instances are serialized/reparsed at the new boundary;
 Pydantic's normal instance acceptance must not bypass nested checks.
+
+### PRC2 additive-schema checkpoint (not the complete lifecycle)
+
+Migration d10a6b3e7f91 implements the three existing-table expansions above. It
+prepends proposal scrubbing to the existing draft retention function, preserving
+its SECURITY DEFINER owner/execute ACL/search_path and material deletion ordering.
+Clearing content/leases covers expired, missing, submitted and archived owners in
+all three operation states; a live owned draft is untouched. Tombstones survive.
+
+The runtime-role schema/constraint/retention tests pass33 cases. Actual empty-data
+upgrade→downgrade→upgrade succeeded on a separate disposable database. A downgrade
+with retained preparation data refuses transactionally rather than dropping it.
+Mutation evidence: installing the previous retention function causes12 failures
+(expired/archived/submitted/missing × three states); restoring the expanded
+function returns all33 cases to GREEN. The fact-digest guard mutation likewise
+caused its tampering regression to fail and was restored, with no mutation committed.
+
+This checkpoint does NOT implement reservation, completion fencing, actor recheck,
+replay expiry guards or understanding calls; PRC2 remains incomplete until those
+runtime paths are implemented/tested. Neither old readers nor producers are changed
+to emit V2. No production schema/configuration/data change is part of this checkpoint.
+
+Migration patterns checked against [Alembic operations](https://alembic.sqlalchemy.org/en/latest/ops.html),
+[PostgreSQL16 CHECK constraints](https://www.postgresql.org/docs/16/ddl-constraints.html#DDL-CONSTRAINTS-CHECK-CONSTRAINTS)
+and [CREATE OR REPLACE FUNCTION ownership/permissions](https://www.postgresql.org/docs/16/sql-createfunction.html).

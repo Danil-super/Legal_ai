@@ -15,7 +15,16 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header
 from pydantic import Field
-from sqlalchemy import BigInteger, DateTime, ForeignKeyConstraint, Integer, String, select, text
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKeyConstraint,
+    Integer,
+    String,
+    select,
+    text,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -39,6 +48,7 @@ JobState = Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED"]
 class AnalysisJob(Base):
     __tablename__ = "analysis_jobs"
     __table_args__ = (
+        CheckConstraint("result_version IN (1, 2)", name="ck_analysis_job_result_version"),
         ForeignKeyConstraint(
             ["clinic_id", "case_id"], ["cases.clinic_id", "cases.id"], ondelete="CASCADE"
         ),
@@ -53,6 +63,7 @@ class AnalysisJob(Base):
     message_id: Mapped[int] = mapped_column(BigInteger)
     state: Mapped[JobState] = mapped_column(String(20), server_default="QUEUED")
     attempts: Mapped[int] = mapped_column(Integer, server_default="0")
+    result_version: Mapped[int] = mapped_column(Integer, server_default="1")
     lease_token: Mapped[UUID | None]
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_code: Mapped[str | None] = mapped_column(String(80))
