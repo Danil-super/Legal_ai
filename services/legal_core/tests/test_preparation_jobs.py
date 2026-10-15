@@ -4,7 +4,7 @@ import asyncio
 import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -110,7 +110,11 @@ def stored_preparation_job():
             session.flush()
             result = _needs_facts()
             result["source"]["caseId"] = str(case.id)
+            result["source"]["operationId"] = str(uuid4())
             record = IdempotencyRecord(
+                # A pre-context operation is the actual receipt row, not an
+                # unpersisted verifier UUID from a schema-only fixture.
+                id=UUID(result["source"]["operationId"]),
                 clinic_id=clinic, actor_membership_id=membership,
                 scope=f"cases:{case.id}:preparation-submissions", key=str(job.id),
                 request_sha256="a" * 64, state="SUCCEEDED", response_json=result,
