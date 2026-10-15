@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
+from pydantic_core import PydanticSerializationError
 
 from legal_core.analysis_clarifications import ClarificationRequest, validate_unique_requests
 from legal_core.contracts import ContractModel, FactKey
@@ -94,12 +95,16 @@ class NeedsFactsResult(PreparationResultBase):
     @field_validator("clarification_requests", mode="before")
     @classmethod
     def revalidate_requests(cls, value: object) -> object:
-        if isinstance(value, list):
+        if not isinstance(value, (list, tuple)) or len(value) > 3:
+            raise ValueError("clarification requests must be a bounded list")
+        try:
             return [
-                item.model_dump(by_alias=True) if isinstance(item, ClarificationRequest) else item
+                item.model_dump(by_alias=True, warnings="error")
+                if isinstance(item, ClarificationRequest) else item
                 for item in value
             ]
-        return value
+        except PydanticSerializationError as error:
+            raise ValueError("invalid constructed clarification request") from error
 
     @model_validator(mode="after")
     def bounded_unique_questions(self) -> NeedsFactsResult:

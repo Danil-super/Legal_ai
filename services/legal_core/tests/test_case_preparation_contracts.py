@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
+from legal_core.analysis_clarifications import ClarificationRequest
 from legal_core.analysis_contracts import (
     AnalysisSubmissionResponse,
     PreparationResult,
@@ -19,7 +20,7 @@ from legal_core.case_preparation_contracts import (
     NeedsFactsResult,
     PreparationSource,
 )
-from legal_core.contracts import CaseStatus, FactKey
+from legal_core.contracts import CaseStatus, FactKey, LegalSourceCard
 from legal_core.reports import build_analysis_report, build_intake_report
 from legal_core.risk_engine import RiskAssessment, RiskLevel
 from test_reports import _evidence, _verification
@@ -461,5 +462,25 @@ def test_human_review_cannot_mix_risk_policy_versions() -> None:
     payload = _human_review()
     payload["source"]["context"] = _ready()["source"]["context"]
     payload["riskPolicyVersion"] = "different-policy.v4"
+    with pytest.raises(ValidationError):
+        PreparationResult.model_validate(payload)
+
+
+@pytest.mark.parametrize("container", [list, tuple, iter])
+def test_constructed_question_cannot_bypass_validation_in_iterables(container) -> None:
+    payload = _needs_facts()
+    payload["clarificationRequests"] = container([
+        ClarificationRequest.model_construct(question_id="FREE_TEXT", service_slot=0),
+    ])
+    with pytest.raises(ValidationError):
+        PreparationResult.model_validate(payload)
+
+
+def test_live_nested_source_instance_cannot_bypass_canonical_report_validation() -> None:
+    payload = _ready()
+    sources = payload["report"]["reportJson"]["legalBasis"]["sources"]
+    source = LegalSourceCard.model_validate(sources[0])
+    source.text_sha256 = "not-a-hash"
+    sources[0] = source
     with pytest.raises(ValidationError):
         PreparationResult.model_validate(payload)

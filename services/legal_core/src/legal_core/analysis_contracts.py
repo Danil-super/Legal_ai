@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import ConfigDict, Field, RootModel, field_validator, model_validator
+from pydantic_core import PydanticSerializationError
 
 from legal_core.api_contracts import LegalFragmentResponse, ReportResponse
 from legal_core.analysis_clarifications import ClarificationRequest, validate_unique_requests
@@ -216,7 +217,11 @@ class ReportReadyResult(PreparationResultBase):
 
     @model_validator(mode="after")
     def ready_report_matches_source(self) -> ReportReadyResult:
-        canonical = CanonicalReport.model_validate(self.report.report_json)
+        try:
+            report_json = self.report.model_dump(mode="json", by_alias=True, warnings="error")
+        except PydanticSerializationError as error:
+            raise ValueError("invalid constructed report content") from error
+        canonical = CanonicalReport.model_validate(report_json["reportJson"])
         context, analysis, risk = self.source.context, canonical.analysis, canonical.risk
         if context is None or analysis is None or risk is None:
             raise ValueError("ready result requires verified legal context")
