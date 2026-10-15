@@ -124,9 +124,9 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
   194.05s; Ruff/all-three-service mypy142/Compose and actual gateway image pass.
   No production release or full Telegram dialogue completion is claimed.
 
-### PRC6: persist late clarification without a report/PDF
+### PRC6: persist late clarification without a report/PDF — late writer implemented
 
-- [ ] Core validates questions and fingerprints, persists verifier/risk/audit
+- [x] Core validates questions and fingerprints, persists verifier/risk/audit
   evidence and the preparation result, but creates zero CaseReport/PDF artifacts.
 - [ ] UNKNOWN/APPROXIMATE, no valid evidence and HIGH/CRITICAL remain honest
   limited/human paths; never invent missing facts or turn an empty batch READY.
@@ -136,6 +136,20 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
   tests/test_preparation_analysis.py (new).
 - Verify: `python -m pytest -q services/legal_core/tests/test_preparation_analysis.py` with PostgreSQL/MinIO.
 - Dependencies: PRC3–5. Scope M.
+- Thin implementation/fix checkpoints:8a86ce9,9b4557d,834a967,94a9751.
+  The actual late source uses its persisted verifier run and fact/context hashes;
+  NEEDS_FACTS/LIMITED create no report, while READY yields a real downloadable PDF.
+  Pre-context UNKNOWN/urgent paths and recovery remain PRC6a/6b below, not closed
+  by this writer. Shared endpoint/queue integration corrections were split into
+  separate commits with their tests and ADR0091; no oversized single task commit.
+- Independent review found and reproduced same-case cache substitution, parallel
+  double finalization and a job reader bypass. Fix review:9 actual PostgreSQL
+  checks pass. Additional fresh/cached lock-wait access review:20 pass. Author
+  combined producer/queue/legacy analysis/access regression:94 pass, Ruff and
+  all-three-service mypy143 pass. Full94a9751 after environment recovery:
+  2938 passed/0 skipped,171.27s on fresh migrated PostgreSQL/MinIO; Compose passes.
+- Recovered the committed branch to a persistent worktree; original dirty tree
+  preserved. No new source was lost, no production changes or release claimed.
 
 ### PRC6a: honest limitation before legal context exists
 

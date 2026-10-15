@@ -18,9 +18,19 @@ Worker follow-up ebb5520 additionally refreshes/fences the current lease before 
 and forwards only the stored result version; its independent fresh PostgreSQL42
 tests pass. Final immutable ebb5520 full run:2910 passed/0 skipped,194.05s.
 The complete Telegram rollback reader is not established until PRC7/10.
-NEXT: PRC6/6a/6b/6c report-free producer, pre-context limits and source-bound form
+PRC6 late producer is implemented at8a86ce9 with integrity/concurrency/access fixes
+through94a9751. It persists actual verifier/risk identities without intermediate
+reports; only READY renders the real final PDF. Independent review reproduced
+three defects in the initial writer, then verified the fixes (9 tests), and a
+separate real lock-wait access matrix passed20 tests. Author focused regression:
+94 passed. Full94a9751 verification repeated after the execution environment
+reset:2938 passed/0 skipped,171.27s, with fresh migrated PostgreSQL and MinIO.
+Ruff/all-three-service mypy143/Compose pass; the interrupted run is not counted.
+NEXT: finish PRC6a/6b/6c pre-context limits and source-bound form
 recovery, followed by PRC7–11 understanding/acceptance/shared UI/end-to-end tests.
-No new producer, server migration or complete pre-report dialogue is activated.
+The V2 writer is opt-in/internal only: ordinary queues remain V1. No server
+migration or complete pre-report dialogue is activated. See
+docs/audit/pre-report-late-preparation-2026-10-15.md.
 
 ### Architecture and dependency order
 
