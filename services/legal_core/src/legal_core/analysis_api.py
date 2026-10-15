@@ -25,6 +25,8 @@ from legal_core.analysis_contracts import (
     AnalysisSubmissionResponse,
     ClinicDocumentContextResponse,
     ClinicDocumentReadinessResponse,
+    PreparationResult,
+    ReportReadyResult,
 )
 from legal_core.analysis_freshness import (
     AnalysisContextFingerprint,
@@ -44,10 +46,17 @@ from legal_core.case_api import (
     _finish_idempotency,
     _idempotency_replay,
     _new_idempotency_record,
+    _require_case_intake_actor,
     _require_finalized_case,
     _tenant_case,
     resolve_actor,
 )
+from legal_core.case_preparation import (
+    intermediate_result,
+    read_preparation_replay,
+    store_preparation_result,
+)
+from legal_core.case_preparation_contracts import PreparationContext, PreparationSource
 from legal_core.clinic_document_readiness import (
     ClinicDocumentReadiness,
     ClinicDocumentReadinessStatus,
@@ -424,36 +433,39 @@ def create_analysis_router(
         actor = await resolve_actor(session, telegram_user_id)
         return _context_response(await _load_analysis_state(session, actor, case_id))
 
-    @router.post(
-        "/{case_id}/analysis-submissions",
-        response_model=AnalysisSubmissionResponse,
-        status_code=status.HTTP_201_CREATED,
-        dependencies=[Depends(_require_agent_internal_key)],
-    )
-    async def submit_analysis(
+    async def submit_result(
         case_id: UUID,
         payload: AnalysisSubmissionRequest,
         response: Response,
         telegram_user_id: TelegramUserId,
         idempotency_key: IdempotencyKey,
-        session: AsyncSession = Depends(get_session),
-        x_analysis_job_id: UUID | None = Header(default=None),
-        x_analysis_job_token: UUID | None = Header(default=None),
-    ) -> AnalysisSubmissionResponse:
+        session: AsyncSession,
+        x_analysis_job_id: UUID | None,
+        x_analysis_job_token: UUID | None,
+        result_version: int,
+    ) -> AnalysisSubmissionResponse | PreparationResult:
         actor = await resolve_actor(session, telegram_user_id)
         # A successful idempotency record is not an exemption from case retention.
         # Do not require analysis eligibility here: a valid completed case must still replay.
-        await _tenant_case(session, actor, case_id)
+        owned_case = await _tenant_case(session, actor, case_id)
+        if result_version == 2:
+            _require_case_intake_actor(actor)
+            if owned_case.created_by_membership_id != actor.membership_id:
+                raise ApiError(status_code=404, code="CASE_NOT_FOUND", message="Case not found")
         if x_analysis_job_id is not None or x_analysis_job_token is not None:
             from legal_core.analysis_jobs import require_job_lease
             if (x_analysis_job_id is None or x_analysis_job_token is None
                     or idempotency_key != x_analysis_job_id):
                 raise ApiError(status_code=409, code="ANALYSIS_JOB_LEASE_EXPIRED",
                                message="Invalid analysis job lease")
-            await require_job_lease(session, actor, case_id,
-                                    x_analysis_job_id, x_analysis_job_token)
+            job = await require_job_lease(session, actor, case_id,
+                                          x_analysis_job_id, x_analysis_job_token)
+            if job.result_version != result_version:
+                raise ApiError(status_code=409, code="ANALYSIS_RESULT_VERSION_MISMATCH",
+                               message="Analysis job result version mismatch")
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
-        scope = f"cases:{case_id}:analysis-submissions"
+        from legal_core.analysis_jobs import analysis_result_scope
+        scope = analysis_result_scope(case_id, result_version)
         replay = await _idempotency_replay(
             session,
             actor=actor,
@@ -463,6 +475,11 @@ def create_analysis_router(
         )
         if replay is not None:
             response.status_code = status.HTTP_200_OK
+            if result_version == 2:
+                return await read_preparation_replay(
+                    session, actor=actor, case=owned_case, scope=scope,
+                    idempotency_key=idempotency_key, wire=replay,
+                )
             return AnalysisSubmissionResponse.model_validate(replay)
 
         state = await _load_analysis_state(session, actor, case_id)
@@ -550,6 +567,30 @@ def create_analysis_router(
             state.case.status = CaseStatus.ANALYSIS_BLOCKED.value
         state.case.updated_at = datetime.now(UTC)
 
+        source = PreparationSource(
+            operationId=verifier_record.analysis_run_id, caseId=state.case.id,
+            factSnapshotSha256=state.fact_snapshot_sha256,
+            context=PreparationContext(
+                asOfDate=state.as_of_date, evidenceTraceSha256=state.evidence_trace_sha256,
+                clinicDocumentContextTraceSha256=state.clinic_document_context_trace_sha256,
+                riskPolicyVersion=state.risk_policy.domain.version,
+            ),
+        ) if result_version == 2 else None
+        if source is not None:
+            preparation = intermediate_result(
+                source=source, risk=outcome.risk, escalation_id=risk_record.escalation_id,
+                clarification_requests=clarification_requests, analysis_allowed=analysis_allowed,
+            )
+            if preparation is not None:
+                if preparation.root.status == "HUMAN_REVIEW":
+                    state.case.status = CaseStatus.ESCALATION_REQUIRED.value
+                await store_preparation_result(
+                    session, actor=actor, case=state.case, scope=scope,
+                    idempotency_key=idempotency_key, request_hash=request_hash, result=preparation,
+                )
+                await session.commit()
+                return preparation
+
         current_version = await session.scalar(
             select(func.coalesce(func.max(CaseReport.report_version), 0)).where(
                 CaseReport.case_id == state.case.id
@@ -618,6 +659,16 @@ def create_analysis_router(
             case=state.case,
             canonical=canonical,
         )
+        if source is not None:
+            ready = PreparationResult(ReportReadyResult(
+                resultVersion=2, status="READY", source=source, analysisAllowed=True, report=report,
+            ))
+            await store_preparation_result(
+                session, actor=actor, case=state.case, scope=scope,
+                idempotency_key=idempotency_key, request_hash=request_hash, result=ready,
+            )
+            await session.commit()
+            return ready
         idempotency = _new_idempotency_record(
             actor=actor,
             scope=scope,
@@ -671,5 +722,37 @@ def create_analysis_router(
         )
         await session.commit()
         return response_payload
+
+    @router.post(
+        "/{case_id}/analysis-submissions", response_model=AnalysisSubmissionResponse,
+        status_code=status.HTTP_201_CREATED, dependencies=[Depends(_require_agent_internal_key)],
+    )
+    async def submit_analysis(
+        case_id: UUID, payload: AnalysisSubmissionRequest, response: Response,
+        telegram_user_id: TelegramUserId, idempotency_key: IdempotencyKey,
+        session: AsyncSession = Depends(get_session),
+        x_analysis_job_id: UUID | None = Header(default=None),
+        x_analysis_job_token: UUID | None = Header(default=None),
+    ) -> AnalysisSubmissionResponse:
+        result = await submit_result(case_id, payload, response, telegram_user_id, idempotency_key,
+                                     session, x_analysis_job_id, x_analysis_job_token, 1)
+        assert isinstance(result, AnalysisSubmissionResponse)
+        return result
+
+    @router.post(
+        "/{case_id}/preparation-submissions", response_model=PreparationResult,
+        status_code=status.HTTP_201_CREATED, dependencies=[Depends(_require_agent_internal_key)],
+    )
+    async def submit_preparation(
+        case_id: UUID, payload: AnalysisSubmissionRequest, response: Response,
+        telegram_user_id: TelegramUserId, idempotency_key: IdempotencyKey,
+        session: AsyncSession = Depends(get_session),
+        x_analysis_job_id: UUID | None = Header(default=None),
+        x_analysis_job_token: UUID | None = Header(default=None),
+    ) -> PreparationResult:
+        result = await submit_result(case_id, payload, response, telegram_user_id, idempotency_key,
+                                     session, x_analysis_job_id, x_analysis_job_token, 2)
+        assert isinstance(result, PreparationResult)
+        return result
 
     return router

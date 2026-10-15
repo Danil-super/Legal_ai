@@ -317,3 +317,36 @@ the ORM identity map cannot authorize using stale attributes. Tests reproduce
 wrong token, expiry, terminal state and the already-loaded-row replacement before
 fixing them. No lease duration, actor permissions, model or deadline changes.
 The ORM refresh follows [SQLAlchemy2.0 Populate Existing](https://docs.sqlalchemy.org/en/20/orm/queryguide/api.html#populate-existing).
+
+### PRC6 late preparation producer checkpoint
+
+The separate internal preparation-submissions route reuses deterministic context
+freshness, approved/date-applicable retrieval, question-scope/attempt checks, risk
+assessment and persisted verifier runs. Existing analysis-submissions keeps its V1
+response and report behavior. New V2 writes require the case creator in an existing
+intake role; another clinic actor, including an owner, cannot use a guessed case
+or idempotency key to write/replay this preparation. A fenced job's saved result
+version must match the selected endpoint.
+
+NEEDS_FACTS and LIMITED persist CASE_PREPARATION under the case-owned V2 namespace
+with real fact/context/run identities, but never call report/PDF rendering. Partial
+verified claims plus pending questions do not become READY; no claims/questions
+is a limitation, not an empty final report. HIGH/CRITICAL selection requires the
+actual escalation ID and outranks clarification; actual pre-context urgent routing
+is the next PRC6a checkpoint, not claimed covered by the late low-risk tests.
+Only READY uses the existing real report/PDF writer and then validates the strict
+source-bound READY contract before committing. Old stored reports are not changed.
+
+An atomic audit receipt binds operation ID and canonical result digest to the case
+and actor without narrative/model transcripts. V2 replay revalidates this receipt,
+cache resource/case and shape; a mutable cache alone cannot replace the original
+result. Runtime case purge already deletes case-owned idempotency resources in all
+states, so no new migration/table is required for this resource kind. Real expiry
+and purge/replay tests verify deletion and410 without using production data.
+
+Focused PostgreSQL proof:10 new late-preparation tests plus existing clarification
+submission/API regressions total44 passes; all-three-service mypy143 and Ruff pass.
+The initial RED is404 for the absent new route. New producer remains unused by
+ordinary V1 queues. Pre-context limitations, source-bound recovery, initial
+report-free receipt producer and Telegram shared form/Hermes interpretation are
+still subsequent PRCs; this checkpoint is not a release or complete new dialogue.
