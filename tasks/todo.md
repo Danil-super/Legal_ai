@@ -1,5 +1,225 @@
 # Dental Legal AI task list
 
+## Pre-report case understanding — PRC, 2026-10-15
+
+- [x] Owner approved SPEC-pre-report-intake-understanding.md on15Oct.
+- [x] Preserve isolated UI fix6624084 and original dirty worktree; no deploy claimed.
+- [ ] Owner approval of the following plan/tasks; implementation starts afterwards.
+
+This extends the existing FC work without closing unrelated tasks. File paths
+below are service-relative unless marked root; new paths are planned, not present.
+Every implementation task starts RED, ends focused GREEN/quality checks and an
+atomic commit. At most five files per task; split if the actual change exceeds it.
+Use source PYTHONPATH and venv from the spec; commands below are pytest selections.
+
+### PRC1: typed intermediate contract and storage feasibility gate
+
+- [ ] Define opt-in NEEDS_FACTS/LIMITED/READY/HUMAN_REVIEW with exclusive payloads;
+  no PDF/report for preparation, no ambiguous legacy null-report payload.
+- [ ] Prove storage design for bounded early understanding and intermediate
+  recovery, including operation fencing, privacy expiry and exact schema needs.
+  Existing draft jobs/report FK assumptions may not be bypassed with fake rows.
+- [ ] Record schema/rollout/rollback decision; request agreement before new tables
+  or unanticipated storage expansion. Do not claim feasibility based only on JSON.
+- Files(5): Core src/legal_core/case_preparation_contracts.py (new),
+  src/legal_core/analysis_contracts.py, tests/test_case_preparation_contracts.py (new),
+  tests/test_preparation_storage_feasibility.py (new), root docs/adr/0091-pre-report-case-preparation.md (new).
+- Verify: `python -m pytest -q services/legal_core/tests/test_case_preparation_contracts.py services/legal_core/tests/test_preparation_storage_feasibility.py`.
+- Dependencies: plan approval. Scope M; fail-fast contract/storage checkpoint.
+
+### PRC2: durable preparation intent and lifecycle
+
+- [ ] Bind intent/proposals to server actor/clinic/draft/revision/content; atomically
+  deduplicate, fence stale completion and recover pending work without long DB locks.
+- [ ] Reuse storage only as proven in PRC1; expiry guards include failed/abandoned
+  operation records and never replay private content after owner expiry/revocation.
+- [ ] Add the explicitly planned existing-table lease/receipt/result-version
+  expansion and expiry/purge changes with Alembic and runtime-role proofs;
+  no producer enablement or deletion of unexpired data/receipts.
+- Files(5): Core src/legal_core/intake_preparation.py (new), src/legal_core/models.py,
+  src/legal_core/analysis_jobs.py, migrations/versions/<reviewed_preparation_expansion>.py,
+  tests/test_preparation_storage.py (new, includes persistence/migration/expiry).
+- Verify: `python -m pytest -q services/legal_core/tests/test_preparation_storage.py` with disposable PostgreSQL, migration upgrade/compatibility and expiry proof.
+- Dependencies: PRC1 storage decision. Scope M; no new-table assumption.
+
+### PRC3: compatible report-free workflow receipt readers
+
+- [ ] Read legacy workflow/report and new preparation receipt without changing
+  old report snapshots; new receipts contain no fabricated report identity.
+- [ ] Gateway/core can read both variants and reject unsupported versions clearly;
+  test a minimum rollback reader before any report-free workflow is produced.
+- [ ] Preserve strict draft/fact validation, user-confirmed provenance and current
+  server-side tenant/creator/retention rules for new response fields.
+- Files(5): Core src/legal_core/api_contracts.py, src/legal_core/case_api.py,
+  tests/test_preparation_workflow_compatibility.py (new), Gateway src/telegram_gateway/case_wizard.py,
+  tests/test_preparation_workflow_readers.py (new).
+- Verify: `python -m pytest -q services/legal_core/tests/test_preparation_workflow_compatibility.py services/gateway/telegram/tests/test_preparation_workflow_readers.py`.
+- Dependencies: PRC1–2. Scope M. Checkpoint A: contracts/storage/readers reviewed;
+  existing regression green, producer still disabled.
+
+### PRC4: compatible queue result readers
+
+- [ ] Job result/status/worker understand intermediate completion independently
+  from final ReportResponse; no permanent RUNNING or fake task failure.
+- [ ] Prevent legacy cached-job replay as V2 and duplicate active work; retain
+  lease, idempotency, creator/tenant, retention and notification-ACK semantics.
+- Files(5): Core src/legal_core/analysis_jobs.py, src/legal_core/analysis_job_worker.py,
+  tests/test_preparation_jobs.py (new), Gateway src/telegram_gateway/analysis_jobs_runtime.py,
+  tests/test_preparation_job_readers.py (new).
+- Verify: `python -m pytest -q services/legal_core/tests/test_preparation_jobs.py services/gateway/telegram/tests/test_preparation_job_readers.py` with PostgreSQL.
+- Dependencies: PRC1–3. Scope M; readers before producers.
+
+### PRC5: intermediate-aware orchestration transport
+
+- [ ] Preserve Core's typed intermediate result through the authenticated
+  orchestrator; malformed/out-of-scope results fail closed with bounded errors.
+- [ ] Existing model/provider/high/deadlines and two-pass legal verification
+  stay intact; no legal claims are accepted from understanding output.
+- Files(4): Agent src/agent_orchestrator/legal_core_client.py, src/agent_orchestrator/main.py,
+  tests/test_preparation_transport.py (new), tests/test_preparation_api.py (new).
+- Verify: `python -m pytest -q services/agent_orchestrator/tests/test_preparation_transport.py services/agent_orchestrator/tests/test_preparation_api.py`.
+- Dependencies: PRC1,PRC4. Scope M. Checkpoint B: queue/transport readers accept
+  both contracts; no producer enabled or legacy output silently reinterpreted.
+
+### PRC6: persist late clarification without a report/PDF
+
+- [ ] Core validates questions and fingerprints, persists verifier/risk/audit
+  evidence and the preparation result, but creates zero CaseReport/PDF artifacts.
+- [ ] UNKNOWN/APPROXIMATE, no valid evidence and HIGH/CRITICAL remain honest
+  limited/human paths; never invent missing facts or turn an empty batch READY.
+- [ ] Bind persisted intermediate data to the actual immutable case snapshot;
+  no dummy report or invented verifier-run identity for pre-context stops.
+- Files(3): Core src/legal_core/analysis_api.py, src/legal_core/case_preparation.py (new),
+  tests/test_preparation_analysis.py (new).
+- Verify: `python -m pytest -q services/legal_core/tests/test_preparation_analysis.py` with PostgreSQL/MinIO.
+- Dependencies: PRC3–5. Scope M.
+
+### PRC6a: honest limitation before legal context exists
+
+- [ ] Missing/unknown event date, attempted UNKNOWN screening and absent evidence
+  yield typed preparation limits without calling the model or generating a report.
+- [ ] Preserve exact-date, approved-evidence and risk refusal. Known urgent facts
+  still route immediately; do not interpret UNKNOWN as NO or invent policy results.
+- [ ] Classify only allowlisted factual/evidence blockers, not auth/network/internal
+  failures; attempts stay preserved for the form instead of an automatic repeat loop.
+- Files(4): Core src/legal_core/analysis_api.py, src/legal_core/case_preparation.py,
+  tests/test_preparation_precontext.py (new), tests/test_preparation_urgent_limits.py (new).
+- Verify: `python -m pytest -q services/legal_core/tests/test_preparation_precontext.py services/legal_core/tests/test_preparation_urgent_limits.py` with PostgreSQL.
+- Dependencies: PRC6. Scope M.
+
+### PRC6b: Core recovery bound to intermediate source
+
+- [ ] Add a strict operation-result origin alongside legacy report-bound origin:
+  operation ID/hash, case/fact hash and available context fingerprints, server-validated.
+- [ ] Creator/tenant/expiry/latest-source checks and stable confirmation keys
+  preserve immutable originals and original material ACLs; do not copy files.
+- [ ] Preserve UNKNOWN/APPROXIMATE attempts during prefill; old report callbacks
+  and correctionSource still validate without treating a stale report as a new result.
+- Files(4): Core src/legal_core/case_clarification.py, src/legal_core/api_contracts.py,
+  tests/test_preparation_recovery.py (new), tests/test_preparation_recovery_authz.py (new).
+- Verify: `python -m pytest -q services/legal_core/tests/test_preparation_recovery.py services/legal_core/tests/test_preparation_recovery_authz.py` with PostgreSQL/MinIO.
+- Dependencies: PRC3,PRC6a. Scope M.
+
+### PRC6c: versioned Telegram clarification intent
+
+- [ ] Encode the intermediate source in a callback within64 bytes; decode and
+  validate the preview's exact source identity/hash before accepting a new draft.
+- [ ] Repeated/stale/forged clicks, creator mismatch and restart do not select
+  another source, clone another case or fall back to a fake/old report.
+- Files(5): Gateway src/telegram_gateway/clarification_intent.py,
+  src/telegram_gateway/clarification_runtime.py, src/telegram_gateway/case_wizard.py,
+  tests/test_preparation_intent.py (new), tests/test_preparation_recovery_runtime.py (new).
+- Verify: `python -m pytest -q services/gateway/telegram/tests/test_preparation_intent.py services/gateway/telegram/tests/test_preparation_recovery_runtime.py`.
+- Dependencies: PRC6b. Scope M. Checkpoint C: late and pre-context limitations,
+  report-free provenance and legacy recovery are all verified before form activation.
+
+### PRC7: shared late-clarification form and report-free initial receipt
+
+- [ ] Versioned initial submission uses the approved preparation receipt rather
+  than creating its old intake PDF; files/triage/audit and case limits stay intact.
+- [ ] Gateway renders the same factual form for intermediate results, no empty
+  result/PDF buttons; final reports and old cases remain usable.
+- [ ] Prove double click, stale result, status/result/PDF callbacks and lease/ACK
+  recovery; split if actual implementation exceeds five files.
+- Files(5): Core src/legal_core/case_api.py, Gateway src/telegram_gateway/bot.py,
+  src/telegram_gateway/analysis_jobs_runtime.py, tests/test_preparation_form_runtime.py (new),
+  Core tests/test_report_free_workflow.py (new).
+- Verify: `python -m pytest -q services/legal_core/tests/test_report_free_workflow.py services/gateway/telegram/tests/test_preparation_form_runtime.py` with PostgreSQL/MinIO.
+- Dependencies: PRC3–6c. Scope M; one complete late-clarification path,
+  no premature report artifacts, legacy results and early urgency still correct.
+
+### PRC8: constrained Hermes understanding, not legal analysis
+
+- [ ] Interpret only permitted existing V2 fields, each anchored to actual text;
+  absent/ambiguous/negated facts stay unknown, no arbitrary questions or URLs.
+- [ ] Validate de-identification before the call and model result afterwards;
+  no files/model tools/new provider, no suggestions promoted to confirmed facts.
+- [ ] Timeouts/protocol failures produce manual continuation, not fabricated facts.
+- Files(5): Agent src/agent_orchestrator/intake_understanding.py (new),
+  src/agent_orchestrator/main.py, src/agent_orchestrator/contracts.py,
+  tests/test_intake_understanding.py (new), tests/test_intake_understanding_api.py (new).
+- Verify: `python -m pytest -q services/agent_orchestrator/tests/test_intake_understanding.py services/agent_orchestrator/tests/test_intake_understanding_api.py`.
+- Dependencies: PRC1–2,PRC5. Scope M.
+
+### PRC9: protected understanding operation API
+
+- [ ] Existing draft owner initiates/reads a bounded operation; reauthorize at
+  completion/acceptance, validate revision/hash and refuse cancelled/stale output.
+- [ ] Intent/result survives restart through PRC2 lifecycle; concurrent retries
+  neither duplicate operations nor hold DB locks across network waits.
+- [ ] Test creator/tenant/subscription negatives and privacy-safe audit codes.
+- Files(5): Core src/legal_core/intake_preparation.py, src/legal_core/case_api.py,
+  tests/test_intake_preparation_api.py (new), tests/test_intake_preparation_authz.py (new),
+  tests/test_intake_preparation_races.py (new).
+- Verify: `python -m pytest -q services/legal_core/tests/test_intake_preparation_api.py services/legal_core/tests/test_intake_preparation_authz.py services/legal_core/tests/test_intake_preparation_races.py` with PostgreSQL.
+- Dependencies: PRC2–3,PRC8. Scope M. Checkpoint D: report-free receipt and
+  protected early understanding run without losing pending/expired operations.
+
+### PRC10: confirmed understanding and one pre-report form
+
+- [ ] Quick entry displays editable understanding; only explicit confirmation
+  prefills the durable draft; later model output cannot overwrite user answers.
+- [ ] Both entries ask only missing allowlisted fields, bind dates/payment to
+  the chosen service episode, and preserve attempted UNKNOWN/APPROXIMATE.
+- [ ] Back/cancel/resume/edit work; optional model wait never prevents manual
+  continuation or confirmed urgent routing. No jargon or false completion message.
+  confirm_case/confirm_v2_summary must not reopen an attempted event/safety answer;
+  route to the PRC6a limitation without weakening the legal/risk gates.
+- Files(5): Gateway src/telegram_gateway/guided_intake_runtime.py,
+  src/telegram_gateway/guided_case_intake_v2.py, src/telegram_gateway/bot.py,
+  tests/test_confirmed_understanding_runtime.py (new), tests/test_shared_pre_report_form.py (new).
+- Verify: `python -m pytest -q services/gateway/telegram/tests/test_confirmed_understanding_runtime.py services/gateway/telegram/tests/test_shared_pre_report_form.py`.
+- Dependencies: PRC7–9. Scope M. Checkpoint E: both user paths and fallback tested;
+  no public activation from partially implemented slices.
+
+### PRC11: complete integration and independent review
+
+- [ ] Fresh quick/guided positives and UNKNOWN, course/episode ambiguity, multiple
+  services, prompt injection, edit/cancel/restart and stale/double click work end-to-end.
+- [ ] Assert zero intermediate CaseReport/PDF objects, immutable originals,
+  correct material ACLs/expiry, no repeated questions, unchanged urgent notifications.
+- [ ] Full PG/MinIO, quality/security/container checks and independent review
+  pass without skipped tests, lowered checks or unapproved model calls.
+- Files(4): root tests/test_pre_report_intake_e2e.py (new), Core tests/test_preparation_retention.py (new),
+  Gateway tests/test_preparation_notification_recovery.py (new),
+  root docs/audit/pre-report-intake-2026-10-15.md (new).
+- Verify: `POSTGRES_INTEGRATION=1 MINIO_INTEGRATION=1 python -m pytest -q --tb=short`,
+  `python -m ruff check .`, `python -m mypy services/legal_core/src services/gateway/telegram/src services/agent_orchestrator/src`, `docker compose config --quiet`.
+- Dependencies: PRC1–10. Scope M; independent branches for review only.
+
+### PRC12: approved release and fresh live acceptance
+
+- [ ] Review immutable head, preserve backup/approval ledgers and minimum rollback
+  reader, pass GitHub CI and approved deployment before claiming production readiness.
+- [ ] Actual new fictional quick/guided cases exercise understanding confirmation,
+  missing-fact forms, verified plans/PDF and truthful UNKNOWN without intermediate PDF.
+- [ ] Check fresh job/report IDs (not idempotent cached results), source/date/action
+  support, final delivery and healthy services; record failures and remaining limits.
+- Files(2): root docs/audit/pre-report-intake-2026-10-15.md, tasks/todo.md.
+- Verify: existing CI plus owner-channel fictional live harness, read-only health/
+  revision/approval-ledger checks. No real patient data or unsolicited lawyer test alerts.
+- Dependencies: PRC11 and separate release approval. Scope S; not full legal certification.
+
 ## Factual analysis clarification — contract approved 2026-10-14
 
 - [x] Read actual synthetic V2 context; disprove the nested INTAKE_VERSION hypothesis.

@@ -1,5 +1,127 @@
 # Implementation Plan: Dental Legal AI MVP
 
+## Pre-report case understanding — spec approved 2026-10-15
+
+Contract: SPEC-pre-report-intake-understanding.md, owner approval15Oct.
+This extends the existing case-readiness/FC work, not another product. Preserve
+all earlier unfinished work below. Plan/task approval is pending; no new application
+implementation, production call, migration or deployment is performed by planning.
+The earlier isolated UI fix6624084 remains unreleased.
+
+### Architecture and dependency order
+
+One user flow: describe → confirm understood facts → complete missing facts →
+confirm summary → verified report or an understandable limitation. Legal Core
+remains authoritative. The model proposes facts, not law or risk classification.
+
+1. **PRC1–PRC3: prove persistence and reader compatibility first.** Existing
+   AnalysisJob has a required case FK and finalized-case guard; it is not a
+   general draft queue. Existing Telegram workflow submission also unconditionally
+   renders an intake PDF and has a required report FK. Both that initial receipt
+   and late analysis must support intermediate preparation, not merely hide PDFs.
+   Define a bounded versioned result: NEEDS_FACTS / LIMITED / READY / HUMAN_REVIEW,
+   where only a genuinely final report exposes a PDF. Keep legacy V1 shapes and
+   stored reports. Establish reader-compatible baseline before new producers.
+2. **PRC4–PRC7: finish one late-clarification vertical path.** Core validates and
+   durably stores the intermediate result against actor/clinic/case/job and fact/
+   evidence/policy fingerprints, without calling CaseReport/PDF creation. Queue,
+   worker, notifications and UI consume that result as completed preparation,
+   not a failed task or legal READY. An intermediate-bound confirmation opens
+   the same form; finalized case snapshots remain immutable, with explicit new
+   draft confirmation and unchanged attachment ACLs. Then enable report-free
+   initial workflow receipts. Legacy report-bound recovery remains supported.
+3. **PRC8–PRC10: add early understanding and shared pre-report form.** Save an
+   actor-owned draft before a bounded Hermes request. Only permitted existing
+   V2 fields with explicit source-text grounding may be proposed; proposals remain
+   separate from confirmed facts. User accepts/edits the compact review before
+   prefilling. Both entries use the same targeted question/answer form. A course
+   of treatment is not silently assigned one universal date; ask which episode
+   the complaint concerns. Invalidate answers when service scope changes.
+4. **PRC11–PRC12: prove the complete flow and release.** Fresh fictional quick/
+   guided cases, late clarification, UNKNOWN, urgency, restart/double click and
+   source-grounded final plans; full PostgreSQL/MinIO and existing security/CI,
+   independent review, approved immutable-head release and actual persisted
+   live results. Process-local model success is not the completion criterion.
+
+Checkpoints follow PRC1–3, PRC4–5, PRC6/6a/6b/6c, PRC7–9 and PRC10–11;
+exact tasks are in tasks/todo.md. PRC6a handles pre-context limitations;
+PRC6b/6c cover the Core/gateway source-bound recovery boundary.
+Shared contracts/storage/writers are sequential. An independent reviewer may use
+an isolated branch; no parallel implementation of the same contracts.
+
+### Storage decision gate and contracts
+
+- Planned expansion (no new table): nullable lease_token/lease_until on
+  IdempotencyRecord for the new operation scope; receipt_version(default1) on
+  TelegramCaseWorkflow, report_id nullable only for a report-free V2 receipt;
+  result_version(default1) on AnalysisJob. Keep existing tenant/case/actor FKs
+  and legacy non-null report semantics. PRC1 specifies exact constraints;
+  PRC2 proves the Alembic expansion before producers. These explicit existing-
+  table changes are part of the requested plan approval, not already authorized.
+- Reuse existing draft/idempotency/job storage only after a concrete proof.
+  Early understanding cannot borrow a fake finalized case, a fake report FK,
+  an unowned cache or an unlimited in-memory task. Test atomically claimed intent,
+  stable server-derived actor/clinic/draft/revision/content/version intent and
+  token-fenced completion. Atomically reserve/commit before network; complete
+  after reauthorization/revision/expiry checks in a short transaction. No DB lock
+  across Hermes. A crash/unknown outcome expires to manual continuation or an
+  explicit new user intent, never blind model re-execution or endless autoretry.
+- IdempotencyRecord has no automatic TTL. If it contains proposals or intermediate
+  private context, its lifetime, expiry-before-replay and cleanup must explicitly
+  follow the owning draft/case. The early-operation resource_id binds draft.id;
+  its separate resource_type needs expiry/replay and purge support, not reliance
+  on the existing TELEGRAM_INTAKE_DRAFT-only scrubber. Keep only bounded necessary
+  proposals/metadata, not another raw description/evidence copy in a queue.
+  Scrubbing preserves non-content replay tombstones.
+  Retention must also cover abandoned/in-progress records, not only successful ones.
+- PRC1 is a fail-fast gate: if safe bounded draft work cannot fit existing storage,
+  present the exact additional schema/authority needed before building it. A new
+  table/storage system is not approved by this plan. Existing-table additive
+  columns/FK nullability changes listed above need an explicit schema diff with
+  Alembic/RLS/retention/rollback tests before enabling producers; no hidden migration.
+- New result contracts are opt-in and strictly validated, not an unannounced
+  change from required report to null. Versioned idempotency/result namespaces,
+  active-job collision handling and latest-job queries must not reuse legacy
+  cached output as fresh preparation or run two active analyses of one snapshot.
+  Pin a tested reader-compatible rollback minimum; b052f40 is not assumed safe
+  after writing new workflow/result variants. Do not downgrade or erase records.
+- Revalidate actor, subscription, creator/tenant, revision and expiry at read,
+  model completion and confirmation; ignore stale completion after cancel/edit/
+  archive/submit. Restart recovery preserves the durable intent, not gateway RAM.
+- Report-free recovery binds operation/result ID and hash, frozen case facts
+  and available evidence/policy/context fingerprints against a retained server
+  result, not client-selected questions or a fake report. No invented run or
+  evidence ID for a gate that has not executed. Keep legacy case+report recovery;
+  version the new callbacks within Telegram's64-byte bound.
+- Unknown event dates, unknown safety answers and no evidence can stop before
+  submit_analysis. Classify these preparation outcomes in Core as LIMITED or
+  NEEDS_FACTS, not broad exception swallowing. Do not automatically reopen attempted
+  questions in confirm_case or strip UNKNOWN during prefill. Exact-date/evidence/
+  risk gates remain closed: LIMITED is neither legal READY, a known negative
+  fact nor an invented high-risk decision. Offer the existing authorized human path.
+- Keep max3 questions per batch,5 services and11 answers. Exact confirmed values
+  and attempted UNKNOWN/APPROXIMATE are not re-asked. Confirming proposed dates
+  creates user-statement provenance, not automatic VERIFIED legal facts.
+
+### Safety, rollout and risks
+
+HIGH/CRITICAL and v4/10k stay unchanged and must bypass optional preparation waits.
+Manual continuation remains available while understanding is pending/unavailable;
+current policy evaluates user-confirmed facts, never silence or model inference.
+Model/provider/high,55/65/115/125/180 fences, tool-free configuration, trusted sources,
+roles, files-to-model prohibition and patient-send prohibition are unchanged.
+No new model service, payment, PII category, auto approval or reference activation.
+
+Reader-only compatibility may be deployed before producers, default-disabled until
+the reviewed complete slice is approved for activation. Every new critical result
+and recovery contract has an ADR and tests. Existing normative/reference ledgers,
+old case/report snapshots and material ownership are checked before/after release.
+The existing quality bar is not lowered; a new question state does not make legal
+evidence applicable, convert uncertain dates into exact dates or guarantee advice.
+
+Commands and quality gates remain those in the approved spec and AGENTS.md.
+No migration/feature activation is authorized merely by recording this plan.
+
 ## Factual analysis clarification — contract approved 2026-10-14
 
 Status: plan and FC1–FC11 tasks approved by the owner on 2026-10-14. This extends the
