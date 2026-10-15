@@ -3,7 +3,7 @@
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from legal_core.analysis_clarifications import ClarificationRequest
@@ -16,6 +16,7 @@ from legal_core.case_api import (
     _finish_idempotency,
     _new_idempotency_record,
     _require_case_content_available,
+    resolve_actor,
 )
 from legal_core.case_preparation_contracts import (
     HumanReviewResult,
@@ -23,8 +24,27 @@ from legal_core.case_preparation_contracts import (
     NeedsFactsResult,
     PreparationSource,
 )
-from legal_core.models import AuditEvent, Case, IdempotencyRecord
+from legal_core.models import AuditEvent, Case, IdempotencyRecord, SubscriptionEntitlement
 from legal_core.risk_engine import RiskAssessment, RiskLevel, risk_missing_facts
+
+
+async def recheck_submission_access(
+    session: AsyncSession, *, actor: ActorContext, telegram_user_id: int, case: Case,
+) -> None:
+    """Lock waits must not preserve withdrawn access or transaction-start expiry."""
+    if await resolve_actor(session, telegram_user_id) != actor:
+        raise ApiError(status_code=403, code="ACTOR_CONTEXT_CHANGED", message="Access changed")
+    entitlement = await session.scalar(select(SubscriptionEntitlement.id).where(
+        SubscriptionEntitlement.clinic_id == actor.clinic_id,
+        SubscriptionEntitlement.user_id == actor.user_id,
+        SubscriptionEntitlement.status == "ACTIVE",
+        SubscriptionEntitlement.starts_at <= func.clock_timestamp(),
+        (SubscriptionEntitlement.ends_at.is_(None))
+        | (SubscriptionEntitlement.ends_at > func.clock_timestamp()),
+    ))
+    if entitlement is None:
+        raise ApiError(status_code=403, code="SUBSCRIPTION_INACTIVE", message="Access is inactive")
+    _require_case_content_available(case)
 
 
 def intermediate_result(

@@ -54,6 +54,7 @@ from legal_core.case_api import (
 from legal_core.case_preparation import (
     intermediate_result,
     read_preparation_replay,
+    recheck_submission_access,
     store_preparation_result,
 )
 from legal_core.case_preparation_contracts import PreparationContext, PreparationSource
@@ -466,6 +467,9 @@ def create_analysis_router(
             if job.result_version != result_version:
                 raise ApiError(status_code=409, code="ANALYSIS_RESULT_VERSION_MISMATCH",
                                message="Analysis job result version mismatch")
+        await recheck_submission_access(
+            session, actor=actor, telegram_user_id=telegram_user_id, case=owned_case,
+        )
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         from legal_core.analysis_jobs import analysis_result_scope
         scope = analysis_result_scope(case_id, result_version)

@@ -374,3 +374,15 @@ operation ID. The new operation-tampering regression was RED before the correcti
 82 focused producer/queue/legacy tests and the additional integration pair pass.
 The proposed immediate-purge/job-lock cycle was disproved on the actual migrated
 function and is not claimed as a defect or fixed issue.
+
+A submission reauthorizes the same actor after case/job lock waits and checks the
+entitlement against clock_timestamp, not the transaction's now(). Membership/user
+withdrawal, suspension and natural expiry cannot reuse the earlier resolution;
+the refreshed case retention guard is checked again. This reasserts existing
+permissions, not a new access policy. Tests pause a real HTTP submission at its
+case-lock boundary while a second connection withdraws access or expires content,
+for both V1 and V2. Membership/user/natural-expiry cases were RED before the fix;
+the suspension fixture was corrected from unsupported REVOKED to actual SUSPENDED
+without changing its expected403. All10 boundary tests now pass; combined producer,
+job-reader and existing analysis/clarification regressions total94 passes. No raw
+case content is returned or report/run written after a denied request.
