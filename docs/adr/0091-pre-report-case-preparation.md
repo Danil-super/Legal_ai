@@ -362,3 +362,15 @@ contract: concurrent identical keys replay once; distinct keys cannot both final
 Both reproductions were RED before fixes;15 focused PostgreSQL tests pass. The
 unmodified8a86ce9 baseline separately passed2920 full tests; it is not the final
 reviewed/fixed snapshot and that earlier green run does not invalidate the findings.
+
+The third review finding was a weaker V2 queue reader: a shape-valid invented run
+identity bypassed the producer's audit validation. All V2 job reads, worker finish
+and crash reconciliation now use the same immutable, request-bound receipt reader.
+Bad receipts are bounded ANALYSIS_RESULT_INVALID and quarantined without another
+model call. Existing synthetic reader fixtures explicitly include a trusted audit
+receipt; they no longer imply that mutable JSON alone establishes trust. A real
+leased producer-to-job-reader roundtrip accepts the original and rejects a changed
+operation ID. The new operation-tampering regression was RED before the correction;
+82 focused producer/queue/legacy tests and the additional integration pair pass.
+The proposed immediate-purge/job-lock cycle was disproved on the actual migrated
+function and is not claimed as a defect or fixed issue.

@@ -146,13 +146,18 @@ async def job_result(
     _require_case_content_available(case)
     try:
         if job.result_version == 2:
-            result = PreparationResult.model_validate(record.response_json)
-            if (
-                record.resource_type != "CASE_PREPARATION" or record.resource_id != job.case_id
-                or result.root.source.case_id != job.case_id
-            ):
-                raise ValueError("preparation resource mismatch")
-            return result
+            from legal_core.case_preparation import read_preparation_replay
+            try:
+                return await read_preparation_replay(
+                    session, clinic_id=job.clinic_id,
+                    actor_membership_id=job.actor_membership_id, case=case,
+                    scope=analysis_result_scope(job.case_id, job.result_version),
+                    idempotency_key=job.id, wire=record.response_json,
+                )
+            except ApiError as error:
+                if error.code != "PREPARATION_RESULT_INVALID":
+                    raise
+                raise ValueError("preparation receipt invalid") from error
         return AnalysisSubmissionResponse.model_validate(record.response_json)
     except (ValidationError, ValueError) as error:
         raise ApiError(status_code=502, code="ANALYSIS_RESULT_INVALID",

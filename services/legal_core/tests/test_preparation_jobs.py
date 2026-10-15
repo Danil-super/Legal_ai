@@ -22,7 +22,8 @@ from legal_core.analysis_jobs import (
 from legal_core.analysis_job_worker import WorkerSettings, execute_job, process_job
 from legal_core.analysis_contracts import PreparationResult
 from legal_core.database import database_url, owner_database_url
-from legal_core.models import Case, IdempotencyRecord
+from legal_core.case_api import _canonical_hash
+from legal_core.models import AuditEvent, Case, IdempotencyRecord
 from test_case_api import actor_headers, application_client, seed_admin
 from test_case_preparation_contracts import _human_review, _limited, _needs_facts, _ready
 
@@ -116,6 +117,18 @@ def stored_preparation_job():
                 resource_type="CASE_PREPARATION", resource_id=case.id,
             )
             session.add(record)
+            session.add(AuditEvent(
+                clinic_id=clinic, actor_membership_id=membership,
+                action="CASE_PREPARATION_COMPLETED", resource_type="CASE_PREPARATION",
+                resource_id=case.id, correlation_id=uuid4(), metadata_json={
+                    "operationId": result["source"]["operationId"],
+                    "resultSha256": _canonical_hash(result),
+                    "requestBindingSha256": _canonical_hash({
+                        "scope": record.scope, "key": record.key,
+                        "requestSha256": record.request_sha256,
+                    }),
+                },
+            ))
             session.flush()
             claimed = ClaimedJob(job.id, clinic, case.id, membership, actor_id, job.lease_token)
         yield actor_id, job.id, case.id, record.id, claimed, result, engine
@@ -183,7 +196,8 @@ def test_v2_job_does_not_replay_an_old_namespace_as_a_new_result(stored_preparat
     _run(scenario)
 
 
-@pytest.mark.parametrize("tamper", ["version", "source_case", "resource", "invalid_question"])
+@pytest.mark.parametrize("tamper", ["version", "source_case", "resource", "invalid_question",
+                                   "source_operation"])
 def test_bad_retained_results_fail_bounded_and_do_not_leave_worker_running(
     stored_preparation_job, tamper,
 ):
@@ -195,6 +209,10 @@ def test_bad_retained_results_fail_bounded_and_do_not_leave_worker_running(
             "to_jsonb(CAST(:other AS text)))"
         ),
         "resource": "resource_type='INTAKE_PREPARATION'",
+        "source_operation": (
+            "response_json=jsonb_set(response_json,'{source,operationId}',"
+            "to_jsonb(CAST(:other AS text)))"
+        ),
         "invalid_question": (
             "response_json=jsonb_set(response_json,'{clarificationRequests}',"
             "'[{\"questionId\":\"UNTRUSTED_SYNTHETIC_QUESTION\"}]')"
