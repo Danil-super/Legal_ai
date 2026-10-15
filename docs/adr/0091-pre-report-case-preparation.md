@@ -260,3 +260,30 @@ paths remain covered. Source-bound clarification controls are added in PRC6c/10;
 no legacy report-based clarification button is invented without a report. No V2
 job is enqueued by the current producer; request transport/production activation
 are later PRC5–12 steps. This is not a complete user-facing dialogue release.
+
+### PRC5 opt-in authenticated late-result transport
+
+The existing internal analyze route defaults to legacy result version1. Exact
+header X-Analysis-Result-Version:2 selects the preparation transport; unknown
+versions fail validation before context or model calls. Internal authentication,
+paired job lease headers and idempotency binding are unchanged. The shared115s
+wall deadline, streaming65s Hermes stages, models/providers/high and verifier
+remain unchanged. No classification of arbitrary errors as missing facts occurs.
+
+The typed Core client sends V2 reasoning to the separate preparation-submissions
+path and reads PreparationResult, preserving the context fingerprints/date/policy.
+A late result must match its actual retrieved context and cannot return context:null.
+Both context retrieval and result reads reject a different case. Version2 never
+silently downgrades to an old report. Pre-context stops require the future Core
+producer/retention/recovery paths in PRC6a/6b; this transport does not fabricate one.
+These endpoints are not called by current V1 producers; Core's V2 writer remains
+unimplemented until the next task and no new production traffic is activated here.
+
+Framework versions are pinned in requirements.lock: FastAPI0.141.1,
+Pydantic2.13.4 and SQLAlchemy2.0.52. Framework patterns were checked against official
+[FastAPI union response models](https://fastapi.tiangolo.com/tutorial/extra-models/#union-or-anyof),
+[Pydantic TypeAdapter](https://docs.pydantic.dev/latest/concepts/type_adapter/)
+and [discriminated unions](https://docs.pydantic.dev/latest/concepts/unions/#discriminated-unions-with-str-discriminators).
+The FastAPI page contains an inconsistent older paragraph about the Python3.10
+union operator; the installed pinned version's actual API tests establish support
+for the alias-based union used here. No framework upgrade or dependency is added.

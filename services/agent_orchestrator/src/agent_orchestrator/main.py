@@ -8,7 +8,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Literal, TypedDict
 from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException, status
@@ -27,7 +27,9 @@ from agent_orchestrator.legal_core_client import (
 )
 from agent_orchestrator.projection import build_projection_from_context
 from agent_orchestrator.reasoning import LegalReasoningOrchestrator
-from legal_core.analysis_contracts import AnalysisSubmissionResponse
+from legal_core.analysis_contracts import AnalysisSubmissionResponse, PreparationResult
+
+AnalysisResponse = AnalysisSubmissionResponse | PreparationResult
 
 InternalKeyHeader = Annotated[
     str,
@@ -40,6 +42,11 @@ logger = logging.getLogger(__name__)
 # wall 125 s and fenced lease 180 s. HTTP operation timeouts are not total walls.
 ANALYSIS_WALL_TIMEOUT_SECONDS = 115
 HERMES_STAGE_TIMEOUT_SECONDS = 65
+
+
+class JobLeaseHeaders(TypedDict, total=False):
+    job_id: UUID | None
+    job_token: UUID | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,7 +152,7 @@ def create_app(
 
     @app.post(
         "/v1/cases/{case_id}/analyze",
-        response_model=AnalysisSubmissionResponse,
+        response_model=AnalysisResponse,
     )
     async def analyze_case(
         case_id: UUID,
@@ -154,7 +161,8 @@ def create_app(
         idempotency_key: IdempotencyKeyHeader,
         x_analysis_job_id: Annotated[UUID | None, Header()] = None,
         x_analysis_job_token: Annotated[UUID | None, Header()] = None,
-    ) -> AnalysisSubmissionResponse:
+        x_analysis_result_version: Annotated[Literal["1", "2"], Header()] = "1",
+    ) -> AnalysisResponse:
         require_internal_key(x_agent_internal_key)
         if (x_analysis_job_id is not None or x_analysis_job_token is not None) and (
             x_analysis_job_id is None
@@ -171,12 +179,22 @@ def create_app(
                     case_id=case_id,
                     telegram_user_id=telegram_user_id,
                 )
+                if context.case_id != case_id:
+                    raise LegalCoreProtocolError("analysis context case mismatch")
                 projection = build_projection_from_context(context)
                 reasoning = await dependencies.reasoning.reason(projection)
-                job_headers = (
+                job_headers: JobLeaseHeaders = (
                     {"job_id": x_analysis_job_id, "job_token": x_analysis_job_token}
                     if x_analysis_job_id is not None else {}
                 )
+                if x_analysis_result_version == "2":
+                    prepared = await dependencies.legal_core.submit_reasoning(
+                        context=context, reasoning=reasoning, telegram_user_id=telegram_user_id,
+                        idempotency_key=idempotency_key, result_version=2, **job_headers,
+                    )
+                    if not isinstance(prepared, PreparationResult):
+                        raise LegalCoreProtocolError("preparation result version mismatch")
+                    return prepared
                 return await dependencies.legal_core.submit_reasoning(
                     context=context,
                     reasoning=reasoning,

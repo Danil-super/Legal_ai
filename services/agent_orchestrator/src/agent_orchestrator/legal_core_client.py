@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, overload
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -16,6 +16,7 @@ from legal_core.analysis_contracts import (
     AnalysisContextResponse,
     AnalysisSubmissionRequest,
     AnalysisSubmissionResponse,
+    PreparationResult,
     SemanticReviewInput,
 )
 
@@ -144,9 +145,28 @@ class LegalCoreClient:
             telegram_user_id=telegram_user_id,
         )
         try:
-            return AnalysisContextResponse.model_validate(payload)
+            context = AnalysisContextResponse.model_validate(payload)
+            if context.case_id != case_id:
+                raise LegalCoreProtocolError("analysis context case mismatch")
+            return context
         except ValidationError as exc:
             raise LegalCoreProtocolError("analysis context response contract mismatch") from exc
+
+    @overload
+    async def submit_reasoning(
+        self, *, context: AnalysisContextResponse, reasoning: ReasoningResult,
+        telegram_user_id: int, idempotency_key: UUID,
+        job_id: UUID | None = None, job_token: UUID | None = None,
+        result_version: Literal[1] = 1,
+    ) -> AnalysisSubmissionResponse: ...
+
+    @overload
+    async def submit_reasoning(
+        self, *, context: AnalysisContextResponse, reasoning: ReasoningResult,
+        telegram_user_id: int, idempotency_key: UUID,
+        job_id: UUID | None = None, job_token: UUID | None = None,
+        result_version: Literal[2],
+    ) -> PreparationResult: ...
 
     async def submit_reasoning(
         self,
@@ -157,7 +177,10 @@ class LegalCoreClient:
         idempotency_key: UUID,
         job_id: UUID | None = None,
         job_token: UUID | None = None,
-    ) -> AnalysisSubmissionResponse:
+        result_version: Literal[1, 2] = 1,
+    ) -> AnalysisSubmissionResponse | PreparationResult:
+        if type(result_version) is not int or result_version not in {1, 2}:
+            raise ValueError("unsupported analysis result version")
         claims = [
             AnalysisClaimInput(
                 claimId=claim.claim_id,
@@ -190,7 +213,8 @@ class LegalCoreClient:
         )
         payload = await self._request_json(
             "POST",
-            f"/v1/cases/{context.case_id}/analysis-submissions",
+            f"/v1/cases/{context.case_id}/"
+            + ("preparation-submissions" if result_version == 2 else "analysis-submissions"),
             telegram_user_id=telegram_user_id,
             idempotency_key=idempotency_key,
             json_body=request.model_dump(mode="json", by_alias=True),
@@ -198,6 +222,21 @@ class LegalCoreClient:
             job_token=job_token,
         )
         try:
+            if result_version == 2:
+                result = PreparationResult.model_validate(payload)
+                source = result.root.source
+                bound = source.context
+                if (
+                    source.case_id != context.case_id
+                    or source.fact_snapshot_sha256 != context.fact_snapshot_sha256
+                    or bound is None or bound.as_of_date != context.as_of_date
+                    or bound.evidence_trace_sha256 != context.evidence_trace_sha256
+                    or bound.clinic_document_context_trace_sha256
+                    != context.clinic_document_context_trace_sha256
+                    or bound.risk_policy_version != context.risk_policy_version
+                ):
+                    raise LegalCoreProtocolError("preparation result context mismatch")
+                return result
             return AnalysisSubmissionResponse.model_validate(payload)
         except ValidationError as exc:
             raise LegalCoreProtocolError("analysis submission response contract mismatch") from exc
