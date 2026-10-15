@@ -789,7 +789,8 @@ def _v2_single_keyboard(field: str) -> InlineKeyboardMarkup:
         [
             [(label, f"case:v2:single:{field}:{value}")]
             for value, label in v2_choice_items(field)
-        ]
+        ],
+        with_back=field != "incomingKind",
     )
 
 
@@ -926,7 +927,8 @@ async def _prompt_v2_draft(
         prompt = (
             "6/7. При необходимости отправьте один обезличенный .txt, .pdf или .docx до 15 МБ. "
             "Удалите ФИО, контакты, номера карт, изображения и ненужные медицинские сведения. "
-            "Файл не станет нормой и не будет отправлен Hermes."
+            "Файл будет сохранён в материалах кейса. Рекомендации готовятся по описанию "
+            "и подтверждённым ответам."
         )
         rows = [[("Продолжить без файла", "case:v2:material:skip")]]
         if attached:
