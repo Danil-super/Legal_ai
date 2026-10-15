@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header
-from pydantic import Field, ValidationError, field_validator, model_validator
+from pydantic import Field, ValidationError
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
 from legal_core.analysis_contracts import AnalysisSubmissionResponse, PreparationResult
+from legal_core.analysis_contracts import PreparationJobResponse as PreparationJobResponse
 from legal_core.analysis_safe_stop import require_analysis_running
 from legal_core.case_api import (
     ActorContext,
@@ -40,7 +41,6 @@ from legal_core.case_api import (
     _tenant_case,
     resolve_actor,
 )
-from legal_core.case_preparation_contracts import PreparationModel
 from legal_core.contracts import ContractModel
 from legal_core.models import Base, Case, IdempotencyRecord
 
@@ -88,32 +88,6 @@ class AnalysisJobResponse(ContractModel):
     state: Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED"]
     error_code: str | None = Field(default=None, alias="errorCode")
     result: AnalysisSubmissionResponse | None = None
-
-
-class PreparationJobResponse(PreparationModel):
-    result_version: Literal[2] = Field(alias="resultVersion")
-    job_id: UUID = Field(alias="jobId")
-    case_id: UUID = Field(alias="caseId")
-    state: JobState
-    error_code: str | None = Field(default=None, alias="errorCode", max_length=80)
-    result: PreparationResult | None = None
-
-    @field_validator("result_version", mode="before")
-    @classmethod
-    def exact_version(cls, value: object) -> object:
-        if type(value) is not int or value != 2:
-            raise ValueError("unsupported preparation job version")
-        return value
-
-    @model_validator(mode="after")
-    def coherent_result(self) -> PreparationJobResponse:
-        if (self.state == "SUCCEEDED") != (self.result is not None):
-            raise ValueError("only a completed job can contain a result")
-        if self.result is not None and self.result.root.source.case_id != self.case_id:
-            raise ValueError("preparation result case mismatch")
-        if self.state == "SUCCEEDED" and self.error_code is not None:
-            raise ValueError("successful preparation cannot include a failure")
-        return self
 
 
 AnalysisJobReceipt = AnalysisJobResponse | PreparationJobResponse

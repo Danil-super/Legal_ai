@@ -15,8 +15,11 @@ from uuid import UUID
 
 import httpx2
 from legal_core.analysis_clarifications import ClarificationRequestBatch, validate_request_scope
-from legal_core.analysis_contracts import PreparationResult, ReportReadyResult
-from legal_core.analysis_jobs import PreparationJobResponse
+from legal_core.analysis_contracts import (
+    PreparationJobResponse,
+    PreparationResult,
+    ReportReadyResult,
+)
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest, Forbidden, RetryAfter, TelegramError
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTypes

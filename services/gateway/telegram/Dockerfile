@@ -20,11 +20,15 @@ COPY services/legal_core/src/legal_core/analysis_clarifications.py ./services/le
 COPY services/legal_core/src/legal_core/report_presentation.py ./services/legal_core/src/legal_core/report_presentation.py
 COPY services/legal_core/src/legal_core/upload_filename.py ./services/legal_core/src/legal_core/upload_filename.py
 COPY services/legal_core/src/legal_core/factual_safety_intake.py ./services/legal_core/src/legal_core/factual_safety_intake.py
+COPY services/legal_core/src/legal_core/case_preparation_contracts.py ./services/legal_core/src/legal_core/case_preparation_contracts.py
+COPY services/legal_core/src/legal_core/analysis_contracts.py ./services/legal_core/src/legal_core/analysis_contracts.py
+COPY services/legal_core/src/legal_core/risk_engine.py ./services/legal_core/src/legal_core/risk_engine.py
+COPY services/legal_core/src/legal_core/factual_safety_risk.py ./services/legal_core/src/legal_core/factual_safety_risk.py
 
 USER app
 
 # Import the real composed entry point without starting polling or requiring credentials.
 # A green source-tree test suite does not prove that COPY included every shared dependency.
-RUN python -c "import telegram_gateway.__main__"
+RUN python -c "import telegram_gateway.__main__, telegram_gateway.analysis_jobs_runtime"
 
 CMD ["python", "-m", "telegram_gateway"]
