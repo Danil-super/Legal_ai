@@ -16,7 +16,13 @@ import httpx
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from legal_core.analysis_jobs import AnalysisJob, ClaimedJob, claim_job, job_result
+from legal_core.analysis_jobs import (
+    AnalysisJob,
+    ClaimedJob,
+    claim_job,
+    job_result,
+    require_job_lease,
+)
 from legal_core.analysis_safe_stop import analysis_safe_stop_active, require_analysis_running
 from legal_core.case_api import ApiError, _tenant_case, resolve_actor
 
@@ -65,17 +71,22 @@ async def execute_job(
         stored = await session.get(AnalysisJob, job.id)
         if stored is not None and await job_result(session, stored) is not None:
             return  # Submission committed before a crash/HTTP timeout; never run the models again.
+        current = await require_job_lease(session, actor, job.case_id, job.id, job.lease_token)
+        result_version = current.result_version
     require_analysis_running()
+    headers = {
+        "X-Agent-Internal-Key": settings.internal_key,
+        "X-Telegram-User-Id": str(job.telegram_user_id),
+        "Idempotency-Key": str(job.id),
+        "X-Analysis-Job-Id": str(job.id),
+        "X-Analysis-Job-Token": str(job.lease_token),
+    }
+    if result_version == 2:
+        headers["X-Analysis-Result-Version"] = "2"
     response = await asyncio.wait_for(
         client.post(
             f"{settings.url}/v1/cases/{job.case_id}/analyze",
-            headers={
-                "X-Agent-Internal-Key": settings.internal_key,
-                "X-Telegram-User-Id": str(job.telegram_user_id),
-                "Idempotency-Key": str(job.id),
-                "X-Analysis-Job-Id": str(job.id),
-                "X-Analysis-Job-Token": str(job.lease_token),
-            },
+            headers=headers,
         ),
         timeout=125,
     )

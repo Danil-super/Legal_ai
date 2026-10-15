@@ -175,6 +175,7 @@ async def require_job_lease(
             AnalysisJob.actor_membership_id == actor.membership_id,
         )
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if (
         job is None

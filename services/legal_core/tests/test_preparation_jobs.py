@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -18,7 +19,7 @@ from legal_core.analysis_jobs import (
     PreparationJobResponse,
     job_result,
 )
-from legal_core.analysis_job_worker import WorkerSettings, process_job
+from legal_core.analysis_job_worker import WorkerSettings, execute_job, process_job
 from legal_core.analysis_contracts import PreparationResult
 from legal_core.database import database_url, owner_database_url
 from legal_core.models import Case, IdempotencyRecord
@@ -261,3 +262,83 @@ def test_intermediate_job_status_is_not_a_retention_or_access_bypass(
             with engine.begin() as connection:
                 connection.execute(text("UPDATE cases SET retention_due_at=clock_timestamp() "
                                         "+interval '30 days' WHERE id=:id"), {"id": case})
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_worker_derives_transport_version_from_the_stored_job(stored_preparation_job, version):
+    _, job, _, record, claimed, _, engine = stored_preparation_job
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE analysis_jobs SET result_version=:version WHERE id=:id"),
+                           {"id": job, "version": version})
+        connection.execute(text("UPDATE idempotency_records SET state='FAILED' WHERE id=:id"),
+                           {"id": record})
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={})
+
+    async def scenario(sessions):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            await execute_job(sessions, claimed, http, WorkerSettings("http://test", "x" * 32))
+    _run(scenario)
+    assert len(requests) == 1
+    assert requests[0].headers.get("x-analysis-result-version", "1") == str(version)
+    assert requests[0].headers["x-analysis-job-id"] == str(job)
+    assert requests[0].headers["idempotency-key"] == str(job)
+    assert requests[0].headers["x-analysis-job-token"] == str(claimed.lease_token)
+
+
+@pytest.mark.parametrize("invalid_lease", ["stale_token", "expired", "not_running"])
+def test_invalid_worker_claim_cannot_start_model_io(stored_preparation_job, invalid_lease):
+    from legal_core.case_api import ApiError
+    _, job, _, record, claimed, _, engine = stored_preparation_job
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE idempotency_records SET state='FAILED' WHERE id=:id"),
+                           {"id": record})
+        if invalid_lease == "expired":
+            connection.execute(text("UPDATE analysis_jobs SET lease_until=clock_timestamp() "
+                                    "-interval '1 second' WHERE id=:id"), {"id": job})
+        elif invalid_lease == "not_running":
+            connection.execute(text("UPDATE analysis_jobs SET state='FAILED',lease_token=NULL,"
+                                    "lease_until=NULL WHERE id=:id"), {"id": job})
+    if invalid_lease == "stale_token":
+        claimed = replace(claimed, lease_token=uuid4())
+
+    async def scenario(sessions):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: pytest.fail("an invalid claim must not start model I/O"),
+        )) as http:
+            await execute_job(sessions, claimed, http, WorkerSettings("http://test", "x" * 32))
+    with pytest.raises(ApiError) as error:
+        _run(scenario)
+    assert error.value.status_code == 409
+    assert error.value.code == "ANALYSIS_JOB_LEASE_EXPIRED"
+
+
+def test_worker_lease_guard_refreshes_a_previously_loaded_job(stored_preparation_job, monkeypatch):
+    import legal_core.analysis_job_worker as worker
+    from legal_core.case_api import ApiError
+    _, job, _, record, claimed, _, engine = stored_preparation_job
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE idempotency_records SET state='FAILED' WHERE id=:id"),
+                           {"id": record})
+    original_result = worker.job_result
+
+    async def supersede_after_read(session, stored):
+        assert await original_result(session, stored) is None
+        with engine.begin() as connection:
+            connection.execute(text("UPDATE analysis_jobs SET lease_token=:token WHERE id=:id"),
+                               {"token": uuid4(), "id": job})
+        return None
+
+    monkeypatch.setattr(worker, "job_result", supersede_after_read)
+
+    async def scenario(sessions):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: pytest.fail("a superseded cached ORM row must not authorize model I/O"),
+        )) as http:
+            await execute_job(sessions, claimed, http, WorkerSettings("http://test", "x" * 32))
+    with pytest.raises(ApiError) as error:
+        _run(scenario)
+    assert error.value.code == "ANALYSIS_JOB_LEASE_EXPIRED"

@@ -287,3 +287,33 @@ and [discriminated unions](https://docs.pydantic.dev/latest/concepts/unions/#dis
 The FastAPI page contains an inconsistent older paragraph about the Python3.10
 union operator; the installed pinned version's actual API tests establish support
 for the alias-based union used here. No framework upgrade or dependency is added.
+
+### Container-boundary regression and correction
+
+The full d30b8a9 run failed two isolated gateway packaging checks. New transport
+imports had accidentally pulled backend API/queue modules into a deliberately
+minimal Telegram image. The fix does not copy the server/ORM into that image:
+shared CaseResponse/ReportResponse/LegalFragmentResponse and workflow receipt types
+now live in contracts.py with identity-preserving api_contracts re-exports.
+PreparationJobResponse lives in analysis_contracts, re-exported by analysis_jobs.
+Seven public JSON-schema fingerprints were compared against immutable d30b8a9 and
+are byte-equivalent after sorted canonical JSON serialization. Wire semantics do
+not change; no stored data or migration is involved in this relocation.
+
+Docker explicitly includes the pure preparation/analysis contracts and existing
+fact-digest dependencies. Reading READY recomputes a fingerprint; it does not run
+the risk policy in Telegram. The isolated copy-set test now imports the optional
+analysis runtime as well as the entry point and asserts no case_api, analysis_jobs
+or ORM models are available. Missing-module negatives remain enforced. The actual
+Docker build also imports both entry points as the unprivileged app user and
+passes. This packaging regression is recorded rather than omitted from the audit.
+
+The PRC5 worker follow-up reads result_version from its stored, currently fenced
+job and forwards the V2 header only for V2. It checks the existing lease before
+orchestrator I/O; the short transaction ends before that I/O. Cached committed
+results still reconcile without a model call. A second connection can replace a
+token after the job was loaded: the FOR UPDATE query must populate_existing so
+the ORM identity map cannot authorize using stale attributes. Tests reproduce
+wrong token, expiry, terminal state and the already-loaded-row replacement before
+fixing them. No lease duration, actor permissions, model or deadline changes.
+The ORM refresh follows [SQLAlchemy2.0 Populate Existing](https://docs.sqlalchemy.org/en/20/orm/queryguide/api.html#populate-existing).
