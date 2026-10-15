@@ -13,28 +13,32 @@ Every implementation task starts RED, ends focused GREEN/quality checks and an
 atomic commit. At most five files per task; split if the actual change exceeds it.
 Use source PYTHONPATH and venv from the spec; commands below are pytest selections.
 
-### PRC1: typed intermediate contract and storage feasibility gate
+### PRC1: typed intermediate contract and storage feasibility gate — complete
 
-- [ ] Define opt-in NEEDS_FACTS/LIMITED/READY/HUMAN_REVIEW with exclusive payloads;
+- [x] Define opt-in NEEDS_FACTS/LIMITED/READY/HUMAN_REVIEW with exclusive payloads;
   no PDF/report for preparation, no ambiguous legacy null-report payload.
-- [ ] Prove storage design for bounded early understanding and intermediate
+- [x] Prove storage design for bounded early understanding and intermediate
   recovery, including operation fencing, privacy expiry and exact schema needs.
   Existing draft jobs/report FK assumptions may not be bypassed with fake rows.
-- [ ] Record schema/rollout/rollback decision; request agreement before new tables
+- [x] Record schema/rollout/rollback decision; request agreement before new tables
   or unanticipated storage expansion. Do not claim feasibility based only on JSON.
 - Files(5): Core src/legal_core/case_preparation_contracts.py (new),
   src/legal_core/analysis_contracts.py, tests/test_case_preparation_contracts.py (new),
   tests/test_preparation_storage_feasibility.py (new), root docs/adr/0091-pre-report-case-preparation.md (new).
 - Verify: `python -m pytest -q services/legal_core/tests/test_case_preparation_contracts.py services/legal_core/tests/test_preparation_storage_feasibility.py`.
 - Dependencies: plan approval. Scope M; fail-fast contract/storage checkpoint.
+- Evidence: ADR0091, contracts37003b9 and88a2ec8, isolated review accepted both
+  actionable nested-validation findings and verified their fixes. Actual existing-
+  storage roundtrip/unique-key/RLS tests pass; this does not claim runtime leases
+  or authorizing a model response. See PRC2's explicitly incomplete lifecycle.
 
-### PRC2: durable preparation intent and lifecycle
+### PRC2: durable preparation intent and lifecycle — schema checkpoint complete
 
 - [ ] Bind intent/proposals to server actor/clinic/draft/revision/content; atomically
   deduplicate, fence stale completion and recover pending work without long DB locks.
 - [ ] Reuse storage only as proven in PRC1; expiry guards include failed/abandoned
   operation records and never replay private content after owner expiry/revocation.
-- [ ] Add the explicitly planned existing-table lease/receipt/result-version
+- [x] Add the explicitly planned existing-table lease/receipt/result-version
   expansion and expiry/purge changes with Alembic and runtime-role proofs;
   no producer enablement or deletion of unexpired data/receipts.
 - Files(5): Core src/legal_core/intake_preparation.py (new), src/legal_core/models.py,
@@ -42,6 +46,17 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
   tests/test_preparation_storage.py (new, includes persistence/migration/expiry).
 - Verify: `python -m pytest -q services/legal_core/tests/test_preparation_storage.py` with disposable PostgreSQL, migration upgrade/compatibility and expiry proof.
 - Dependencies: PRC1 storage decision. Scope M; no new-table assumption.
+- Schema checkpoint: migrationd10a6b3e7f91,34 focused runtime-role tests, real empty
+  upgrade/downgrade/upgrade and retained-data refusal; concurrent downgrade/write
+  regression is RED without locking and GREEN with it. Independent schema review
+  plus follow-up found no remaining Required/Critical findings. No producer enabled.
+- NEXT: implement intake_preparation.py reservation/completion/read lifecycle;
+  atomically deduplicate, fence stale completion, reauthorize every read/completion,
+  verify revision/input/expiry and return manual continuation after an unknown call.
+  Existing purge coverage is implemented, but it does not substitute replay guards.
+- Combined checkpoint:2745 passed/0 skipped with disposable PostgreSQL/MinIO,
+  Ruff/140-source mypy/Compose passed. Evidence and remaining boundaries:
+  docs/audit/pre-report-preparation-foundation-2026-10-15.md. No deploy/activation.
 
 ### PRC3: compatible report-free workflow receipt readers
 
