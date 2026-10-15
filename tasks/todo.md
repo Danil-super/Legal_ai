@@ -153,16 +153,25 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
 
 ### PRC6a: honest limitation before legal context exists
 
-- [ ] Missing/unknown event date, attempted UNKNOWN screening and absent evidence
+- [x] Missing/unknown event date, attempted UNKNOWN screening and absent evidence
   yield typed preparation limits without calling the model or generating a report.
-- [ ] Preserve exact-date, approved-evidence and risk refusal. Known urgent facts
+- [x] Preserve exact-date, approved-evidence and risk refusal. Known urgent facts
   still route immediately; do not interpret UNKNOWN as NO or invent policy results.
-- [ ] Classify only allowlisted factual/evidence blockers, not auth/network/internal
+- [x] Classify only allowlisted factual/evidence blockers, not auth/network/internal
   failures; attempts stay preserved for the form instead of an automatic repeat loop.
 - Files(4): Core src/legal_core/analysis_api.py, src/legal_core/case_preparation.py,
   tests/test_preparation_precontext.py (new), tests/test_preparation_urgent_limits.py (new).
 - Verify: `python -m pytest -q services/legal_core/tests/test_preparation_precontext.py services/legal_core/tests/test_preparation_urgent_limits.py` with PostgreSQL.
 - Dependencies: PRC6. Scope M.
+- Core cd7646a + transport f87d41c, fixture prerequisite6cbf2db. Real pre-context
+  receipt IDs, urgent escalation, safe-stop and retained late-result retries are
+  tested; intermediate outcomes create no report/PDF. The direct-retry422 defect
+  found by independent review is fixed without weakening late payload matching.
+- Independent exact-artifact follow-up:23 Core +63 agent tests pass, no skips;
+  real agent/Core/SQL path uses synthetic external model stand-ins only. Author
+  focused111 Core/63 agent pass. Immutable f87d41c full PostgreSQL/MinIO run:
+  2975 passed/0 skipped,189.68s; Ruff/all-three-service mypy143/Compose pass.
+  Ordinary queues remain V1, initial legacy finalization is unchanged; no deploy.
 
 ### PRC6b: Core recovery bound to intermediate source
 

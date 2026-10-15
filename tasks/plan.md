@@ -26,7 +26,12 @@ separate real lock-wait access matrix passed20 tests. Author focused regression:
 94 passed. Full94a9751 verification repeated after the execution environment
 reset:2938 passed/0 skipped,171.27s, with fresh migrated PostgreSQL and MinIO.
 Ruff/all-three-service mypy143/Compose pass; the interrupted run is not counted.
-NEXT: finish PRC6a/6b/6c pre-context limits and source-bound form
+PRC6a Core cd7646a + transport f87d41c implement honest pre-context limitations,
+urgent routing and authenticated retained-result replay. Independent final review
+verified86 focused tests with no outstanding Required/Critical finding. Immutable
+f87d41c full PostgreSQL/MinIO run:2975 passed/0 skipped,189.68s; Ruff/mypy143/Compose
+pass. The new gate preserves safe-stop and does not repeat model work on replay.
+NEXT: finish PRC6b/6c source-bound form
 recovery, followed by PRC7–11 understanding/acceptance/shared UI/end-to-end tests.
 The V2 writer is opt-in/internal only: ordinary queues remain V1. No server
 migration or complete pre-report dialogue is activated. See

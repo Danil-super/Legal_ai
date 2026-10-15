@@ -58,8 +58,38 @@ zero-dependency results are not used as proof of isolation.
 
 ## Remaining before user-facing completion
 
-PRC6a pre-context limits/urgent routing, PRC6b/6c source-bound recovery/callbacks,
+PRC6b/6c source-bound recovery/callbacks,
 PRC7 report-free initial receipts, PRC8/9 protected Hermes understanding, PRC10
 shared confirmed form and PRC11 full-flow acceptance remain open. No claim that
 new quick/guided cases already use this complete dialogue. Server rollout requires
 the agreed separate immutable-head review/release checkpoint.
+
+## Pre-context gate and transport checkpoint
+
+Core cd7646a and transport f87d41c add the explicit V2 pre-context gate. Unknown or
+approximate dates, unknown safety and missing approved evidence yield honest
+LIMITED results without a verifier run or PDF; urgent confirmed facts persist a
+real escalation. Fresh work respects the operator safe-stop; existing urgent
+intake routing remains available. A pre-context operation uses its real durable
+receipt ID, not a fabricated analysis identity. Queue fixture prerequisite6cbf2db
+now reflects this persistence requirement without weakening assertions.
+
+Review reproduced a direct same-key retry422 after late completion. An authorized
+preflight now reads the actual retained, audit-bound late result before marker
+comparison. Late writes still compare the full payload hash. Independent real
+agent→Core→runtime PostgreSQL tests cover NEEDS_FACTS/READY and safe-stop replay
+with each synthetic model stand-in called once, no repeat retrieval/rendering,
+tenant/expiry rejection and cache/request/key substitution rejection. Final exact-
+artifact review:23 Core +63 agent tests passed, no skips, no remaining Required/
+Critical finding in this scope. Review evidence survives outside the repository:
+`/home/danil/.cache/dental-prc-verify.pLetxJ/precontext-final-review.md`.
+
+Author focused verification:111 Core +63 agent tests passed. Full immutable code
+f87d41c, fresh migrated PostgreSQL and MinIO: **2975 passed,0 skipped,189.68s**;
+298 existing Telegram warnings. JUnit:
+`/home/danil/.cache/dental-prc-verify.pLetxJ/f87d41c.xml`.
+Ruff/all-three-service mypy143/Compose pass. Actual exact-worktree Code Graph
+reindex:569 nodes/568 edges; Python impact limitations still apply.
+
+No external provider/model was called, no complete new Telegram intake claimed,
+and no server migration, release, normative approval or feature activation made.
