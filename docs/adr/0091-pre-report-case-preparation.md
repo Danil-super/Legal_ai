@@ -350,3 +350,15 @@ The initial RED is404 for the absent new route. New producer remains unused by
 ordinary V1 queues. Pre-context limitations, source-bound recovery, initial
 report-free receipt producer and Telegram shared form/Hermes interpretation are
 still subsequent PRCs; this checkpoint is not a release or complete new dialogue.
+
+Independent review of8a86ce9 reproduced same-case cache substitution and concurrent
+double finalization. The audit receipt now also binds a canonical digest of the
+scope, idempotency key and request hash. A valid receipt from another operation
+cannot authorize the original replay. Submission locks and refreshes the case
+before job fencing, replay and eligibility, so an ORM identity-map snapshot cannot
+conceal another committed finalization. The existing scoped FOR UPDATE helper now
+uses populate_existing. This fixes both V1 and V2 without changing either wire
+contract: concurrent identical keys replay once; distinct keys cannot both finalize.
+Both reproductions were RED before fixes;15 focused PostgreSQL tests pass. The
+unmodified8a86ce9 baseline separately passed2920 full tests; it is not the final
+reviewed/fixed snapshot and that earlier green run does not invalidate the findings.

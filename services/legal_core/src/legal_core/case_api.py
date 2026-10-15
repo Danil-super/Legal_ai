@@ -529,7 +529,8 @@ async def _tenant_case(
 ) -> Case:
     statement = select(Case).where(Case.id == case_id, Case.clinic_id == actor.clinic_id)
     if for_update:
-        statement = statement.with_for_update()
+        # A previous read in this session must not hide changes committed while waiting.
+        statement = statement.with_for_update().execution_options(populate_existing=True)
     case = await session.scalar(statement)
     if case is None:
         raise ApiError(

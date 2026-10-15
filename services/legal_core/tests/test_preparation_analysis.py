@@ -3,6 +3,8 @@
 import asyncio
 import json
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID, uuid4
 
 import pytest
@@ -263,3 +265,77 @@ def test_same_clinic_noncreator_and_lawyer_cannot_submit_or_replay_preparation(p
         response = client.post(path, headers=headers | {"X-Telegram-User-Id": str(other)},
                                json=payload)
         assert response.status_code == (403 if role == "CLINIC_LAWYER" else 404), response.text
+
+
+def test_same_case_receipt_cannot_replace_a_different_request_result(prepared_case):
+    client, _, _, case, headers, context, engine = prepared_case
+    path = f"/v1/cases/{case}/preparation-submissions"
+    original = _submission(context)
+    first = client.post(path, headers=headers, json=original)
+    other_headers = headers | {"Idempotency-Key": str(uuid4())}
+    second = client.post(path, headers=other_headers,
+                         json=_submission(context, questions=False))
+    assert first.status_code == second.status_code == 201
+    assert first.json()["status"] == "NEEDS_FACTS"
+    assert second.json()["status"] == "LIMITED"
+    with engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE idempotency_records original SET response_json=other.response_json "
+            "FROM idempotency_records other WHERE original.scope=:scope "
+            "AND other.scope=:scope AND original.key=:original AND other.key=:other"
+        ), {"scope": f"cases:{case}:preparation-submissions",
+            "original": headers["Idempotency-Key"], "other": other_headers["Idempotency-Key"]})
+    replay = client.post(path, headers=headers, json=original)
+    assert replay.status_code == 502, replay.text
+    assert replay.json()["error"]["code"] == "PREPARATION_RESULT_INVALID"
+
+
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("same_key", [False, True])
+def test_parallel_preparation_cannot_finalize_the_same_case_twice(prepared_case, monkeypatch,
+                                                                version, same_key):
+    import legal_core.analysis_api as api
+
+    client, _, _, case, headers, context, engine = prepared_case
+    entered, release = threading.Event(), threading.Event()
+    counter_lock = threading.Lock()
+    entrants = 0
+    original = api._tenant_case
+
+    async def synchronize_initial_read(*args, **kwargs):
+        nonlocal entrants
+        result = await original(*args, **kwargs)
+        with counter_lock:
+            entrants += 1
+            initial = entrants <= 2
+            if entrants == 2:
+                entered.set()
+        if initial:
+            assert await asyncio.to_thread(release.wait, 10)
+        return result
+
+    monkeypatch.setattr(api, "_tenant_case", synchronize_initial_read)
+    shared_key = uuid4()
+
+    def submit():
+        route = "preparation-submissions" if version == 2 else "analysis-submissions"
+        return client.post(f"/v1/cases/{case}/{route}",
+                           headers=headers | {"Idempotency-Key": str(shared_key if same_key
+                                                                     else uuid4())},
+                           json=_submission(context, questions=False, claims=True))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = pool.submit(submit), pool.submit(submit)
+        try:
+            assert entered.wait(10)
+        finally:
+            release.set()
+        responses = first.result(15), second.result(15)
+    assert sorted(response.status_code for response in responses) == (
+        [200, 201] if same_key else [201, 409]
+    )
+    if same_key:
+        assert responses[0].json() == responses[1].json()
+    with engine.connect() as connection:
+        assert _count(connection, "case_reports", case) == 1
+        assert _count(connection, "case_analysis_runs", case) == 1

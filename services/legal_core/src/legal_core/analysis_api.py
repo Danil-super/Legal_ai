@@ -452,6 +452,9 @@ def create_analysis_router(
             _require_case_intake_actor(actor)
             if owned_case.created_by_membership_id != actor.membership_id:
                 raise ApiError(status_code=404, code="CASE_NOT_FOUND", message="Case not found")
+        # Serialize replay, eligibility and writes on a freshly loaded case. The case
+        # lock precedes the job lock; no external/model I/O occurs in this transaction.
+        owned_case = await _tenant_case(session, actor, case_id, for_update=True)
         if x_analysis_job_id is not None or x_analysis_job_token is not None:
             from legal_core.analysis_jobs import require_job_lease
             if (x_analysis_job_id is None or x_analysis_job_token is None
@@ -477,7 +480,8 @@ def create_analysis_router(
             response.status_code = status.HTTP_200_OK
             if result_version == 2:
                 return await read_preparation_replay(
-                    session, actor=actor, case=owned_case, scope=scope,
+                    session, clinic_id=actor.clinic_id, actor_membership_id=actor.membership_id,
+                    case=owned_case, scope=scope,
                     idempotency_key=idempotency_key, wire=replay,
                 )
             return AnalysisSubmissionResponse.model_validate(replay)

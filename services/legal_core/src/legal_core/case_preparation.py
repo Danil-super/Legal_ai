@@ -59,28 +59,34 @@ def intermediate_result(
 
 
 async def read_preparation_replay(
-    session: AsyncSession, *, actor: ActorContext, case: Case, scope: str,
+    session: AsyncSession, *, clinic_id: UUID, actor_membership_id: UUID, case: Case, scope: str,
     idempotency_key: UUID, wire: dict[str, Any],
 ) -> PreparationResult:
     """A mutable cache alone is not a source binding; match its retained audit receipt."""
     try:
         result = PreparationResult.model_validate(wire)
         record = await session.scalar(select(IdempotencyRecord).where(
-            IdempotencyRecord.clinic_id == actor.clinic_id,
-            IdempotencyRecord.actor_membership_id == actor.membership_id,
+            IdempotencyRecord.clinic_id == clinic_id,
+            IdempotencyRecord.actor_membership_id == actor_membership_id,
             IdempotencyRecord.scope == scope, IdempotencyRecord.key == str(idempotency_key),
         ))
+        if record is None:
+            raise ValueError("preparation receipt missing")
         audit = await session.scalar(select(AuditEvent.id).where(
-            AuditEvent.clinic_id == actor.clinic_id,
-            AuditEvent.actor_membership_id == actor.membership_id,
+            AuditEvent.clinic_id == clinic_id,
+            AuditEvent.actor_membership_id == actor_membership_id,
             AuditEvent.resource_id == case.id,
             AuditEvent.action == "CASE_PREPARATION_COMPLETED",
             AuditEvent.metadata_json["operationId"].as_string()
             == str(result.root.source.operation_id),
             AuditEvent.metadata_json["resultSha256"].as_string() == _canonical_hash(wire),
+            AuditEvent.metadata_json["requestBindingSha256"].as_string() == _canonical_hash({
+                "scope": scope, "key": str(idempotency_key),
+                "requestSha256": record.request_sha256,
+            }),
         ))
         if (
-            record is None or record.resource_type != "CASE_PREPARATION"
+            case.clinic_id != clinic_id or record.resource_type != "CASE_PREPARATION"
             or record.resource_id != case.id or result.root.source.case_id != case.id
             or audit is None
         ):
@@ -111,6 +117,9 @@ async def store_preparation_result(
             "status": result.root.status,
             "operationId": str(result.root.source.operation_id),
             "resultSha256": _canonical_hash(wire),
+            "requestBindingSha256": _canonical_hash({
+                "scope": scope, "key": str(idempotency_key), "requestSha256": request_hash,
+            }),
             "factSnapshotSha256": result.root.source.fact_snapshot_sha256,
             "clarificationRequestCount": len(result.root.clarification_requests)
             if isinstance(result.root, NeedsFactsResult) else 0,
