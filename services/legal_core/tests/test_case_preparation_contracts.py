@@ -364,7 +364,7 @@ def test_ready_analysis_allowed_requires_actual_true_boolean(value) -> None:
         PreparationResult.model_validate(payload)
 
 
-def _replace(payload: dict, path: tuple[str, ...], value) -> None:
+def _replace(payload: dict, path: tuple[str | int, ...], value) -> None:
     target = payload
     for key in path[:-1]:
         target = target[key]
@@ -433,3 +433,33 @@ def test_legacy_submission_response_still_requires_nonnull_report() -> None:
             "escalationRequired": False,
             "report": None,
         })
+
+
+@pytest.mark.parametrize(("path", "value"), [
+    (("source", "operationId"), str(OTHER_ID)),
+    (("report", "reportJson", "facts", "PROBLEM_SUMMARY"), "Изменённый синтетический факт."),
+    (("report", "reportJson", "legalBasis", "sources", 0, "effectiveFrom"), "2026-09-01"),
+    (("report", "reportJson", "legalBasis", "sources", 0, "effectiveTo"), "2026-08-31"),
+])
+def test_ready_rejects_different_run_tampered_facts_and_inapplicable_sources(path, value) -> None:
+    payload = _ready()
+    _replace(payload, path, value)
+    with pytest.raises(ValidationError):
+        PreparationResult.model_validate(payload)
+
+
+def test_constructed_report_instance_cannot_bypass_nested_validation() -> None:
+    payload = _ready()
+    report = ReportResponse.model_validate(payload["report"])
+    report.report_json["analysis"]["verifierStatus"] = "BLOCKED"
+    payload["report"] = report
+    with pytest.raises(ValidationError):
+        ReportReadyResult.model_validate(payload)
+
+
+def test_human_review_cannot_mix_risk_policy_versions() -> None:
+    payload = _human_review()
+    payload["source"]["context"] = _ready()["source"]["context"]
+    payload["riskPolicyVersion"] = "different-policy.v4"
+    with pytest.raises(ValidationError):
+        PreparationResult.model_validate(payload)
