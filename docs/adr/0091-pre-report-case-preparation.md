@@ -449,3 +449,29 @@ and plan (pre-context LIMITED or NEEDS_FACTS). Current fresh Core gates emit onl
 LIMITED/HUMAN_REVIEW; the generic reader's NEEDS_FACTS support is not a legal answer
 or a protocol bypass. A review request interpreting it as a forbidden status
 misread that contract; no blanket status prohibition is introduced.
+
+### PRC6a authenticated orchestration transport
+
+Only an explicit resultVersion=2 analysis invokes preparation-context before the
+existing two-pass reasoning. A genuine usable context continues through unchanged
+researcher/reviewer and late submission. A strictly validated, same-case retained
+PreparationResult returns directly without a model call. Fresh pre-context limits
+for uncertain dates, uncertain safety or missing evidence require context:null;
+late retained outcomes may carry their real retrieved context, including READY's
+fully validated canonical report. No context or final answer is reconstructed by
+the transport. V1 still uses the existing GET context path.
+
+Actor, stable intent key and paired job lease headers are forwarded unchanged.
+The existing shared115s deadline and65s stage budgets, models/provider/high, risk
+policy and legal verification are unchanged. Core errors remain errors rather
+than a synthetic limitation. Ordinary queue creation remains V1: this change does
+not activate the new dialogue or modify production settings.
+
+Independent final follow-up verified the exact Core/transport artifacts on its
+own branch and PostgreSQL:23 Core plus63 agent tests passed, zero skipped. Real
+agent→Core retries of NEEDS_FACTS and READY invoke each synthetic external model
+stand-in once; replay under safe-stop performs no retrieval, verifier or rendering.
+Cross-tenant access, retention expiry, request/key/cache substitution and changed
+late payloads remain rejected. No actual external model/provider was called.
+Author focused integration totals111 Core and63 agent tests; the full immutable
+regression run is recorded separately in the audit checkpoint.

@@ -19,6 +19,7 @@ from legal_core.analysis_contracts import (
     PreparationResult,
     SemanticReviewInput,
 )
+from legal_core.case_preparation_contracts import LimitedResult
 
 
 class LegalCoreError(RuntimeError):
@@ -151,6 +152,41 @@ class LegalCoreClient:
             return context
         except ValidationError as exc:
             raise LegalCoreProtocolError("analysis context response contract mismatch") from exc
+
+    async def prepare_analysis_context(
+        self, *, case_id: UUID, telegram_user_id: int, idempotency_key: UUID,
+        job_id: UUID | None = None, job_token: UUID | None = None,
+    ) -> AnalysisContextResponse | PreparationResult:
+        payload = await self._request_json(
+            "POST", f"/v1/cases/{case_id}/preparation-context",
+            telegram_user_id=telegram_user_id, idempotency_key=idempotency_key,
+            job_id=job_id, job_token=job_token,
+        )
+        try:
+            if "resultVersion" in payload:
+                result = PreparationResult.model_validate(payload)
+                if (
+                    result.root.source.case_id != case_id
+                    or (
+                        isinstance(result.root, LimitedResult)
+                        and result.root.reason_code in {
+                            "ANALYSIS_DATE_UNCERTAIN", "FACTUAL_SAFETY_UNCERTAIN",
+                            "LEGAL_EVIDENCE_UNAVAILABLE",
+                        }
+                        and result.root.source.context is not None
+                    )
+                ):
+                    raise LegalCoreProtocolError("pre-context result source mismatch")
+                # Core can replay an already verified late result (including
+                # READY) for this exact intent; its real context is retained,
+                # not fabricated and not sent through the models again.
+                return result
+            context = AnalysisContextResponse.model_validate(payload)
+            if context.case_id != case_id:
+                raise LegalCoreProtocolError("analysis context case mismatch")
+            return context
+        except ValidationError as exc:
+            raise LegalCoreProtocolError("preparation context contract mismatch") from exc
 
     @overload
     async def submit_reasoning(

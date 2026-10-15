@@ -32,10 +32,13 @@ def preparation_wire(context, status="NEEDS_FACTS"):
         },
     }
     if status == "NEEDS_FACTS":
-        result.update(reasonCode="FACTUAL_CLARIFICATION_REQUIRED",
-                      clarificationRequests=[{"questionId": "RESPONSE_PURPOSE"}])
+        result.update(
+            reasonCode="FACTUAL_CLARIFICATION_REQUIRED",
+            clarificationRequests=[{"questionId": "RESPONSE_PURPOSE", "serviceSlot": None}],
+            missingFactKeys=[],
+        )
     elif status == "LIMITED":
-        result["reasonCode"] = "LEGAL_EVIDENCE_UNAVAILABLE"
+        result.update(reasonCode="LEGAL_EVIDENCE_UNAVAILABLE", missingFactKeys=[])
     else:
         result.update(escalationId=str(uuid4()), riskLevel="HIGH",
                       riskPolicyVersion=context.risk_policy_version)
@@ -116,3 +119,90 @@ def test_wrong_analysis_context_case_is_rejected_before_any_model_can_read_it():
             await client.get_analysis_context(case_id=CASE_ID, telegram_user_id=123)
     with pytest.raises(LegalCoreProtocolError):
         asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("kind", ["context", "LIMITED", "HUMAN_REVIEW"])
+def test_precontext_transport_preserves_the_actual_core_gate_and_lease(kind):
+    context = _context()
+    wire = context.model_dump(mode="json", by_alias=True)
+    if kind != "context":
+        wire = preparation_wire(context, kind)
+        wire["source"]["context"] = None
+    requests, token = [], uuid4()
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json=wire)
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = LegalCoreClient(LegalCoreEndpoint("http://core:8000", "k" * 32), client=http)
+            return await client.prepare_analysis_context(
+                case_id=CASE_ID, telegram_user_id=123, idempotency_key=IDEMPOTENCY_KEY,
+                job_id=IDEMPOTENCY_KEY, job_token=token,
+            )
+    result = asyncio.run(scenario())
+    assert result.model_dump(mode="json", by_alias=True) == wire
+    assert requests[0].method == "POST"
+    assert requests[0].url.path == f"/v1/cases/{CASE_ID}/preparation-context"
+    assert requests[0].headers["x-analysis-job-token"] == str(token)
+    assert requests[0].headers["idempotency-key"] == str(IDEMPOTENCY_KEY)
+
+
+@pytest.mark.parametrize("tamper", ["case", "context", "version", "report"])
+def test_precontext_transport_refuses_incoherent_or_fabricated_context(tamper):
+    context = _context()
+    wire = preparation_wire(context, "LIMITED")
+    wire["source"]["context"] = None
+    if tamper == "case":
+        wire["source"]["caseId"] = str(uuid4())
+    elif tamper == "context":
+        wire["source"]["context"] = preparation_wire(context)["source"]["context"]
+    elif tamper == "version":
+        wire["resultVersion"] = True
+    else:
+        wire["report"] = None
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=wire),
+        )) as http:
+            client = LegalCoreClient(LegalCoreEndpoint("http://core:8000", "k" * 32), client=http)
+            await client.prepare_analysis_context(
+                case_id=CASE_ID, telegram_user_id=123, idempotency_key=IDEMPOTENCY_KEY,
+            )
+    with pytest.raises(LegalCoreProtocolError):
+        asyncio.run(scenario())
+
+
+def test_precontext_transport_checks_a_usable_context_case_before_model_use():
+    wire = _context().model_dump(mode="json", by_alias=True)
+    wire["caseId"] = str(uuid4())
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=wire),
+        )) as http:
+            client = LegalCoreClient(LegalCoreEndpoint("http://core:8000", "k" * 32), client=http)
+            await client.prepare_analysis_context(
+                case_id=CASE_ID, telegram_user_id=123, idempotency_key=IDEMPOTENCY_KEY,
+            )
+    with pytest.raises(LegalCoreProtocolError):
+        asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("kind", ["NEEDS_FACTS", "LIMITED", "HUMAN_REVIEW"])
+def test_context_preparation_can_return_an_audited_retained_late_result(kind):
+    wire = preparation_wire(_context(), kind)
+    if kind == "LIMITED":
+        wire["reasonCode"] = "EVIDENCE_NOT_VERIFIED"
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=wire),
+        )) as http:
+            client = LegalCoreClient(LegalCoreEndpoint("http://core:8000", "k" * 32), client=http)
+            return await client.prepare_analysis_context(
+                case_id=CASE_ID, telegram_user_id=123, idempotency_key=IDEMPOTENCY_KEY,
+            )
+    assert asyncio.run(scenario()) == PreparationResult.model_validate(wire)

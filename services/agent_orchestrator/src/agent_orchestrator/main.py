@@ -175,18 +175,28 @@ def create_app(
             )
         try:
             async with asyncio.timeout(ANALYSIS_WALL_TIMEOUT_SECONDS):
-                context = await dependencies.legal_core.get_analysis_context(
-                    case_id=case_id,
-                    telegram_user_id=telegram_user_id,
-                )
-                if context.case_id != case_id:
-                    raise LegalCoreProtocolError("analysis context case mismatch")
-                projection = build_projection_from_context(context)
-                reasoning = await dependencies.reasoning.reason(projection)
                 job_headers: JobLeaseHeaders = (
                     {"job_id": x_analysis_job_id, "job_token": x_analysis_job_token}
                     if x_analysis_job_id is not None else {}
                 )
+                if x_analysis_result_version == "2":
+                    initial = await dependencies.legal_core.prepare_analysis_context(
+                        case_id=case_id, telegram_user_id=telegram_user_id,
+                        idempotency_key=idempotency_key, **job_headers,
+                    )
+                    if isinstance(initial, PreparationResult):
+                        if initial.root.source.case_id != case_id:
+                            raise LegalCoreProtocolError("preparation result case mismatch")
+                        return initial
+                    context = initial
+                else:
+                    context = await dependencies.legal_core.get_analysis_context(
+                        case_id=case_id, telegram_user_id=telegram_user_id,
+                    )
+                if context.case_id != case_id:
+                    raise LegalCoreProtocolError("analysis context case mismatch")
+                projection = build_projection_from_context(context)
+                reasoning = await dependencies.reasoning.reason(projection)
                 if x_analysis_result_version == "2":
                     prepared = await dependencies.legal_core.submit_reasoning(
                         context=context, reasoning=reasoning, telegram_user_id=telegram_user_id,
