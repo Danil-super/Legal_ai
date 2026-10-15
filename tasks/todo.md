@@ -32,11 +32,11 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
   storage roundtrip/unique-key/RLS tests pass; this does not claim runtime leases
   or authorizing a model response. See PRC2's explicitly incomplete lifecycle.
 
-### PRC2: durable preparation intent and lifecycle — schema checkpoint complete
+### PRC2: durable preparation intent and lifecycle — complete, producers disabled
 
-- [ ] Bind intent/proposals to server actor/clinic/draft/revision/content; atomically
+- [x] Bind intent/proposals to server actor/clinic/draft/revision/content; atomically
   deduplicate, fence stale completion and recover pending work without long DB locks.
-- [ ] Reuse storage only as proven in PRC1; expiry guards include failed/abandoned
+- [x] Reuse storage only as proven in PRC1; expiry guards include failed/abandoned
   operation records and never replay private content after owner expiry/revocation.
 - [x] Add the explicitly planned existing-table lease/receipt/result-version
   expansion and expiry/purge changes with Alembic and runtime-role proofs;
@@ -50,21 +50,25 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
   upgrade/downgrade/upgrade and retained-data refusal; concurrent downgrade/write
   regression is RED without locking and GREEN with it. Independent schema review
   plus follow-up found no remaining Required/Critical findings. No producer enabled.
-- NEXT: implement intake_preparation.py reservation/completion/read lifecycle;
-  atomically deduplicate, fence stale completion, reauthorize every read/completion,
-  verify revision/input/expiry and return manual continuation after an unknown call.
-  Existing purge coverage is implemented, but it does not substitute replay guards.
+- Runtime checkpoint:d2bd5da+9bf21b2. Separate bounded proposal contracts/tests and
+  lifecycle tests implement the planned split; no new storage expansion is added.
+  Replay tampering, natural expiry/access withdrawal while waiting, and actual
+  retention/completion deadlock are reproduced and fixed. Independent delta review
+  repeats46 focused tests on its own fresh PostgreSQL and has no remaining Required.
+- Full immutable9bf21b2:2791 passed/0 skipped on fresh PostgreSQL/MinIO; current
+  later reader/transport checkpoints require their own full regression below.
 - Combined checkpoint:2745 passed/0 skipped with disposable PostgreSQL/MinIO,
   Ruff/140-source mypy/Compose passed. Evidence and remaining boundaries:
   docs/audit/pre-report-preparation-foundation-2026-10-15.md. No deploy/activation.
 
 ### PRC3: compatible report-free workflow receipt readers
 
-- [ ] Read legacy workflow/report and new preparation receipt without changing
+- [x] Read legacy workflow/report and new preparation receipt without changing
   old report snapshots; new receipts contain no fabricated report identity.
-- [ ] Gateway/core can read both variants and reject unsupported versions clearly;
-  test a minimum rollback reader before any report-free workflow is produced.
-- [ ] Preserve strict draft/fact validation, user-confirmed provenance and current
+- [x] Gateway/core transport reads both variants and rejects unsupported versions clearly.
+- [ ] Establish the complete minimum rollback reader, including the new Telegram
+  dialogue consumer, before any report-free workflow is produced (PRC7/10/11).
+- [x] Preserve strict draft/fact validation, user-confirmed provenance and current
   server-side tenant/creator/retention rules for new response fields.
 - Files(5): Core src/legal_core/api_contracts.py, src/legal_core/case_api.py,
   tests/test_preparation_workflow_compatibility.py (new), Gateway src/telegram_gateway/case_wizard.py,
@@ -72,30 +76,53 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
 - Verify: `python -m pytest -q services/legal_core/tests/test_preparation_workflow_compatibility.py services/gateway/telegram/tests/test_preparation_workflow_readers.py`.
 - Dependencies: PRC1–2. Scope M. Checkpoint A: contracts/storage/readers reviewed;
   existing regression green, producer still disabled.
+- Evidence:8570ae1+b34c252,d30b8a9. Core GET/replayed POST V2, no artifact duplication,
+  expiry/payload mismatch and legacy unchanged; independent reader review found
+  no Required/Critical. Shared contract packaging is corrected in1a5c74e/6eb1d2c.
 
-### PRC4: compatible queue result readers
+### PRC4: compatible queue result readers — complete, producers disabled
 
-- [ ] Job result/status/worker understand intermediate completion independently
+- [x] Job result/status/worker understand intermediate completion independently
   from final ReportResponse; no permanent RUNNING or fake task failure.
-- [ ] Prevent legacy cached-job replay as V2 and duplicate active work; retain
+- [x] Prevent legacy cached-job replay as V2 and duplicate active work; retain
   lease, idempotency, creator/tenant, retention and notification-ACK semantics.
 - Files(5): Core src/legal_core/analysis_jobs.py, src/legal_core/analysis_job_worker.py,
   tests/test_preparation_jobs.py (new), Gateway src/telegram_gateway/analysis_jobs_runtime.py,
   tests/test_preparation_job_readers.py (new).
 - Verify: `python -m pytest -q services/legal_core/tests/test_preparation_jobs.py services/gateway/telegram/tests/test_preparation_job_readers.py` with PostgreSQL.
 - Dependencies: PRC1–3. Scope M; readers before producers.
+- Evidence:d36d602/8798333; independent own-PostgreSQL review81 passed, no skips,
+  no Required/Critical; extra READY callback/PDF/notifier and creator/resource/purge
+  negatives passed its runtime harness. Shared wire classes are re-exported after
+  packaging relocation; no Core API/ORM is included in the Telegram image.
 
 ### PRC5: intermediate-aware orchestration transport
 
-- [ ] Preserve Core's typed intermediate result through the authenticated
+- [x] Preserve Core's typed intermediate result through the authenticated
   orchestrator; malformed/out-of-scope results fail closed with bounded errors.
-- [ ] Existing model/provider/high/deadlines and two-pass legal verification
+- [x] Existing model/provider/high/deadlines and two-pass legal verification
   stay intact; no legal claims are accepted from understanding output.
 - Files(4): Agent src/agent_orchestrator/legal_core_client.py, src/agent_orchestrator/main.py,
   tests/test_preparation_transport.py (new), tests/test_preparation_api.py (new).
 - Verify: `python -m pytest -q services/agent_orchestrator/tests/test_preparation_transport.py services/agent_orchestrator/tests/test_preparation_api.py`.
 - Dependencies: PRC1,PRC4. Scope M. Checkpoint B: queue/transport readers accept
   both contracts; no producer enabled or legacy output silently reinterpreted.
+- Evidence:ab5c884;26 new/43 combined agent tests, bounded auth/lease/protocol/deadline
+  failures, exact context fingerprints and wrong-case guards. Independent transport
+  and packaging review at6eb1d2c has no Required/Critical; no activation claimed.
+- Full6eb1d2c:2904 passed/0 skipped on fresh PostgreSQL/MinIO,199.25s; actual gateway
+  Docker build and strengthened exact COPY-set tests pass after the recorded regression.
+- [x] PRC5 follow-up split: worker derives version from its stored job, forwards
+  only the matching opt-in and checks the current lease before model I/O. Files:
+  Core analysis_job_worker.py, tests/test_preparation_jobs.py; no new producer.
+- Follow-up:ebb5520 also refreshes an already-loaded ORM row when fencing a lease.
+  Independent fresh PostgreSQL42 tests pass, no Required/Critical; its real I/O
+  harness proves no runtime DB lock/transaction spans the HTTP request. A removed
+  populate_existing mutation is killed by the stale-token regression. The additional
+  analysis_jobs.py change and ADR0091 document this critical fencing correction.
+- Final code ebb5520:2910 passed/0 skipped, fresh migrated PostgreSQL+MinIO,
+  194.05s; Ruff/all-three-service mypy142/Compose and actual gateway image pass.
+  No production release or full Telegram dialogue completion is claimed.
 
 ### PRC6: persist late clarification without a report/PDF
 

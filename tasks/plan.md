@@ -7,8 +7,20 @@ This extends the existing case-readiness/FC work, not another product. Preserve
 all earlier unfinished work below. Owner approved execution after clarifying
 Hermes' semantic role on15Oct: it interprets the narrative and subsequent answers,
 suggests factual mappings/questions and the next step; Core enforces the boundaries.
-Implementation starts with PRC1. Approval is not a production deployment or legal approval.
+Execution follows the PRC dependency order. Approval is not a production deployment or legal approval.
 The earlier isolated UI fix6624084 remains unreleased.
+
+Execution checkpoint15Oct: PRC1/2 contracts/storage/runtime and PRC3–5 receipt,
+queue and orchestration readers are implemented with isolated independent reviews.
+The exact Docker COPY-set regression is fixed and a real gateway image builds;
+immutable6eb1d2c full PostgreSQL/MinIO suite passes2904 tests without skips.
+Worker follow-up ebb5520 additionally refreshes/fences the current lease before I/O
+and forwards only the stored result version; its independent fresh PostgreSQL42
+tests pass. Final immutable ebb5520 full run:2910 passed/0 skipped,194.05s.
+The complete Telegram rollback reader is not established until PRC7/10.
+NEXT: PRC6/6a/6b/6c report-free producer, pre-context limits and source-bound form
+recovery, followed by PRC7–11 understanding/acceptance/shared UI/end-to-end tests.
+No new producer, server migration or complete pre-report dialogue is activated.
 
 ### Architecture and dependency order
 
