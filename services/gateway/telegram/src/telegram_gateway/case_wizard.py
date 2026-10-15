@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 import httpx2
 from legal_core.analysis_clarifications import AnalysisClarificationAnswers
-from legal_core.api_contracts import TelegramWorkflowReceipt, TelegramWorkflowResponse
+from legal_core.contracts import TelegramWorkflowReceipt, TelegramWorkflowResponse
 from legal_core.report_presentation import (
     TELEGRAM_DRAFT_IN_PDF,
     TELEGRAM_SOURCE_LIMITATIONS_IN_PDF,

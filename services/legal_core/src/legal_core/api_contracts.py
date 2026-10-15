@@ -11,7 +11,30 @@ from legal_core.analysis_clarifications import (
     AnalysisClarificationAnswers,
     ClarificationRequestBatch,
 )
-from legal_core.contracts import CaseStatus, ContractModel, FactKey, MissingFact
+from legal_core.contracts import (
+    CaseResponse as CaseResponse,
+)
+from legal_core.contracts import (
+    CaseStatus,
+    ContractModel,
+    FactKey,
+    MissingFact,
+)
+from legal_core.contracts import (
+    LegalFragmentResponse as LegalFragmentResponse,
+)
+from legal_core.contracts import (
+    ReportResponse as ReportResponse,
+)
+from legal_core.contracts import (
+    TelegramPreparationReceipt as TelegramPreparationReceipt,
+)
+from legal_core.contracts import (
+    TelegramWorkflowReceipt as TelegramWorkflowReceipt,
+)
+from legal_core.contracts import (
+    TelegramWorkflowResponse as TelegramWorkflowResponse,
+)
 from legal_core.factual_safety_intake import FactualSafetyScreening
 from legal_core.material_preparation import MaterialGroup, MaterialKind, PreparedPart
 from legal_core.review_material_groups import ReviewGroup
@@ -202,15 +225,6 @@ class CreateCaseRequest(ContractModel):
     channel: Literal["TELEGRAM"]
 
 
-class CaseResponse(ContractModel):
-    id: UUID
-    public_number: str = Field(alias="publicNumber")
-    status: CaseStatus
-    intake_schema_version: str = Field(alias="intakeSchemaVersion")
-    created_at: datetime = Field(alias="createdAt")
-    early_escalation_id: UUID | None = Field(default=None, alias="earlyEscalationId")
-
-
 ClinicRole = Literal["CLINIC_OWNER", "CLINIC_ADMIN", "CLINIC_LAWYER"]
 
 
@@ -387,31 +401,6 @@ class PlatformSubscriptionGrantResponse(ContractModel):
     plan_code: Literal["MVP_MANUAL", "FREE_PILOT"] = Field(alias="planCode")
     status: Literal["ACTIVE"]
     ends_at: datetime | None = Field(alias="endsAt")
-
-
-class LegalFragmentResponse(ContractModel):
-    fragment_id: UUID = Field(alias="fragmentId")
-    version_id: UUID = Field(alias="versionId")
-    document_id: UUID = Field(alias="documentId")
-    article: str | None
-    part: str | None
-    point: str | None
-    structural_path: str = Field(alias="structuralPath")
-    fragment_text: str = Field(alias="fragmentText")
-    text_sha256: str = Field(alias="textSha256")
-    effective_from: date = Field(alias="effectiveFrom")
-    effective_to: date | None = Field(alias="effectiveTo")
-    source_url: str = Field(alias="sourceUrl")
-    raw_sha256: str = Field(alias="rawSha256")
-    document_title: str = Field(alias="documentTitle")
-    issuer: str | None
-    official_number: str | None = Field(alias="officialNumber")
-    version_date: date | None = Field(alias="versionDate")
-    publication_date: date | None = Field(alias="publicationDate")
-    date_basis: Literal["DATED_EDITION", "LAWYER_CURRENT_COPY"] = Field(
-        default="DATED_EDITION", alias="dateBasis"
-    )
-    extraction_limitations: list[str] = Field(default_factory=list, alias="extractionLimitations")
 
 
 class LegalFragmentSearchResponse(ContractModel):
@@ -894,8 +883,6 @@ class AddFactsRequest(ContractModel):
     @classmethod
     def fact_keys_are_unique(cls, facts: list[FactInput]) -> list[FactInput]:
         return _unique_fact_keys(facts)
-
-
 class IntakeResponse(ContractModel):
     case_id: UUID = Field(alias="caseId")
     status: CaseStatus
@@ -911,15 +898,6 @@ class CreateReportRequest(ContractModel):
     locale: Literal["ru-RU"] = "ru-RU"
 
 
-class ReportResponse(ContractModel):
-    id: UUID
-    case_id: UUID = Field(alias="caseId")
-    report_version: int = Field(alias="reportVersion")
-    report_json: dict[str, Any] = Field(alias="reportJson")
-    pdf_sha256: str = Field(alias="pdfSha256")
-    created_at: datetime = Field(alias="createdAt")
-
-
 class TelegramWorkflowSubmissionRequest(ContractModel):
     intake_schema_version: Literal["dental-case-intake.v1", "dental-case-intake.v2"] = Field(
         alias="intakeSchemaVersion"
@@ -931,29 +909,3 @@ class TelegramWorkflowSubmissionRequest(ContractModel):
     @classmethod
     def fact_keys_are_unique(cls, facts: list[FactInput]) -> list[FactInput]:
         return _unique_fact_keys(facts)
-
-
-class TelegramWorkflowResponse(ContractModel):
-    workflow_id: UUID = Field(alias="workflowId")
-    state: Literal["SUCCEEDED"]
-    case: CaseResponse
-    report: ReportResponse
-
-
-class TelegramPreparationReceipt(ContractModel):
-    """Confirmed intake receipt, deliberately without a report or PDF identity."""
-
-    receipt_version: Literal[2] = Field(alias="receiptVersion")
-    workflow_id: UUID = Field(alias="workflowId")
-    state: Literal["SUCCEEDED"]
-    case: CaseResponse
-
-    @field_validator("receipt_version", mode="before")
-    @classmethod
-    def exact_receipt_version(cls, value: object) -> object:
-        if type(value) is not int or value != 2:
-            raise ValueError("unsupported preparation receipt version")
-        return value
-
-
-TelegramWorkflowReceipt = TelegramWorkflowResponse | TelegramPreparationReceipt

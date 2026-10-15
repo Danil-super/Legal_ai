@@ -9,15 +9,17 @@ from uuid import UUID
 from pydantic import ConfigDict, Field, RootModel, field_validator, model_validator
 from pydantic_core import PydanticSerializationError
 
-from legal_core.api_contracts import LegalFragmentResponse, ReportResponse
 from legal_core.analysis_clarifications import ClarificationRequest, validate_unique_requests
 from legal_core.case_preparation_contracts import (
     HumanReviewResult,
     LimitedResult,
     NeedsFactsResult,
+    PreparationModel,
     PreparationResultBase,
 )
-from legal_core.contracts import CanonicalReport, ContractModel, FactKey
+from legal_core.contracts import (
+    CanonicalReport, ContractModel, FactKey, LegalFragmentResponse, ReportResponse,
+)
 from legal_core.risk_engine import fact_snapshot_sha256
 
 
@@ -267,3 +269,29 @@ class PreparationResult(RootModel[Annotated[
     Field(discriminator="status"),
 ]]):
     model_config = ConfigDict(revalidate_instances="always")
+
+
+class PreparationJobResponse(PreparationModel):
+    result_version: Literal[2] = Field(alias="resultVersion")
+    job_id: UUID = Field(alias="jobId")
+    case_id: UUID = Field(alias="caseId")
+    state: Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED"]
+    error_code: str | None = Field(default=None, alias="errorCode", max_length=80)
+    result: PreparationResult | None = None
+
+    @field_validator("result_version", mode="before")
+    @classmethod
+    def exact_version(cls, value: object) -> object:
+        if type(value) is not int or value != 2:
+            raise ValueError("unsupported preparation job version")
+        return value
+
+    @model_validator(mode="after")
+    def coherent_result(self) -> PreparationJobResponse:
+        if (self.state == "SUCCEEDED") != (self.result is not None):
+            raise ValueError("only a completed job can contain a result")
+        if self.result is not None and self.result.root.source.case_id != self.case_id:
+            raise ValueError("preparation result case mismatch")
+        if self.state == "SUCCEEDED" and self.error_code is not None:
+            raise ValueError("successful preparation cannot include a failure")
+        return self

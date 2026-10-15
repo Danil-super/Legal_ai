@@ -30,6 +30,15 @@ def receipt_wire():
     }
 
 
+def test_shared_wire_types_preserve_the_existing_api_imports_without_duplicate_schemas():
+    from legal_core import api_contracts, contracts
+    for name in (
+        "CaseResponse", "ReportResponse", "LegalFragmentResponse", "TelegramWorkflowResponse",
+        "TelegramPreparationReceipt", "TelegramWorkflowReceipt",
+    ):
+        assert getattr(api_contracts, name) is getattr(contracts, name)
+
+
 def test_explicit_preparation_receipt_has_no_report_or_pdf_identity():
     wire = receipt_wire()
     parsed = TypeAdapter(TelegramWorkflowReceipt).validate_python(wire)
