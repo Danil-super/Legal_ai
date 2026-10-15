@@ -8,7 +8,12 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from legal_core.api_contracts import TelegramPreparationReceipt, TelegramWorkflowReceipt
+from legal_core.api_contracts import (
+    TelegramPreparationReceipt,
+    TelegramWorkflowReceipt,
+    TelegramWorkflowSubmissionRequest,
+)
+from legal_core.case_api import _canonical_hash
 from legal_core.database import owner_database_url
 from legal_core.models import Case, TelegramCaseWorkflow
 from test_case_api import actor_headers, application_client, seed_admin, workflow_submission
@@ -66,9 +71,12 @@ def stored_receipt():
             session.add(case)
             session.flush()
             workflow = uuid4()
+            normalized = TelegramWorkflowSubmissionRequest.model_validate(
+                workflow_submission(),
+            ).model_dump(mode="json", by_alias=True)
             session.add(TelegramCaseWorkflow(
                 id=workflow, clinic_id=clinic, actor_membership_id=membership,
-                case_id=case.id, request_sha256="a" * 64, state="SUCCEEDED",
+                case_id=case.id, request_sha256=_canonical_hash(normalized), state="SUCCEEDED",
                 receipt_version=2, report_id=None,
             ))
             case_id = case.id
@@ -146,3 +154,39 @@ def test_existing_producer_still_returns_and_replays_a_legacy_report(stored_rece
     assert "receiptVersion" not in response.json()
     assert response.json()["report"]["caseId"] == response.json()["case"]["id"]
     assert response.json()["report"]["pdfSha256"]
+
+
+@pytest.mark.parametrize("mode", ["replay", "expired", "changed_payload"])
+def test_submission_replay_reads_v2_without_producing_another_case_or_report(stored_receipt, mode):
+    actor, clinic, _, workflow, case, engine = stored_receipt
+    payload = workflow_submission()
+    with engine.begin() as connection:
+        if mode == "expired":
+            connection.execute(text(
+                "UPDATE cases SET retention_due_at=clock_timestamp()-interval '1 second' "
+                "WHERE id=:id"
+            ), {"id": case})
+        before = connection.execute(text(
+            "SELECT (SELECT count(*) FROM cases WHERE clinic_id=:clinic),"
+            "(SELECT count(*) FROM case_reports WHERE clinic_id=:clinic)"
+        ), {"clinic": clinic}).one()
+    if mode == "changed_payload":
+        payload["facts"] = [fact for fact in payload["facts"] if fact["factKey"] != "SERVICE_TYPE"]
+    with application_client() as client:
+        response = client.post(f"/v1/telegram-case-workflows/{workflow}/submissions",
+                               headers=actor_headers(actor), json=payload)
+    expected = {"replay": 200, "expired": 410, "changed_payload": 422}[mode]
+    assert response.status_code == expected, response.text
+    if mode == "replay":
+        assert response.json()["receiptVersion"] == 2
+        assert response.json()["case"]["id"] == str(case)
+        assert "report" not in response.json()
+    else:
+        assert response.json()["error"]["code"] == (
+            "CASE_CONTENT_EXPIRED" if mode == "expired" else "WORKFLOW_PAYLOAD_MISMATCH"
+        )
+    with engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT (SELECT count(*) FROM cases WHERE clinic_id=:clinic),"
+            "(SELECT count(*) FROM case_reports WHERE clinic_id=:clinic)"
+        ), {"clinic": clinic}).one() == before
