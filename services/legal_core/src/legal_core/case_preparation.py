@@ -24,8 +24,37 @@ from legal_core.case_preparation_contracts import (
     NeedsFactsResult,
     PreparationSource,
 )
+from legal_core.contracts import FactKey
+from legal_core.factual_safety_intake import SCREENING_FIELDS
 from legal_core.models import AuditEvent, Case, IdempotencyRecord, SubscriptionEntitlement
 from legal_core.risk_engine import RiskAssessment, RiskLevel, risk_missing_facts
+
+
+def precontext_limitation(
+    *, error: ApiError, source: PreparationSource, facts: dict[FactKey, object],
+) -> PreparationResult:
+    """Only explicit Core factual/evidence gates become limitations, never arbitrary errors."""
+    reason = error.code
+    keys = error.details.get("missingFactKeys", [])
+    if reason == "INSUFFICIENT_FACTS":
+        event = facts.get(FactKey.EVENT_DATE)
+        if (
+            keys == [FactKey.EVENT_DATE.value] and isinstance(event, dict)
+            and event.get("precision") in {"UNKNOWN", "APPROXIMATE"}
+        ):
+            reason = "ANALYSIS_DATE_UNCERTAIN"
+    elif reason in {
+        "FACTUAL_SAFETY_SCREENING_UNKNOWN", "FACTUAL_SAFETY_AMOUNT_UNKNOWN",
+        *(f"FACTUAL_SAFETY_{field.upper()}_UNKNOWN" for field in SCREENING_FIELDS),
+    }:
+        reason = "FACTUAL_SAFETY_UNCERTAIN"
+        keys = [FactKey.FACTUAL_SAFETY_SCREENING.value]
+    elif reason not in {"ANALYSIS_DATE_UNCERTAIN", "LEGAL_EVIDENCE_UNAVAILABLE"}:
+        raise error
+    return PreparationResult(LimitedResult.model_validate({
+        "resultVersion": 2, "status": "LIMITED", "source": source,
+        "reasonCode": reason, "missingFactKeys": keys,
+    }))
 
 
 async def recheck_submission_access(
@@ -108,6 +137,7 @@ async def read_preparation_replay(
         if (
             case.clinic_id != clinic_id or record.resource_type != "CASE_PREPARATION"
             or record.resource_id != case.id or result.root.source.case_id != case.id
+            or (result.root.source.context is None and result.root.source.operation_id != record.id)
             or audit is None
         ):
             raise ValueError("preparation receipt binding mismatch")
@@ -128,6 +158,10 @@ async def store_preparation_result(
     wire = result.model_dump(mode="json", by_alias=True)
     record = _new_idempotency_record(actor=actor, scope=scope, key=idempotency_key,
                                      request_hash=request_hash)
+    if result.root.source.context is None:
+        # Before legal retrieval there is no verifier run. The durable operation
+        # is this actual receipt row, not a fabricated analysis-run identity.
+        record.id = result.root.source.operation_id
     session.add(record)
     _finish_idempotency(record, resource_type="CASE_PREPARATION", resource_id=case.id,
                         response_json=wire)

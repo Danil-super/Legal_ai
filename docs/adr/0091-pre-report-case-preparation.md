@@ -386,3 +386,66 @@ the suspension fixture was corrected from unsupported REVOKED to actual SUSPENDE
 without changing its expected403. All10 boundary tests now pass; combined producer,
 job-reader and existing analysis/clarification regressions total94 passes. No raw
 case content is returned or report/run written after a denied request.
+
+### PRC6a Core gate before legal context
+
+The opt-in internal POST /v1/cases/{case_id}/preparation-context reuses the same
+creator/tenant/role/retention/current-access and paired job lease/version checks
+as V2 submission. It performs no external I/O. A usable actual legal context
+returns200 without reserving the late submission key. Otherwise only explicit
+INSUFFICIENT_FACTS, uncertain-date, unknown-screening and absent-approved-evidence
+Core blockers become LIMITED; auth/policy/safe-stop/internal/invalid-screening
+errors remain errors. Attempted UNKNOWN/APPROXIMATE facts are retained, not coerced
+to negatives or changed to exact dates. No report or verifier run is invented.
+
+Before retrieval, source.context is null and source.operationId is the actual
+persisted IdempotencyRecord.id. The same request-bound audit receipt protects
+replay and queue recovery; the reader also checks this early operation identity.
+Confirmed HIGH/CRITICAL under the existing approved policy is evaluated before
+optional date/screening/evidence gates, records the real risk/escalation and returns
+HUMAN_REVIEW with its actual ID. The existing no-legal-evidence early-triage trace
+is used only for risk persistence, never passed off as retrieved legal context.
+
+The pre-context intent uses the same V2 case-owned namespace/job key with a fixed
+PREPARE_ANALYSIS_CONTEXT request digest. A successful context read stores no row,
+so the later reasoning submission can use that key. A retained pre-context stop
+replays without another model call; a mismatching late submission cannot overwrite
+it. Existing V1 GET/context and report contracts remain unchanged. The orchestrator
+does not opt in until the following transport increment; ordinary queues remain V1.
+
+Tests deliberately freeze API-validated synthetic fact rows at the future V2
+initial-producer boundary: legacy finalization still rejects unknown dates and is
+not claimed changed here. UNKNOWN, approximate dates, unknown safety, no evidence,
+actual urgent routing and valid context→late submission are exercised through
+real HTTP/runtime-role PostgreSQL. The absent endpoint was RED before adding it.
+One older queue fixture had context:null with an unpersisted random operation ID;
+its row ID is now aligned to that source. The expected success/ACK behavior and
+production identity check are preserved, not weakened to make the test green.
+
+Review found that early urgent preparation could bypass the operator analysis
+safe-stop. The new operation now checks require_analysis_running after an allowed
+retained replay but before policy/risk work, just as V1 stops new automated work.
+The regression reproduced201 instead of503 before this correction. This does not
+disable the separate existing human workflow: a real urgent intake finalization
+under the stop still persists its early escalation, while the subsequent new
+preparation returns503 without another risk assessment, verifier run or report.
+Both sides are covered; the stop is not reclassified as missing facts.
+
+The independent retry probe found a real422 after the late result committed:
+the payload-free preflight marker and late reasoning payload have different
+request digests under the same intent key. A repeated preflight is now an
+authorized read of an existing SUCCEEDED result, through the unchanged immutable
+request-bound receipt validation, before the new-operation marker comparison.
+It can return the actual retained late NEEDS_FACTS/LIMITED/HUMAN_REVIEW/READY with
+its genuine retrieved context. A NEW pre-context stop still has context:null and
+an actual receipt-row operation ID. The late reasoning write still compares its
+exact payload hash; no caller can replace that payload or overwrite a receipt.
+The real context→late NEEDS_FACTS/READY→same-key preflight tests were RED422 and
+now return200 with byte-equivalent canonical JSON and no second model/run/report.
+Existing worker reconciliation remains in place.
+
+Bounded NEEDS_FACTS before context remains permitted by the approved generic wire
+and plan (pre-context LIMITED or NEEDS_FACTS). Current fresh Core gates emit only
+LIMITED/HUMAN_REVIEW; the generic reader's NEEDS_FACTS support is not a legal answer
+or a protocol bypass. A review request interpreting it as a forbidden status
+misread that contract; no blanket status prohibition is introduced.
