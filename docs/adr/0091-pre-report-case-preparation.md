@@ -213,3 +213,23 @@ now(); natural expiry while waiting must not permit a stale completion. Tests al
 withdraw membership or suspend access between the initial check and completion.
 No access rules or subscription terms are changed by these repeated checks.
 Lock ordering follows [PostgreSQL deadlock prevention](https://www.postgresql.org/docs/16/explicit-locking.html#LOCKING-DEADLOCKS).
+
+### PRC3 receipt readers, before report-free producers
+
+The existing TelegramWorkflowResponse remains unchanged and report-required.
+TelegramPreparationReceipt is a separate strict-shape variant with mandatory exact
+integer receiptVersion2 and no report field, even null. Core workflow reads and
+submission replays accept both variants; ordinary submission still produces its
+legacy report. Database receipt_version chooses the variant, never the presence
+of a malformed/missing report. Current tenant, creator, entitlement and case-content
+retention checks precede reading either receipt.
+
+Gateway submission/recovery validates the same union and requested workflow ID;
+legacy report caseId must equal the returned case. Unsupported versions, partial
+payloads, null/fabricated report fields and identity mismatch become a bounded
+INVALID_LEGAL_CORE_RESPONSE, not user-facing validation details.
+Actual PostgreSQL API tests read a V2 row with zero CaseReport artifacts and reject
+foreign clinics, another creator, revoked membership and expired content. Legacy
+submission/replay and gateway transport remain covered. This is transport reader
+compatibility only: the Telegram report consumer is not yet a V2 dialogue, so this
+checkpoint is NOT the minimum rollback revision for enabling report-free producers.

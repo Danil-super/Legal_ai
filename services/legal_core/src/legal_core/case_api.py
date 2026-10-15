@@ -42,6 +42,8 @@ from legal_core.api_contracts import (
     TelegramIntakeDraftResponse,
     TelegramIntakeDraftSummary,
     TelegramIntakeDraftUpdateRequest,
+    TelegramPreparationReceipt,
+    TelegramWorkflowReceipt,
     TelegramWorkflowResponse,
     TelegramWorkflowSubmissionRequest,
 )
@@ -602,21 +604,14 @@ def _input_value(value_type: str, value: dict[str, Any]) -> object:
 
 async def _workflow_response(
     session: AsyncSession, workflow: TelegramCaseWorkflow
-) -> TelegramWorkflowResponse:
+) -> TelegramWorkflowReceipt:
     case = await session.scalar(
         select(Case).where(
             Case.id == workflow.case_id,
             Case.clinic_id == workflow.clinic_id,
         )
     )
-    report = await session.scalar(
-        select(CaseReport).where(
-            CaseReport.id == workflow.report_id,
-            CaseReport.clinic_id == workflow.clinic_id,
-            CaseReport.case_id == workflow.case_id,
-        )
-    )
-    if case is None or report is None:
+    if case is None:
         raise RuntimeError("durable workflow references are inconsistent")
     _require_case_content_available(case)
     case_response = _case_response(case)
@@ -626,6 +621,23 @@ async def _workflow_response(
             CaseEscalation.case_id == workflow.case_id,
         ).order_by(CaseEscalation.created_at, CaseEscalation.id).limit(1)
     )
+    if workflow.receipt_version == 2 and workflow.report_id is None:
+        return TelegramPreparationReceipt(
+            receiptVersion=2, workflowId=workflow.id, state="SUCCEEDED", case=case_response,
+        )
+    if workflow.receipt_version != 1 or workflow.report_id is None:
+        raise ApiError(status_code=500, code="WORKFLOW_RECEIPT_INVALID",
+                       message="Workflow receipt is unavailable")
+    report = await session.scalar(
+        select(CaseReport).where(
+            CaseReport.id == workflow.report_id,
+            CaseReport.clinic_id == workflow.clinic_id,
+            CaseReport.case_id == workflow.case_id,
+        )
+    )
+    if report is None:
+        raise ApiError(status_code=500, code="WORKFLOW_RECEIPT_INVALID",
+                       message="Workflow receipt is unavailable")
     return TelegramWorkflowResponse(
         workflowId=workflow.id,
         state="SUCCEEDED",
@@ -1810,7 +1822,7 @@ def create_case_router(
 
     @router.post(
         "/telegram-case-workflows/{workflow_id}/submissions",
-        response_model=TelegramWorkflowResponse,
+        response_model=TelegramWorkflowReceipt,
         status_code=status.HTTP_201_CREATED,
     )
     async def submit_telegram_workflow(
@@ -1819,7 +1831,7 @@ def create_case_router(
         response: Response,
         telegram_user_id: TelegramUserId,
         session: Session,
-    ) -> TelegramWorkflowResponse:
+    ) -> TelegramWorkflowReceipt:
         actor = await resolve_actor(session, telegram_user_id)
         _require_case_intake_actor(actor)
         request_json = payload.model_dump(mode="json", by_alias=True)
@@ -2068,13 +2080,13 @@ def create_case_router(
 
     @router.get(
         "/telegram-case-workflows/{workflow_id}",
-        response_model=TelegramWorkflowResponse,
+        response_model=TelegramWorkflowReceipt,
     )
     async def get_telegram_workflow(
         workflow_id: UUID,
         telegram_user_id: TelegramUserId,
         session: Session,
-    ) -> TelegramWorkflowResponse:
+    ) -> TelegramWorkflowReceipt:
         actor = await resolve_actor(session, telegram_user_id)
         workflow = await session.scalar(
             select(TelegramCaseWorkflow).where(

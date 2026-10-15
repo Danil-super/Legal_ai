@@ -938,3 +938,22 @@ class TelegramWorkflowResponse(ContractModel):
     state: Literal["SUCCEEDED"]
     case: CaseResponse
     report: ReportResponse
+
+
+class TelegramPreparationReceipt(ContractModel):
+    """Confirmed intake receipt, deliberately without a report or PDF identity."""
+
+    receipt_version: Literal[2] = Field(alias="receiptVersion")
+    workflow_id: UUID = Field(alias="workflowId")
+    state: Literal["SUCCEEDED"]
+    case: CaseResponse
+
+    @field_validator("receipt_version", mode="before")
+    @classmethod
+    def exact_receipt_version(cls, value: object) -> object:
+        if type(value) is not int or value != 2:
+            raise ValueError("unsupported preparation receipt version")
+        return value
+
+
+TelegramWorkflowReceipt = TelegramWorkflowResponse | TelegramPreparationReceipt
