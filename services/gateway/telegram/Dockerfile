@@ -22,6 +22,11 @@ COPY services/legal_core/src/legal_core/upload_filename.py ./services/legal_core
 COPY services/legal_core/src/legal_core/factual_safety_intake.py ./services/legal_core/src/legal_core/factual_safety_intake.py
 COPY services/legal_core/src/legal_core/case_preparation_contracts.py ./services/legal_core/src/legal_core/case_preparation_contracts.py
 COPY services/legal_core/src/legal_core/intake_preparation_contracts.py ./services/legal_core/src/legal_core/intake_preparation_contracts.py
+COPY services/legal_core/src/legal_core/intake_answer_contracts.py ./services/legal_core/src/legal_core/intake_answer_contracts.py
+COPY services/legal_core/src/legal_core/intake_answer_intent.py ./services/legal_core/src/legal_core/intake_answer_intent.py
+COPY services/legal_core/src/legal_core/intake_answer_wire.py ./services/legal_core/src/legal_core/intake_answer_wire.py
+COPY services/legal_core/src/legal_core/intake_answer_values.py ./services/legal_core/src/legal_core/intake_answer_values.py
+COPY services/legal_core/src/legal_core/intake_service_scope.py ./services/legal_core/src/legal_core/intake_service_scope.py
 COPY services/legal_core/src/legal_core/analysis_contracts.py ./services/legal_core/src/legal_core/analysis_contracts.py
 COPY services/legal_core/src/legal_core/risk_engine.py ./services/legal_core/src/legal_core/risk_engine.py
 COPY services/legal_core/src/legal_core/factual_safety_risk.py ./services/legal_core/src/legal_core/factual_safety_risk.py
