@@ -861,8 +861,15 @@ class LegalCoreClient:
 
     async def clarification_preview(
         self, case_id: UUID, telegram_user_id: int, *, source_report_id: UUID | None = None,
+        source_operation_id: UUID | None = None,
     ) -> dict[str, Any]:
+        if source_report_id is not None and source_operation_id is not None:
+            raise ValueError("clarification origins are mutually exclusive")
         query = "" if source_report_id is None else f"?report_id={source_report_id}"
+        if source_operation_id is not None:
+            if not isinstance(source_operation_id, UUID):
+                raise ValueError("invalid preparation operation")
+            query = f"?operation_id={source_operation_id}"
         return await self._json_request(
             "GET", f"/v1/cases/{case_id}/clarification-drafts/preview{query}",
             telegram_user_id=telegram_user_id,
@@ -871,9 +878,14 @@ class LegalCoreClient:
     async def create_clarification_draft(
         self, case_id: UUID, telegram_user_id: int, *, expected_sha256: str, key: UUID,
         expected_report_id: UUID | None = None, expected_report_sha256: str | None = None,
+        expected_operation_id: UUID | None = None, expected_operation_sha256: str | None = None,
     ) -> dict[str, Any]:
         if (expected_report_id is None) != (expected_report_sha256 is None):
             raise ValueError("clarification report binding must be provided together")
+        if (expected_operation_id is None) != (expected_operation_sha256 is None):
+            raise ValueError("clarification operation binding must be provided together")
+        if expected_report_id is not None and expected_operation_id is not None:
+            raise ValueError("clarification origins are mutually exclusive")
         payload = {"expectedFactSnapshotSha256": expected_sha256}
         if expected_report_id is not None and expected_report_sha256 is not None:
             if (not isinstance(expected_report_id, UUID)
@@ -882,6 +894,14 @@ class LegalCoreClient:
                 raise ValueError("invalid clarification report binding")
             payload.update(expectedReportId=str(expected_report_id),
                            expectedReportSha256=expected_report_sha256)
+        if expected_operation_id is not None and expected_operation_sha256 is not None:
+            if (not isinstance(expected_operation_id, UUID)
+                    or not isinstance(expected_operation_sha256, str)
+                    or len(expected_operation_sha256) != 64
+                    or any(char not in "0123456789abcdef" for char in expected_operation_sha256)):
+                raise ValueError("invalid clarification operation binding")
+            payload.update(expectedOperationId=str(expected_operation_id),
+                           expectedOperationSha256=expected_operation_sha256)
         return await self._json_request(
             "POST", f"/v1/cases/{case_id}/clarification-drafts",
             telegram_user_id=telegram_user_id, idempotency_key=key,

@@ -529,3 +529,18 @@ was RED200 with the substituted draft, then GREEN502 with no source/draft change
 The current edited active draft remains authoritative; legacy audit shape stays
 unchanged. Earlier full3009-pass evidence predates this correction and is not the
 final fixed snapshot.
+
+### PRC6c compact preparation intent and client
+
+Intermediate-origin buttons use case:clarify2: plus the same canonical base64url
+pair of case UUID and actual operation UUID (57 ASCII bytes). Report callbacks
+retain case:clarify: unchanged; neither decoder accepts the other's namespace.
+The full result hash does not fit in the button and is obtained only from Core's
+authenticated, audit-validated exact-operation preview. Creation forwards that
+whole hash/fact hash and checks the returned draft's exact immutable origin.
+A source cannot silently become a different operation, old report or latest case.
+
+Gateway client selectors and paired operation ID/hash are additive and exclusive
+of report origin. They preserve the caller's actor/idempotency key and the legacy
+wire shape; malformed/mixed bindings reject before HTTP. This first contract
+increment does not add visible buttons, change access, call models or activate V2.
