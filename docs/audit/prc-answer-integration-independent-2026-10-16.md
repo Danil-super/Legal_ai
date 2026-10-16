@@ -98,3 +98,44 @@ conversation-state/concurrency documentation was fetched through Context7; the
 existing actor-serial processor is retained, rather than relying on unconstrained
 parallel ConversationHandler updates. No external CLI, SSH or production access
 was used.
+
+## Final compatibility delta: frozen runtime `013c9f2`
+
+The reviewer separately read both complete runtime files and their exact final
+changes after the preceding review:
+
+- guided resume without an initial narrative: `17ea6fb` / integrated `d8cd861`,
+  `understanding_runtime.py` blob `d1369fda7395ab114f20c5130efa70644f4bdfda`;
+- legacy resume under the full opt-in: `ddac991` / integrated `013c9f2`,
+  `answer_runtime.py` blob `7b04d30905dd832f12397488115b110fa8d6e4a1`.
+
+Review snapshot `39ceddd` adds only the earlier review's tests/report after that
+frozen runtime. The existing strict `_saved_draft_selection`, original legacy
+resume and initial-discovery validators were also read. No required finding was
+reproduced in this delta.
+
+Missing `eventSummary` now skips only initial-narrative discovery, allowing a
+guided draft's saved question to open. A present but invalid source still crosses
+the existing fail-closed discovery boundary; it is not treated as an absent source.
+
+The legacy path is chosen only when `intakeVersion` is absent, after an owned Core
+read and strict validation of exact draft identity, an integer positive revision
+and a legacy wizard state. It calls the original legacy handler explicitly with
+`preparation=False`. A present malformed/new version never falls back to this path.
+The default-off factory and previously reviewed blob remain unchanged.
+
+Actual PTB checks on this snapshot:
+
+- **37 passed, zero skipped, 1.45 seconds**: guided-resume, legacy-resume and full
+  answer-runtime tests. JUnit `final-answer-compat-focused-39ceddd.xml`, SHA-256
+  `375b133dfdef85eab6bede7cf22933ca420a5823ff4ad6290d5b632df66f1cac`.
+- **5 passed, zero skipped, 1.04 seconds**: newly authored independent negative
+  legacy identity/revision/state probes. Wrong ID, boolean or zero revision, a V2
+  state and an unknown state do not populate the wizard, call V2 discovery or create
+  writes/jobs. Ruff passed for the new test file.
+
+The focused cross-service test harness needs `services/legal_core/tests` in
+`PYTHONPATH`; an initial command omitted it and stopped at collection. Correcting
+the invocation required no source/test changes. Neither PostgreSQL cluster was
+used for this delta; the concurrent frozen full-suite run on port 55487 was not
+touched. There were no runtime source edits, deployments or external CLI calls.
