@@ -143,3 +143,21 @@ def test_real_actor_processor_accepts_manual_while_synthetic_model_is_still_bloc
             await task
             assert "incomingKind" not in core.draft["draftData"]
     asyncio.run(scenario())
+
+
+def test_edit_stops_old_operation_saves_same_draft_and_starts_new_revision():
+    async def scenario():
+        async with active_harness() as (_app, core, _sent, dispatch):
+            await dispatch("quick:start")
+            await dispatch("text:" + TEXT)
+            previous = core.starts[-1]
+            await dispatch(bound_callback("edit", previous, DRAFT))
+            edited = TEXT + " Уточнение описания."
+            await dispatch("text:" + edited)
+            assert core.draft["id"] == str(DRAFT)
+            assert core.draft["draftData"]["eventSummary"] == edited
+            assert core.cancels == [previous]
+            assert len(core.starts) == 2 and core.starts[-1] != previous
+            assert len([request for request in core.requests if request[0] == "POST"]) == 1
+            assert core.operations[previous]["status"]["state"] == "MANUAL_CONTINUATION"
+    asyncio.run(scenario())

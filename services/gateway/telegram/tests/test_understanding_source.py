@@ -91,3 +91,16 @@ def test_edit_reuses_saved_draft_and_refuses_to_discard_confirmed_answers():
             await save_source(core, 777, 777, 101, TEXT, edit_draft_id=DRAFT)
         assert core.draft["draftData"]["incomingKind"] == "UNKNOWN"
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("marker", ["TEXT_ATTACHED", "FILE_ATTACHED"])
+def test_source_edit_never_resets_an_existing_attachment_marker(marker):
+    async def scenario():
+        core = SourceCore()
+        await save_source(core, 777, 777, 99, TEXT)
+        core.draft["draftData"]["incomingSourceStatus"] = marker
+        core.draft["revision"] += 1
+        saved = await save_source(core, 777, 777, 100, TEXT + " Уточнение.", edit_draft_id=DRAFT)
+        assert saved["draftData"]["incomingSourceStatus"] == marker
+        assert saved["id"] == str(DRAFT)
+    asyncio.run(scenario())

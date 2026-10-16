@@ -38,8 +38,10 @@ class UnderstandingCore(ExperienceCore):
                 return {"operation": deepcopy(match["status"]) if match else None}
             assert method == "POST"
             assert kwargs["payload"] == {"expectedRevision": self.draft["revision"]}
-            assert self.draft["draftData"] == {"intakeVersion": 2, "eventSummary": TEXT,
-                                              "incomingSourceStatus": "NOT_ATTACHED"}
+            assert set(self.draft["draftData"]) == {
+                "intakeVersion", "eventSummary", "incomingSourceStatus",
+            }
+            assert self.draft["draftData"]["incomingSourceStatus"] == "NOT_ATTACHED"
             operation = uuid5(DRAFT, str(self.draft["revision"]))
             if operation not in self.operations:
                 self.operations[operation] = {
