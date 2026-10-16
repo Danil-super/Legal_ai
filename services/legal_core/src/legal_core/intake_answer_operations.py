@@ -359,6 +359,10 @@ async def discover_answer(
     async with sessions() as session:
         actor = await resolve_actor(session, telegram_user_id)
         draft = await _draft(session, actor, draft_id)
+        if draft.wizard_state in {"MATERIALS", "SUMMARY", "V2_CONFIRM"}:
+            # Navigation fences also run here, but these are uploads/consent, not answers.
+            await _recheck_after_locks(session, telegram_user_id, actor, draft)
+            return None
         question = current_question(draft)
         rows = await live_records(session, actor, draft, question)
         await _recheck_after_locks(session, telegram_user_id, actor, draft)

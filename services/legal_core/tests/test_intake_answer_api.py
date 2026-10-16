@@ -56,3 +56,21 @@ def test_caller_cannot_choose_question_or_result(draft_owner, extra):
         )
     assert response.status_code == 422
     assert "Новый ответ" not in response.text and "forged" not in response.text
+
+
+@pytest.mark.parametrize("state", ["MATERIALS", "SUMMARY", "V2_CONFIRM"])
+def test_nonfactual_checkpoint_discovery_does_not_block_navigation(draft_owner, state):
+    actor, _, _, draft = draft_owner
+    with application_client() as client:
+        saved = client.put(f"/v1/telegram-intake-drafts/{draft['id']}",
+                           headers=actor_headers(actor, uuid4()), json={
+                               "expectedRevision": draft["revision"], "wizardState": state,
+                               "draftData": draft["draftData"],
+                           })
+        assert saved.status_code == 200, saved.text
+        response = client.get(
+            f"/v1/telegram-intake-drafts/{draft['id']}/answer-interpretations",
+            headers=actor_headers(actor),
+        )
+    assert response.status_code == 200, response.text
+    assert response.json() == {"operation": None}
