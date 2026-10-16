@@ -928,3 +928,12 @@ value can accompany a pending/manual/accepted tag or become confirmed by model
 output alone. Actor requests supply a bounded answer and expected revision only,
 never a question or target. Protected context selects only existing factual
 fields and exact answer anchors; attachments and final consent are excluded.
+
+Answer reservation serializes on the owned draft, allowing only one live answer
+for the current question/revision. A different reply requires cancellation first;
+an exact retry, even after cancellation or UTC midnight, reuses the frozen original
+reference date and never reacquires a model lease. The bounded de-identified answer
+is private expiring operation data, not confirmed draft data or audit metadata.
+Discovery checks at most two candidates and refuses ambiguity rather than choosing
+the latest timestamp. Authorization and retention are rechecked after the last
+operation lock. This reservation slice remains additive and is not runtime-enabled.
