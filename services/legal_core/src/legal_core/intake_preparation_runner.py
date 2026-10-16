@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Literal
 from uuid import UUID
 
@@ -11,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from legal_core.analysis_job_worker import WorkerSettings
 from legal_core.analysis_safe_stop import require_analysis_running
 from legal_core.case_api import ApiError
+from legal_core.intake_answer_operations import AnswerOperation
+from legal_core.intake_answer_wire import AnswerProposal
 from legal_core.intake_preparation import (
     PreparationOperation,
     complete_preparation,
@@ -20,6 +23,7 @@ from legal_core.intake_preparation_contracts import UnderstandingInvocation, Und
 from legal_core.model_admission import ModelAdmission
 
 logger = logging.getLogger(__name__)
+Operation = PreparationOperation | AnswerOperation
 
 
 class IntakePreparationRunner:
@@ -33,10 +37,10 @@ class IntakePreparationRunner:
             timeout=120, trust_env=False, follow_redirects=False,
             limits=httpx.Limits(max_connections=2),
         )
-        self._tasks: dict[asyncio.Task[None], tuple[int, PreparationOperation]] = {}
+        self._tasks: dict[asyncio.Task[None], tuple[int, Operation]] = {}
         self._closing = False
 
-    async def submit(self, *, telegram_user_id: int, operation: PreparationOperation) -> None:
+    async def submit(self, *, telegram_user_id: int, operation: Operation) -> None:
         if operation.lease_token is None or any(
             item.operation_id == operation.operation_id for _, item in self._tasks.values()
         ):
@@ -78,7 +82,7 @@ class IntakePreparationRunner:
             await self._client.aclose()
 
     async def _manual(
-        self, actor: int, operation: PreparationOperation,
+        self, actor: int, operation: Operation,
         code: str,
     ) -> None:
         if operation.lease_token is None:
@@ -87,8 +91,15 @@ class IntakePreparationRunner:
         reason = ("MODEL_TIMEOUT" if code == "MODEL_TIMEOUT" else
                   "MODEL_PROTOCOL_INVALID" if code == "MODEL_PROTOCOL_INVALID" else
                   "MODEL_UNAVAILABLE")
+        fail: Callable[..., Awaitable[Operation]]
         try:
-            await fail_preparation(
+            if isinstance(operation, AnswerOperation):
+                from legal_core.intake_answer_lifecycle import fail_answer
+
+                fail = fail_answer
+            else:
+                fail = fail_preparation
+            await fail(
                 self._sessions, telegram_user_id=actor, operation_id=operation.operation_id,
                 lease_token=operation.lease_token, reason_code=reason,
             )
@@ -98,7 +109,7 @@ class IntakePreparationRunner:
             logger.warning("intake_preparation_cleanup_failed operation=%s type=%s",
                            operation.operation_id, type(error).__name__)
 
-    async def _execute(self, actor: int, operation: PreparationOperation) -> None:
+    async def _execute(self, actor: int, operation: Operation) -> None:
         try:
             intent, token = operation.intent, operation.lease_token
             if intent is None or token is None:
@@ -108,8 +119,11 @@ class IntakePreparationRunner:
                 draftId=intent.draft_id, leaseToken=token, expectedRevision=intent.draft_revision,
                 expectedInputSha256=intent.input_sha256,
             )
+            suffix = (f"intake-answer-preparations/{operation.operation_id}/interpret"
+                      if isinstance(operation, AnswerOperation)
+                      else f"intake-preparations/{operation.operation_id}/understand")
             response = await asyncio.wait_for(self._client.post(
-                f"{self._settings.url}/v1/intake-preparations/{operation.operation_id}/understand",
+                f"{self._settings.url}/v1/{suffix}",
                 headers={"X-Agent-Internal-Key": self._settings.internal_key,
                          "X-Telegram-User-Id": str(actor)},
                 json=request.model_dump(mode="json", by_alias=True),
@@ -119,6 +133,9 @@ class IntakePreparationRunner:
             if response.is_error:
                 code = response.json().get("detail", {}).get("code")
                 await self._manual(actor, operation, code)
+                return
+            if isinstance(operation, AnswerOperation):
+                await self._complete_answer(actor, operation, response)
                 return
             proposal = UnderstandingProposal.model_validate(response.json())
             if (
@@ -142,3 +159,24 @@ class IntakePreparationRunner:
             await self._manual(actor, operation, "MODEL_PROTOCOL_INVALID")
         except Exception:
             await self._manual(actor, operation, "MODEL_UNAVAILABLE")
+
+    async def _complete_answer(
+        self, actor: int, operation: AnswerOperation, response: httpx.Response,
+    ) -> None:
+        from legal_core.intake_answer_lifecycle import complete_answer
+
+        proposal = AnswerProposal.model_validate(response.json())
+        intent = operation.intent
+        if intent is None or operation.lease_token is None or (
+            proposal.operation_id != operation.operation_id
+            or proposal.draft_id != intent.draft_id
+            or proposal.draft_revision != intent.draft_revision
+            or proposal.input_sha256 != intent.input_sha256
+            or proposal.answer_sha256 != intent.answer_sha256
+            or proposal.question_sha256 != intent.question_sha256
+        ):
+            raise ValueError("answer result binding mismatch")
+        await complete_answer(
+            self._sessions, telegram_user_id=actor, operation_id=operation.operation_id,
+            lease_token=operation.lease_token, interpretation=proposal.interpretation,
+        )

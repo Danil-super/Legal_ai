@@ -44,6 +44,10 @@ class AnswerOperation:
     lease_token: UUID | None = None
     intent: AnswerPreparationIntent | None = None
 
+    @property
+    def operation_id(self) -> UUID:
+        return self.response.operation_id
+
 
 class StoredAnswer(PreparationModel):
     intent: AnswerPreparationIntent

@@ -946,3 +946,10 @@ advances in a later optimistic save. A repeated consent returns the current owne
 draft without reapplying the old answer or extending retention. Historical receipt
 validation precedes freshness checks but never current access/retention checks.
 No case, confirmed-fact row, analysis job or report is created by answer consent.
+
+Both operation kinds use the existing two-slot admission and drainable runner;
+answer dispatch sends only operation/draft/revision/hash/lease metadata. The Agent
+fetches the current protected context itself. A completion must match all three
+input, answer and question digests and pass current authorization/lease checks after
+the network wait. Busy, shutdown, protocol failure and timeout produce manual
+continuation, without an extra model attempt or a new queue/budget.
