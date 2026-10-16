@@ -20,6 +20,7 @@ from legal_core.intake_answer_contracts import (
     derive_answer_question,
 )
 from legal_core.intake_answer_intent import AnswerPreparationIntent
+from legal_core.intake_answer_values import validate_answer_shape, validate_answer_value
 from legal_core.intake_answer_wire import AnswerStatusResponse
 from legal_core.intake_preparation import (
     LEASE_DURATION,
@@ -28,7 +29,12 @@ from legal_core.intake_preparation import (
     _locked_owned_operation,
     _recheck_after_locks,
 )
-from legal_core.models import IdempotencyRecord, TelegramIntakeDraft
+from legal_core.intake_preparation_contracts import (
+    AcceptUnderstandingRequest,
+    UnderstandingAcceptance,
+    UnderstandingSource,
+)
+from legal_core.models import AuditEvent, IdempotencyRecord, TelegramIntakeDraft
 from legal_core.pseudonymization import pseudonymize_text
 
 
@@ -45,6 +51,138 @@ class StoredAnswer(PreparationModel):
     answer: str = Field(strict=True, min_length=1, max_length=1500)
     interpretation: AnswerInterpretation | None = None
     acceptance: dict[str, Any] | None = Field(default=None, max_length=6)
+
+
+def proposal_metadata(stored: StoredAnswer) -> dict[str, Any]:
+    if stored.interpretation is None:
+        raise ApiError(status_code=409, code="ANSWER_RESULT_INVALID",
+                       message="Answer result is not available")
+    intent = stored.intent
+    return {
+        "draftId": str(intent.draft_id), "revision": intent.draft_revision,
+        "inputSha256": intent.input_sha256, "intentSha256": intent.request_sha256,
+        "questionSha256": intent.question_sha256, "answerSha256": intent.answer_sha256,
+        "proposalSha256": _canonical_hash(stored.interpretation.model_dump(
+            mode="json", by_alias=True,
+        )),
+    }
+
+
+async def _audit_matches(
+    session: AsyncSession, actor: ActorContext, record: IdempotencyRecord,
+    action: str, metadata: dict[str, Any],
+) -> bool:
+    audits = list((await session.scalars(select(AuditEvent.metadata_json).where(
+        AuditEvent.clinic_id == actor.clinic_id,
+        AuditEvent.actor_membership_id == actor.membership_id,
+        AuditEvent.resource_type == RESOURCE_TYPE, AuditEvent.resource_id == record.id,
+        AuditEvent.action == action,
+    ).limit(2))).all())
+    return audits == [metadata]
+
+
+async def checked_proposal(
+    session: AsyncSession, actor: ActorContext, record: IdempotencyRecord,
+    stored: StoredAnswer, draft: TelegramIntakeDraft | None = None,
+) -> dict[str, Any]:
+    valid = False
+    try:
+        interpretation = stored.interpretation
+        if interpretation is not None:
+            interpretation.validate_source(stored.answer)
+            if interpretation.status == "PROPOSED":
+                if draft is None:
+                    validate_answer_shape(stored.question, interpretation.value,
+                                          as_of_date=stored.intent.as_of_date)
+                else:
+                    validate_answer_value(stored.question, interpretation.value, stored.answer,
+                                          draft.draft_json, as_of_date=stored.intent.as_of_date)
+                if stored.question.target_field == "affectedServices" and (
+                    not isinstance(interpretation.value, list) or any(
+                        not isinstance(item, str) or not any(
+                            item in stored.answer[span.start:span.end]
+                            for span in interpretation.source_spans
+                        ) for item in interpretation.value
+                    )
+                ):
+                    raise ValueError("service is not grounded in an answer anchor")
+            valid = (record.state == "SUCCEEDED" and record.lease_token is None
+                     and record.lease_until is None)
+    except (ValueError, TypeError):
+        valid = False
+    if not valid or not await _audit_matches(
+        session, actor, record, "INTAKE_ANSWER_PROPOSED", proposal_metadata(stored),
+    ):
+        raise ApiError(status_code=409, code="ANSWER_PROPOSAL_INVALID",
+                       message="Answer proposal binding is not valid")
+    return proposal_metadata(stored)
+
+
+async def acceptance_receipt(
+    session: AsyncSession, actor: ActorContext, draft: TelegramIntakeDraft,
+    record: IdempotencyRecord, stored: StoredAnswer,
+) -> dict[str, Any] | None:
+    receipt = stored.acceptance
+    if receipt is None:
+        return None
+    metadata = await checked_proposal(session, actor, record, stored)
+    valid = False
+    try:
+        request = AcceptUnderstandingRequest(
+            expectedRevision=stored.intent.draft_revision,
+            expectedInputSha256=stored.intent.input_sha256,
+            expectedProposalSha256=metadata["proposalSha256"],
+        )
+        valid = (
+            set(receipt) == {"acceptedRevision", "requestSha256", "proposalSha256", "outputSha256"}
+            and type(receipt["acceptedRevision"]) is int
+            and receipt["acceptedRevision"] == stored.intent.draft_revision + 1
+            and draft.revision >= receipt["acceptedRevision"]
+            and stored.interpretation is not None and stored.interpretation.status == "PROPOSED"
+            and receipt["proposalSha256"] == metadata["proposalSha256"]
+            and receipt["requestSha256"] == _canonical_hash(request.model_dump(
+                mode="json", by_alias=True,
+            ))
+            and isinstance(receipt["outputSha256"], str)
+            and len(receipt["outputSha256"]) == 64
+            and all(char in "0123456789abcdef" for char in receipt["outputSha256"])
+            and (draft.revision != receipt["acceptedRevision"]
+                 or input_hash(draft) == receipt["outputSha256"])
+        )
+    except (KeyError, TypeError, ValueError):
+        valid = False
+    if not valid or not await _audit_matches(
+        session, actor, record, "INTAKE_ANSWER_ACCEPTED", {**metadata, **receipt},
+    ):
+        raise ApiError(status_code=409, code="ANSWER_ACCEPTANCE_INVALID",
+                       message="Answer acceptance binding is not valid")
+    return receipt
+
+
+async def checked_result(
+    session: AsyncSession, actor: ActorContext, draft: TelegramIntakeDraft,
+    record: IdempotencyRecord,
+) -> AnswerOperation:
+    historical = stored_answer(actor, draft, record, fresh=False)
+    receipt = await acceptance_receipt(session, actor, draft, record, historical)
+    if receipt is not None:
+        return AnswerOperation(AnswerStatusResponse(
+            operationId=record.id, state="ACCEPTED", acceptance=UnderstandingAcceptance(
+                draftId=draft.id, acceptedRevision=receipt["acceptedRevision"],
+            ),
+        ))
+    bound = stored_answer(actor, draft, record)
+    if record.state != "SUCCEEDED":
+        return pending_result(record)
+    metadata = await checked_proposal(session, actor, record, bound, draft)
+    assert bound.interpretation is not None  # checked_proposal established the closed result.
+    return AnswerOperation(AnswerStatusResponse(
+        operationId=record.id, state=bound.interpretation.status, question=bound.question,
+        interpretation=bound.interpretation, source=UnderstandingSource(
+            draftId=draft.id, draftRevision=draft.revision,
+            inputSha256=bound.intent.input_sha256, proposalSha256=metadata["proposalSha256"],
+        ),
+    ))
 
 
 def checked_source(answer: str) -> str:
@@ -162,7 +300,7 @@ async def reserve_answer(
                            message="The current answer operation is ambiguous")
         if exact:
             stored_answer(actor, draft, exact[0])
-            result = pending_result(exact[0])
+            result = await checked_result(session, actor, draft, exact[0])
             await session.commit()
             return result
         intent = AnswerPreparationIntent(
@@ -200,7 +338,7 @@ async def reserve_answer(
             raise ApiError(status_code=409, code="ANSWER_INTENT_INVALID",
                            message="Answer operation binding is not valid")
         stored_answer(actor, draft, record)
-        result = pending_result(record)
+        result = await checked_result(session, actor, draft, record)
         if inserted is not None:
             result = AnswerOperation(result.response, lease_token=token, intent=intent)
             session.add(_audit(actor=actor, action="INTAKE_ANSWER_RESERVED",
@@ -226,7 +364,7 @@ async def discover_answer(
         if not rows:
             return None
         stored_answer(actor, draft, rows[0])
-        result = pending_result(rows[0])
+        result = await checked_result(session, actor, draft, rows[0])
         await session.commit()
         return result
 
@@ -238,8 +376,7 @@ async def read_answer(
         actor, draft, record = await _locked_owned_operation(
             session, telegram_user_id, operation_id,
         )
-        stored_answer(actor, draft, record)
-        result = pending_result(record)
+        result = await checked_result(session, actor, draft, record)
         await session.commit()
         return result
 
@@ -251,6 +388,10 @@ async def cancel_answer(
         actor, draft, record = await _locked_owned_operation(
             session, telegram_user_id, operation_id,
         )
+        historical = stored_answer(actor, draft, record, fresh=False)
+        if await acceptance_receipt(session, actor, draft, record, historical) is not None:
+            raise ApiError(status_code=409, code="ANSWER_ALREADY_ACCEPTED",
+                           message="Confirmed facts cannot be cancelled")
         stored_answer(actor, draft, record)
         if record.state != "FAILED":
             record.state, record.lease_token, record.lease_until = "FAILED", None, None

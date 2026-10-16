@@ -937,3 +937,12 @@ is private expiring operation data, not confirmed draft data or audit metadata.
 Discovery checks at most two candidates and refuses ambiguity rather than choosing
 the latest timestamp. Authorization and retention are rechecked after the last
 operation lock. This reservation slice remains additive and is not runtime-enabled.
+
+Completed answers are separately audited and decoded; both proposal digests and
+consent receipts bind question, original answer, intent, displayed value and output
+revision. UNRESOLVED cannot be accepted. Consent changes only the current target
+and canonical dependent fields, and preserves the wizard checkpoint. Navigation
+advances in a later optimistic save. A repeated consent returns the current owned
+draft without reapplying the old answer or extending retention. Historical receipt
+validation precedes freshness checks but never current access/retention checks.
+No case, confirmed-fact row, analysis job or report is created by answer consent.
