@@ -48,7 +48,7 @@ def test_preparation_receipt_has_one_next_step_and_never_downloads_an_intake_pdf
     from telegram_gateway import analysis_runtime
 
     monkeypatch.setenv("AGENT_ORCHESTRATOR_URL", "http://synthetic-agent:8010")
-    monkeypatch.setenv("AGENT_INTERNAL_KEY", "synthetic-internal-key-12345678901234567890")
+    monkeypatch.setenv("AGENT_INTERNAL_KEY", "synthetic-" + "x" * 40)
     monkeypatch.setattr(bot, "_send_workflow_report", bot._send_workflow_report)
     monkeypatch.setattr(analysis_runtime, "_PATCHED", False)
     analysis_runtime.build_application_with_analysis("123456789:synthetic-telegram-token")

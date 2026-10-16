@@ -312,8 +312,13 @@ producer/retention/recovery paths in PRC6a/6b; this transport does not fabricate
 These endpoints are not called by current V1 producers; Core's V2 writer remains
 unimplemented until the next task and no new production traffic is activated here.
 
-Framework versions are pinned in requirements.lock: FastAPI0.141.1,
-Pydantic2.13.4 and SQLAlchemy2.0.52. Framework patterns were checked against official
+Framework versions are pinned in requirements.lock:
+
+- FastAPI: 0.141.1.
+- Pydantic: 2.13.4.
+- SQLAlchemy: 2.0.52.
+
+Framework patterns were checked against official
 [FastAPI union response models](https://fastapi.tiangolo.com/tutorial/extra-models/#union-or-anyof),
 [Pydantic TypeAdapter](https://docs.pydantic.dev/latest/concepts/type_adapter/)
 and [discriminated unions](https://docs.pydantic.dev/latest/concepts/unions/#discriminated-unions-with-str-discriminators).

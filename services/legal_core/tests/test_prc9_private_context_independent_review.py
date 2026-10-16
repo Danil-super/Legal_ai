@@ -158,7 +158,7 @@ def test_agent_core_postgres_roundtrip_minimizes_model_input_and_releases_locks(
     from agent_orchestrator.legal_core_client import LegalCoreClient, LegalCoreEndpoint
     from agent_orchestrator.main import ServiceDependencies, ServiceSettings, create_app
 
-    key = "independent-synthetic-private-key-1234567890"
+    key = "independent-" + "x" * 40
     monkeypatch.setenv("AGENT_INTERNAL_KEY", key)
     actor, _, _, draft = draft_owner
     lease = _run(lambda sessions: _reserve(sessions, actor, draft))

@@ -125,7 +125,7 @@ def test_arbitrary_source_or_metadata_is_rejected_without_validation_echo(change
 
 
 @pytest.mark.parametrize("change", [
-    {"X-Agent-Internal-Key": "wrong-key-123456789012345678901234567890"},
+    {"X-Agent-Internal-Key": "wrong-" + "x" * 40},
     {"X-Agent-Internal-Key": None}, {"X-Telegram-User-Id": None},
     {"X-Telegram-User-Id": "0"}, {"X-Telegram-User-Id": "-1"},
 ])
