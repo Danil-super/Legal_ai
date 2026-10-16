@@ -23,6 +23,10 @@ class UnderstandingContextRequest(PreparationModel):
     expected_input_sha256: Sha256 = Field(alias="expectedInputSha256")
 
 
+class StartUnderstandingRequest(PreparationModel):
+    expected_revision: int = Field(alias="expectedRevision", strict=True, ge=1)
+
+
 class UnderstandingInvocation(UnderstandingContextRequest):
     draft_id: UUID = Field(alias="draftId")
 
@@ -131,3 +135,17 @@ class UnderstandingProposal(PreparationModel):
     draft_revision: int = Field(alias="draftRevision", strict=True, ge=1)
     input_sha256: Sha256 = Field(alias="inputSha256")
     suggestions: DraftSuggestions
+
+
+class PreparationStatusResponse(PreparationModel):
+    """Public state only: never serialize a private operation dataclass wholesale."""
+
+    operation_id: UUID = Field(alias="operationId")
+    state: Literal["PENDING", "PROPOSED", "MANUAL_CONTINUATION"]
+    suggestions: DraftSuggestions | None
+
+    @model_validator(mode="after")
+    def proposed_only(self) -> PreparationStatusResponse:
+        if (self.state == "PROPOSED") != (self.suggestions is not None):
+            raise ValueError("only a proposed operation may expose unconfirmed suggestions")
+        return self

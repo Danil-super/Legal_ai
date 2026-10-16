@@ -806,3 +806,17 @@ timeout and process shutdown yield durable manual continuation when access still
 permits; a cancelled/changed/expired operation cannot be revived. Shutdown drains
 intake tasks before disposing its HTTP client and the database engine. No caller
 or Telegram route starts these tasks until the separately tested actor API exists.
+
+### PRC9e actor operation API
+
+The existing intake owner can POST a stored draft's /understanding with only its
+expected revision. Core derives kind, tenant, content hash and stable intent;
+retries recover the same durable operation without a new model lease. GET reads
+owned status/proposals; DELETE durably cancels before signalling the local task.
+The dedicated public response serializes only operationId/state/suggestions, not
+the internal dataclass's lease/intent. Proposals remain unconfirmed and do not
+modify the draft. Safe-stop refuses new work but allows status/cancellation.
+Absent/busy workers return durable manual continuation, not an orphan pending
+lease. POST returns 202 without awaiting model I/O; restart uses the same owner
+and revision-bound intent. Ordinary Telegram entry points remain unchanged until
+PRC10's durable source, confirmation and cancellation consumers are implemented.
