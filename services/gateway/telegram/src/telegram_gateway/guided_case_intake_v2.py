@@ -21,6 +21,7 @@ from legal_core.analysis_clarifications import (
     ClarificationQuestionId,
     ClarificationRequest,
     ClarificationRequestBatch,
+    ServiceProvidedDate,
 )
 from legal_core.pseudonymization import pseudonymize_text
 
@@ -433,11 +434,13 @@ def _valid_multi(value: object, field: str) -> bool:
 def _valid_date(value: object, *, exact_required: bool) -> bool:
     if not isinstance(value, dict) or set(value) != {"date", "precision"}:
         return False
-    if value["precision"] == "UNKNOWN":
-        return value["date"] is None and not exact_required
-    if value["precision"] != "EXACT" or not isinstance(value["date"], str):
+    try:
+        parsed = ServiceProvidedDate.model_validate(value)
+        if parsed.provided_date is not None and parse_date_answer(parsed.provided_date) is None:
+            return False
+    except ValueError:
         return False
-    return parse_date_answer(value["date"]) == value
+    return not exact_required or parsed.precision == "EXACT"
 
 
 def _valid_text(value: object, field: str) -> bool:
@@ -530,6 +533,8 @@ def _date_label(value: object) -> str:
     date_value = value.get("date")
     if value.get("precision") == "EXACT" and isinstance(date_value, str):
         return date_value
+    if value.get("precision") == "APPROXIMATE" and _valid_date(value, exact_required=False):
+        return "примерно " + str(date_value)
     return "не указано"
 
 

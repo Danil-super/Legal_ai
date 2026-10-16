@@ -490,6 +490,29 @@ transaction, waits, stores and reads back its receipt; it was RED on the default
 transaction timestamp. Normal production writers hold the case lock; the test
 directly exercises storage with a synthetic result only.
 
+### PRC7d3 initial Telegram preparation consumer
+
+The new explicit confirmation callback case:confirm2:<workflow UUID> binds the
+receipt mode in the durable Telegram message. Core also hashes receiptVersion in
+the submission. A retry uses the same workflow/facts/mode; restart recovery only
+GETs that workflow and refuses a legacy response for this intent, never creates
+another case or falls back to a legacy report. Existing case:confirm remains1.
+The ordinary wizard still emits the legacy button until PRC10 activation readiness.
+
+The new consumer checks all ordinary missing fields but preserves attempted
+UNKNOWN/APPROXIMATE dates and UNKNOWN screening, rather than reopening them on
+confirmation. Invalid calendar/precision values still need correction. Shared
+partial intake completeness now accepts a validated approximate date, displaying
+"примерно" in the recap; the legacy final confirmation and Core's exact-date legal
+gate remain in place. This does not turn an approximate date into an exact one.
+
+Typed receipt2 is presented as source facts with one next step: case processing,
+or the actual early-escalation lawyer card. It never downloads an intake PDF,
+claims a final answer exists, or assumes no final answer exists on a later read.
+Status/result delivery uses the previously implemented preparation reader. Telegram
+delivery failure preserves the intent for explicit retry; archive failure reports
+saved facts, not a fabricated finished report. No model/provider settings change.
+
 ### PRC7d2 queue version follows the stored initial receipt
 
 For a case created by the explicit report-free initial writer, enqueue derives
