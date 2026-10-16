@@ -6,7 +6,11 @@ from datetime import date, timedelta
 import pytest
 
 from legal_core.intake_answer_contracts import derive_answer_question
-from legal_core.intake_answer_values import apply_answer_value, validate_answer_value
+from legal_core.intake_answer_values import (
+    apply_answer_value,
+    preview_answer_value,
+    validate_answer_value,
+)
 from legal_core.factual_safety_intake import SCREENING_FIELDS, SCREENING_VERSION
 from legal_core.intake_answer_values import validate_answer_shape
 
@@ -191,3 +195,70 @@ def test_frozen_analysis_date_controls_future_date_validation():
         validate_answer_value(question, value, "2025-02-01", data, as_of_date=date(2025, 1, 1))
     assert validate_answer_value(question, value, "2025-02-01", data,
                                  as_of_date=date(2025, 3, 1)) == value
+
+
+@pytest.mark.parametrize(("state", "value", "source"), [
+    ("INCOMING", "COMPLAINT", "An unhappy message arrived."),
+    ("SITUATION", ["SERVICE"], "Only service interaction."),
+    ("SERVICES", ["Extraction", "Restoration"], "Extraction; Restoration"),
+    ("EVENT", "A patient asks about the result.", "A patient asks about the result."),
+    ("EVENT_DATE", {"date": None, "precision": "UNKNOWN"}, "Unknown"),
+    ("CHRONOLOGY", "ONGOING", "This has happened before."),
+    ("CLINIC_ACTIONS", ["NOTHING_YET"], "Nothing done yet."),
+    ("HEALTH", ["HOSPITALIZATION"], "Hospitalization was reported."),
+    ("SAFETY", "YES", "Yes."),
+    ("ANALYSIS_CLARIFICATION", "UNKNOWN", "Unknown."),
+])
+def test_preview_uses_exactly_the_same_mutation_for_every_question_family(state, value, source):
+    data = _service_data()
+    data["healthSignals"] = ["UNKNOWN"]
+    data["safetyScreening"] = {"schemaVersion": SCREENING_VERSION, "moneyRequested": "YES"}
+    if state == "ANALYSIS_CLARIFICATION":
+        data.pop("analysisClarificationAnswers")
+    before = deepcopy(data)
+    question = derive_answer_question(data, state)
+    expected = apply_answer_value(data, question, value, source)
+    assert preview_answer_value(data, question, value) == expected
+    assert data == before
+
+
+def test_preview_is_shape_only_and_never_weakens_source_grounding_for_acceptance():
+    data = {"intakeVersion": 2, "situationAreas": ["TREATMENT"]}
+    question = derive_answer_question(data, "SERVICES")
+    result = preview_answer_value(data, question, ["Restoration"])
+    assert result["affectedServices"] == ["Restoration"]
+    with pytest.raises(ValueError):
+        apply_answer_value(data, question, ["Restoration"], "A different service.")
+
+
+def test_preview_rejects_stale_and_invalid_question_without_private_error_context():
+    data = _service_data()
+    data.pop("analysisClarificationAnswers")
+    question = derive_answer_question(data, "ANALYSIS_CLARIFICATION")
+    data["affectedServices"].reverse()
+    for candidate in (question, question.model_copy(update={"target_field": "incomingKind"})):
+        with pytest.raises(ValueError) as caught:
+            preview_answer_value(data, candidate, "PAID")
+        assert caught.value.__context__ is None
+        assert caught.value.__cause__ is None
+
+
+def test_preview_checks_shape_and_the_same_frozen_date_without_raw_answer():
+    data = {"intakeVersion": 2}
+    question = derive_answer_question(data, "EVENT_DATE")
+    for value in (True, {"date": "2025-02-01", "precision": "EXACT"}):
+        with pytest.raises(ValueError):
+            preview_answer_value(data, question, value, as_of_date=date(2025, 1, 1))
+
+
+@pytest.mark.parametrize(("signal", "amount"), [("NO", "NOT_REQUESTED"), ("UNKNOWN", "UNKNOWN")])
+def test_preview_reuses_monetary_dependency_and_preserves_other_signals(signal, amount):
+    data = {"intakeVersion": 2, "safetyScreening": {
+        "schemaVersion": SCREENING_VERSION,
+        **{key: "NO" for key in SCREENING_FIELDS if key != "moneyRequested"},
+    }}
+    question = derive_answer_question(data, "SAFETY")
+    result = preview_answer_value(data, question, signal)
+    assert result == apply_answer_value(data, question, signal, "A factual answer.")
+    assert result["safetyScreening"]["amount"] == amount
+    assert result["safetyScreening"]["hospitalizationReported"] == "NO"

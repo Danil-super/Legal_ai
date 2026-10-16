@@ -107,16 +107,23 @@ def validate_answer_shape(
     raise ValueError("answer does not match the current factual question")
 
 
+def _current_question(
+    data: Mapping[str, object], question: AnswerQuestion,
+) -> AnswerQuestion:
+    validated = _question(question)
+    current = derive_answer_question(data, validated.wizard_state)
+    if current is None or current.question_sha256 != validated.question_sha256:
+        raise ValueError("question is not current")
+    return validated
+
+
 def validate_answer_value(
     question: AnswerQuestion, value: object, source: str, draft_data: Mapping[str, object],
     *, as_of_date: date | None = None,
 ) -> JsonValue:
     """Only the actual answer supplies anchors, never another draft field or model memory."""
     try:
-        validated = _question(question)
-        current = derive_answer_question(draft_data, validated.wizard_state)
-        if current is None or current.question_sha256 != validated.question_sha256:
-            raise ValueError("question is not current")
+        validated = _current_question(draft_data, question)
         if (not isinstance(source, str) or not 1 <= len(source) <= 1500
                 or not source.strip() or pseudonymize_text(source).changed):
             raise ValueError("answer source must be bounded and de-identified")
@@ -135,12 +142,9 @@ def validate_answer_value(
     raise ValueError("answer does not match the current factual question and source")
 
 
-def _apply(
-    data: Mapping[str, object], question: AnswerQuestion, value: object, source: str,
-    as_of_date: date | None,
+def _apply_normalized(
+    data: Mapping[str, object], validated: AnswerQuestion, normalized: JsonValue,
 ) -> dict[str, object]:
-    normalized = validate_answer_value(question, value, source, data, as_of_date=as_of_date)
-    validated = _question(question)
     result = deepcopy(dict(data))
     validate_intake_draft_data(result)
     field = validated.target_field
@@ -197,7 +201,27 @@ def apply_answer_value(
     This does not weaken the separate initial-narrative fill-only merge.
     """
     try:
-        return _apply(data, question, value, source, as_of_date)
+        normalized = validate_answer_value(question, value, source, data, as_of_date=as_of_date)
+        return _apply_normalized(data, _question(question), normalized)
     except (ValueError, TypeError, AttributeError):
         pass
     raise ValueError("answer cannot be applied to this draft")
+
+
+def preview_answer_value(
+    data: Mapping[str, object], question: AnswerQuestion, value: object,
+    *, as_of_date: date | None = None,
+) -> dict[str, object]:
+    """Preview the same dependency diff without retaining or recovering the raw answer.
+
+    This checks the current question and value shape only. It is NOT source
+    grounding, authorization, confirmation or persistence; Core acceptance must
+    still use apply_answer_value with the operation's actual stored answer.
+    """
+    try:
+        validated = _current_question(data, question)
+        normalized = _shape(validated, value, as_of_date)
+        return _apply_normalized(data, validated, normalized)
+    except (ValueError, TypeError, AttributeError):
+        pass
+    raise ValueError("answer cannot be previewed for this draft")
