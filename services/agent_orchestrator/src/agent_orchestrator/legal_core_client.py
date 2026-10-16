@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Literal, overload
 from urllib.parse import urlparse
@@ -183,11 +184,15 @@ class LegalCoreClient:
                 json_body=request.model_dump(mode="json", by_alias=True),
             )
             context = AnswerContext.model_validate(payload)
+            answer_hash = hashlib.sha256(json.dumps(
+                {"answer": context.answer}, ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"),
+            ).encode()).hexdigest()
             if (
                 context.operation_id == operation_id and context.draft_id == draft_id
                 and context.draft_revision == request.expected_revision
                 and context.input_sha256 == request.expected_input_sha256
-                and context.answer_sha256 == hashlib.sha256(context.answer.encode()).hexdigest()
+                and context.answer_sha256 == answer_hash
                 and context.question_sha256 == context.question.question_sha256
                 and type(context.confirmed_context.get("intakeVersion")) is int
             ):

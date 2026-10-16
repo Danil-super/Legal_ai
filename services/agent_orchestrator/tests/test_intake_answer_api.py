@@ -33,7 +33,10 @@ def client_scenario(
     question = derive_answer_question({"intakeVersion": 2}, "INCOMING")
     context_body = {"operationId": str(operation), "draftId": str(draft), "draftRevision": 2,
                     "inputSha256": "a" * 64,
-                    "answerSha256": hashlib.sha256(ANSWER.encode()).hexdigest(),
+                    "answerSha256": hashlib.sha256(json.dumps(
+                        {"answer": ANSWER}, ensure_ascii=False, sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()).hexdigest(),
                     "questionSha256": question.question_sha256,
                     "question": question.model_dump(mode="json", by_alias=True),
                     "answer": ANSWER, "confirmedContext": {"intakeVersion": 2},
@@ -93,7 +96,9 @@ def test_metadata_invocation_fetches_core_context_before_one_existing_model_call
     result = response.json()
     assert result["draftId"] == body["draftId"] and result["draftRevision"] == 2
     assert result["inputSha256"] == body["expectedInputSha256"]
-    assert result["answerSha256"] == hashlib.sha256(ANSWER.encode()).hexdigest()
+    assert result["answerSha256"] == hashlib.sha256(json.dumps(
+        {"answer": ANSWER}, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
     assert result["interpretation"]["value"] == "FORMAL_DOCUMENT"
     assert [item[0] for item in calls] == ["context", "model"]
     assert calls[0][1]["telegram_user_id"] == 123
@@ -175,7 +180,9 @@ def test_fixed_total_wall_bounds_context_fetch_before_any_model_call():
 def test_identifying_source_is_refused_before_model_without_exposing_source():
     source = "patient@example.invalid"
     client, calls, path, body = client_scenario(context_patch={
-        "answer": source, "answerSha256": hashlib.sha256(source.encode()).hexdigest(),
+        "answer": source, "answerSha256": hashlib.sha256(json.dumps(
+            {"answer": source}, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode()).hexdigest(),
     })
     response = client.post(path, headers=headers(), json=body)
     assert response.status_code == 502 and source not in response.text

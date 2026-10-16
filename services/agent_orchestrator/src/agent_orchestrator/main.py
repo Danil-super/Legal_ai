@@ -303,12 +303,15 @@ def create_app(
                         ),
                     )
                     context = AnswerContext.model_validate(supplied.model_dump(by_alias=True))
+                    answer_hash = hashlib.sha256(json.dumps(
+                        {"answer": context.answer}, ensure_ascii=False, sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()).hexdigest()
                     if (
                         context.operation_id != operation_id or context.draft_id != request.draft_id
                         or context.draft_revision != request.expected_revision
                         or context.input_sha256 != request.expected_input_sha256
-                        or context.answer_sha256
-                        != hashlib.sha256(context.answer.encode()).hexdigest()
+                        or context.answer_sha256 != answer_hash
                         or context.question_sha256 != context.question.question_sha256
                     ):
                         raise LegalCoreProtocolError("answer context binding mismatch")

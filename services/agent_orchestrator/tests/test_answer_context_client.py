@@ -27,7 +27,10 @@ def scenario(change=None, *, failure=None):
     )
     payload = {"operationId": str(operation), "draftId": str(draft), "draftRevision": 2,
                "inputSha256": "a" * 64,
-               "answerSha256": hashlib.sha256(ANSWER.encode()).hexdigest(),
+               "answerSha256": hashlib.sha256(json.dumps(
+                   {"answer": ANSWER}, ensure_ascii=False, sort_keys=True,
+                   separators=(",", ":"),
+               ).encode()).hexdigest(),
                "questionSha256": question.question_sha256,
                "question": question.model_dump(mode="json", by_alias=True),
                "answer": ANSWER, "confirmedContext": {"intakeVersion": 2},
