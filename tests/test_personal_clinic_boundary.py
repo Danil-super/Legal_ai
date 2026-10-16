@@ -20,7 +20,8 @@ CLINIC_BASELINE = {
         # Owner-requested clinic library unification; personal surface unchanged (ADR 0080).
         "da2a396c379d2cfef32c4d3b2c16160d534a83b2",
     "services/gateway/telegram/src/telegram_gateway/case_experience_runtime.py":
-        "19f6371c3507b844c54fa8308a97cabfafe292cd",
+        # Independently reviewed clinical opt-in; default/personal stay inert (ADR 0091).
+        "b1afe5e178998ee037c275574054abcf05fe3d8f",
     "services/legal_core/src/legal_core/main.py":
         # Reviewed owner-approved clinic preparation wiring; personal remains inert (ADR 0091).
         "a37582ab864227bdcccae17b6a21acb99b385c14",
@@ -119,12 +120,15 @@ def test_route_isolation_canary_rejects_hidden_personal_include_prefix(nested):
         _assert_clinical_understanding_routes(app)
 
 
-def test_clinic_composition_registers_no_personal_handlers(monkeypatch):
+@pytest.mark.parametrize("enable_understanding", [False, True])
+def test_clinic_composition_registers_no_personal_handlers(monkeypatch, enable_understanding):
     from telegram.ext import CallbackQueryHandler, CommandHandler, ConversationHandler
     from telegram_gateway.case_experience_runtime import build_application_with_case_experience
 
     monkeypatch.setenv("PERSONAL_PREVIEW_MODE", "synthetic")
-    app = build_application_with_case_experience("123456:" + "q" * 40)
+    app = build_application_with_case_experience(
+        "123456:" + "q" * 40, enable_understanding=enable_understanding,
+    )
     checked = 0
 
     def inspect_handler(handler):
@@ -149,3 +153,17 @@ def test_clinic_composition_registers_no_personal_handlers(monkeypatch):
         for handler in group:
             inspect_handler(handler)
     assert checked > 20
+
+
+def test_clinic_default_factory_does_not_install_opt_in_understanding(monkeypatch):
+    from unittest.mock import Mock
+
+    from telegram_gateway import preparation_form_runtime, understanding_runtime
+    from telegram_gateway.case_experience_runtime import build_application_with_case_experience
+
+    fail = Mock(side_effect=AssertionError("ordinary factory must keep understanding disabled"))
+    monkeypatch.setattr(preparation_form_runtime, "install_preparation_form", fail)
+    monkeypatch.setattr(understanding_runtime, "install_understanding", fail)
+    monkeypatch.setenv("PERSONAL_PREVIEW_MODE", "synthetic")
+    build_application_with_case_experience("123456:" + "q" * 40)
+    fail.assert_not_called()
