@@ -490,6 +490,23 @@ transaction, waits, stores and reads back its receipt; it was RED on the default
 transaction timestamp. Normal production writers hold the case lock; the test
 directly exercises storage with a synthetic result only.
 
+### PRC7d2 queue version follows the stored initial receipt
+
+For a case created by the explicit report-free initial writer, enqueue derives
+result_version2 from that case's tenant-scoped stored Telegram workflow receipt.
+The request shape remains messageId only: the client cannot choose this mode or
+downgrade it, and ordinary/legacy cases still produce version1. The existing
+worker forwards the stored version into the authenticated preparation transport.
+No global flag or per-request model settings are introduced.
+
+An active/completed incompatible legacy job for a preparation case is a409
+ANALYSIS_RESULT_VERSION_CONFLICT, not cached legacy success or a second active job.
+Before new/replayed V2 work, the case is refreshed and current actor/entitlement/
+retention rechecked after the case-lock wait. Access policy itself is unchanged.
+Tests cover actual initial confirmation, deduplicated queue, fenced worker, real
+orchestrator/Core HTTP boundaries and SQL; pre-context limits skip the model and
+produce no intermediate report. Ordinary Gateway confirmation is not activated.
+
 ### PRC7d1 explicit Gateway submission mode
 
 LegalCoreClient.submit_workflow adds optional receipt_version2 with exact integer

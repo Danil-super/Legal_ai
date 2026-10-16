@@ -42,7 +42,7 @@ from legal_core.case_api import (
     resolve_actor,
 )
 from legal_core.contracts import ContractModel
-from legal_core.models import Base, Case, IdempotencyRecord
+from legal_core.models import Base, Case, IdempotencyRecord, TelegramCaseWorkflow
 
 JobState = Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED"]
 
@@ -284,6 +284,23 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
             )
             .with_for_update()
         )
+        # The initial receipt is an immutable server-side intent, not a client flag.
+        preparation_workflow = await session.scalar(select(TelegramCaseWorkflow.id).where(
+            TelegramCaseWorkflow.clinic_id == actor.clinic_id,
+            TelegramCaseWorkflow.case_id == case_id,
+            TelegramCaseWorkflow.receipt_version == 2,
+        ).limit(1))
+        result_version = 2 if preparation_workflow is not None else 1
+        if result_version == 2:
+            from legal_core.case_preparation import recheck_submission_access
+
+            case = await _tenant_case(session, actor, case_id, for_update=True)
+            await recheck_submission_access(
+                session, actor=actor, telegram_user_id=telegram_user_id, case=case,
+            )
+            if (actor.role == "CLINIC_ADMIN"
+                    and case.created_by_membership_id != actor.membership_id):
+                raise ApiError(status_code=404, code="CASE_NOT_FOUND", message="Case not found")
         latest = await session.scalar(
             select(AnalysisJob)
             .where(
@@ -300,6 +317,9 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
                     code="ANALYSIS_ALREADY_REQUESTED",
                     message="Analysis already requested by another clinic actor",
                 )
+            if result_version == 2 and latest.result_version != 2:
+                raise ApiError(status_code=409, code="ANALYSIS_RESULT_VERSION_CONFLICT",
+                               message="Existing analysis uses an incompatible result format")
             return await _response(session, latest)
         from legal_core.analysis_api import _require_analysis_eligible_case
 
@@ -309,6 +329,7 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
             case_id=case_id,
             actor_membership_id=actor.membership_id,
             message_id=payload.message_id,
+            result_version=result_version,
         )
         session.add(job)
         await session.flush()
@@ -318,7 +339,8 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
                 action="CASE_ANALYSIS_QUEUED",
                 resource_type="CASE",
                 resource_id=case_id,
-                metadata={"jobId": str(job.id)},
+                metadata={"jobId": str(job.id), **({"resultVersion": 2}
+                                                   if result_version == 2 else {})},
             )
         )
         response = await _response(session, job)
