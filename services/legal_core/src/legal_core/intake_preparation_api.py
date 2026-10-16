@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from legal_core.analysis_api import _require_agent_internal_key
 from legal_core.analysis_safe_stop import require_analysis_running
 from legal_core.case_api import TelegramUserId
+from legal_core.intake_answer_api import create_answer_router
 from legal_core.intake_preparation import (
     PreparationOperation,
     cancel_preparation,
@@ -37,6 +38,7 @@ def _public(operation: PreparationOperation) -> PreparationStatusResponse:
 
 def create_intake_preparation_router(sessions: async_sessionmaker[AsyncSession]) -> APIRouter:
     router = APIRouter()
+    router.include_router(create_answer_router(sessions))
 
     @router.get("/v1/telegram-intake-drafts/{draft_id}/understanding",
                 response_model=UnderstandingDiscoveryResponse)
