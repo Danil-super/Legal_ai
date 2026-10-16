@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from legal_core.analysis_safe_stop import require_analysis_running
 from legal_core.case_api import (
     CASE_INTAKE_ROLES,
     ActorContext,
@@ -20,9 +21,9 @@ from legal_core.case_api import (
     resolve_actor,
 )
 from legal_core.case_preparation_contracts import DraftPreparationIntent
-from legal_core.intake_preparation_contracts import DraftSuggestions
+from legal_core.intake_preparation_contracts import DraftSuggestions, IntakeUnderstandingContext
 from legal_core.models import IdempotencyRecord, SubscriptionEntitlement, TelegramIntakeDraft
-from legal_core.pseudonymization import contains_obvious_direct_identifier
+from legal_core.pseudonymization import contains_obvious_direct_identifier, pseudonymize_text
 
 OperationKind = Literal["UNDERSTAND_INTAKE", "INTERPRET_ANSWER"]
 RESOURCE_TYPE = "INTAKE_PREPARATION"
@@ -209,6 +210,47 @@ async def read_preparation(
         result = _result(record)
         if result.suggestions is not None:
             result.suggestions.validate_source(_source(draft))
+        await session.commit()
+        return result
+
+
+async def read_understanding_context(
+    sessions: async_sessionmaker[AsyncSession], *, telegram_user_id: int, operation_id: UUID,
+    lease_token: UUID, expected_revision: int, expected_input_sha256: str,
+) -> IntakeUnderstandingContext:
+    """Release only a current owned source; finish the transaction before model I/O."""
+    require_analysis_running()
+    async with sessions() as session:
+        actor, draft, record = await _owned_operation(session, telegram_user_id, operation_id)
+        intent = _validate_binding(actor, draft, record)
+        if intent.operation_kind != "UNDERSTAND_INTAKE":
+            raise ApiError(status_code=409, code="PREPARATION_KIND_UNSUPPORTED",
+                           message="Operation does not support initial understanding")
+        if (
+            type(expected_revision) is not int or expected_revision != draft.revision
+            or expected_input_sha256 != intent.input_sha256
+        ):
+            raise ApiError(status_code=409, code="PREPARATION_INPUT_STALE",
+                           message="Draft binding does not match")
+        if (
+            record.state != "IN_PROGRESS" or record.lease_token != lease_token
+            or record.lease_until is None or record.lease_until <= datetime.now(UTC)
+        ):
+            raise ApiError(status_code=409, code="PREPARATION_LEASE_EXPIRED",
+                           message="Operation lease is no longer current")
+        require_analysis_running()
+        source = _source(draft)
+        # Do not redact here: changing the source would invalidate proposal offsets.
+        if pseudonymize_text(source).changed:
+            raise ApiError(status_code=422, code="UNDERSTANDING_INPUT_INVALID",
+                           message="A bounded de-identified v2 description is required")
+        result = IntakeUnderstandingContext(
+            operationId=record.id, draftId=draft.id, draftRevision=draft.revision,
+            inputSha256=intent.input_sha256, operationKind="UNDERSTAND_INTAKE", source=source,
+        )
+        session.add(_audit(actor=actor, action="INTAKE_PREPARATION_CONTEXT_READ",
+                           resource_type=RESOURCE_TYPE, resource_id=record.id,
+                           metadata={"revision": draft.revision}))
         await session.commit()
         return result
 

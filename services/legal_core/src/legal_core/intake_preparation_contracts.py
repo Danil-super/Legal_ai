@@ -3,15 +3,27 @@
 from __future__ import annotations
 
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import Field, JsonValue, field_validator, model_validator
 
 from legal_core.analysis_clarifications import AnalysisClarificationAnswers, ServiceProvidedDate
-from legal_core.case_preparation_contracts import PreparationModel
+from legal_core.case_preparation_contracts import PreparationModel, Sha256
 from legal_core.factual_safety_intake import validate_partial_screening
 from legal_core.pseudonymization import contains_obvious_direct_identifier
 
 ServiceName = Annotated[str, Field(strict=True, min_length=2, max_length=120)]
+
+
+class IntakeUnderstandingContext(PreparationModel):
+    """Private Core→Agent input, never a public receipt or a confirmation."""
+
+    operation_id: UUID = Field(alias="operationId")
+    draft_id: UUID = Field(alias="draftId")
+    draft_revision: int = Field(alias="draftRevision", strict=True, ge=1)
+    input_sha256: Sha256 = Field(alias="inputSha256")
+    operation_kind: Literal["UNDERSTAND_INTAKE"] = Field(alias="operationKind")
+    source: str = Field(strict=True, min_length=10, max_length=1500)
 
 
 class SourceSpan(PreparationModel):

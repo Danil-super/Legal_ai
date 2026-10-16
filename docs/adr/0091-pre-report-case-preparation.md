@@ -716,3 +716,19 @@ tenant refusal, unchanged original facts/runs/reports and a context:null uncerta
 date that remains attempted UNKNOWN. These seed the agreed frozen V2 boundary;
 they do not claim the ordinary initial producer or shared confirmation is changed.
 The routing consumer is established before any new visible producer is enabled.
+
+### PRC9a private understanding context
+
+The Core context reader releases only an owned, unexpired V2 draft description
+for a live UNDERSTAND_INTAKE lease. Its input is operation/actor/lease/revision/hash
+metadata, not caller-supplied narrative. Actor, entitlement, retention, immutable
+intent, current lease and analysis safe-stop are rechecked after resource locks.
+The hash binds the entire stored draftData and wizardState, not source text alone.
+The response contains operation/draft/revision/hash/kind and bounded source only:
+no lease token, full draft, files, clinic configuration or confirmed facts.
+Direct identifiers are refused rather than redacted, preserving source offsets.
+An identifier guard is a conservative boundary, not a claim of anonymisation.
+The transaction and row locks end before returning the model input; the audit
+contains operation IDs and revision only. Completion still revalidates ownership
+and current source independently. This additive helper does not expose HTTP,
+start background work, enable Telegram producers or change legal/risk policy.
