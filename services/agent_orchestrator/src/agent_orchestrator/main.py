@@ -19,6 +19,8 @@ from agent_orchestrator.hermes_client import (
     HermesProtocolError,
     HermesUnavailable,
 )
+from agent_orchestrator.intake_understanding import IntakeUnderstanding
+from agent_orchestrator.intake_understanding_api import create_understanding_router
 from agent_orchestrator.legal_core_client import (
     LegalCoreClient,
     LegalCoreEndpoint,
@@ -95,6 +97,7 @@ class ServiceSettings:
 class ServiceDependencies:
     legal_core: LegalCoreClient
     reasoning: LegalReasoningOrchestrator
+    understanding: IntakeUnderstanding | None = None
 
 
 def build_dependencies(settings: ServiceSettings) -> ServiceDependencies:
@@ -126,6 +129,7 @@ def build_dependencies(settings: ServiceSettings) -> ServiceDependencies:
     return ServiceDependencies(
         legal_core=legal_core,
         reasoning=LegalReasoningOrchestrator(researcher=researcher, reviewer=reviewer),
+        understanding=IntakeUnderstanding(researcher=researcher),
     )
 
 
@@ -246,6 +250,11 @@ def create_app(
                 detail={"code": "ANALYSIS_PROVIDER_INVALID"},
             ) from exc
 
+    app.include_router(create_understanding_router(
+        legal_core=dependencies.legal_core, understanding=dependencies.understanding,
+        require_internal_key=require_internal_key, stage_timeout=HERMES_STAGE_TIMEOUT_SECONDS,
+        wall_timeout=ANALYSIS_WALL_TIMEOUT_SECONDS,
+    ))
     return app
 
 

@@ -23,6 +23,10 @@ class UnderstandingContextRequest(PreparationModel):
     expected_input_sha256: Sha256 = Field(alias="expectedInputSha256")
 
 
+class UnderstandingInvocation(UnderstandingContextRequest):
+    draft_id: UUID = Field(alias="draftId")
+
+
 class IntakeUnderstandingContext(PreparationModel):
     """Private Core→Agent input, never a public receipt or a confirmation."""
 
@@ -117,3 +121,13 @@ class DraftSuggestions(PreparationModel):
             raise ValueError("understanding source must be bounded and de-identified")
         if any(span.end > len(source) for spans in self.source_spans.values() for span in spans):
             raise ValueError("source span is outside the actual understanding input")
+
+
+class UnderstandingProposal(PreparationModel):
+    """Private unconfirmed result, still subject to the owned Core completion fence."""
+
+    operation_id: UUID = Field(alias="operationId")
+    draft_id: UUID = Field(alias="draftId")
+    draft_revision: int = Field(alias="draftRevision", strict=True, ge=1)
+    input_sha256: Sha256 = Field(alias="inputSha256")
+    suggestions: DraftSuggestions

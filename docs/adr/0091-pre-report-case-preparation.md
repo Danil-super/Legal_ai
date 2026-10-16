@@ -747,3 +747,18 @@ kind before returning source. Malformed or substituted responses fail with a
 bounded protocol error outside Pydantic's input-bearing exception context. This
 does not accept model-ready arbitrary text from an internal caller, add a second
 provider or change the legacy legal-analysis client contract.
+
+### PRC8b protected initial understanding invocation
+
+Agent POST /v1/intake-preparations/{operationId}/understand accepts only existing
+internal credentials, actor header and typed draft/lease/revision/hash metadata.
+It resolves current source through Core before one constrained researcher call,
+using the same configured researcher instance/model/provider and unchanged
+65-second stage / 115-second total ceilings. It returns only bound unconfirmed
+suggestions, never a report, legal advice or a confirmation. Core must still
+recheck the lease/current draft when persisting completion. Context refusals,
+model timeout/unavailability/protocol errors have fixed non-input-bearing codes.
+New-route validation redacts all inputs without changing legacy API validation.
+Existing callers can omit the additive understanding dependency. This private
+route alone does not enqueue or activate public understanding; shared two-slot
+admission, durable cancellation and explicit user confirmation remain required.
