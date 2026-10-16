@@ -544,3 +544,29 @@ Gateway client selectors and paired operation ID/hash are additive and exclusive
 of report origin. They preserve the caller's actor/idempotency key and the legacy
 wire shape; malformed/mixed bindings reject before HTTP. This first contract
 increment does not add visible buttons, change access, call models or activate V2.
+
+### PRC6c Telegram recovery consumer
+
+The existing clarification handler/router also consumes canonical case:clarify2:
+buttons. A dedicated preparation path requires the exact four-field Core preview,
+matching case/operation and full lowercase fact/result hashes. It forwards those
+bindings to creation and validates the returned draft's immutable correctionSource
+and ordinary V2 draft shape before offering resume. It never selects another
+operation or legacy report as fallback, copies files, or calls the model/PDF path.
+Legacy report callbacks, keys, messages and client shape remain intact.
+
+One new button/message is one intent: UUID5 clarification:v3 includes actor, case,
+fact hash, operation ID, whole result hash and original message ID. Repeated clicks
+and gateway restart preserve the same key; different messages remain distinct
+intents. Unknown HTTP outcomes are not automatically retried. The user can click
+again to recover Core's audited result/draft. Stale, invalid and expired sources
+show bounded instructions to open the current case, not an automatic repeat loop.
+Successful creation uses the existing durable-draft resume controls and explicit
+final confirmation. A new legal report is not implied by opening that draft.
+
+Actual Gateway client→Core→runtime PostgreSQL tests cover late NEEDS_FACTS/LIMITED,
+lost Core/Telegram responses, restart, exact stable keys, one new draft, creator/
+tenant refusal, unchanged original facts/runs/reports and a context:null uncertain
+date that remains attempted UNKNOWN. These seed the agreed frozen V2 boundary;
+they do not claim the ordinary initial producer or shared confirmation is changed.
+The routing consumer is established before any new visible producer is enabled.
