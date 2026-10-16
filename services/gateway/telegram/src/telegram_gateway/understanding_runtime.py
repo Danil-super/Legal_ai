@@ -256,7 +256,12 @@ def install_understanding(application: bot.TelegramApplication) -> None:
             draft_id = UUID(value.removeprefix("case:draft:"))
             core = bot._legal_core(context)
             draft = validated_draft(await core.get_intake_draft(draft_id, actor), draft_id)
-            status = await UnderstandingClient(core, actor).discover(draft_id)
+            # Guided drafts have no initial narrative before the EVENT step.
+            # Absence is not a failed model operation; present invalid input still
+            # crosses the existing fail-closed discovery boundary unchanged.
+            status = await UnderstandingClient(core, actor).discover(draft_id) if (
+                "eventSummary" in draft["draftData"]
+            ) else None
             if status is not None and status.state in {"PENDING", "PROPOSED"}:
                 status, draft = await _checked(core, actor, status.operation_id, draft_id)
                 bot._clear_wizard(context)
