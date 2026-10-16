@@ -137,6 +137,15 @@ class UnderstandingProposal(PreparationModel):
     suggestions: DraftSuggestions
 
 
+class UnderstandingSource(PreparationModel):
+    """Immutable public proposal binding; identifiers never confer authorization."""
+
+    draft_id: UUID = Field(alias="draftId")
+    draft_revision: int = Field(alias="draftRevision", strict=True, ge=1)
+    input_sha256: Sha256 = Field(alias="inputSha256")
+    proposal_sha256: Sha256 = Field(alias="proposalSha256")
+
+
 class PreparationStatusResponse(PreparationModel):
     """Public state only: never serialize a private operation dataclass wholesale."""
 

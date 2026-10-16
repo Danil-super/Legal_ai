@@ -848,3 +848,12 @@ before this fix; both prove an actual HTTP200 registration absent from OpenAPI.
 Context7's APIRouter include_router reference confirms prefix composition.
 This engineering baseline update is not personal M2,
 legal approval, production release or activation of ordinary Telegram producers.
+
+### PRC10 immutable proposal receipt
+
+Completion binds the canonical bounded suggestions (including offsets, preserving
+nested UNKNOWN date:null) to the server intent in the append-only proposal audit.
+Read/replay verifies that receipt before publishing a proposal. Mutable cached JSON
+alone, including older unbound results, cannot become a confirmable proposal.
+The internal result now includes an explicit source/revision/proposal digest;
+public acceptance and Telegram consumers are subsequent increments, not activation.

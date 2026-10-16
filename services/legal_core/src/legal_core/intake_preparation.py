@@ -21,8 +21,17 @@ from legal_core.case_api import (
     resolve_actor,
 )
 from legal_core.case_preparation_contracts import DraftPreparationIntent
-from legal_core.intake_preparation_contracts import DraftSuggestions, IntakeUnderstandingContext
-from legal_core.models import IdempotencyRecord, SubscriptionEntitlement, TelegramIntakeDraft
+from legal_core.intake_preparation_contracts import (
+    DraftSuggestions,
+    IntakeUnderstandingContext,
+    UnderstandingSource,
+)
+from legal_core.models import (
+    AuditEvent,
+    IdempotencyRecord,
+    SubscriptionEntitlement,
+    TelegramIntakeDraft,
+)
 from legal_core.pseudonymization import contains_obvious_direct_identifier, pseudonymize_text
 
 OperationKind = Literal["UNDERSTAND_INTAKE", "INTERPRET_ANSWER"]
@@ -37,6 +46,7 @@ class PreparationOperation:
     lease_token: UUID | None = None
     suggestions: DraftSuggestions | None = None
     intent: DraftPreparationIntent | None = None  # Private dispatch metadata, never a public DTO.
+    source: UnderstandingSource | None = None
 
 
 async def _draft(
@@ -90,6 +100,53 @@ def _result(record: IdempotencyRecord) -> PreparationOperation:
                                         record.response_json["suggestions"],
                                     ))
     return PreparationOperation(record.id, "MANUAL_CONTINUATION")
+
+
+def _proposal_metadata(intent: DraftPreparationIntent, suggestions: DraftSuggestions
+                       ) -> dict[str, object]:
+    payload = {key: value for key, value in suggestions.model_dump(
+        mode="json", by_alias=True,
+    ).items() if value is not None}
+    return {
+        "draftId": str(intent.draft_id), "revision": intent.draft_revision,
+        "inputSha256": intent.input_sha256, "intentSha256": intent.request_sha256,
+        "proposalSha256": _canonical_hash(payload), "fieldCount": len(suggestions.source_spans),
+    }
+
+
+async def _checked_result(
+    session: AsyncSession, actor: ActorContext, draft: TelegramIntakeDraft,
+    record: IdempotencyRecord,
+) -> PreparationOperation:
+    invalid = False
+    try:
+        result = _result(record)
+        if result.suggestions is None:
+            return result
+        intent = _validate_binding(actor, draft, record)
+        result.suggestions.validate_source(_source(draft))
+        metadata = _proposal_metadata(intent, result.suggestions)
+    except (KeyError, TypeError, ValueError):
+        invalid = True
+    # Do not attach raw validation input to an externally visible error chain.
+    if invalid:
+        raise ApiError(status_code=409, code="PREPARATION_PROPOSAL_INVALID",
+                       message="Proposal is not valid")
+    receipts = (await session.scalars(select(AuditEvent.metadata_json).where(
+        AuditEvent.clinic_id == actor.clinic_id,
+        AuditEvent.actor_membership_id == actor.membership_id,
+        AuditEvent.resource_type == RESOURCE_TYPE, AuditEvent.resource_id == record.id,
+        AuditEvent.action == "INTAKE_PREPARATION_PROPOSED",
+    ))).all()
+    if len(receipts) != 1 or receipts[0] != metadata:
+        raise ApiError(status_code=409, code="PREPARATION_PROPOSAL_INVALID",
+                       message="Proposal binding is not valid")
+    return PreparationOperation(record.id, "PROPOSED", suggestions=result.suggestions,
+                                source=UnderstandingSource(
+                                    draftId=draft.id, draftRevision=draft.revision,
+                                    inputSha256=intent.input_sha256,
+                                    proposalSha256=str(metadata["proposalSha256"]),
+                                ))
 
 
 def _validate_binding(
@@ -191,9 +248,7 @@ async def reserve_preparation(
                            message="Operation intent conflict")
         _validate_binding(actor, draft, record)
         await _recheck_after_locks(session, telegram_user_id, actor, draft)
-        result = _result(record)
-        if result.suggestions is not None:
-            result.suggestions.validate_source(_source(draft))
+        result = await _checked_result(session, actor, draft, record)
         if inserted is not None:
             result = PreparationOperation(record.id, "PENDING", lease_token=token, intent=intent)
             session.add(_audit(actor=actor, action="INTAKE_PREPARATION_RESERVED",
@@ -207,10 +262,8 @@ async def read_preparation(
     sessions: async_sessionmaker[AsyncSession], *, telegram_user_id: int, operation_id: UUID,
 ) -> PreparationOperation:
     async with sessions() as session:
-        _, draft, record = await _owned_operation(session, telegram_user_id, operation_id)
-        result = _result(record)
-        if result.suggestions is not None:
-            result.suggestions.validate_source(_source(draft))
+        actor, draft, record = await _owned_operation(session, telegram_user_id, operation_id)
+        result = await _checked_result(session, actor, draft, record)
         await session.commit()
         return result
 
@@ -284,9 +337,10 @@ async def complete_preparation(
         record.state, record.lease_token, record.lease_until = "SUCCEEDED", None, None
         session.add(_audit(actor=actor, action="INTAKE_PREPARATION_PROPOSED",
                            resource_type=RESOURCE_TYPE, resource_id=record.id,
-                           metadata={"revision": draft.revision,
-                                     "fieldCount": len(checked.source_spans)}))
-        result = _result(record)
+                           metadata=_proposal_metadata(_validate_binding(actor, draft, record),
+                                                       checked)))
+        await session.flush()
+        result = await _checked_result(session, actor, draft, record)
         await session.commit()
         return result
 

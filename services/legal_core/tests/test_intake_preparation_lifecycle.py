@@ -100,11 +100,38 @@ def test_completed_suggestions_survive_restart_without_changing_confirmed_draft(
     assert result.state == resumed.state == "PROPOSED"
     assert resumed.suggestions == _suggestions()
     assert resumed.lease_token is None
+    assert resumed.source == result.source
+    assert resumed.source.draft_id == draft["id"] or str(resumed.source.draft_id) == draft["id"]
+    assert resumed.source.draft_revision == draft["revision"]
+    assert len(resumed.source.proposal_sha256) == 64
     with application_client() as client:
         actual = client.get(f"/v1/telegram-intake-drafts/{draft['id']}",
                             headers=actor_headers(actor)).json()
         assert actual["draftData"] == draft["draftData"]
         assert actual["revision"] == draft["revision"]
+
+
+def test_shape_valid_cached_proposal_substitution_is_not_confirmable(draft_owner):
+    actor, _, _, draft = draft_owner
+    lease = _run(lambda sessions: _reserve(sessions, actor, draft))
+    _run(lambda sessions: complete_preparation(
+        sessions, telegram_user_id=actor, operation_id=lease.operation_id,
+        lease_token=lease.lease_token, suggestions=_suggestions(),
+    ))
+    engine = create_engine(owner_database_url())
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE idempotency_records SET response_json=jsonb_set(response_json, "
+                "'{suggestions,clinicActions}', '[\"NOTHING_YET\"]'::jsonb) WHERE id=:id"
+            ), {"id": lease.operation_id})
+        with pytest.raises(ApiError) as error:
+            _run(lambda sessions: read_preparation(
+                sessions, telegram_user_id=actor, operation_id=lease.operation_id,
+            ))
+        assert error.value.code == "PREPARATION_PROPOSAL_INVALID"
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.parametrize("field", ["eventDate", "analysisClarificationAnswers"])
