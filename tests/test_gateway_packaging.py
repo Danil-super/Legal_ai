@@ -51,6 +51,7 @@ import sys
 sys.path[:0] = json.loads(sys.argv[1])
 import telegram_gateway.__main__
 import telegram_gateway.analysis_jobs_runtime
+import telegram_gateway.understanding_review
 import legal_core.contracts
 assert pathlib.Path(legal_core.contracts.__file__).is_relative_to(sys.argv[2])
 assert importlib.util.find_spec('legal_core.case_api') is None
