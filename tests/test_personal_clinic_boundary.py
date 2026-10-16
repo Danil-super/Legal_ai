@@ -8,6 +8,7 @@ import hashlib
 from pathlib import Path
 
 import pytest
+from fastapi import APIRouter
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
@@ -51,6 +52,35 @@ def test_personal_flag_never_mounts_private_routes_in_clinic_app(monkeypatch):
         assert client.get("/health/live").status_code == 200
 
 
+def _assert_clinical_understanding_routes(app):
+    # Inspect actual registrations, not just OpenAPI: include_in_schema=False hides
+    # documentation, but does not unmount a route (FastAPI reference via Context7).
+    # FastAPI >=0.137 retains live included-router containers, not a flat route list.
+    pending = [("", route) for route in app.routes]
+    paths = set()
+    while pending:
+        prefix, route = pending.pop()
+        if isinstance(route, APIRoute):
+            path = prefix + route.path
+            assert "/personal" not in path, "Personal route registered in clinical composition"
+            assert not route.endpoint.__module__.startswith("legal_core.personal")
+            paths.add(path)
+        else:
+            included = getattr(route, "original_router", None)
+            assert included is not None, f"Uninspected route container: {type(route).__name__}"
+            context = getattr(route, "include_context", None)
+            include_prefix = getattr(context, "prefix", None)
+            assert isinstance(include_prefix, str), "Uninspected router inclusion prefix"
+            effective_prefix = prefix + include_prefix
+            assert "/personal" not in effective_prefix, "Personal router included in clinic"
+            pending.extend((effective_prefix, child) for child in included.routes)
+    assert {
+        "/v1/telegram-intake-drafts/{draft_id}/understanding",
+        "/v1/intake-preparations/{operation_id}",
+        "/v1/intake-preparations/{operation_id}/context",
+    } <= paths
+
+
 def test_understanding_composition_stays_clinical_even_when_personal_preview_is_requested(
     monkeypatch,
 ):
@@ -59,28 +89,34 @@ def test_understanding_composition_stays_clinical_even_when_personal_preview_is_
     monkeypatch.setenv("PERSONAL_PREVIEW_MODE", "synthetic")
     monkeypatch.delenv("PERSONAL_PREVIEW_API_KEY", raising=False)
     app = create_app(enable_draft_retention=False, enable_analysis_worker=False)
-    # Inspect actual registrations, not just OpenAPI: include_in_schema=False hides
-    # documentation, but does not unmount a route (FastAPI reference via Context7).
-    # FastAPI >=0.137 retains live included-router containers, not a flat route list.
-    pending, routes = list(app.routes), []
-    while pending:
-        route = pending.pop()
-        if isinstance(route, APIRoute):
-            routes.append(route)
-        else:
-            included = getattr(route, "original_router", None)
-            assert included is not None, f"Uninspected route container: {type(route).__name__}"
-            pending.extend(included.routes)
-    assert {
-        "/v1/telegram-intake-drafts/{draft_id}/understanding",
-        "/v1/intake-preparations/{operation_id}",
-        "/v1/intake-preparations/{operation_id}/context",
-    } <= {route.path for route in routes}
-    assert all("/personal" not in route.path for route in routes)
-    assert all(not route.endpoint.__module__.startswith("legal_core.personal") for route in routes)
+    _assert_clinical_understanding_routes(app)
     with TestClient(app) as client:
         assert client.get("/health/live").status_code == 200
         assert app.state.intake_preparation_runner is None
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_route_isolation_canary_rejects_hidden_personal_include_prefix(nested):
+    from legal_core.main import create_app
+
+    app = create_app(enable_draft_retention=False, enable_analysis_worker=False)
+    hidden = APIRouter()
+
+    @hidden.get("/hidden-review-only", include_in_schema=False)
+    async def fictional_hidden_route():
+        return {"synthetic": True}
+
+    if nested:
+        parent = APIRouter()
+        parent.include_router(hidden, prefix="/nested")
+        hidden = parent
+    app.include_router(hidden, prefix="/v1/personal-preview")
+    path = "/v1/personal-preview" + ("/nested" if nested else "") + "/hidden-review-only"
+    assert path not in app.openapi()["paths"]
+    with TestClient(app) as client:
+        assert client.get(path).status_code == 200  # Prove a real hidden registration.
+    with pytest.raises(AssertionError):
+        _assert_clinical_understanding_routes(app)
 
 
 def test_clinic_composition_registers_no_personal_handlers(monkeypatch):

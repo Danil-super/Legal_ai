@@ -840,5 +840,11 @@ a route-isolation check. FastAPI0.141.1 also retains included-router containers;
 the canary recursively inspects their original routes and fails closed on an
 unrecognized container instead of assuming a flat APIRoute list. The first added
 canary reproduced that wrong flat-list assumption and was corrected, not skipped.
+Independent Required R2 then reproduced a hidden child under a personal include
+prefix that the first traversal missed. The canary now accumulates every inclusion
+prefix and validates both container and effective leaf paths, failing closed for
+missing metadata. Two permanent direct/nested hidden-prefix regressions were RED
+before this fix; both prove an actual HTTP200 registration absent from OpenAPI.
+Context7's APIRouter include_router reference confirms prefix composition.
 This engineering baseline update is not personal M2,
 legal approval, production release or activation of ordinary Telegram producers.
