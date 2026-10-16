@@ -25,9 +25,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     raise ApplicationHandlerStop
 
 
-def build_application_with_case_experience(token: str) -> gateway_bot.TelegramApplication:
+def build_application_with_case_experience(
+    token: str, *, enable_understanding: bool = False,
+) -> gateway_bot.TelegramApplication:
     application = build_application_with_diagnostics(token)
     install_guided_intake(application)
+    if enable_understanding:
+        from telegram_gateway.preparation_form_runtime import install_preparation_form
+        from telegram_gateway.understanding_runtime import install_understanding
+
+        install_preparation_form(application)
+        install_understanding(application)
     install_work_notes(application)
     application.add_handler(CommandHandler("help", help_command), group=-8)
     return application
