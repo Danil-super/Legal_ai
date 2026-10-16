@@ -218,9 +218,9 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
   PostgreSQL+MinIO. Ruff/mypy143/Compose pass. Shared UI/initial producer remain PRC7;
   Hermes understanding and production activation are not claimed.
 
-### PRC7: shared late-clarification form and report-free initial receipt
+### PRC7: shared late-clarification form and report-free initial receipt — partial
 
-- [ ] Versioned initial submission uses the approved preparation receipt rather
+- [x] Versioned initial submission uses the approved preparation receipt rather
   than creating its old intake PDF; files/triage/audit and case limits stay intact.
 - [ ] Gateway renders the same factual form for intermediate results, no empty
   result/PDF buttons; final reports and old cases remain usable.
@@ -232,6 +232,33 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
 - Verify: `python -m pytest -q services/legal_core/tests/test_report_free_workflow.py services/gateway/telegram/tests/test_preparation_form_runtime.py` with PostgreSQL/MinIO.
 - Dependencies: PRC3–6c. Scope M; one complete late-clarification path,
   no premature report artifacts, legacy results and early urgency still correct.
+- Thin increments16Oct: PRC7a b6df566 supplies one explicit source-bound control
+  through status/result/notifier; PRC7b f48320b implements opt-in initial receipt2
+  with no preliminary report and preserves attempted dates/urgency/materials.
+  Ordinary Gateway still submits legacy; new initial receipt presentation and
+  activation/complete shared-dialogue acceptance remain open (PRC7d/10/11).
+- PRC7a independent review exposed inherited incomplete returned-draft validation.
+  PRC7c3868e20 fixes it with the same bounded partial-draft validator as Core,
+  not a duplicate or API/ORM dependency in the Gateway image. Seven reproductions
+  were RED then GREEN. No full semantic/fact authorization is claimed by this guard.
+- Independent7b:82 real-PostgreSQL tests/0 skips,18 own race/quota/expiry/provenance
+  probes, no new Required/Critical. Independent7c:307 pass/14 PG skips,3522 exact
+  old/new schema-outcome comparisons and39 boundary probes; no remaining Required
+  in scope. Author runs those PG paths in the complete integration gate.
+- Full immutable3868e20/tree eda5a57:3096 passed/0 skipped,341.59s on fresh migrated
+  PostgreSQL+MinIO; Ruff/mypy143/Compose and actual Gateway Docker build pass.
+  No model/provider/production activation. See the audit checkpoint for limits.
+
+### PRC7d: initial consumer before producer activation — open
+
+- [ ] Extend Gateway submission transport with explicit receiptVersion2 intent;
+  legacy payload/hashes remain unchanged and saved intent survives restart.
+- [ ] Render a report-free receipt as preparation, without preliminary PDF or
+  success/advice claims; preserve urgent lawyer path and strict source identity.
+- [ ] Verify real submission→initial presentation→analysis queue→shared factual
+  form/confirmation, including uncertain attempts and both original entry paths.
+- Split into at most five-file tested increments; this completes PRC7 alongside
+  PRC10's confirmed understanding before any ordinary producer is enabled.
 
 ### PRC8: constrained Hermes understanding, not legal analysis
 

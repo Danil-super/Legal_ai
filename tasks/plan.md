@@ -42,8 +42,14 @@ Telegram callbacks. Actual client/Core/PostgreSQL recovery survives lost replies
 without duplicate drafts; independent review134 tests includes current-source and
 same-clinic creator negatives. Full immutable tree bb5307c (f459747):3053 passed/
 0 skipped,313.72s, isolated PostgreSQL+MinIO; quality checks pass.
-NEXT: PRC7 shared clarification UI/report-free initial receipt, followed by PRC8–11
-understanding/acceptance/end-to-end tests.
+PRC7a b6df566 adds source-bound factual controls; PRC7b f48320b implements the
+explicit report-free initial writer. PRC7c3868e20 closes the malformed returned-
+draft gap found by independent review using Core's shared partial-draft validator.
+Independent7b:82 real-PostgreSQL tests pass;7c:307 pass/14 PG skips plus3522 exact
+validator outcome comparisons. Author full3868e20/tree eda5a57:3096 passed/0 skipped,
+341.59s on fresh PostgreSQL+MinIO; Ruff/mypy143/Compose and actual Gateway image pass.
+NEXT: PRC7d initial receipt consumer and PRC8–11 confirmed understanding/shared
+dialogue acceptance. Ordinary producer activation remains gated on their completion.
 The V2 writer is opt-in/internal only: ordinary queues remain V1. No server
 migration or complete pre-report dialogue is activated. See
 docs/audit/pre-report-late-preparation-2026-10-15.md.

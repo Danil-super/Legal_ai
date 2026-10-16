@@ -178,3 +178,65 @@ Ruff/all-three-service mypy143/Compose pass. Actual exact-worktree graph refresh
 This completes the callback consumer, not shared-form/initial-producer PRC7 or
 confirmed Hermes interpretation PRC8–11. No external provider/model was called,
 no SSH, server migration, deployment, normative approval or activation performed.
+
+## Explicit form control and report-free initial writer — 16 October
+
+PRC7a b6df566 renders one operation-bound factual control through status, result
+delivery and restart notifier. NEEDS_FACTS offers clarification, LIMITED an explicit
+manual correction; neither offers a final PDF or automatically repeats analysis.
+HUMAN_REVIEW keeps the lawyer route. Author focused73 tests pass, including real
+rendered-button→client→Core→PostgreSQL recovery for NEEDS_FACTS and LIMITED.
+Independent246 targeted tests pass; the review found an inherited content-validation
+gap after checking source identity, which was classified actionable, not ignored.
+
+PRC7b f48320b accepts explicit integer receiptVersion2 for GUIDED_V2 facts only.
+Legacy omission and canonical hashes remain unchanged. V2 confirmation persists
+the actual facts/receipt without constructing an intake report/PDF. Attempted
+UNKNOWN/APPROXIMATE date can be stored when it alone blocks finalization; later
+legal analysis still refuses date-dependent advice. Urgent10k/court/hospitalization
+routing, metadata-only material move, quotas, creator/tenant, retention and current
+access after waits remain enforced. A reproduced urgent-policy-loss condition was
+RED201→GREEN409: attempted dates cannot bypass a previously required escalation.
+
+Author writer regression:73 pass on a fresh parent database. An earlier run against
+the reused test parent had72 pass/1 legacy search failure because a previous test
+left an approved synthetic corpus row. That root legacy suite expects an empty
+parent; a new migrated disposable database fixed the isolation issue. No retrieval
+code, assertion, test or gate was weakened. Earlier RED implementation runs and
+setup/annotation/formatting errors are not counted as passes.
+
+Independent writer review:82 pass/0 skips on separate cluster55486. Its18 additional
+probes include actual two-connection wait/revocation/current-clock subscription
+expiry, draft natural expiry, concurrent identical/mixed-mode submissions, tenant/
+creator reuse, active/monthly quotas, exact provenance/retention and expired replay.
+Inverting the attempted-date guard killed three tests; source restored exactly.
+No new Required/Critical was demonstrated in this scope. Report:
+`/home/danil/.cache/dental-prc-verify.pLetxJ/prc7b-workflow-review-20261016.md`.
+
+PRC7c3868e20 closes the inherited consumer gap. Seven malformed response vectors
+were reproduced before the fix. The existing Core partial-draft validator and
+CorrectionSource move to already-packaged pure contracts; Core and preparation
+consumer use the exact same function. Unsupported/mixed keys, malformed screening,
+question/answer schemas and16384-byte UTF8 limit now refuse continuation. This is
+not full semantic scalar validation, confirmed facts or a demonstrated auth bypass.
+Author related69 tests pass with PostgreSQL. Independent307 pass/14 PG skips;
+3522 old/new outcomes and JSON schemas match,39 additional runtime probes pass.
+Removing the consumer call fails all seven regressions, restoring it passes them.
+No remaining Required is demonstrated in this bounded review. Report:
+`/home/danil/.cache/dental-prc-verify.pLetxJ/prc7c-boundary-review-20261016.md`.
+
+Final combined source/test tree **eda5a576ba356ef58315f4869ac6c55a14d27222**,
+commit3868e20: **3096 passed,0 skipped,341.59s**,299 existing Telegram warnings.
+Fresh database `dental_legal_test_prc7_combined_20261016` on task cluster55487 and
+task MinIO were used. JUnit:
+`/home/danil/.cache/dental-prc-verify.pLetxJ/prc7-combined-20261016.xml`.
+Ruff/all-three-service mypy143/Compose pass. Real Gateway Docker build and composed
+entrypoint imports pass (local image dental-prc7-gateway-20261016,3f16a1d04bce).
+Actual Code Graph refreshed:576 nodes/575 edges, incomplete Python impact coverage.
+
+PRC7 remains partial: ordinary Gateway omits the new receipt opt-in; its complete
+initial confirmation consumer (PRC7d), early Hermes understanding/acceptance and
+shared final dialogue (PRC8–11) remain open. Tests use synthetic external-model and
+Telegram stand-ins, not live provider quality or production delivery. Models/high,
+provider, budgets, risk policy, approved sources and approval authority unchanged.
+No external CLI/model/provider, SSH, server migration, deployment or activation.
