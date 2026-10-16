@@ -490,6 +490,23 @@ transaction, waits, stores and reads back its receipt; it was RED on the default
 transaction timestamp. Normal production writers hold the case lock; the test
 directly exercises storage with a synthetic result only.
 
+### PRC7c returned-draft validation before continuation
+
+Independent PRC7a review demonstrated that matching source/ID/revision/state alone
+could still offer continuation for a malformed returned draft. The actual Core
+write validator refused the same payloads. This is an inherited consumer boundary
+gap, not demonstrated persistence/authorization bypass, but must close before
+activation of the new form control.
+
+Move the existing bounded partial-draft data validation and CorrectionSource type
+to the already-packaged pure contracts module. Core's write schema delegates to
+that same function; its existing allowed keys, partial safety/question/answer
+validation and16384-byte UTF8 limit are preserved, not independently redefined.
+The preparation consumer validates it before offering continuation. Existing Core
+imports of CorrectionSource remain re-exports of the exact type. No Core API/ORM
+module or new dependency is added to the Gateway image. This boundary does not
+turn partial draft fields into confirmed facts or replace later access checks.
+
 ### PRC7b opt-in report-free initial workflow writer
 
 The existing submission API accepts an explicit integer receiptVersion2 only with

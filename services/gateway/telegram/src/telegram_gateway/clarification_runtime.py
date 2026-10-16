@@ -4,6 +4,7 @@
 import re
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from legal_core.contracts import validate_intake_draft_data
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
@@ -69,6 +70,7 @@ async def _create_preparation_clarification(
             "operationId": str(operation_id), "operationSha256": operation_sha,
         }:
             raise ValueError("preparation draft origin mismatch")
+        validate_intake_draft_data(data)
         gateway_bot._saved_draft_selection(draft_id, draft)
     except (KeyError, ValueError, LegalCoreApiError) as exc:
         code = exc.code if isinstance(exc, LegalCoreApiError) else None

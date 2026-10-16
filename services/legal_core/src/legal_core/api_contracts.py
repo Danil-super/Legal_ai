@@ -7,10 +7,7 @@ from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 
-from legal_core.analysis_clarifications import (
-    AnalysisClarificationAnswers,
-    ClarificationRequestBatch,
-)
+from legal_core.analysis_clarifications import AnalysisClarificationAnswers
 from legal_core.contracts import (
     CaseResponse as CaseResponse,
 )
@@ -19,6 +16,10 @@ from legal_core.contracts import (
     ContractModel,
     FactKey,
     MissingFact,
+    validate_intake_draft_data,
+)
+from legal_core.contracts import (
+    CorrectionSource as CorrectionSource,
 )
 from legal_core.contracts import (
     LegalFragmentResponse as LegalFragmentResponse,
@@ -92,51 +93,6 @@ _ENUM_FACT_KEYS = frozenset(
 _DOCUMENT_STATUSES = frozenset({"AVAILABLE", "MISSING", "UNKNOWN", "REQUESTED", "NOT_APPLICABLE"})
 _DOCUMENT_KEYS = frozenset({"CONTRACT", "MEDICAL_RECORD", "INFORMED_CONSENT", "GUARANTEE"})
 _SIGNAL_STATES = frozenset({"YES", "NO", "UNKNOWN"})
-_V1_DRAFT_DATA_KEYS = frozenset(
-    {
-        "incident_type",
-        "service_type",
-        "service_date",
-        "incident_date",
-        "claim_date",
-        "problem_summary",
-        "patient_demand",
-        "demand_amount_kopecks",
-        "formal_claim",
-        "claim_received_at",
-        "response_deadline",
-        "harm_claimed",
-        "hospitalization",
-        "lawyer_contact",
-        "representative_authority",
-        "regulator_or_court",
-        "authority_kind",
-        "authority_document_date",
-        "regulator_threat",
-        "documents_status",
-    }
-)
-_V2_DRAFT_DATA_KEYS = frozenset(
-    {
-        "intakeVersion",
-        "incomingKind",
-        "incomingSourceStatus",
-        "situationAreas",
-        "affectedServices",
-        "eventSummary",
-        "eventDate",
-        "conflictStage",
-        "clinicActions",
-        "clinicActionsNote",
-        "healthSignals",
-        "caseMaterialsStatus",
-        "safetyScreening",
-        "analysisClarificationAnswers",
-        "analysisClarificationRequests",
-        "correctionSource",
-    }
-)
-_DRAFT_DATA_KEYS = _V1_DRAFT_DATA_KEYS | _V2_DRAFT_DATA_KEYS
 _V2_DRAFT_STATES = frozenset(
     {
         "INCOMING",
@@ -294,35 +250,6 @@ class EscalationQueueResponse(ContractModel):
     next_before: UUID | None = Field(default=None, alias="nextBefore")
 
 
-class CorrectionSource(ContractModel):
-    case_id: UUID = Field(alias="caseId")
-    fact_snapshot_sha256: str = Field(alias="factSnapshotSha256", pattern=r"^[0-9a-f]{64}$")
-    report_id: UUID | None = Field(
-        default=None, alias="reportId", exclude_if=lambda value: value is None
-    )
-    report_sha256: str | None = Field(
-        default=None, alias="reportSha256", pattern=r"^[0-9a-f]{64}$",
-        exclude_if=lambda value: value is None,
-    )
-    operation_id: UUID | None = Field(
-        default=None, alias="operationId", exclude_if=lambda value: value is None,
-    )
-    operation_sha256: str | None = Field(
-        default=None, alias="operationSha256", pattern=r"^[0-9a-f]{64}$",
-        exclude_if=lambda value: value is None,
-    )
-
-    @model_validator(mode="after")
-    def validate_report_binding(self) -> "CorrectionSource":
-        if (self.report_id is None) != (self.report_sha256 is None):
-            raise ValueError("reportId and reportSha256 must be provided together")
-        if (self.operation_id is None) != (self.operation_sha256 is None):
-            raise ValueError("operationId and operationSha256 must be provided together")
-        if self.operation_id is not None and self.report_id is not None:
-            raise ValueError("operation and report origins are mutually exclusive")
-        return self
-
-
 class TelegramIntakeDraftUpdateRequest(ContractModel):
     expected_revision: int = Field(alias="expectedRevision", ge=1)
     wizard_state: TelegramDraftWizardState = Field(alias="wizardState")
@@ -331,30 +258,7 @@ class TelegramIntakeDraftUpdateRequest(ContractModel):
     @field_validator("draft_data")
     @classmethod
     def validate_draft_data(cls, value: dict[str, Any]) -> dict[str, Any]:
-        if not set(value) <= _DRAFT_DATA_KEYS:
-            raise ValueError("draftData contains unsupported fields")
-        is_v2 = value.get("intakeVersion") == 2
-        allowed = _V2_DRAFT_DATA_KEYS if is_v2 else _V1_DRAFT_DATA_KEYS
-        if not set(value) <= allowed:
-            raise ValueError("draftData mixes incompatible intake versions")
-        if "intakeVersion" in value and not is_v2:
-            raise ValueError("draftData intakeVersion is invalid")
-        if "safetyScreening" in value:
-            from legal_core.factual_safety_intake import validate_partial_screening
-
-            validate_partial_screening(value["safetyScreening"])
-        if "correctionSource" in value:
-            CorrectionSource.model_validate(value["correctionSource"])
-        if "analysisClarificationAnswers" in value:
-            AnalysisClarificationAnswers.model_validate(value["analysisClarificationAnswers"])
-        if "analysisClarificationRequests" in value:
-            ClarificationRequestBatch.model_validate({
-                "requests": value["analysisClarificationRequests"]
-            })
-        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-        if len(encoded.encode()) > 16_384:
-            raise ValueError("draftData exceeds 16384 bytes")
-        return value
+        return validate_intake_draft_data(value)
 
     @model_validator(mode="after")
     def validate_versioned_state(self) -> "TelegramIntakeDraftUpdateRequest":

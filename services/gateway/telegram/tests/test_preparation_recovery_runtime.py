@@ -85,6 +85,43 @@ def test_wrong_returned_draft_origin_never_offers_a_resume_button(field):
                    for row in buttons for button in row)
 
 
+@pytest.mark.parametrize("field,value", [
+    ("unexpectedProperty", "synthetic"),
+    ("safetyScreening", {"schemaVersion": "invented", "hospitalizationReported": "SAFE"}),
+    ("analysisClarificationRequests", [{"questionId": "INVENTED"}]),
+    ("analysisClarificationAnswers", {"schemaVersion": "invented"}),
+    ("eventSummary", "x" * 20_000),
+    ("eventSummary", "я" * 9_000),
+    ("incident_type", "OTHER"),
+], ids=["unexpected", "safety", "questions", "answers", "oversize", "utf8-size", "mixed-v1"])
+def test_returned_draft_content_must_pass_the_same_bounded_schema_as_core(field, value):
+    from legal_core.api_contracts import TelegramIntakeDraftUpdateRequest
+
+    update, context, client, message = _context()
+    draft = client.create_clarification_draft.return_value
+    draft["draftData"][field] = value
+    with pytest.raises(ValueError):
+        TelegramIntakeDraftUpdateRequest.model_validate({
+            "expectedRevision": draft["revision"], "wizardState": draft["wizardState"],
+            "draftData": draft["draftData"],
+        })
+    open_clarification(update, context)
+    client.create_clarification_draft.assert_awaited_once()
+    buttons = message.reply_text.await_args.kwargs["reply_markup"].inline_keyboard
+    assert not any(button.callback_data.startswith("case:draft:")
+                   for row in buttons for button in row)
+    assert context.user_data == {}
+
+
+def test_core_and_gateway_share_the_partial_draft_validator_without_duplicate_origin_types():
+    from legal_core import api_contracts, contracts
+    from telegram_gateway import clarification_runtime
+
+    assert api_contracts.CorrectionSource is contracts.CorrectionSource
+    assert api_contracts.validate_intake_draft_data is contracts.validate_intake_draft_data
+    assert clarification_runtime.validate_intake_draft_data is contracts.validate_intake_draft_data
+
+
 @pytest.mark.parametrize("code", ["CASE_PREPARATION_STALE", "CLARIFICATION_OPERATION_UNAVAILABLE",
                                   "PREPARATION_RESULT_INVALID", "CASE_CONTENT_EXPIRED"])
 def test_stale_invalid_or_expired_source_does_not_fall_back_to_a_report(code):
