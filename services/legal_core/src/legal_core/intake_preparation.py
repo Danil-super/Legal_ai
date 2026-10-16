@@ -36,6 +36,7 @@ class PreparationOperation:
     state: Literal["PENDING", "PROPOSED", "MANUAL_CONTINUATION"]
     lease_token: UUID | None = None
     suggestions: DraftSuggestions | None = None
+    intent: DraftPreparationIntent | None = None  # Private dispatch metadata, never a public DTO.
 
 
 async def _draft(
@@ -194,7 +195,7 @@ async def reserve_preparation(
         if result.suggestions is not None:
             result.suggestions.validate_source(_source(draft))
         if inserted is not None:
-            result = PreparationOperation(record.id, "PENDING", lease_token=token)
+            result = PreparationOperation(record.id, "PENDING", lease_token=token, intent=intent)
             session.add(_audit(actor=actor, action="INTAKE_PREPARATION_RESERVED",
                                resource_type=RESOURCE_TYPE, resource_id=record.id,
                                metadata={"revision": draft.revision, "kind": operation_kind}))

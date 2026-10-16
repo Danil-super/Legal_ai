@@ -793,3 +793,16 @@ draft, revision and facts are preserved, and cancellation remains possible while
 analysis safe-stop is active. No private token is needed by the public caller.
 This helper must be wired to actual Telegram cancellation before UI activation;
 merely clearing Gateway memory is not a cancellation fence.
+
+### PRC9d bounded background executor
+
+Core lifespan creates one ModelAdmission shared by existing analysis consumers and
+the optional intake runner. A newly reserved operation carries private server
+intent only for dispatch; it must not be serialized as the public receipt. The
+runner try-admits at most two tasks, returns immediately, never queues behind busy
+capacity, and sends only metadata to Agent. It validates the bound result then
+persists through the existing reauthorizing completion guard. Failure, overload,
+timeout and process shutdown yield durable manual continuation when access still
+permits; a cancelled/changed/expired operation cannot be revived. Shutdown drains
+intake tasks before disposing its HTTP client and the database engine. No caller
+or Telegram route starts these tasks until the separately tested actor API exists.

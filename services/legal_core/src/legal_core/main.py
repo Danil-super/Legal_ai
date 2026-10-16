@@ -38,7 +38,9 @@ from legal_core.database import create_engine, create_session_factory
 from legal_core.draft_retention import purge_expired_intake_drafts
 from legal_core.escalation_notifications import create_escalation_notifications_router
 from legal_core.intake_preparation_api import create_intake_preparation_router
+from legal_core.intake_preparation_runner import IntakePreparationRunner
 from legal_core.legal_api import create_legal_router
+from legal_core.model_admission import ModelAdmission
 from legal_core.reference_evaluation_api import create_reference_evaluation_router
 from legal_core.reference_evaluation_retention import purge_expired_reference_evaluations
 
@@ -173,18 +175,24 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-        del application
+        admission = ModelAdmission()
         retention_task = (
             asyncio.create_task(_retention_purge_loop(sessions)) if enable_draft_retention else None
         )
         worker_settings = WorkerSettings.load() if enable_analysis_worker else None
+        runner = (IntakePreparationRunner(sessions, worker_settings, admission)
+                  if worker_settings is not None else None)
+        application.state.intake_preparation_runner = runner
         worker_task = (
-            asyncio.create_task(run_analysis_worker(sessions, worker_settings))
+            asyncio.create_task(run_analysis_worker(sessions, worker_settings, admission=admission))
             if worker_settings is not None else None
         )
         try:
             yield
         finally:
+            application.state.intake_preparation_runner = None
+            if runner is not None:
+                await runner.close()
             if worker_task is not None:
                 worker_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -206,6 +214,7 @@ def create_app(
         ),
         lifespan=lifespan,
     )
+    app.state.intake_preparation_runner = None
 
     @app.middleware("http")
     async def correlation_id(request: Request, call_next: RequestResponseEndpoint) -> Response:
