@@ -490,6 +490,35 @@ transaction, waits, stores and reads back its receipt; it was RED on the default
 transaction timestamp. Normal production writers hold the case lock; the test
 directly exercises storage with a synthetic result only.
 
+### PRC7b opt-in report-free initial workflow writer
+
+The existing submission API accepts an explicit integer receiptVersion2 only with
+GUIDED_V2 facts and the v2 intake schema. Omission preserves the exact legacy
+canonical request/hash and report-producing behavior; explicit null, coercions
+and unsupported versions are rejected. New and old modes cannot reuse a workflow
+identity with a different canonical request. The planned existing-table migration
+already permits a v2 receipt without report_id; no additional schema is introduced.
+
+Only the explicit mode bypasses initial intake report/PDF construction. It preserves
+confirmed immutable facts, correction-source provenance, material metadata movement,
+quotas, retention and early triage. Report-created audit is emitted only when a
+report exists; v2 workflow audit carries receiptVersion, not a fake reportId.
+Finalization audit says PREPARATION_PENDING rather than diagnosing the corpus.
+
+A provided, validated UNKNOWN/APPROXIMATE event date may be saved in this preparation
+mode when it is the sole missing fact. An absent date/other missing facts retain the
+existing refusal unless approved urgent routing applies. The exact-date requirement
+for time-dependent legal advice is unchanged: the actual preparation-context gate
+returns ANALYSIS_DATE_UNCERTAIN without a report. Previously confirmed urgency must
+still persist an escalation; a changed/unavailable policy rolls back instead of
+using attempted_date to suppress routing. Policy and the10k threshold are unchanged.
+
+V2 creation and replay recheck current actor/entitlement after workflow/quota waits,
+using the existing current-clock preparation access guard. An owned locked draft's
+natural expiry is checked again after the quota wait. Ordinary Gateway submission
+still omits receiptVersion: this writer is not production activation or proof of
+the complete PRC10 initial confirmation consumer.
+
 ### PRC7a explicit form control for intermediate queue results
 
 The validated NEEDS_FACTS presentation offers one operation-bound "Уточнить факты"

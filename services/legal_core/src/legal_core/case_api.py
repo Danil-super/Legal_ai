@@ -1833,6 +1833,8 @@ def create_case_router(
         telegram_user_id: TelegramUserId,
         session: Session,
     ) -> TelegramWorkflowReceipt:
+        from legal_core.case_preparation import recheck_submission_access
+
         actor = await resolve_actor(session, telegram_user_id)
         _require_case_intake_actor(actor)
         request_json = payload.model_dump(mode="json", by_alias=True)
@@ -1858,12 +1860,24 @@ def create_case_router(
                     code="WORKFLOW_PAYLOAD_MISMATCH",
                     message="Workflow identifier was already submitted with other facts",
                 )
+            if existing.receipt_version == 2:
+                existing_case = await _tenant_case(session, actor, existing.case_id)
+                await recheck_submission_access(
+                    session, actor=actor, telegram_user_id=telegram_user_id, case=existing_case,
+                )
             response.status_code = status.HTTP_200_OK
             return await _workflow_response(session, existing)
 
         facts = {item.fact_key: _input_value(item.value_type, item.value) for item in payload.facts}
         missing = missing_facts_for(facts)
-        if missing and not await has_approved_urgent_signal(session, facts):
+        event = facts.get(FactKey.EVENT_DATE)
+        attempted_date = (
+            payload.receipt_version == 2 and len(missing) == 1
+            and missing[0].fact_key == FactKey.EVENT_DATE and isinstance(event, dict)
+            and event.get("precision") in {"UNKNOWN", "APPROXIMATE"}
+        )
+        urgent_before = bool(missing) and await has_approved_urgent_signal(session, facts)
+        if missing and not attempted_date and not urgent_before:
             raise ApiError(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 code="INSUFFICIENT_FACTS",
@@ -1918,6 +1932,13 @@ def create_case_router(
         )
         session.add(case)
         await session.flush()
+        if payload.receipt_version == 2:
+            await recheck_submission_access(
+                session, actor=actor, telegram_user_id=telegram_user_id, case=case,
+            )
+            if source_draft is not None and source_draft.purge_after <= datetime.now(UTC):
+                raise ApiError(status_code=409, code="INTAKE_DRAFT_CLOSED",
+                               message="An expired intake draft cannot create a new case")
 
         # The Telegram workflow identifier is the durable draft identifier. A
         # submission moves private material metadata to the confirmed case without
@@ -1954,35 +1975,38 @@ def create_case_router(
             )
             for item in payload.facts
         ]
-        report_id = uuid4()
-        canonical = build_intake_report(
-            report_id=report_id,
-            case_id=case.id,
-            public_number=_case_response(case).public_number,
-            case_status=CaseStatus.ANALYSIS_BLOCKED,
-            report_version=1,
-            generated_at=datetime.now(UTC),
-            facts=facts,
-            missing_facts=missing,
-        )
-        report_json = canonical.model_dump(mode="json", by_alias=True)
-        pdf = render_report_pdf(canonical)
-        report_row = CaseReport(
-            id=report_id,
-            clinic_id=actor.clinic_id,
-            case_id=case.id,
-            report_version=1,
-            schema_version=canonical.schema_version,
-            status="ANALYSIS_BLOCKED",
-            report_json=report_json,
-            content_sha256=_canonical_hash(report_json),
-            pdf_bytes=pdf,
-            pdf_sha256=hashlib.sha256(pdf).hexdigest(),
-            pdf_size_bytes=len(pdf),
-            facts_snapshot_sha256=canonical.fact_snapshot_sha256,
-            created_by_membership_id=actor.membership_id,
-        )
-        session.add_all([*fact_rows, report_row])
+        report_row = None
+        if payload.receipt_version != 2:
+            report_id = uuid4()
+            canonical = build_intake_report(
+                report_id=report_id,
+                case_id=case.id,
+                public_number=_case_response(case).public_number,
+                case_status=CaseStatus.ANALYSIS_BLOCKED,
+                report_version=1,
+                generated_at=datetime.now(UTC),
+                facts=facts,
+                missing_facts=missing,
+            )
+            report_json = canonical.model_dump(mode="json", by_alias=True)
+            pdf = render_report_pdf(canonical)
+            report_row = CaseReport(
+                id=report_id,
+                clinic_id=actor.clinic_id,
+                case_id=case.id,
+                report_version=1,
+                schema_version=canonical.schema_version,
+                status="ANALYSIS_BLOCKED",
+                report_json=report_json,
+                content_sha256=_canonical_hash(report_json),
+                pdf_bytes=pdf,
+                pdf_sha256=hashlib.sha256(pdf).hexdigest(),
+                pdf_size_bytes=len(pdf),
+                facts_snapshot_sha256=canonical.fact_snapshot_sha256,
+                created_by_membership_id=actor.membership_id,
+            )
+            session.add(report_row)
+        session.add_all(fact_rows)
         await session.flush()
         early_escalation_id = await ensure_early_triage(
             session,
@@ -1992,25 +2016,31 @@ def create_case_router(
             facts=facts,
         )
 
-        if missing and early_escalation_id is None:
+        if missing and (not attempted_date or urgent_before) and early_escalation_id is None:
             raise ApiError(status_code=409, code="RISK_POLICY_NOT_READY",
                            message="Urgent routing policy changed; retry confirmation")
 
         case_response = _case_response(case)
         case_response.early_escalation_id = early_escalation_id
-        result = TelegramWorkflowResponse(
-            workflowId=workflow_id,
-            state="SUCCEEDED",
-            case=case_response,
-            report=ReportResponse(
-                id=report_row.id,
-                caseId=report_row.case_id,
-                reportVersion=report_row.report_version,
-                reportJson=report_row.report_json,
-                pdfSha256=report_row.pdf_sha256,
-                createdAt=report_row.created_at,
-            ),
-        )
+        result: TelegramWorkflowReceipt
+        if report_row is None:
+            result = TelegramPreparationReceipt(
+                receiptVersion=2, workflowId=workflow_id, state="SUCCEEDED", case=case_response,
+            )
+        else:
+            result = TelegramWorkflowResponse(
+                workflowId=workflow_id,
+                state="SUCCEEDED",
+                case=case_response,
+                report=ReportResponse(
+                    id=report_row.id,
+                    caseId=report_row.case_id,
+                    reportVersion=report_row.report_version,
+                    reportJson=report_row.report_json,
+                    pdfSha256=report_row.pdf_sha256,
+                    createdAt=report_row.created_at,
+                ),
+            )
         workflow = TelegramCaseWorkflow(
             id=workflow_id,
             clinic_id=actor.clinic_id,
@@ -2018,7 +2048,8 @@ def create_case_router(
             request_sha256=request_hash,
             state="SUCCEEDED",
             case_id=case.id,
-            report_id=report_row.id,
+            receipt_version=payload.receipt_version or 1,
+            report_id=report_row.id if report_row is not None else None,
         )
         session.add_all(
             [
@@ -2042,15 +2073,14 @@ def create_case_router(
                     action="CASE_INTAKE_FINALIZED",
                     resource_type="CASE",
                     resource_id=case.id,
-                    metadata={"analysisStatus": "LEGAL_CORPUS_NOT_READY"},
+                    metadata={"analysisStatus": "PREPARATION_PENDING"
+                              if payload.receipt_version == 2 else "LEGAL_CORPUS_NOT_READY"},
                 ),
-                _audit(
-                    actor=actor,
-                    action="CASE_REPORT_CREATED",
-                    resource_type="CASE_REPORT",
+                *([_audit(
+                    actor=actor, action="CASE_REPORT_CREATED", resource_type="CASE_REPORT",
                     resource_id=report_row.id,
-                    metadata={"reportVersion": 1, "schemaVersion": canonical.schema_version},
-                ),
+                    metadata={"reportVersion": 1, "schemaVersion": report_row.schema_version},
+                )] if report_row is not None else []),
                 _audit(
                     actor=actor,
                     action="TELEGRAM_WORKFLOW_SUCCEEDED",
@@ -2058,7 +2088,8 @@ def create_case_router(
                     resource_id=workflow_id,
                     metadata={
                         "caseId": str(case.id),
-                        "reportId": str(report_row.id),
+                        **({"reportId": str(report_row.id)} if report_row is not None
+                           else {"receiptVersion": 2}),
                         "schema": payload.intake_schema_version,
                     },
                 ),

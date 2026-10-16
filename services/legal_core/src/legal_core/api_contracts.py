@@ -914,7 +914,28 @@ class TelegramWorkflowSubmissionRequest(ContractModel):
         alias="intakeSchemaVersion"
     )
     locale: Literal["ru-RU"] = "ru-RU"
+    receipt_version: Literal[2] | None = Field(
+        default=None, alias="receiptVersion", exclude_if=lambda value: value is None,
+    )
     facts: list[FactInput] = Field(min_length=1, max_length=20)
+
+    @field_validator("receipt_version", mode="before")
+    @classmethod
+    def receipt_version_is_exact(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("receipt version must be an integer")
+        return value
+
+    @model_validator(mode="after")
+    def preparation_requires_guided_facts(self) -> "TelegramWorkflowSubmissionRequest":
+        if self.receipt_version == 2 and (
+            self.intake_schema_version != "dental-case-intake.v2" or not any(
+                fact.fact_key == FactKey.INTAKE_VERSION and fact.value == {"value": "GUIDED_V2"}
+                for fact in self.facts
+            )
+        ):
+            raise ValueError("preparation receipt requires guided v2 intake")
+        return self
 
     @field_validator("facts")
     @classmethod
