@@ -37,8 +37,13 @@ and checks latest source/access/retention before replay. Independent review foun
 same-origin receipt substitution; corrected regression and follow-up41 tests pass.
 Author99 focused tests pass. Final immutable tree91764b7/commit7c2dbef:
 3010 passed/0 skipped,224.57s on isolated PostgreSQL+MinIO; quality checks pass.
-NEXT: PRC6c source-bound Telegram callbacks, followed by PRC7–11
-understanding/acceptance/shared UI/end-to-end tests.
+PRC6c codec/client fd68e8f and runtime/router f459747 establish57-byte source-bound
+Telegram callbacks. Actual client/Core/PostgreSQL recovery survives lost replies
+without duplicate drafts; independent review134 tests includes current-source and
+same-clinic creator negatives. Full immutable tree bb5307c (f459747):3053 passed/
+0 skipped,313.72s, isolated PostgreSQL+MinIO; quality checks pass.
+NEXT: PRC7 shared clarification UI/report-free initial receipt, followed by PRC8–11
+understanding/acceptance/end-to-end tests.
 The V2 writer is opt-in/internal only: ordinary queues remain V1. No server
 migration or complete pre-report dialogue is activated. See
 docs/audit/pre-report-late-preparation-2026-10-15.md.

@@ -140,3 +140,41 @@ Verification:
 This completes PRC6b Core recovery only. New Telegram callbacks/shared form,
 report-free initial workflow and confirmed Hermes interpretation remain open.
 No external model/provider, SSH or production changes occurred in this checkpoint.
+
+## Telegram intermediate-origin recovery checkpoint — 16 October
+
+Codec/client fd68e8f and runtime/router f459747 consume the new origin in a57-byte
+canonical callback. Preview and returned draft must match the complete case/fact/
+operation/result identity. Stable actor/message/source-derived keys preserve one
+audited draft when the Core response or Telegram reply is lost. Legacy report
+callbacks remain supported; no fallback to a different origin, automatic fact
+confirmation, model request, file copy or report generation is added.
+
+Independent codec/client review:16 new tests and66 legacy tests pass;5 PostgreSQL
+cases were skipped in that review only. The author later ran the87-case combined
+selection with real PostgreSQL and zero skips after restarting stopped test-only
+containers. The first connection-refused setup run is not a pass.
+
+Independent runtime review:134 passed/0 skipped,24.79s on its own PostgreSQL cluster.
+Own probes include malformed/future DTOs, actual full application callback routing,
+GET200 followed by a newer source before POST (409/no draft/report), and a different
+creator in the same clinic (404/no POST). A temporary comparison-guard mutation in
+the reviewer-owned tree caused two failures, was restored, and the graph refreshed.
+No Required/Critical finding remains demonstrated in this bounded review. Reports:
+`/home/danil/.cache/dental-prc-verify.pLetxJ/prc6c-intent-client-review.md` and
+`/home/danil/.cache/dental-prc-verify.pLetxJ/prc6c-runtime-review-20261016.md`.
+The owner chose these reviews/tests without an external CLI review.
+
+Author runtime/legacy selection:94 passed/0 skipped,19.15s. Full immutable code/test
+tree **bb5307c7db4f40ffdd3da57962cf8f1dfd3a5837**, commit f459747:
+**3053 passed,0 skipped,313.72s**,299 Telegram library/test-environment warnings.
+Fresh migrated PostgreSQL database `dental_legal_test_prc6c_20261016_full` on task
+cluster55487 and task MinIO were used; reviewer used separate cluster55486 to avoid
+global runtime-role provisioning races. JUnit:
+`/home/danil/.cache/dental-prc-verify.pLetxJ/prc6c-full-20261016.xml`.
+Ruff/all-three-service mypy143/Compose pass. Actual exact-worktree graph refreshed:
+574 nodes/573 edges; Python dependency extraction remains incomplete.
+
+This completes the callback consumer, not shared-form/initial-producer PRC7 or
+confirmed Hermes interpretation PRC8–11. No external provider/model was called,
+no SSH, server migration, deployment, normative approval or activation performed.

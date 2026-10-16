@@ -197,11 +197,11 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
   role-provisioning error was diagnosed and the incomplete run was not counted.
   Gateway operation callbacks, form/confirmation changes and Hermes remain PRC6c–11.
 
-### PRC6c: versioned Telegram clarification intent
+### PRC6c: versioned Telegram clarification intent — complete, producer disabled
 
-- [ ] Encode the intermediate source in a callback within64 bytes; decode and
+- [x] Encode the intermediate source in a callback within64 bytes; decode and
   validate the preview's exact source identity/hash before accepting a new draft.
-- [ ] Repeated/stale/forged clicks, creator mismatch and restart do not select
+- [x] Repeated/stale/forged clicks, creator mismatch and restart do not select
   another source, clone another case or fall back to a fake/old report.
 - Files(5): Gateway src/telegram_gateway/clarification_intent.py,
   src/telegram_gateway/clarification_runtime.py, src/telegram_gateway/case_wizard.py,
@@ -209,6 +209,14 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
 - Verify: `python -m pytest -q services/gateway/telegram/tests/test_preparation_intent.py services/gateway/telegram/tests/test_preparation_recovery_runtime.py`.
 - Dependencies: PRC6b. Scope M. Checkpoint C: late and pre-context limitations,
   report-free provenance and legacy recovery are all verified before form activation.
+- Split into codec/client fd68e8f and runtime/router f459747, each with ADR0091.
+  Callback is57 ASCII bytes; actual client/Core/PostgreSQL recovery preserves one
+  draft after lost HTTP/Telegram replies. No report/PDF or file copying is added.
+  Independent runtime review:134 passed/0 skipped, including stale-between-GET/
+  POST and same-clinic wrong-creator probes; no Required/Critical in bounded scope.
+  Full immutable tree bb5307c (f459747):3053 passed/0 skipped,313.72s on isolated
+  PostgreSQL+MinIO. Ruff/mypy143/Compose pass. Shared UI/initial producer remain PRC7;
+  Hermes understanding and production activation are not claimed.
 
 ### PRC7: shared late-clarification form and report-free initial receipt
 
