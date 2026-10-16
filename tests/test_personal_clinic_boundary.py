@@ -8,8 +8,8 @@ import hashlib
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
 CLINIC_BASELINE = {
@@ -61,7 +61,16 @@ def test_understanding_composition_stays_clinical_even_when_personal_preview_is_
     app = create_app(enable_draft_retention=False, enable_analysis_worker=False)
     # Inspect actual registrations, not just OpenAPI: include_in_schema=False hides
     # documentation, but does not unmount a route (FastAPI reference via Context7).
-    routes = [route for route in app.routes if isinstance(route, APIRoute)]
+    # FastAPI >=0.137 retains live included-router containers, not a flat route list.
+    pending, routes = list(app.routes), []
+    while pending:
+        route = pending.pop()
+        if isinstance(route, APIRoute):
+            routes.append(route)
+        else:
+            included = getattr(route, "original_router", None)
+            assert included is not None, f"Uninspected route container: {type(route).__name__}"
+            pending.extend(included.routes)
     assert {
         "/v1/telegram-intake-drafts/{draft_id}/understanding",
         "/v1/intake-preparations/{operation_id}",

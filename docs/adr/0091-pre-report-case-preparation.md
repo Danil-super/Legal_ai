@@ -836,5 +836,9 @@ operation routes. PERSONAL_PREVIEW_MODE=synthetic does not mount a personal API,
 read personal credentials or enable the clinical worker when explicitly disabled.
 Context7's official FastAPI include_router and testing-events documentation was
 retrieved before this test change; it confirms that OpenAPI absence alone is not
-a route-isolation check. This engineering baseline update is not personal M2,
+a route-isolation check. FastAPI0.141.1 also retains included-router containers;
+the canary recursively inspects their original routes and fails closed on an
+unrecognized container instead of assuming a flat APIRoute list. The first added
+canary reproduced that wrong flat-list assumption and was corrected, not skipped.
+This engineering baseline update is not personal M2,
 legal approval, production release or activation of ordinary Telegram producers.
