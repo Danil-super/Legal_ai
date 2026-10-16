@@ -781,3 +781,15 @@ JSONDecodeError.doc / httpx request-bearing exception chain. The whole new conte
 method now replaces protocol/transport errors outside except; refusals retain only
 HTTP status with a fixed code/message. Legacy client behavior is untouched. Tests
 prove absent cause/context and no raw error-body marker, not merely safe HTTP text.
+
+### PRC9c durable owner cancellation
+
+The owner-only cancellation transition locks the same current draft and operation,
+reauthorizes access, clears any pending lease and unconfirmed suggestions, and
+persists FAILED/manual continuation. Repeated cancellation is idempotent; a late
+model completion cannot revive it, nor can a retry acquire a replacement lease.
+It also cancels an already proposed result before future confirmation. The saved
+draft, revision and facts are preserved, and cancellation remains possible while
+analysis safe-stop is active. No private token is needed by the public caller.
+This helper must be wired to actual Telegram cancellation before UI activation;
+merely clearing Gateway memory is not a cancellation fence.

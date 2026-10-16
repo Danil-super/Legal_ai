@@ -290,6 +290,22 @@ async def complete_preparation(
         return result
 
 
+async def cancel_preparation(
+    sessions: async_sessionmaker[AsyncSession], *, telegram_user_id: int, operation_id: UUID,
+) -> PreparationOperation:
+    """Owner-only durable fence; no private lease and no draft deletion required."""
+    async with sessions() as session:
+        actor, _, record = await _owned_operation(session, telegram_user_id, operation_id)
+        if record.state != "FAILED":
+            record.state, record.lease_token, record.lease_until = "FAILED", None, None
+            record.response_json = {**(record.response_json or {}), "suggestions": None}
+            session.add(_audit(actor=actor, action="INTAKE_PREPARATION_CANCELLED",
+                               resource_type=RESOURCE_TYPE, resource_id=record.id,
+                               metadata={}))
+        await session.commit()
+        return PreparationOperation(record.id, "MANUAL_CONTINUATION")
+
+
 async def fail_preparation(
     sessions: async_sessionmaker[AsyncSession], *, telegram_user_id: int, operation_id: UUID,
     lease_token: UUID, reason_code: Literal[
