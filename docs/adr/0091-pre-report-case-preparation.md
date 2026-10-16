@@ -911,3 +911,14 @@ of the loaded draft producing a false success message. The consumer now refreshe
 once when consent commits between its reads and rejects an ahead-of-current
 receipt, including at the final presentation boundary. The malformed status
 regression was RED before this fix; a genuine intervening commit still recovers.
+
+### Subsequent free-text answers: separate identity
+
+The owner explicitly declined a narrower initial-narrative pilot on16Oct: complete
+subsequent-answer interpretation before test release. INTERPRET_ANSWER therefore
+uses a separate versioned intent/scope without changing old narrative hashes or
+decoders. Identity binds the current whole draft, revision, server-derived question,
+answer digest and fixed interpretation reference date. Different replies at the
+same question/revision cannot collide. Raw answer text is not an intent field.
+This pure identity does not reserve work, authorize access or confirm any value;
+the protected lifecycle, strict per-question values and explicit consent follow.
