@@ -203,7 +203,6 @@ async def route_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             raise ValueError("actor missing")
         draft_id = UUID(identity.get("draftId", identity.get(bot.DRAFT_ID_KEY)))
         core, client = bot._legal_core(context), AnswerClient(bot._legal_core(context), actor)
-        remote = await _draft(core, actor, draft_id)
         status = await client.discover(draft_id)
         if not interpret:
             if status is not None:
@@ -211,9 +210,13 @@ async def route_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             data.pop(_SELECTED, None)
             data.pop(_MANUAL, None)
             return
+        remote = await _draft(core, actor, draft_id)
         if not isinstance(wizard, dict):
             raise ValueError("current question missing")
         if status is not None:
+            await bot._reply(update, "Предыдущий ответ ещё ожидает проверки. "
+                             "Новый ответ пока не сохранён. Чтобы заменить его, "
+                             "нажмите «Ответить точнее».")
             await _show(update, context, status, remote)
             raise ApplicationHandlerStop
         if remote["revision"] != wizard.get(bot.DRAFT_REVISION_KEY):

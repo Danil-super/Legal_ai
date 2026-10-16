@@ -6,9 +6,10 @@ from typing import Any
 from legal_core.intake_answer_values import preview_answer_value
 from legal_core.intake_answer_wire import AnswerStatusResponse
 
-from telegram_gateway.factual_safety_intake import LABELS, screening_summary
+from telegram_gateway.factual_safety_intake import LABELS, QUESTIONS, screening_summary
 from telegram_gateway.guided_case_intake_v2 import (
     choice_items,
+    clarification_question,
     clarification_review_blocks,
 )
 
@@ -24,6 +25,16 @@ _REASONS = {
     "OFF_QUESTION": "В ответе не удалось найти сведения по текущему вопросу. "
     "Ответьте именно на него либо выберите вариант в анкете.",
 }
+_QUESTIONS = {
+    "INCOMING": "Что поступило от пациента?",
+    "SITUATION": "С чем связана ситуация?",
+    "SERVICES": "Какие услуги затронуты? Укажите от одной до пяти услуг.",
+    "EVENT": "Что именно произошло? Кратко опишите факты без персональных данных.",
+    "EVENT_DATE": "Когда произошло событие? Укажите дату, приблизительную дату или «не знаю».",
+    "CHRONOLOGY": "Это первое обращение по ситуации или конфликт продолжается?",
+    "CLINIC_ACTIONS": "Что клиника уже сделала по этой ситуации?",
+    "HEALTH": "Какие известны последствия для здоровья?",
+}
 
 
 def review_blocks(status: AnswerStatusResponse, data: dict[str, Any]) -> list[str]:
@@ -33,7 +44,13 @@ def review_blocks(status: AnswerStatusResponse, data: dict[str, Any]) -> list[st
     if interpretation.status == "UNRESOLVED":
         if interpretation.reason_code is None:
             raise ValueError("unresolved reason required")
-        return [_REASONS[interpretation.reason_code],
+        if question.screening_field is not None:
+            prompt = QUESTIONS[question.screening_field]
+        elif question.clarification_request is not None:
+            prompt = clarification_question(question.clarification_request, data)
+        else:
+            prompt = _QUESTIONS[question.wizard_state]
+        return [prompt, _REASONS[interpretation.reason_code],
                 "Ответ не сохранён как факт. Можно написать точнее или заполнить вручную."]
     value, field = interpretation.value, question.target_field
     blocks = ["🧩 Проверьте, правильно ли понят ответ"]

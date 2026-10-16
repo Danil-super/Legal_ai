@@ -172,19 +172,21 @@ def test_pending_refresh_consent_and_lost_accept_response_resume_once_after_ram_
     asyncio.run(scenario())
 
 
-def test_unresolved_has_fixed_copy_and_no_accept_button_or_invented_unknown():
+@pytest.mark.parametrize("reason", ["AMBIGUOUS", "CONTRADICTS_CONFIRMED", "OFF_QUESTION"])
+def test_unresolved_has_fixed_copy_and_no_accept_button_or_invented_unknown(reason):
     async def scenario():
         async with answer_harness() as (_app, core, sent, dispatch):
             await dispatch(f"case:draft:{DRAFT}")
             await dispatch("text:Всё как раньше")
             operation = core.starts[-1]
-            core.propose(None, reason="AMBIGUOUS")
+            core.propose(None, reason=reason)
             await dispatch(bound_callback("refresh", operation, DRAFT))
             assert "incomingKind" not in core.draft["draftData"]
             assert not core.accepts and not core.saved
             assert all(button.callback_data != bound_callback("accept", operation, DRAFT)
                        for row in sent[-1]["reply_markup"].inline_keyboard for button in row)
-            assert "AMBIGUOUS" not in sent[-1]["text"] and "Hermes" not in sent[-1]["text"]
+            assert reason not in sent[-1]["text"] and "Hermes" not in sent[-1]["text"]
+            assert "Что поступило от пациента" in sent[-1]["text"]
     asyncio.run(scenario())
 
 
@@ -349,3 +351,15 @@ def test_review_uses_canonical_preview_and_discloses_reset_dependencies_before_c
     assert "заново уточнить" in text
     assert "последствиях и требованиях" in text
     assert core.draft["draftData"]["safetyScreening"]["hospitalizationReported"] == "UNKNOWN"
+
+
+def test_new_text_does_not_silently_replace_pending_answer_and_copy_explains_it():
+    async def scenario():
+        async with answer_harness() as (_app, core, sent, dispatch):
+            await dispatch(f"case:draft:{DRAFT}")
+            await dispatch("text:Пациент недоволен")
+            await dispatch("text:Я хочу заменить предыдущий ответ")
+            assert len(core.starts) == 1
+            assert core.operations[core.starts[-1]]["answer"] == "Пациент недоволен"
+            assert any("Новый ответ пока не сохранён" in item.get("text", "") for item in sent)
+    asyncio.run(scenario())
