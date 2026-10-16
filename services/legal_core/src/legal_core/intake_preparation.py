@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
@@ -22,8 +22,10 @@ from legal_core.case_api import (
 )
 from legal_core.case_preparation_contracts import DraftPreparationIntent
 from legal_core.intake_preparation_contracts import (
+    AcceptUnderstandingRequest,
     DraftSuggestions,
     IntakeUnderstandingContext,
+    UnderstandingAcceptance,
     UnderstandingSource,
 )
 from legal_core.models import (
@@ -42,11 +44,12 @@ LEASE_DURATION = timedelta(seconds=180)
 @dataclass(frozen=True)
 class PreparationOperation:
     operation_id: UUID
-    state: Literal["PENDING", "PROPOSED", "MANUAL_CONTINUATION"]
+    state: Literal["PENDING", "PROPOSED", "MANUAL_CONTINUATION", "ACCEPTED"]
     lease_token: UUID | None = None
     suggestions: DraftSuggestions | None = None
     intent: DraftPreparationIntent | None = None  # Private dispatch metadata, never a public DTO.
     source: UnderstandingSource | None = None
+    acceptance: UnderstandingAcceptance | None = None
 
 
 async def _draft(
@@ -149,24 +152,86 @@ async def _checked_result(
                                 ))
 
 
-def _validate_binding(
+def _stored_intent(
     actor: ActorContext, draft: TelegramIntakeDraft, record: IdempotencyRecord,
 ) -> DraftPreparationIntent:
     if record.response_json is None:
         raise ApiError(status_code=410, code="PREPARATION_EXPIRED", message="Operation expired")
     try:
         intent = DraftPreparationIntent.model_validate(record.response_json["intent"])
-    except (KeyError, ValueError) as error:
+    except (KeyError, TypeError, ValueError):
+        intent = None
+    if intent is None:
         raise ApiError(status_code=409, code="PREPARATION_INTENT_INVALID",
-                       message="Operation intent is not valid") from error
+                       message="Operation intent is not valid")
     if (
-        intent != _intent(actor, draft, intent.operation_kind) or record.scope != intent.scope
+        intent.clinic_id != actor.clinic_id or intent.actor_membership_id != actor.membership_id
+        or intent.draft_id != draft.id or record.scope != intent.scope
         or record.key != str(intent.idempotency_key)
         or record.request_sha256 != intent.request_sha256
         or record.resource_id != draft.id or record.resource_type != RESOURCE_TYPE
     ):
         raise ApiError(status_code=409, code="PREPARATION_INPUT_STALE", message="Draft has changed")
     return intent
+
+
+def _validate_binding(
+    actor: ActorContext, draft: TelegramIntakeDraft, record: IdempotencyRecord,
+) -> DraftPreparationIntent:
+    intent = _stored_intent(actor, draft, record)
+    if intent != _intent(actor, draft, intent.operation_kind):
+        raise ApiError(status_code=409, code="PREPARATION_INPUT_STALE", message="Draft has changed")
+    return intent
+
+
+async def _acceptance_receipt(
+    session: AsyncSession, actor: ActorContext, draft: TelegramIntakeDraft,
+    record: IdempotencyRecord,
+) -> dict[str, Any] | None:
+    """Receipt replay precedes source freshness, but never current authorization."""
+    intent = _stored_intent(actor, draft, record)
+    receipt = (record.response_json or {}).get("acceptance")
+    if receipt is None:
+        return None
+    valid = False
+    try:
+        proposal = DraftSuggestions.model_validate((record.response_json or {})["suggestions"])
+        metadata = _proposal_metadata(intent, proposal)
+        request = AcceptUnderstandingRequest(
+            expectedRevision=intent.draft_revision, expectedInputSha256=intent.input_sha256,
+            expectedProposalSha256=str(metadata["proposalSha256"]),
+        )
+        valid = (
+            isinstance(receipt, dict)
+            and set(receipt) == {"acceptedRevision", "requestSha256", "proposalSha256",
+                                 "outputSha256"}
+            and type(receipt["acceptedRevision"]) is int
+            and receipt["acceptedRevision"] == intent.draft_revision + 1
+            and draft.revision >= receipt["acceptedRevision"]
+            and record.state == "SUCCEEDED" and record.lease_token is None
+            and record.lease_until is None and intent.operation_kind == "UNDERSTAND_INTAKE"
+            and receipt["proposalSha256"] == metadata["proposalSha256"]
+            and receipt["requestSha256"] == _canonical_hash(request.model_dump(
+                mode="json", by_alias=True,
+            ))
+            and isinstance(receipt["outputSha256"], str)
+            and len(receipt["outputSha256"]) == 64
+        )
+    except (KeyError, TypeError, ValueError):
+        valid = False
+    if valid:
+        expected = {**metadata, **receipt}
+        audits = (await session.scalars(select(AuditEvent.metadata_json).where(
+            AuditEvent.clinic_id == actor.clinic_id,
+            AuditEvent.actor_membership_id == actor.membership_id,
+            AuditEvent.resource_type == RESOURCE_TYPE, AuditEvent.resource_id == record.id,
+            AuditEvent.action == "INTAKE_PREPARATION_ACCEPTED",
+        ))).all()
+        valid = len(audits) == 1 and audits[0] == expected
+    if not valid:
+        raise ApiError(status_code=409, code="PREPARATION_ACCEPTANCE_INVALID",
+                       message="Acceptance binding is not valid")
+    return dict(receipt)
 
 
 async def _recheck_after_locks(
@@ -191,7 +256,7 @@ async def _recheck_after_locks(
         raise ApiError(status_code=410, code="INTAKE_DRAFT_EXPIRED", message="Draft expired")
 
 
-async def _owned_operation(
+async def _locked_owned_operation(
     session: AsyncSession, telegram_user_id: int, operation_id: UUID,
 ) -> tuple[ActorContext, TelegramIntakeDraft, IdempotencyRecord]:
     actor = await resolve_actor(session, telegram_user_id)
@@ -205,11 +270,19 @@ async def _owned_operation(
         raise ApiError(status_code=404, code="PREPARATION_NOT_FOUND", message="Operation not found")
     # Same lock order as reservation: draft first, then operation. No lock crosses model I/O.
     draft = await _draft(session, actor, resource_id)
-    record = await session.scalar(select(IdempotencyRecord).where(*criteria).with_for_update())
+    record = await session.scalar(select(IdempotencyRecord).where(*criteria).with_for_update()
+                                  .execution_options(populate_existing=True))
     if record is None:
         raise ApiError(status_code=410, code="PREPARATION_EXPIRED", message="Operation expired")
-    _validate_binding(actor, draft, record)
     await _recheck_after_locks(session, telegram_user_id, actor, draft)
+    return actor, draft, record
+
+
+async def _owned_operation(
+    session: AsyncSession, telegram_user_id: int, operation_id: UUID,
+) -> tuple[ActorContext, TelegramIntakeDraft, IdempotencyRecord]:
+    actor, draft, record = await _locked_owned_operation(session, telegram_user_id, operation_id)
+    _validate_binding(actor, draft, record)
     return actor, draft, record
 
 
@@ -262,7 +335,15 @@ async def read_preparation(
     sessions: async_sessionmaker[AsyncSession], *, telegram_user_id: int, operation_id: UUID,
 ) -> PreparationOperation:
     async with sessions() as session:
-        actor, draft, record = await _owned_operation(session, telegram_user_id, operation_id)
+        actor, draft, record = await _locked_owned_operation(
+            session, telegram_user_id, operation_id,
+        )
+        receipt = await _acceptance_receipt(session, actor, draft, record)
+        if receipt is not None:
+            return PreparationOperation(record.id, "ACCEPTED", acceptance=UnderstandingAcceptance(
+                draftId=draft.id, acceptedRevision=int(receipt["acceptedRevision"]),
+            ))
+        _validate_binding(actor, draft, record)
         result = await _checked_result(session, actor, draft, record)
         await session.commit()
         return result
@@ -350,7 +431,13 @@ async def cancel_preparation(
 ) -> PreparationOperation:
     """Owner-only durable fence; no private lease and no draft deletion required."""
     async with sessions() as session:
-        actor, _, record = await _owned_operation(session, telegram_user_id, operation_id)
+        actor, draft, record = await _locked_owned_operation(
+            session, telegram_user_id, operation_id,
+        )
+        if await _acceptance_receipt(session, actor, draft, record) is not None:
+            raise ApiError(status_code=409, code="PREPARATION_ALREADY_ACCEPTED",
+                           message="Confirmed facts cannot be cancelled")
+        _validate_binding(actor, draft, record)
         if record.state != "FAILED":
             record.state, record.lease_token, record.lease_until = "FAILED", None, None
             record.response_json = {**(record.response_json or {}), "suggestions": None}

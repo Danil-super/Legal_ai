@@ -146,6 +146,17 @@ class UnderstandingSource(PreparationModel):
     proposal_sha256: Sha256 = Field(alias="proposalSha256")
 
 
+class AcceptUnderstandingRequest(PreparationModel):
+    expected_revision: int = Field(alias="expectedRevision", strict=True, ge=1)
+    expected_input_sha256: Sha256 = Field(alias="expectedInputSha256")
+    expected_proposal_sha256: Sha256 = Field(alias="expectedProposalSha256")
+
+
+class UnderstandingAcceptance(PreparationModel):
+    draft_id: UUID = Field(alias="draftId")
+    accepted_revision: int = Field(alias="acceptedRevision", strict=True, ge=1)
+
+
 class PreparationStatusResponse(PreparationModel):
     """Public state only: never serialize a private operation dataclass wholesale."""
 

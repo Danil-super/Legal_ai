@@ -857,3 +857,15 @@ Read/replay verifies that receipt before publishing a proposal. Mutable cached J
 alone, including older unbound results, cannot become a confirmable proposal.
 The internal result now includes an explicit source/revision/proposal digest;
 public acceptance and Telegram consumers are subsequent increments, not activation.
+
+### PRC10 atomic user acceptance and replay
+
+Explicit acceptance fills absent proposal fields only, preserving UNKNOWN, negative
+and approximate user attempts; conflicting values reject the complete merge.
+Existing screening/date/service-scope validators remain authoritative. No fact or
+case is created. Draft then operation locks serialize consent, edits and cancellation.
+The existing operation stores a bounded receipt backed by the append-only audit;
+the same request returns the current owned draft without reapplying or extending
+retention. Receipt validation precedes source freshness on replay only; new model
+completion still requires the exact original source. Cancellation after acceptance
+cannot undo confirmed answers. No new table, policy or personal feature is added.
