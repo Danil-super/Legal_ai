@@ -172,6 +172,10 @@ def _apply_normalized(
             answers=[*existing.answers, added],
         ).model_dump(mode="json", by_alias=True)
     else:
+        if field == "incomingKind":
+            # Transport metadata is derived here, never supplied by the model.
+            # Existing uploaded text/file provenance remains authoritative.
+            result.setdefault("incomingSourceStatus", "NOT_ATTACHED")
         if result.get(field) != normalized and field in {"incomingKind", "healthSignals"}:
             result.pop("safetyScreening", None)
         if field == "affectedServices":

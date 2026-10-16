@@ -262,3 +262,18 @@ def test_preview_reuses_monetary_dependency_and_preserves_other_signals(signal, 
     assert result == apply_answer_value(data, question, signal, "A factual answer.")
     assert result["safetyScreening"]["amount"] == amount
     assert result["safetyScreening"]["hospitalizationReported"] == "NO"
+
+
+@pytest.mark.parametrize("marker", [None, "TEXT_ATTACHED", "FILE_ATTACHED"])
+def test_incoming_acceptance_advances_fresh_intake_and_preserves_existing_attachment_marker(marker):
+    from telegram_gateway.guided_case_intake_v2 import next_missing_state
+
+    data = {"intakeVersion": 2}
+    if marker is not None:
+        data["incomingSourceStatus"] = marker
+    question = derive_answer_question(data, "INCOMING")
+    result = apply_answer_value(data, question, "COMPLAINT", "An unhappy message arrived.")
+    assert result["incomingSourceStatus"] == (marker or "NOT_ATTACHED")
+    assert next_missing_state(result) == "SITUATION"
+    assert preview_answer_value(data, question, "COMPLAINT") == result
+    assert data.get("incomingSourceStatus") == marker
