@@ -13,7 +13,10 @@ async def _write(core: Any, method: str, path: str, **kwargs: Any) -> dict[str, 
     # One bounded transport retry uses the EXACT original body/key, never a new intent.
     for _ in range(2):
         try:
-            return await core._json_request(method, path, **kwargs)
+            result = await core._json_request(method, path, **kwargs)
+            if not isinstance(result, dict):
+                raise ValueError("invalid draft write response")
+            return result
         except LegalCoreApiError as error:
             if error.status_code < 500:
                 break

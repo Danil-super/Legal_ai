@@ -33,9 +33,12 @@ class UnderstandingClient:
     async def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         failed = False
         try:
-            return await self.core._json_request(
+            result = await self.core._json_request(
                 method, path, telegram_user_id=self.actor, **kwargs,
             )
+            if not isinstance(result, dict):
+                raise ValueError("invalid public response")
+            return result
         except (LegalCoreApiError, KeyError, TypeError, ValueError):
             failed = True
         if failed:
