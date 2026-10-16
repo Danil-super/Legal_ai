@@ -63,8 +63,19 @@ a1b3888 and nested-UNKNOWN storage fix14f3755 are implemented but not wired into
 ordinary intake. Independent interpretation464 +12 attack tests and storage107
 tests pass. Final immutable14f3755/tree67b3aec:3192 passed/0 skipped,493.28s on fresh
 PostgreSQL+MinIO; Ruff/mypy145/Compose and actual Core/Agent containers pass.
-PRC8/9/10 remain incomplete: protected dispatch, subsequent answers and explicit
-user confirmation are not provided by this internal module.
+PRC8/9/10 remain incomplete: subsequent answers and explicit user confirmation are
+not provided by this internal module. The next bounded runtime checkpoint through
+75b523f implements private source/lease resolution, metadata-only Agent invocation,
+shared two-slot background execution and owner POST/GET/DELETE operations with
+durable cancellation. Independent first-boundary review192 tests passed and fixed
+an exception-retention defect; final background/actor review224 tests/0 skips
+passed with no remaining Required/Critical. Final immutable b48c11b/treef436cd1:
+3292 passed/0 skips/534.29s on fresh PostgreSQL/MinIO; Ruff/mypy149/Compose and
+actual Core/Agent builds pass. Separately reviewed startup pin update preserves
+personal M1; the stronger actual-router canary detects hidden nested prefixes.
+Evidence: docs/audit/pre-report-understanding-runtime-2026-10-16.md.
+The Telegram quick-entry source still needs durable persistence before dispatch;
+operation-bound acceptance and actual cancel/menu/resume consumers remain next.
 The V2 writer is opt-in/internal only: ordinary queues remain V1. No server
 migration or complete pre-report dialogue is activated. See
 docs/audit/pre-report-late-preparation-2026-10-15.md.

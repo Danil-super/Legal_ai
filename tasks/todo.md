@@ -319,6 +319,24 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
   enabling UI, without archiving the saved draft. Error responses must not echo
   source bodies; avoid a new top-level case_api import cycle. Split these boundary
   prerequisites into≤5-file commits with contracts/ADR and authz/race tests.
+- Runtime checkpoint16Oct through75b523f: b5542ab/3a4db8b private owned context;
+  d9961dd/ef359de context client and protected one-call Agent route; c8fc676 shared
+  two-slot admission; 1e01a95 removes raw response/request-bearing exception chains
+  found by independent review; 8eb8ea2/c01b4d3 durable cancellation and corrected
+  storage-status assertion; 5d8074f bounded runner/lifespan; 75b523f actor operation
+  API. All source increments are≤5 files with focused RED/GREEN tests and ADR0091.
+- First independent boundary192 tests/0 skips and two killed mutations passed;
+  final runtime/actor review224 tests/0 skips includes12 full-stack/concurrency
+  probes and kills a cancellation mutation, no remaining Required/Critical.
+  The immutable full gate and review evidence are tracked in
+  docs/audit/pre-report-understanding-runtime-2026-10-16.md. No full PRC9 completion:
+  operation-bound acceptance and actual Telegram cancel/menu/resume are not wired.
+- Final immutable b48c11b/treef436cd1:3292 passed/0 skips/534.29s, fresh migrated
+  PostgreSQL/MinIO; Ruff/all-three-service mypy149/Compose and Core/Agent images
+  pass. First full75b523f had1 failure/3288 passes due the old clinical startup pin;
+  separate ADR0042 interface review and hidden-prefix guard corrections retain
+  exact checks and pass127 personal tests. Interrupted4885aaa is not clearance.
+  Future startup wiring must run that focused boundary subset before the full gate.
 
 ### PRC10: confirmed understanding and one pre-report form
 
