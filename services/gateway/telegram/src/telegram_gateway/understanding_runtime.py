@@ -35,7 +35,9 @@ def _controls(operation: UUID, draft_id: UUID, *, proposed: bool = False) -> Inl
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(label, callback_data=bound_callback(action, operation, draft_id))]
         for label, action in actions
-    ] + [[InlineKeyboardButton("← Главное меню", callback_data="menu")]])
+    ] + [[InlineKeyboardButton("← Главное меню", callback_data=bound_callback(
+        "menu", operation, draft_id,
+    ))]])
 
 
 async def _checked(
@@ -155,24 +157,33 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if status.state != "ACCEPTED":
                 raise ValueError("proposal no longer available")
             await _show(update, context, status, draft)
-        elif action in {"manual", "cancel", "edit"}:
+        elif action in {"manual", "cancel", "edit", "menu"}:
             if status.state == "ACCEPTED":
-                if action != "manual":
+                if action not in {"manual", "menu"}:
                     raise ValueError("confirmed facts cannot be cancelled")
             elif status.state != "MANUAL_CONTINUATION":
                 await client.cancel(operation)  # fence BEFORE any RAM reset or source edit
             data = bot._user_data(context)
             data.pop(_SELECTED, None)
+            data.pop(_EDIT, None)
             quick_intake_runtime._clear_quick(context)
-            if action == "edit":
+            if action == "menu":
+                bot._clear_wizard(context)
+                await bot.menu(update, context)
+            elif action == "edit":
                 if set(draft["draftData"]) - {
                     "intakeVersion", "eventSummary", "incomingSourceStatus",
                 }:
                     raise ValueError("use ordinary form to correct confirmed fields")
                 data[_EDIT] = str(draft_id)
                 data[quick_intake_runtime._QUICK_PENDING_KEY] = True
-                await bot._reply(update, "Пришлите исправленное обезличенное описание. "
-                                 "Оно заменит описание в том же черновике.")
+                await bot._reply(
+                    update, "Пришлите исправленное обезличенное описание. "
+                    "Оно заменит описание в том же черновике.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                        "← Главное меню", callback_data=bound_callback("menu", operation, draft_id),
+                    )]]),
+                )
             else:
                 await bot._reply(
                     update, "Разбор остановлен. Описание и ответы сохранены в черновике."
@@ -204,6 +215,7 @@ async def fence_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     data = bot._user_data(context)
     selected = data.get(_SELECTED)
     if not isinstance(selected, dict):
+        data.pop(_EDIT, None)
         return
     actor = bot._actor_id(update)
     if actor is None:

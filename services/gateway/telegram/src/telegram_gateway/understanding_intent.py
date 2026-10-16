@@ -4,7 +4,8 @@ from base64 import urlsafe_b64decode, urlsafe_b64encode
 from uuid import UUID, uuid5
 
 _NAMESPACE = UUID("27247423-e4db-54e2-80c5-c7adeb8b23d4")
-_CODES = {"refresh": "r1", "accept": "a1", "manual": "m1", "cancel": "c1", "edit": "e1"}
+_CODES = {"refresh": "r1", "accept": "a1", "manual": "m1", "cancel": "c1", "edit": "e1",
+          "menu": "h1"}
 
 
 def source_keys(actor: int, chat: int, message: int) -> tuple[UUID, UUID]:
