@@ -20,6 +20,10 @@ from legal_core.analysis_contracts import (
     SemanticReviewInput,
 )
 from legal_core.case_preparation_contracts import LimitedResult
+from legal_core.intake_preparation_contracts import (
+    IntakeUnderstandingContext,
+    UnderstandingContextRequest,
+)
 
 
 class LegalCoreError(RuntimeError):
@@ -133,6 +137,29 @@ class LegalCoreClient:
         finally:
             if owns_client:
                 await client.aclose()
+
+    async def get_understanding_context(
+        self, *, operation_id: UUID, draft_id: UUID, telegram_user_id: int,
+        binding: UnderstandingContextRequest,
+    ) -> IntakeUnderstandingContext:
+        request = UnderstandingContextRequest.model_validate(binding.model_dump(by_alias=True))
+        payload = await self._request_json(
+            "POST", f"/v1/intake-preparations/{operation_id}/context",
+            telegram_user_id=telegram_user_id,
+            json_body=request.model_dump(mode="json", by_alias=True),
+        )
+        try:
+            context = IntakeUnderstandingContext.model_validate(payload)
+            if (
+                context.operation_id == operation_id and context.draft_id == draft_id
+                and context.draft_revision == request.expected_revision
+                and context.input_sha256 == request.expected_input_sha256
+            ):
+                return context
+        except (ValueError, TypeError):
+            pass
+        # No input-bearing validation exception may cross the private source boundary.
+        raise LegalCoreProtocolError("understanding context response contract mismatch")
 
     async def get_analysis_context(
         self,

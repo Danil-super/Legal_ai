@@ -739,3 +739,11 @@ using the existing X-Agent-Internal-Key and X-Telegram-User-Id boundary. Extra
 source/tenant/fact inputs are refused. Core's existing validation handler returns
 locations/types, never input values or tokens. A focused router avoids importing
 intake_preparation back into case_api. No actor operation producer is enabled.
+
+The Agent context client uses that existing Core endpoint and internal credential.
+It sends only the typed lease/revision/hash metadata and authenticated actor, and
+matches operation ID, expected draft ID, revision, full input hash and operation
+kind before returning source. Malformed or substituted responses fail with a
+bounded protocol error outside Pydantic's input-bearing exception context. This
+does not accept model-ready arbitrary text from an internal caller, add a second
+provider or change the legacy legal-analysis client contract.
