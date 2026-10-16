@@ -21,7 +21,7 @@ CLINIC_BASELINE = {
         "da2a396c379d2cfef32c4d3b2c16160d534a83b2",
     "services/gateway/telegram/src/telegram_gateway/case_experience_runtime.py":
         # Independently reviewed clinical opt-in; default/personal stay inert (ADR 0091).
-        "b1afe5e178998ee037c275574054abcf05fe3d8f",
+        "6c7145f1a2a29d39a8cafa89d2dd15a5416729cf",
     "services/legal_core/src/legal_core/main.py":
         # Reviewed owner-approved clinic preparation wiring; personal remains inert (ADR 0091).
         "a37582ab864227bdcccae17b6a21acb99b385c14",
@@ -120,14 +120,19 @@ def test_route_isolation_canary_rejects_hidden_personal_include_prefix(nested):
         _assert_clinical_understanding_routes(app)
 
 
-@pytest.mark.parametrize("enable_understanding", [False, True])
-def test_clinic_composition_registers_no_personal_handlers(monkeypatch, enable_understanding):
+@pytest.mark.parametrize("enable_understanding,enable_answers", [
+    (False, False), (True, False), (True, True),
+])
+def test_clinic_composition_registers_no_personal_handlers(
+    monkeypatch, enable_understanding, enable_answers,
+):
     from telegram.ext import CallbackQueryHandler, CommandHandler, ConversationHandler
     from telegram_gateway.case_experience_runtime import build_application_with_case_experience
 
     monkeypatch.setenv("PERSONAL_PREVIEW_MODE", "synthetic")
     app = build_application_with_case_experience(
         "123456:" + "q" * 40, enable_understanding=enable_understanding,
+        enable_answer_interpretation=enable_answers,
     )
     checked = 0
 

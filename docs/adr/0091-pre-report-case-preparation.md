@@ -953,3 +953,11 @@ fetches the current protected context itself. A completion must match all three
 input, answer and question digests and pass current authorization/lease checks after
 the network wait. Busy, shutdown, protocol failure and timeout produce manual
 continuation, without an extra model attempt or a new queue/budget.
+
+Full subsequent-answer UI is a second explicit app-local opt-in requiring the
+shared preparation consumer. Both flags default false and ordinary main startup
+is unchanged. The independent reviewer approved the exact clinical factory blob
+6c7145f1a2a29d39a8cafa89d2dd15a5416729cf before advancing the personal-isolation
+pin; actual nested handler checks cover default, initial-only and full modes.
+The owner rejected release of initial-only mode: its internal test composition
+does not authorize deployment or bypass the full subsequent-answer acceptance gate.

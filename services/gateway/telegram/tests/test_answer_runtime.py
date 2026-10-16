@@ -15,7 +15,6 @@ from legal_core.intake_answer_wire import AnswerStatusResponse
 from telegram_gateway import bot
 from telegram_gateway.answer_intent import bound_callback
 from telegram_gateway.answer_review import review_blocks
-from telegram_gateway.answer_runtime import install_answer_interpretation
 from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.understanding_client import canonical_hash
 from telegram_gateway.update_processor import ActorSerialUpdateProcessor
@@ -113,9 +112,7 @@ async def answer_harness(saved_core=None):
     factory = original.build_application_with_case_experience
 
     def build(token):
-        app = factory(token, enable_understanding=True)
-        install_answer_interpretation(app)
-        return app
+        return factory(token, enable_understanding=True, enable_answer_interpretation=True)
 
     with patch.object(original, "build_application_with_case_experience", build):
         async with harness() as (app, _core, sent, dispatch):
