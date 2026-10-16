@@ -14,7 +14,6 @@ from pydantic import JsonValue
 from legal_core.analysis_clarifications import (
     AnalysisClarificationAnswers,
     ClarificationAnswer,
-    ClarificationRequestBatch,
     ServiceProvidedDate,
     confirmed_answers,
 )
@@ -26,6 +25,7 @@ from legal_core.factual_safety_intake import (
 )
 from legal_core.intake_answer_contracts import AnswerQuestion, derive_answer_question
 from legal_core.intake_preparation_contracts import DraftSuggestions
+from legal_core.intake_service_scope import invalidate_service_clarification_answers
 from legal_core.pseudonymization import pseudonymize_text
 
 _LINK = re.compile(r"//|[a-z][a-z0-9+.-]*:|www\.|(?:[\w-]+\.)+[^\W\d_]{2,63}\b", re.I)
@@ -135,22 +135,6 @@ def validate_answer_value(
     raise ValueError("answer does not match the current factual question and source")
 
 
-def _invalidate_service_answers(data: dict[str, object]) -> None:
-    if "analysisClarificationAnswers" in data:
-        answers = AnalysisClarificationAnswers.model_validate(data["analysisClarificationAnswers"])
-        data["analysisClarificationAnswers"] = AnalysisClarificationAnswers(
-            answers=[item for item in answers.answers if item.service_slot is None],
-        ).model_dump(mode="json", by_alias=True)
-    if "analysisClarificationRequests" in data:
-        requests = ClarificationRequestBatch.model_validate({
-            "requests": data["analysisClarificationRequests"],
-        }).requests
-        data["analysisClarificationRequests"] = [
-            item.model_dump(mode="json", by_alias=True)
-            for item in requests if item.service_slot is None
-        ]
-
-
 def _apply(
     data: Mapping[str, object], question: AnswerQuestion, value: object, source: str,
     as_of_date: date | None,
@@ -184,14 +168,13 @@ def _apply(
             answers=[*existing.answers, added],
         ).model_dump(mode="json", by_alias=True)
     else:
-        if result.get(field) != normalized:
-            if field == "incomingKind":
-                result.pop("safetyScreening", None)
-            elif field in {"affectedServices", "situationAreas"}:
-                _invalidate_service_answers(result)
-                if (field == "situationAreas" and isinstance(normalized, list)
-                        and "TREATMENT" not in normalized):
-                    result.pop("affectedServices", None)
+        if result.get(field) != normalized and field in {"incomingKind", "healthSignals"}:
+            result.pop("safetyScreening", None)
+        if field == "affectedServices":
+            result = invalidate_service_clarification_answers(result, cast(list[str], normalized))
+        elif (field == "situationAreas" and isinstance(normalized, list)
+              and "TREATMENT" not in normalized):
+            result = invalidate_service_clarification_answers(result, None)
         result[field] = deepcopy(normalized)
     validate_intake_draft_data(result)
     confirmed_answers({

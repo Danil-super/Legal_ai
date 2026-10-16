@@ -162,6 +162,10 @@ def derive_answer_question(
         field = next((item for item in SCREENING_FIELDS if item not in screening), None)
         if field is None and screening.get("moneyRequested") == "YES" and "amount" not in screening:
             field = "amount"
+        if field is None and "amount" not in screening:
+            # Match the manual adapter's recovery for an incomplete dependent
+            # amount after an initial narrative proposal: do not silently infer it.
+            field = "moneyRequested"
         if field is None:
             return None
         payload["screeningField"] = field

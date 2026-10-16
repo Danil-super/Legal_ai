@@ -57,6 +57,15 @@ def test_screening_selects_first_absent_not_explicit_unknown():
     assert derive_answer_question(data, "SAFETY") is None
 
 
+@pytest.mark.parametrize("signal", ["NO", "UNKNOWN"])
+def test_missing_dependent_amount_reopens_money_question_like_manual_intake(signal):
+    data = {"intakeVersion": 2, "safetyScreening": {
+        "schemaVersion": SCREENING_VERSION, **{key: "NO" for key in SCREENING_FIELDS},
+        "moneyRequested": signal,
+    }}
+    assert derive_answer_question(data, "SAFETY").screening_field == "moneyRequested"
+
+
 def test_clarification_skips_attempts_and_binds_current_service_order():
     data = {"intakeVersion": 2, "situationAreas": ["TREATMENT"],
             "affectedServices": ["Restoration", "Extraction"],

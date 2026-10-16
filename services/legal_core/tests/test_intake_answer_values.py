@@ -108,6 +108,25 @@ def test_removing_treatment_area_removes_service_scope_and_dependent_answers():
     assert len(result["analysisClarificationAnswers"]["answers"]) == 1
 
 
+def test_adding_service_area_keeps_existing_treatment_service_answers():
+    data = _service_data()
+    result = apply_answer_value(data, derive_answer_question(data, "SITUATION"),
+                                ["TREATMENT", "SERVICE"], "Treatment and service interaction.")
+    assert result["affectedServices"] == data["affectedServices"]
+    assert result["analysisClarificationAnswers"] == data["analysisClarificationAnswers"]
+    assert result["analysisClarificationRequests"] == data["analysisClarificationRequests"]
+
+
+def test_changed_health_signals_reopen_screening_just_like_manual_buttons():
+    data = {"intakeVersion": 2, "healthSignals": ["UNKNOWN"],
+            "safetyScreening": {"schemaVersion": SCREENING_VERSION,
+                                "hospitalizationReported": "UNKNOWN"}}
+    result = apply_answer_value(data, derive_answer_question(data, "HEALTH"),
+                                ["HOSPITALIZATION"], "Hospitalization was reported.")
+    assert "safetyScreening" not in result
+    assert data["safetyScreening"]["hospitalizationReported"] == "UNKNOWN"
+
+
 def test_safety_answer_preserves_other_signals_and_invalidates_only_dependent_amount():
     screening = {"schemaVersion": SCREENING_VERSION,
                  **{key: "NO" for key in SCREENING_FIELDS if key != "moneyRequested"}}
