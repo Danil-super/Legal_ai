@@ -127,7 +127,9 @@ def _require_agent_internal_key(key: AgentInternalKeyHeader = None) -> None:
     """Require the service credential before exposing any analysis boundary."""
 
     expected = os.getenv("AGENT_INTERNAL_KEY", "")
-    if len(expected) < 32 or key is None or not hmac.compare_digest(expected, key):
+    if len(expected) < 32 or key is None or not hmac.compare_digest(
+        expected.encode("utf-8"), key.encode("utf-8"),
+    ):
         raise ApiError(status_code=403, code="INTERNAL_ACCESS_REQUIRED", message="Forbidden")
 
 
