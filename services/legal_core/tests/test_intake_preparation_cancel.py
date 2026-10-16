@@ -4,8 +4,10 @@ import os
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import create_engine, text
 
 from legal_core.case_api import ApiError
+from legal_core.database import owner_database_url
 import legal_core.intake_preparation as preparation
 from test_case_api import actor_headers, application_client, seed_admin
 from test_intake_preparation_lifecycle import _reserve, _run, _suggestions, draft_owner
@@ -16,7 +18,9 @@ __all__ = ["draft_owner"]
 
 
 @pytest.mark.parametrize("completed", [False, True])
-def test_cancel_survives_restart_refuses_late_completion_and_preserves_draft(draft_owner, completed):
+def test_cancel_survives_restart_refuses_late_completion_and_preserves_draft(
+    draft_owner, completed,
+):
     actor, _, _, draft = draft_owner
     lease = _run(lambda sessions: _reserve(sessions, actor, draft))
     if completed:
@@ -47,7 +51,15 @@ def test_cancel_survives_restart_refuses_late_completion_and_preserves_draft(dra
         actual = client.get(f"/v1/telegram-intake-drafts/{draft['id']}",
                             headers=actor_headers(actor)).json()
     assert actual["draftData"] == draft["draftData"]
-    assert actual["revision"] == draft["revision"] and actual["status"] == "DRAFT"
+    assert actual["revision"] == draft["revision"]
+    engine = create_engine(owner_database_url())
+    try:
+        with engine.connect() as connection:
+            assert connection.scalar(text(
+                "SELECT status FROM telegram_intake_drafts WHERE id=:id"
+            ), {"id": draft["id"]}) == "DRAFT"
+    finally:
+        engine.dispose()
 
 
 def test_cancellation_is_available_during_analysis_safe_stop(draft_owner, monkeypatch):
