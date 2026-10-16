@@ -4,27 +4,7 @@ from base64 import urlsafe_b64decode, urlsafe_b64encode
 from uuid import UUID, uuid5
 
 _NAMESPACE = UUID("27247423-e4db-54e2-80c5-c7adeb8b23d4")
-_ACTIONS = frozenset({"refresh", "accept", "manual", "cancel", "edit"})
 _CODES = {"refresh": "r1", "accept": "a1", "manual": "m1", "cancel": "c1", "edit": "e1"}
-
-
-def callback(action: str, operation: UUID) -> str:
-    if action not in _ACTIONS:
-        raise ValueError("unsupported understanding action")
-    return f"understanding:{action}1:{operation.hex}"
-
-
-def parse_callback(value: str) -> tuple[str, UUID]:
-    pieces = value.split(":")
-    if len(pieces) != 3 or pieces[0] != "understanding":
-        raise ValueError("invalid understanding callback")
-    action = pieces[1].removesuffix("1")
-    if action not in _ACTIONS or pieces[1] != action + "1":
-        raise ValueError("invalid understanding action")
-    operation = UUID(hex=pieces[2])
-    if pieces[2] != operation.hex:
-        raise ValueError("noncanonical understanding selector")
-    return action, operation
 
 
 def source_keys(actor: int, chat: int, message: int) -> tuple[UUID, UUID]:
