@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from fastapi.routing import APIRoute
 
 ROOT = Path(__file__).resolve().parents[1]
 CLINIC_BASELINE = {
@@ -20,8 +21,8 @@ CLINIC_BASELINE = {
     "services/gateway/telegram/src/telegram_gateway/case_experience_runtime.py":
         "19f6371c3507b844c54fa8308a97cabfafe292cd",
     "services/legal_core/src/legal_core/main.py":
-        # Authorized clinic-only notification router; personal composition unchanged (ADR 0062).
-        "66d59eac7592bbf84d3b87d80d9213ecee352f7a",
+        # Reviewed owner-approved clinic preparation wiring; personal remains inert (ADR 0091).
+        "a37582ab864227bdcccae17b6a21acb99b385c14",
     # Separately reviewed clinical automation pause; no personal surface change (ADR 0064).
     "docker-compose.yml": "c50d5c9ccd748eebed9bf2240489c898c1c0b5ef",
     "ops/deploy/docker-compose.production.yml": "9d07d50c67787a0da7a13fcfc49907d550298b83",
@@ -48,6 +49,29 @@ def test_personal_flag_never_mounts_private_routes_in_clinic_app(monkeypatch):
             assert client.get(path).status_code == 404
             assert client.post(path, json={}).status_code == 404
         assert client.get("/health/live").status_code == 200
+
+
+def test_understanding_composition_stays_clinical_even_when_personal_preview_is_requested(
+    monkeypatch,
+):
+    from legal_core.main import create_app
+
+    monkeypatch.setenv("PERSONAL_PREVIEW_MODE", "synthetic")
+    monkeypatch.delenv("PERSONAL_PREVIEW_API_KEY", raising=False)
+    app = create_app(enable_draft_retention=False, enable_analysis_worker=False)
+    # Inspect actual registrations, not just OpenAPI: include_in_schema=False hides
+    # documentation, but does not unmount a route (FastAPI reference via Context7).
+    routes = [route for route in app.routes if isinstance(route, APIRoute)]
+    assert {
+        "/v1/telegram-intake-drafts/{draft_id}/understanding",
+        "/v1/intake-preparations/{operation_id}",
+        "/v1/intake-preparations/{operation_id}/context",
+    } <= {route.path for route in routes}
+    assert all("/personal" not in route.path for route in routes)
+    assert all(not route.endpoint.__module__.startswith("legal_core.personal") for route in routes)
+    with TestClient(app) as client:
+        assert client.get("/health/live").status_code == 200
+        assert app.state.intake_preparation_runner is None
 
 
 def test_clinic_composition_registers_no_personal_handlers(monkeypatch):

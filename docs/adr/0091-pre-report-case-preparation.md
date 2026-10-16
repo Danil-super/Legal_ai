@@ -820,3 +820,21 @@ Absent/busy workers return durable manual continuation, not an orphan pending
 lease. POST returns 202 without awaiting model I/O; restart uses the same owner
 and revision-bound intent. Ordinary Telegram entry points remain unchanged until
 PRC10's durable source, confirmation and cancellation consumers are implemented.
+
+### Separately reviewed clinical startup baseline (ADR0042)
+
+The first full75b523f run had3288 passes and one failure: ADR0042's exact clinical
+main.py blob pin predates this owner-approved clinical preparation wiring. The
+separate interface review checks the entire 13-add/2-delete startup delta: only
+the clinical router, shared admission and runner/lifespan drain; no personal
+imports, authority, settings, entrypoint or Compose changes. All other exact pins
+remain unchanged. The Core main baseline advances from66d59eac7592bbf84d3b87d80d9213ecee352f7a
+to a37582ab864227bdcccae17b6a21acb99b385c14, not to an unpinned allowlist.
+An added composition regression checks actual APIRoute registrations, including
+hidden-schema routes, for personal paths/modules while requiring the new clinical
+operation routes. PERSONAL_PREVIEW_MODE=synthetic does not mount a personal API,
+read personal credentials or enable the clinical worker when explicitly disabled.
+Context7's official FastAPI include_router and testing-events documentation was
+retrieved before this test change; it confirms that OpenAPI absence alone is not
+a route-isolation check. This engineering baseline update is not personal M2,
+legal approval, production release or activation of ordinary Telegram producers.
