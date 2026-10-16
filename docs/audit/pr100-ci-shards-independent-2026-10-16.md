@@ -69,3 +69,13 @@ Independently ran the actual production-entry tests in an isolated worktree:
 before baseline-pin advancement, not a later Compose change or actual server
 activation. Default-off wiring is not the same as an approved live activation;
 the final release record must state which deployment value was actually applied.
+
+Follow-up Compose review: `dc738ed`, base Compose blob
+`9ace2c7b92db76cf03cb4f158d29ed9309e1ffa9`, production-template blob
+`f023c276f62255b1e0207e461f3f53f9a594e107`. Approved before baseline-pin advancement.
+Only the clinic Gateway receives the variable; Compose's absent/empty default is
+`0`, explicit `1` reaches the atomic entry, and invalid nonempty input is preserved
+for strict startup refusal. The production example remains `0`. Actual resolution
+of base, production, and Hermes overlays plus entry tests: **31 passed, zero
+skipped**, 1.16 seconds. No provider, personal feature or other service setting was
+changed. This additional source review did not activate or access a server.
