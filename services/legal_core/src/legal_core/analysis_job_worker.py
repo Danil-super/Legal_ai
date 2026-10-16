@@ -25,6 +25,7 @@ from legal_core.analysis_jobs import (
 )
 from legal_core.analysis_safe_stop import analysis_safe_stop_active, require_analysis_running
 from legal_core.case_api import ApiError, _tenant_case, resolve_actor
+from legal_core.model_admission import ModelAdmission
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +188,9 @@ async def worker_once(
 async def run_analysis_worker(
     sessions: async_sessionmaker[AsyncSession],
     settings: WorkerSettings,
+    *, admission: ModelAdmission | None = None,
 ) -> None:
+    admission = admission or ModelAdmission()
     async with httpx.AsyncClient(
         timeout=120, trust_env=False, follow_redirects=False, limits=httpx.Limits(max_connections=2)
     ) as client:
@@ -195,8 +198,11 @@ async def run_analysis_worker(
         async def consumer() -> None:
             while True:
                 try:
-                    if await worker_once(sessions, client, settings):
-                        continue
+                    # Acquire before claim: queued jobs must not age a live lease waiting
+                    # for optional intake work that shares the same two model slots.
+                    async with admission.slot():
+                        if await worker_once(sessions, client, settings):
+                            continue
                 except Exception as exc:
                     logger.warning("analysis_worker_error type=%s", type(exc).__name__)
                 await asyncio.sleep(1)

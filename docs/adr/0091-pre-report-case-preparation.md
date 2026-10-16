@@ -762,3 +762,15 @@ New-route validation redacts all inputs without changing legacy API validation.
 Existing callers can omit the additive understanding dependency. This private
 route alone does not enqueue or activate public understanding; shared two-slot
 admission, durable cancellation and explicit user confirmation remain required.
+
+### PRC9b shared model admission
+
+ModelAdmission supplies one process-local BoundedSemaphore(2) for both existing
+analysis consumers and optional intake work. Analysis acquires before claiming a
+durable job, so no claimed lease waits behind intake. Intake admission is an
+immediate try, respecting existing waiters, never an unbounded task queue; busy
+capacity must yield manual continuation under the existing failure contract.
+Cancellation releases the slot via structured cleanup. The worker's two consumers
+and HTTP connection limit are unchanged. This increment adds the reusable budget
+and worker compatibility; application-scoped sharing and bounded intake task
+shutdown are the next wiring increment, not active public functionality yet.
