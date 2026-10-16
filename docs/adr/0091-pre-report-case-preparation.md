@@ -922,3 +922,9 @@ answer digest and fixed interpretation reference date. Different replies at the
 same question/revision cannot collide. Raw answer text is not an intent field.
 This pure identity does not reserve work, authorize access or confirm any value;
 the protected lifecycle, strict per-question values and explicit consent follow.
+
+The dedicated answer API distinguishes PROPOSED from UNRESOLVED explicitly; no
+value can accompany a pending/manual/accepted tag or become confirmed by model
+output alone. Actor requests supply a bounded answer and expected revision only,
+never a question or target. Protected context selects only existing factual
+fields and exact answer anchors; attachments and final consent are excluded.
