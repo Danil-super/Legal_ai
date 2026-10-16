@@ -26,7 +26,10 @@ from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTy
 
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError
-from telegram_gateway.clarification_intent import encode_clarification_callback
+from telegram_gateway.clarification_intent import (
+    encode_clarification_callback,
+    encode_preparation_callback,
+)
 from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
@@ -208,6 +211,8 @@ def _ready_for_presentation(result: ReportReadyResult) -> dict[str, Any]:
 
 def _preparation_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
     result = PreparationResult.model_validate(job.result).root
+    if result.source.case_id != job.case_id:
+        raise ValueError("preparation result case mismatch")
     if isinstance(result, ReportReadyResult):
         return job_message(JobSnapshot(
             job.job_id, job.case_id, job.state, job.error_code, _ready_for_presentation(result),
@@ -230,8 +235,11 @@ def _preparation_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
         rows.insert(0, [InlineKeyboardButton(
             "⚖️ Карточка юриста", callback_data=f"case:escalation:{result.escalation_id}",
         )])
-    # Source-bound clarification controls land in PRC6c/10, before producer activation.
-    # Do not emit a legacy report-based button for a result that has no report.
+    if result.status in {"NEEDS_FACTS", "LIMITED"}:
+        rows.insert(0, [InlineKeyboardButton(
+            "Уточнить факты" if result.status == "NEEDS_FACTS" else "Изменить сведения",
+            callback_data=encode_preparation_callback(job.case_id, result.source.operation_id),
+        )])
     rows.extend(list(row) for row in back_keyboard().inline_keyboard)
     return text, InlineKeyboardMarkup(rows)
 

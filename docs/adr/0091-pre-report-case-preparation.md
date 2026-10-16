@@ -490,6 +490,24 @@ transaction, waits, stores and reads back its receipt; it was RED on the default
 transaction timestamp. Normal production writers hold the case lock; the test
 directly exercises storage with a synthetic result only.
 
+### PRC7a explicit form control for intermediate queue results
+
+The validated NEEDS_FACTS presentation offers one operation-bound "Уточнить факты"
+button; LIMITED offers an explicit "Изменить сведения" correction, not an automatic
+repeat of UNKNOWN/APPROXIMATE questions. Status refresh, result delivery and restart
+notifications use this same presentation and the PRC6c consumer. No intermediate
+PDF/result button, automatic model retry or claim that editing cures unavailable
+evidence is introduced. HUMAN_REVIEW keeps the lawyer path without an optional
+clarification diversion; READY retains the existing actual final-report controls.
+Presentation additionally rejects a cross-case source even if called with a
+manually built JobSnapshot instead of its validated wire parser.
+
+Real Gateway-client/Core/PostgreSQL tests start with the rendered NEEDS_FACTS and
+LIMITED controls and recover an owned, source-bound durable draft, preserving the
+original facts and report-free case. Telegram network/model output remain synthetic.
+This is a consumer change only: ordinary initial submissions and queue producers
+remain legacy until PRC7/10/11 compatibility and acceptance are complete.
+
 ### PRC6b report-free clarification origin
 
 ClarificationDraftRequest/Preview add paired expectedOperationId and
