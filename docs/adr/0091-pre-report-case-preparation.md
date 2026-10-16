@@ -892,3 +892,16 @@ row-lock wait: the pre-query authorization check alone was insufficient. Discove
 now rechecks current access and retention after its final lock/query, including
 the empty result path. The real PostgreSQL/HTTP regression was RED before this
 fix; no proposal may be returned using access valid only before a lock wait.
+
+### PRC10 compatibility and opt-in boundary
+
+The default legacy resume retains its existing material/checkpoint behavior.
+Recomputing every incomplete checkpoint is specific to the new opt-in preparation
+consumer. A broad legacy material-upload regression reproduced 13 failures when
+that behavior leaked into the default consumer; the explicit preparation argument
+restores the legacy route without deleting or weakening its tests. Both consumers
+still recompute completed summary/confirmation/clarification checkpoints.
+The reviewed clinical factory adds only an explicit default-false composition
+argument and local clinical installers; its exact personal-isolation baseline is
+b1afe5e178998ee037c275574054abcf05fe3d8f. Default startup and personal M1 remain
+unchanged; actual handlers in both modes are checked for personal isolation.

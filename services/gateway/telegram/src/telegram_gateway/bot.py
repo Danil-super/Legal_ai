@@ -2099,7 +2099,9 @@ async def _prompt_resumed_draft(update: Update, state: WizardState, data: dict[s
             )
 
 
-async def resume_intake_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def resume_intake_draft(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, preparation: bool = False,
+) -> int:
     callback = await _answer_callback(update)
     _clear_pending_admin_grant(context)
     actor_id = _actor_id(update)
@@ -2127,7 +2129,9 @@ async def resume_intake_draft(update: Update, context: ContextTypes.DEFAULT_TYPE
     _clear_wizard(context)
     _clear_pending_inputs(context)
     data = dict(draft_data)
-    if data.get("intakeVersion") == 2:
+    if data.get("intakeVersion") == 2 and (preparation or state in {
+        WizardState.SUMMARY, WizardState.V2_CONFIRM, WizardState.ANALYSIS_CLARIFICATION,
+    }):
         # Navigation checkpoints are not missing facts. Explicit back/edit still
         # opens its selected field; generic resume asks only what is absent.
         state = _v2_state(v2_next_missing_state(data))

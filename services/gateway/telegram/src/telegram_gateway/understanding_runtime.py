@@ -256,7 +256,7 @@ def install_understanding(application: bot.TelegramApplication) -> None:
             await bot._reply(update, "Черновик или результат разбора сейчас недоступен. "
                              "Обновите список через /menu.")
             return ConversationHandler.END
-        return await bot.resume_intake_draft(update, context)
+        return await bot.resume_intake_draft(update, context, preparation=True)
 
     for handlers in application.handlers.values():
         for handler in handlers:

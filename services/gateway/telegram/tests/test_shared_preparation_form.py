@@ -44,7 +44,7 @@ def test_generic_resume_skips_completed_checkpoints_in_a_confirmed_v2_draft(chec
     })
     context.user_data.clear()  # New process has no conversation or local preparation handles.
     update.callback_query = FakeQuery(f"case:draft:{draft_id}")
-    result = asyncio.run(bot.resume_intake_draft(update, context))
+    result = asyncio.run(bot.resume_intake_draft(update, context, preparation=True))
     assert result == bot.WizardState.SUMMARY
     saved = context.user_data[bot.WIZARD_DATA_KEY]
     assert bot._draft_payload(saved) == original
@@ -62,7 +62,7 @@ def test_installed_shared_form_routes_actual_summary_to_preparation_not_legacy_p
             data = completed_data(representativeContact="UNKNOWN")
             data["eventDate"] = {"date": None, "precision": "UNKNOWN"}
             core.draft = {"id": str(DRAFT), "revision": 3,
-                          "wizardState": "INCOMING", "draftData": data}
+                          "wizardState": "SUMMARY", "draftData": data}
             await dispatch(f"case:draft:{DRAFT}")
             await dispatch("case:v2:summary:confirm")
             assert core.draft["wizardState"] == "V2_CONFIRM"
