@@ -43,8 +43,18 @@ async def save_source(
         current = validated_draft(await core.get_intake_draft(draft_id, actor), draft_id)
         payload = {"intakeVersion": 2, "eventSummary": summary}
         saved_data = current["draftData"]
-        if set(saved_data) - {"intakeVersion", "eventSummary"}:
+        if set(saved_data) - {"intakeVersion", "eventSummary", "incomingSourceStatus"}:
             raise ValueError("source event cannot replace later confirmed answers")
+        if "incomingSourceStatus" in saved_data:
+            if saved_data["incomingSourceStatus"] not in {
+                "NOT_ATTACHED", "TEXT_ATTACHED", "FILE_ATTACHED",
+            }:
+                raise ValueError("invalid attachment metadata")
+            payload["incomingSourceStatus"] = saved_data["incomingSourceStatus"]
+        elif current["revision"] == 1 and saved_data == {"intakeVersion": 2}:
+            # This newly created empty draft has no attachment. This is observed
+            # application metadata, not a model-suggested fact about the patient.
+            payload["incomingSourceStatus"] = "NOT_ATTACHED"
         if saved_data == payload:
             return current
         if "eventSummary" in saved_data and edit_draft_id is None:

@@ -55,7 +55,8 @@ def test_source_is_saved_once_across_unknown_response_and_replayed_original_even
         second = await save_source(core, 777, 777, 99, TEXT)
         assert first == second
         assert core.writes == 1
-        assert first["draftData"] == {"intakeVersion": 2, "eventSummary": TEXT}
+        assert first["draftData"] == {"intakeVersion": 2, "eventSummary": TEXT,
+                                      "incomingSourceStatus": "NOT_ATTACHED"}
         assert first["wizardState"] == "INCOMING"
         assert not any("understanding" in path for _, path, _ in core.requests)
         creates = [kwargs["idempotency_key"] for method, _, kwargs in core.requests
