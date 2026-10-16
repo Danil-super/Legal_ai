@@ -1,4 +1,4 @@
-"""Protected public answer routes expose no private source or dispatch metadata."""
+"""Core public answer routes expose no private source or dispatch metadata."""
 
 import os
 from uuid import uuid4
