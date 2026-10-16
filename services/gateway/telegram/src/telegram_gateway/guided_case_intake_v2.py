@@ -23,6 +23,9 @@ from legal_core.analysis_clarifications import (
     ClarificationRequestBatch,
     ServiceProvidedDate,
 )
+from legal_core.intake_service_scope import (
+    invalidate_service_clarification_answers as invalidate_service_scope,
+)
 from legal_core.pseudonymization import pseudonymize_text
 
 from telegram_gateway.case_wizard import confirmed_clarification_answers, parse_date_answer
@@ -293,25 +296,7 @@ def invalidate_service_clarification_answers(
     Slots are positions, not stable service identities: even a reordering invalidates
     all service answers. The global response purpose survives a service edit.
     """
-    if services is not None and not _valid_services(services):
-        raise ValueError("Укажите от одной до пяти услуг.")
-    updated = dict(data)
-    if services is None:
-        updated.pop("affectedServices", None)
-    else:
-        updated["affectedServices"] = list(services)
-    if services != data.get("affectedServices") and "analysisClarificationAnswers" in data:
-        answers = confirmed_clarification_answers(data)
-        retained = AnalysisClarificationAnswers(answers=[
-            answer for answer in answers.answers if answer.service_slot is None
-        ])
-        updated["analysisClarificationAnswers"] = retained.model_dump(mode="json", by_alias=True)
-    if services != data.get("affectedServices") and "analysisClarificationRequests" in data:
-        updated["analysisClarificationRequests"] = [
-            request.model_dump(mode="json", by_alias=True)
-            for request in _stored_clarification_requests(data) if request.service_slot is None
-        ]
-    return updated
+    return invalidate_service_scope(data, services)
 
 
 def clarification_review_blocks(data: dict[str, Any]) -> list[str]:
