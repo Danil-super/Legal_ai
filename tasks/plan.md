@@ -74,8 +74,23 @@ passed with no remaining Required/Critical. Final immutable b48c11b/treef436cd1:
 actual Core/Agent builds pass. Separately reviewed startup pin update preserves
 personal M1; the stronger actual-router canary detects hidden nested prefixes.
 Evidence: docs/audit/pre-report-understanding-runtime-2026-10-16.md.
-The Telegram quick-entry source still needs durable persistence before dispatch;
-operation-bound acceptance and actual cancel/menu/resume consumers remain next.
+The subsequent PRC10 initial-narrative slice now provides durable quick source,
+audit-bound atomic consent/replay, source-bound recovery and short Telegram
+refresh/manual/cancel/edit/menu controls. The opt-in common summary preserves
+UNKNOWN/APPROXIMATE and selects receipt2. Legacy material resume is unchanged.
+Both actual PTB/HTTP/PostgreSQL entries reach one report-free case; model output
+and Telegram delivery are synthetic. The bd86049 full gate was interrupted and
+does not establish clearance. The owner rejected an initial-only test release.
+Subsequent answers now have separate question/answer-bound operations, strict
+target values, explicit consent and durable cancellation; all ten factual question
+families pass real Core/Agent HTTP tests and both full PTB entries pass against
+PostgreSQL. Full immutable86e2c80 PG/MinIO verification passed:3965 tests,
+0 failures/errors/skips,372.88s. Five subsequent independent compatibility guards
+also pass on identical runtime source. Ruff/mypy171, Compose, Bandit, dependency
+audit and three offline container smokes pass. GitHub CI/release/live acceptance
+remain separate gates, not implied by this local result.
+Ordinary default startup is still unchanged. Current evidence and limits:
+docs/audit/pre-report-consent-and-telegram-2026-10-16.md.
 The V2 writer is opt-in/internal only: ordinary queues remain V1. No server
 migration or complete pre-report dialogue is activated. See
 docs/audit/pre-report-late-preparation-2026-10-15.md.

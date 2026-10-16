@@ -340,11 +340,28 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
 
 ### PRC10: confirmed understanding and one pre-report form
 
-- [ ] Quick entry displays editable understanding; only explicit confirmation
+- Initial-narrative opt-in implementation checkpoint16Oct: audit-bound atomic
+  consent/replay, conflict-safe merge, durable source save, bounded callbacks,
+  restart recovery and cancellation/navigation are implemented. Shared summary
+  preserves attempts and uses receipt2; legacy material upload behavior is retained.
+  Both real PTB/HTTP/PostgreSQL entry tests reach one report-free case; source
+  identical to bd86049. Required API/consumer review findings were reproduced and
+  fixed, not bypassed. Full bd86049 gate was interrupted, with no clearance.
+  The owner rejected an initial-only release. Subsequent free-text interpretation
+  is implemented in separate answer operations: all ten question families pass
+  real Core/Agent HTTP tests; both full PTB entries pass against PostgreSQL.
+  Final86e2c80 full PG/MinIO gate passed:3965 tests/0skips/372.88s, plus five final
+  independent compatibility guards on identical runtime source. Three actual
+  container smokes, Ruff/mypy171/Compose/Bandit/dependency audit pass. The release
+  gates remain open for GitHub CI, authorized activation and live acceptance; no
+  ordinary activation or release follows from this partial checkpoint. Evidence:
+  docs/audit/pre-report-consent-and-telegram-2026-10-16.md.
+
+- [x] Quick entry displays editable understanding; only explicit confirmation
   prefills the durable draft; later model output cannot overwrite user answers.
-- [ ] Both entries ask only missing allowlisted fields, bind dates/payment to
+- [x] Both entries ask only missing allowlisted fields, bind dates/payment to
   the chosen service episode, and preserve attempted UNKNOWN/APPROXIMATE.
-- [ ] Back/cancel/resume/edit work; optional model wait never prevents manual
+- [x] Back/cancel/resume/edit work; optional model wait never prevents manual
   continuation or confirmed urgent routing. No jargon or false completion message.
   confirm_case/confirm_v2_summary must not reopen an attempted event/safety answer;
   route to the PRC6a limitation without weakening the legal/risk gates.
