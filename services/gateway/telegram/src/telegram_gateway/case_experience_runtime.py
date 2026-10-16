@@ -2,6 +2,7 @@
 """Production composition: quick confirmed intake and optional case work notes."""
 
 import logging
+import os
 
 from telegram import Update
 from telegram.ext import ApplicationHandlerStop, CommandHandler, ContextTypes
@@ -48,11 +49,18 @@ def build_application_with_case_experience(
 
 
 def main() -> None:
+    value = os.getenv("PRE_REPORT_INTAKE_ENABLED", "0")
+    if value not in {"0", "1"}:
+        raise RuntimeError("PRE_REPORT_INTAKE_ENABLED must be exactly 0 or 1")
+    enabled = value == "1"
     logging.basicConfig(
         format="%(asctime)s %(levelname)s %(name)s %(message)s", level=logging.INFO,
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    application = build_application_with_case_experience(gateway_bot.load_token())
+    application = build_application_with_case_experience(
+        gateway_bot.load_token(), enable_understanding=enabled,
+        enable_answer_interpretation=enabled,
+    )
     application.run_polling(
         allowed_updates=gateway_bot.ALLOWED_UPDATES,
         bootstrap_retries=3, drop_pending_updates=False,

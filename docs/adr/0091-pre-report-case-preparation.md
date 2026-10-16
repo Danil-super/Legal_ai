@@ -966,3 +966,22 @@ is unchanged. The independent reviewer approved the exact clinical factory blob
 pin; actual nested handler checks cover default, initial-only and full modes.
 The owner rejected release of initial-only mode: its internal test composition
 does not authorize deployment or bypass the full subsequent-answer acceptance gate.
+
+### Atomic production activation of the complete intake
+
+The clinic Gateway production entry reads one deployment switch,
+`PRE_REPORT_INTAKE_ENABLED`. Its only valid literal values are `0` and `1`;
+absence defaults to `0`, while blank, whitespace and other spellings fail before
+token loading, application construction or polling. `1` passes both existing
+clinical composition arguments together: initial narrative understanding and
+subsequent factual-answer interpretation. There is no production initial-only
+switch. The factory's explicit default-false arguments remain unchanged for
+compatibility and isolated testing.
+
+This switch chooses only the already reviewed clinical consumer. It does not
+approve sources, confirm facts, change provider/model/authentication/risk policy,
+start personal M1 features or bypass acceptance, evidence and legal-answer gates.
+Returning it to `0` and recreating the Gateway restores the previous consumer;
+persisted drafts, consent receipts and case history are not deleted. Deployment
+configuration and explicit release approval remain required to enable it on a VPS;
+adding this wiring does not itself change a running server.
