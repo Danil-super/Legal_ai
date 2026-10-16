@@ -886,3 +886,9 @@ their existing behavior until composition is enabled after complete verification
 Generic V2 draft resume computes the next absent fact rather than reopening an
 already completed persisted navigation checkpoint; explicit back/edit remains
 available and unchanged. This is not clinical risk-policy approval or deployment.
+
+Independent API review reproduced an access change during the discovery operation
+row-lock wait: the pre-query authorization check alone was insufficient. Discovery
+now rechecks current access and retention after its final lock/query, including
+the empty result path. The real PostgreSQL/HTTP regression was RED before this
+fix; no proposal may be returned using access valid only before a lock wait.

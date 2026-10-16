@@ -367,6 +367,9 @@ async def discover_preparation(
             IdempotencyRecord.resource_type == RESOURCE_TYPE,
             IdempotencyRecord.resource_id == draft.id,
         ).with_for_update().execution_options(populate_existing=True))
+        # The operation lock can wait independently of the already held draft.
+        # Reauthorize after the LAST wait, including the no-operation read path.
+        await _recheck_after_locks(session, telegram_user_id, actor, draft)
         if record is None:
             return None
         _validate_binding(actor, draft, record)
