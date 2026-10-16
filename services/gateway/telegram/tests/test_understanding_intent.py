@@ -3,7 +3,13 @@
 from uuid import UUID
 
 import pytest
-from telegram_gateway.understanding_intent import callback, parse_callback, source_keys
+from telegram_gateway.understanding_intent import (
+    bound_callback,
+    callback,
+    parse_bound_callback,
+    parse_callback,
+    source_keys,
+)
 
 
 def test_callbacks_are_canonical_bounded_and_round_trip_without_ram():
@@ -34,3 +40,14 @@ def test_source_keys_are_stable_purpose_separated_and_event_scoped():
 def test_missing_original_event_identity_never_generates_random_retry_keys(identity):
     with pytest.raises(ValueError):
         source_keys(*identity)
+
+
+def test_bound_callbacks_recover_pending_draft_and_operation_without_ram():
+    operation = UUID("00000000-0000-4000-8000-000000000009")
+    draft_id = UUID("00000000-0000-4000-8000-000000000019")
+    for action in ("refresh", "accept", "manual", "cancel", "edit"):
+        value = bound_callback(action, operation, draft_id)
+        assert len(value.encode()) <= 64
+        assert parse_bound_callback(value) == (action, operation, draft_id)
+        with pytest.raises(ValueError):
+            parse_bound_callback(value + "=")
