@@ -8,6 +8,7 @@ import pytest
 from legal_core.intake_answer_contracts import derive_answer_question
 from legal_core.intake_answer_values import apply_answer_value, validate_answer_value
 from legal_core.factual_safety_intake import SCREENING_FIELDS, SCREENING_VERSION
+from legal_core.intake_answer_values import validate_answer_shape
 
 
 @pytest.mark.parametrize(("state", "value", "source"), [
@@ -154,3 +155,20 @@ def test_stale_service_question_never_applies_answer_to_a_new_service_slot():
     data["affectedServices"].reverse()
     with pytest.raises(ValueError):
         apply_answer_value(data, question, "PAID", "It was paid.")
+
+
+def test_shape_rejects_python_values_that_bypass_json_type_boundaries():
+    data = {"intakeVersion": 2}
+    question = derive_answer_question(data, "SITUATION")
+    with pytest.raises(ValueError):
+        validate_answer_shape(question, ("TREATMENT",))
+
+
+def test_frozen_analysis_date_controls_future_date_validation():
+    data = {"intakeVersion": 2}
+    question = derive_answer_question(data, "EVENT_DATE")
+    value = {"date": "2025-02-01", "precision": "EXACT"}
+    with pytest.raises(ValueError):
+        validate_answer_value(question, value, "2025-02-01", data, as_of_date=date(2025, 1, 1))
+    assert validate_answer_value(question, value, "2025-02-01", data,
+                                 as_of_date=date(2025, 3, 1)) == value

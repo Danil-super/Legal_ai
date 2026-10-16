@@ -12,6 +12,7 @@ from legal_core.intake_answer_contracts import (
     derive_answer_question,
 )
 from legal_core.factual_safety_intake import SCREENING_FIELDS, SCREENING_VERSION
+from legal_core.analysis_clarifications import ClarificationRequest
 
 
 @pytest.mark.parametrize(("state", "target"), [
@@ -109,3 +110,24 @@ def test_answer_offsets_apply_only_to_actual_answer_not_draft_narrative():
         proposal.validate_source("")
     with pytest.raises(ValueError):
         proposal.model_copy(update={"source_spans": [{"start": 0, "end": 2}]}).validate_source("?")
+
+
+def test_question_revalidates_constructed_nested_clarification_identity():
+    bad = ClarificationRequest.model_construct(question_id="INVENTED", service_slot=0)
+    with pytest.raises(ValidationError):
+        AnswerQuestion.model_validate({
+            "schemaVersion": "intake-answer-question.v1", "wizardState": "ANALYSIS_CLARIFICATION",
+            "targetField": "analysisClarificationAnswers", "clarificationRequest": bad,
+            "serviceScopeSha256": "a" * 64,
+        })
+
+
+def test_answer_source_validation_never_exposes_constructed_private_values():
+    malformed = AnswerInterpretation.model_construct(
+        status="PROPOSED", value="patient@example.test", source_spans=[], reason_code=None,
+    )
+    with pytest.raises(ValueError) as caught:
+        malformed.validate_source("?")
+    assert type(caught.value) is ValueError
+    assert "patient@example.test" not in str(caught.value)
+    assert caught.value.__context__ is None

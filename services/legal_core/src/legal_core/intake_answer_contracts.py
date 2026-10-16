@@ -7,7 +7,7 @@ import json
 from collections.abc import Mapping
 from typing import Literal, Self
 
-from pydantic import Field, JsonValue, model_validator
+from pydantic import Field, JsonValue, field_validator, model_validator
 
 from legal_core.analysis_clarifications import (
     ClarificationRequest,
@@ -74,6 +74,13 @@ class AnswerQuestion(PreparationModel):
     )
     service_scope_sha256: Sha256 | None = Field(default=None, alias="serviceScopeSha256")
 
+    @field_validator("clarification_request", mode="before")
+    @classmethod
+    def revalidate_request(cls, value: object) -> object:
+        return value.model_dump(by_alias=True, warnings=False) if isinstance(
+            value, ClarificationRequest,
+        ) else value
+
     @model_validator(mode="after")
     def coherent_target(self) -> Self:
         if _TARGETS[self.wizard_state] != self.target_field:
@@ -115,13 +122,20 @@ class AnswerInterpretation(PreparationModel):
         return self
 
     def validate_source(self, source: str) -> None:
-        validated = AnswerInterpretation.model_validate(self.model_dump(by_alias=True))
-        if (not isinstance(source, str) or not 1 <= len(source) <= 1500
-                or not source.strip() or pseudonymize_text(source).changed):
-            raise ValueError("answer source must be bounded and de-identified")
-        if any(span.end > len(source) or not source[span.start:span.end].strip()
-               for span in validated.source_spans):
-            raise ValueError("answer anchor is outside the actual answer or blank")
+        try:
+            validated = AnswerInterpretation.model_validate(
+                self.model_dump(by_alias=True, warnings=False),
+            )
+            if (not isinstance(source, str) or not 1 <= len(source) <= 1500
+                    or not source.strip() or pseudonymize_text(source).changed):
+                raise ValueError("answer source must be bounded and de-identified")
+            if any(span.end > len(source) or not source[span.start:span.end].strip()
+                   for span in validated.source_spans):
+                raise ValueError("answer anchor is outside the actual answer or blank")
+            return
+        except (ValueError, TypeError, AttributeError):
+            pass
+        raise ValueError("invalid answer interpretation or source anchors")
 
 
 def derive_answer_question(

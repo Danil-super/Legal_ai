@@ -47,12 +47,19 @@ def _date_not_future(value: ServiceProvidedDate, as_of_date: date | None) -> Non
 def _shape(question: AnswerQuestion, value: object, as_of_date: date | None) -> JsonValue:
     question = _question(question)
     field = question.target_field
+    if (field in {"situationAreas", "affectedServices", "clinicActions", "healthSignals"}
+            and not isinstance(value, list)):
+        raise ValueError("multi-valued answers require a JSON list")
+    if field == "eventDate" and not isinstance(value, dict):
+        raise ValueError("factual dates require a JSON object")
     if field == "eventSummary":
         if not isinstance(value, str) or not 10 <= len(value.strip()) <= 1500:
             raise ValueError("event answer must be bounded text")
         normalized: JsonValue = value
     elif field == "safetyScreening":
         if question.screening_field == "amount":
+            if value != "UNKNOWN" and not isinstance(value, dict):
+                raise ValueError("amount requires a JSON object or explicit UNKNOWN")
             normalized = "UNKNOWN" if value == "UNKNOWN" else RequestedMoney.model_validate(
                 value,
             ).model_dump(mode="json", by_alias=True)
@@ -63,6 +70,9 @@ def _shape(question: AnswerQuestion, value: object, as_of_date: date | None) -> 
     elif field == "analysisClarificationAnswers":
         if question.clarification_request is None:
             raise ValueError("clarification identity is absent")
+        if (question.clarification_request.question_id == "SERVICE_PROVIDED_DATE"
+                and not isinstance(value, dict)):
+            raise ValueError("service dates require a JSON object")
         answer = ClarificationAnswer.model_validate({
             **question.clarification_request.model_dump(by_alias=True), "value": value,
         })
