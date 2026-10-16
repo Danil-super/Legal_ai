@@ -107,6 +107,45 @@ def test_completed_suggestions_survive_restart_without_changing_confirmed_draft(
         assert actual["revision"] == draft["revision"]
 
 
+@pytest.mark.parametrize("field", ["eventDate", "analysisClarificationAnswers"])
+def test_unknown_date_null_survives_completion_restart_and_reservation_replay(draft_owner, field):
+    actor, _, _, draft = draft_owner
+    unknown = {"date": None, "precision": "UNKNOWN"}
+    value = unknown if field == "eventDate" else {"answers": [{
+        "questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 0, "value": unknown,
+    }]}
+    proposed = DraftSuggestions.model_validate({
+        field: value, "sourceSpans": {field: [{"start": 0, "end": len(SOURCE)}]},
+    })
+    lease = _run(lambda sessions: _reserve(sessions, actor, draft))
+    completed = _run(lambda sessions: complete_preparation(
+        sessions, telegram_user_id=actor, operation_id=lease.operation_id,
+        lease_token=lease.lease_token, suggestions=proposed,
+    ))
+    resumed = _run(lambda sessions: read_preparation(
+        sessions, telegram_user_id=actor, operation_id=lease.operation_id,
+    ))
+    replayed = _run(lambda sessions: _reserve(sessions, actor, draft))
+    assert completed.state == resumed.state == replayed.state == "PROPOSED"
+    assert completed.suggestions == resumed.suggestions == replayed.suggestions == proposed
+    assert replayed.lease_token is None
+    engine = create_engine(owner_database_url())
+    try:
+        with engine.connect() as connection:
+            stored = connection.scalar(select(IdempotencyRecord.response_json).where(
+                IdempotencyRecord.id == lease.operation_id,
+            ))["suggestions"]
+            assert stored[field] == value
+            assert set(stored) == {field, "sourceSpans"}
+    finally:
+        engine.dispose()
+    with application_client() as client:
+        actual = client.get(f"/v1/telegram-intake-drafts/{draft['id']}",
+                            headers=actor_headers(actor)).json()
+        assert actual["draftData"] == draft["draftData"]
+        assert actual["revision"] == draft["revision"]
+
+
 def test_wrong_token_cannot_complete_or_destroy_a_live_operation(draft_owner):
     actor, _, _, draft = draft_owner
     lease = _run(lambda sessions: _reserve(sessions, actor, draft))

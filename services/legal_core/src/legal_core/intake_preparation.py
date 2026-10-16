@@ -232,7 +232,11 @@ async def complete_preparation(
             "intent": _intent(actor, draft, DraftPreparationIntent.model_validate(
                 (record.response_json or {})["intent"],
             ).operation_kind).model_dump(mode="json", by_alias=True),
-            "suggestions": checked.model_dump(mode="json", by_alias=True, exclude_none=True),
+            # Omit absent proposals, not mandatory nested date:null for UNKNOWN.
+            "suggestions": {
+                key: value for key, value in checked.model_dump(mode="json", by_alias=True).items()
+                if value is not None
+            },
         }
         record.state, record.lease_token, record.lease_until = "SUCCEEDED", None, None
         session.add(_audit(actor=actor, action="INTAKE_PREPARATION_PROPOSED",

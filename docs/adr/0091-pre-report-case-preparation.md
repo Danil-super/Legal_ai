@@ -40,6 +40,16 @@ This first internal slice has no HTTP entry point, storage write or ordinary UI
 wiring. Protected invocation, subsequent answer interpretation with existing
 confirmed context, cancellation/revisions and confirmation remain PRC8b/9/10.
 
+### PRC8 storage prerequisite: explicit unknown dates survive persistence
+
+The existing early-operation writer omits only absent root proposals. Recursive
+exclude_none discarded required nested date:null for UNKNOWN event/service dates,
+so immediate completion failed validation and could not be replayed. Retain nested
+nulls, without inventing dates, changing the request intent or accepting proposals
+as user facts. Real PostgreSQL tests cover completion, separate-session restart,
+reservation replay, stored JSON and unchanged owned draft. No schema/backfill or
+activation is needed; service-slot/semantic acceptance is still a later boundary.
+
 PreparationResult is an unwrapped RootModel union discriminated by status; every
 variant requires the exact integer resultVersion2 and a strict source:
 operationId, caseId, factSnapshotSha256 and explicit context. Before retrieval,
