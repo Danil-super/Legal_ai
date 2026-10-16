@@ -19,6 +19,8 @@ from agent_orchestrator.main import (
     create_app,
 )
 from legal_core.intake_answer_contracts import derive_answer_question
+from legal_core.intake_answer_intent import AnswerPreparationIntent
+from legal_core.case_api import _canonical_hash
 from legal_core.intake_answer_wire import AnswerContext
 
 KEY = "synthetic-answer-key-12345678901234567890"
@@ -31,12 +33,14 @@ def client_scenario(
     operation, draft, token = uuid4(), uuid4(), uuid4()
     calls = []
     question = derive_answer_question({"intakeVersion": 2}, "INCOMING")
+    intent = AnswerPreparationIntent(
+        clinicId=uuid4(), actorMembershipId=uuid4(), draftId=draft, draftRevision=2,
+        inputSha256="a" * 64, answerSha256=_canonical_hash({"answer": ANSWER}),
+        questionSha256=question.question_sha256, asOfDate="2026-10-16",
+    )
     context_body = {"operationId": str(operation), "draftId": str(draft), "draftRevision": 2,
                     "inputSha256": "a" * 64,
-                    "answerSha256": hashlib.sha256(json.dumps(
-                        {"answer": ANSWER}, ensure_ascii=False, sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode()).hexdigest(),
+                    "answerSha256": intent.answer_sha256,
                     "questionSha256": question.question_sha256,
                     "question": question.model_dump(mode="json", by_alias=True),
                     "answer": ANSWER, "confirmedContext": {"intakeVersion": 2},
