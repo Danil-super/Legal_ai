@@ -154,6 +154,7 @@ def test_provider_failure_propagates_once_without_raw_source_or_retry(error):
     with pytest.raises(HermesUnavailable) as caught:
         run_model("Письменная претензия", unresolved(), calls=calls, error=error)
     assert len(calls) == 1 and "SYNTHETIC_PRIVATE_DETAIL" not in str(caught.value)
+    assert caught.value.__context__ is None and caught.value.__cause__ is None
 
 
 @pytest.mark.parametrize("state", ["MATERIALS", "SUMMARY", "V2_CONFIRM"])

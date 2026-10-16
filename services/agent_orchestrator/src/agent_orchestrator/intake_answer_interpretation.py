@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import date
 
-from agent_orchestrator.hermes_client import HermesClient, HermesProtocolError
+from agent_orchestrator.hermes_client import HermesClient, HermesProtocolError, HermesUnavailable
 from legal_core.intake_answer_contracts import AnswerInterpretation, AnswerQuestion
 from legal_core.intake_answer_values import validate_answer_value
 from legal_core.intake_preparation_contracts import DraftSuggestions
@@ -72,6 +72,18 @@ def _context(data: dict[str, object]) -> dict[str, object]:
     return context
 
 
+async def _complete(researcher: HermesClient, *, system: str, user: str) -> object:
+    failure: HermesUnavailable | HermesProtocolError
+    try:
+        return await researcher.complete_json(system=system, user=user)
+    except HermesUnavailable as error:
+        failure = HermesUnavailable(reason=error.reason)
+    except HermesProtocolError:
+        failure = HermesProtocolError("answer response does not match the interpretation contract")
+    # Even a suppressed transport cause may retain a request with the answer. Rebuild it.
+    raise failure
+
+
 class AnswerUnderstanding:
     def __init__(self, *, researcher: HermesClient) -> None:
         self._researcher = researcher
@@ -91,7 +103,8 @@ class AnswerUnderstanding:
         except (ValueError, TypeError, AttributeError):
             pass
         else:
-            raw = await self._researcher.complete_json(
+            raw = await _complete(
+                self._researcher,
                 system=_SYSTEM + json.dumps(AnswerInterpretation.model_json_schema(by_alias=True),
                                             ensure_ascii=False, sort_keys=True),
                 user=json.dumps({"answer": source, "question": question.model_dump(
