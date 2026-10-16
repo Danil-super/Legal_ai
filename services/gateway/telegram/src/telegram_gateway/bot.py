@@ -859,6 +859,7 @@ async def _prompt_v2_draft(
     update: Update,
     state: WizardState,
     data: dict[str, Any],
+    *, preparation: bool = False,
 ) -> None:
     message = update.effective_message
     data.pop("_v2_prompt_message_id", None)
@@ -984,8 +985,10 @@ async def _prompt_v2_draft(
         workflow_id = UUID(str(data["workflow_id"]))
         if message is not None:
             await reply(
-                "Фактическая карточка подтверждена. Сформировать внутренний отчёт?",
-                reply_markup=confirm_keyboard(workflow_id),
+                ("Фактическая карточка подтверждена. Подготовить рекомендации?"
+                 if preparation else
+                 "Фактическая карточка подтверждена. Сформировать внутренний отчёт?"),
+                reply_markup=confirm_keyboard(workflow_id, preparation=preparation),
             )
 
 
@@ -1173,7 +1176,9 @@ async def v2_material_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return await _advance_v2_draft(update, data)
 
 
-async def confirm_v2_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def confirm_v2_summary(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, preparation: bool = False,
+) -> int:
     if await _answer_callback(update) != "case:v2:summary:confirm":
         return WizardState.SUMMARY
     data = _wizard_data(context)
@@ -1182,12 +1187,12 @@ async def confirm_v2_summary(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await _reply(update, "Перед подтверждением уточните недостающие сведения.")
         await _prompt_v2_draft(update, missing, data)
         return missing
-    if reopen_unknown_screening_question(data) is not None:
+    if not preparation and reopen_unknown_screening_question(data) is not None:
         await _reply(update, "Нужно уточнить неизвестный факт. Если сейчас уточнить нельзя, "
                      "/cancel сохранит черновик; неизвестное не считается ответом «Нет».")
         await _prompt_v2_draft(update, WizardState.SAFETY, data)
         return WizardState.SAFETY
-    await _prompt_v2_draft(update, WizardState.V2_CONFIRM, data)
+    await _prompt_v2_draft(update, WizardState.V2_CONFIRM, data, preparation=preparation)
     return WizardState.V2_CONFIRM
 
 
@@ -2122,9 +2127,9 @@ async def resume_intake_draft(update: Update, context: ContextTypes.DEFAULT_TYPE
     _clear_wizard(context)
     _clear_pending_inputs(context)
     data = dict(draft_data)
-    if data.get("intakeVersion") == 2 and state in {
-        WizardState.SUMMARY, WizardState.V2_CONFIRM, WizardState.ANALYSIS_CLARIFICATION,
-    }:
+    if data.get("intakeVersion") == 2:
+        # Navigation checkpoints are not missing facts. Explicit back/edit still
+        # opens its selected field; generic resume asks only what is absent.
         state = _v2_state(v2_next_missing_state(data))
     data.update(
         {

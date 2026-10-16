@@ -876,3 +876,13 @@ separate pending, proposed, manual and accepted states, with source or acceptanc
 metadata only in the matching state. Safe-stop still prevents dispatch but permits
 read, cancellation and factual consent; these operations cannot trigger analysis.
 Gateway imports only the pure shared contracts, not Core API/storage modules.
+
+### PRC10 shared pre-report form
+
+The opt-in application-local summary consumer preserves UNKNOWN/APPROXIMATE attempts
+and selects explicit receipt2 preparation, not the legacy intermediate PDF path.
+Both quick and guided V2 entries use this same consumer. Legacy consumers keep
+their existing behavior until composition is enabled after complete verification.
+Generic V2 draft resume computes the next absent fact rather than reopening an
+already completed persisted navigation checkpoint; explicit back/edit remains
+available and unchanged. This is not clinical risk-policy approval or deployment.
