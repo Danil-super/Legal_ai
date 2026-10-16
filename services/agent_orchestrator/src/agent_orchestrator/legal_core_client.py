@@ -142,13 +142,14 @@ class LegalCoreClient:
         self, *, operation_id: UUID, draft_id: UUID, telegram_user_id: int,
         binding: UnderstandingContextRequest,
     ) -> IntakeUnderstandingContext:
-        request = UnderstandingContextRequest.model_validate(binding.model_dump(by_alias=True))
-        payload = await self._request_json(
-            "POST", f"/v1/intake-preparations/{operation_id}/context",
-            telegram_user_id=telegram_user_id,
-            json_body=request.model_dump(mode="json", by_alias=True),
-        )
+        failure_status = None
         try:
+            request = UnderstandingContextRequest.model_validate(binding.model_dump(by_alias=True))
+            payload = await self._request_json(
+                "POST", f"/v1/intake-preparations/{operation_id}/context",
+                telegram_user_id=telegram_user_id,
+                json_body=request.model_dump(mode="json", by_alias=True),
+            )
             context = IntakeUnderstandingContext.model_validate(payload)
             if (
                 context.operation_id == operation_id and context.draft_id == draft_id
@@ -156,9 +157,15 @@ class LegalCoreClient:
                 and context.input_sha256 == request.expected_input_sha256
             ):
                 return context
-        except (ValueError, TypeError):
+        except LegalCoreError as error:
+            failure_status = error.status_code
+        except (LegalCoreProtocolError, ValueError, TypeError):
             pass
-        # No input-bearing validation exception may cross the private source boundary.
+        # Transport errors can retain the request (including keys/lease) or raw JSON body.
+        # Raise outside except, dropping both explicit cause and implicit exception context.
+        if failure_status is not None:
+            raise LegalCoreError("UNDERSTANDING_CONTEXT_REFUSED", "Understanding context refused",
+                                 status_code=failure_status)
         raise LegalCoreProtocolError("understanding context response contract mismatch")
 
     async def get_analysis_context(

@@ -75,4 +75,31 @@ def test_client_rejects_wrong_binding_or_unexpected_context_without_error_input(
 def test_core_refusal_is_not_relabelled_as_a_model_suggestion():
     with pytest.raises(LegalCoreError) as error:
         asyncio.run(_scenario(status=409))
-    assert error.value.status_code == 409 and error.value.code == "PREPARATION_LEASE_EXPIRED"
+    assert error.value.status_code == 409 and error.value.code == "UNDERSTANDING_CONTEXT_REFUSED"
+
+
+@pytest.mark.parametrize("failure", ["json", "transport", "error_body"])
+def test_context_transport_errors_do_not_retain_private_body_or_headers(failure):
+    marker = "SYNTHETIC_PRIVATE_CONTEXT_MARKER"
+
+    def handler(request):
+        if failure == "transport":
+            raise httpx.ReadError(marker, request=request)
+        if failure == "json":
+            return httpx.Response(200, text=marker)
+        return httpx.Response(409, json={"error": {"code": marker, "message": marker}})
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = LegalCoreClient(LegalCoreEndpoint("http://core:8000", "k" * 32), client=http)
+            await client.get_understanding_context(
+                operation_id=uuid4(), draft_id=uuid4(), telegram_user_id=123,
+                binding=UnderstandingContextRequest(
+                    leaseToken=uuid4(), expectedRevision=2, expectedInputSha256="a" * 64,
+                ),
+            )
+
+    with pytest.raises((LegalCoreError, LegalCoreProtocolError)) as error:
+        asyncio.run(scenario())
+    assert marker not in str(error.value)
+    assert error.value.__context__ is None and error.value.__cause__ is None

@@ -774,3 +774,10 @@ Cancellation releases the slot via structured cleanup. The worker's two consumer
 and HTTP connection limit are unchanged. This increment adds the reusable budget
 and worker compatibility; application-scoped sharing and bounded intake task
 shutdown are the next wiring increment, not active public functionality yet.
+
+Independent PRC9 review reproduced a private exception-retention defect: the new
+client initially sanitized schema failures but not the existing transport's
+JSONDecodeError.doc / httpx request-bearing exception chain. The whole new context
+method now replaces protocol/transport errors outside except; refusals retain only
+HTTP status with a fixed code/message. Legacy client behavior is untouched. Tests
+prove absent cause/context and no raw error-body marker, not merely safe HTTP text.
