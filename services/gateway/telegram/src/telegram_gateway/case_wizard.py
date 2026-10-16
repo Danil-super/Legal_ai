@@ -947,9 +947,15 @@ class LegalCoreClient:
         telegram_user_id: int,
         *,
         intake_schema_version: str = INTAKE_SCHEMA_VERSION,
+        receipt_version: Literal[2] | None = None,
     ) -> dict[str, Any]:
         if intake_schema_version not in {INTAKE_SCHEMA_VERSION, V2_INTAKE_SCHEMA_VERSION}:
             raise ValueError("unsupported intake schema version")
+        if receipt_version is not None and (
+            type(receipt_version) is not int or receipt_version != 2
+            or intake_schema_version != V2_INTAKE_SCHEMA_VERSION
+        ):
+            raise ValueError("unsupported workflow preparation mode")
         receipt = await self._json_request(
             "POST",
             f"/v1/telegram-case-workflows/{workflow_id}/submissions",
@@ -958,9 +964,13 @@ class LegalCoreClient:
                 "intakeSchemaVersion": intake_schema_version,
                 "locale": "ru-RU",
                 "facts": facts,
+                **({"receiptVersion": 2} if receipt_version == 2 else {}),
             },
         )
-        return _validated_workflow_receipt(receipt, workflow_id)
+        validated = _validated_workflow_receipt(receipt, workflow_id)
+        if receipt_version == 2 and validated.get("receiptVersion") != 2:
+            raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response")
+        return validated
 
     async def upload_case_material(
         self,

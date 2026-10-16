@@ -490,6 +490,15 @@ transaction, waits, stores and reads back its receipt; it was RED on the default
 transaction timestamp. Normal production writers hold the case lock; the test
 directly exercises storage with a synthetic result only.
 
+### PRC7d1 explicit Gateway submission mode
+
+LegalCoreClient.submit_workflow adds optional receipt_version2 with exact integer
+and v2 schema validation before HTTP. Omission preserves the legacy request body;
+the existing read/recovery client still accepts either stored receipt version.
+An explicitly requested2 may not accept a legacy report response as success.
+This is transport support, not a switch of ordinary producers. Stable callback
+intent and the initial presentation/queue consumer follow before activation.
+
 ### PRC7c returned-draft validation before continuation
 
 Independent PRC7a review demonstrated that matching source/ID/revision/state alone

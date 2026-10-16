@@ -1,6 +1,7 @@
 """Gateway transport accepts legacy reports and explicit report-free receipts."""
 
 import asyncio
+import json
 from uuid import uuid4
 
 import httpx2
@@ -90,3 +91,54 @@ def test_invalid_or_misbound_receipts_raise_a_bounded_boundary_error(operation, 
     assert error.value.status_code == 502
     assert error.value.code == "INVALID_LEGAL_CORE_RESPONSE"
     assert "synthetic" not in str(error.value)
+
+
+def _submit_mode(mode=None, *, schema="dental-case-intake.v2", response_version=2):
+    workflow = uuid4()
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx2.Response(201, json=_wire(workflow, response_version))
+
+    async def run():
+        async with httpx2.AsyncClient(base_url="http://core.test",
+                                      transport=httpx2.MockTransport(respond)) as http:
+            return await LegalCoreClient(http).submit_workflow(
+                workflow, [], 7000000001, intake_schema_version=schema, receipt_version=mode,
+            )
+
+    return run, requests
+
+
+@pytest.mark.parametrize("version", [None, 2])
+def test_submission_mode_is_explicit_and_legacy_body_remains_identical(version):
+    run, requests = _submit_mode(version)
+    result = asyncio.run(run())
+    assert result["receiptVersion"] == 2
+    expected = {"intakeSchemaVersion": "dental-case-intake.v2", "locale": "ru-RU", "facts": []}
+    if version is not None:
+        expected["receiptVersion"] = 2
+    assert json.loads(requests[0].content) == expected
+    assert requests[0].headers["x-telegram-user-id"] == "7000000001"
+    assert "x-clinic-id" not in requests[0].headers
+
+
+@pytest.mark.parametrize("version", [1, 3, True, "2", 2.0])
+def test_malformed_submission_mode_is_refused_before_network(version):
+    run, requests = _submit_mode(version)
+    with pytest.raises(ValueError):
+        asyncio.run(run())
+    assert requests == []
+
+
+def test_preparation_mode_cannot_submit_legacy_schema_or_accept_a_legacy_response():
+    run, requests = _submit_mode(2, schema="dental-case-intake.v1")
+    with pytest.raises(ValueError):
+        asyncio.run(run())
+    assert requests == []
+    run, requests = _submit_mode(2, response_version=1)
+    with pytest.raises(LegalCoreApiError) as error:
+        asyncio.run(run())
+    assert error.value.code == "INVALID_LEGAL_CORE_RESPONSE"
+    assert len(requests) == 1
