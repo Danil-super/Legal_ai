@@ -240,3 +240,55 @@ shared final dialogue (PRC8–11) remain open. Tests use synthetic external-mode
 Telegram stand-ins, not live provider quality or production delivery. Models/high,
 provider, budgets, risk policy, approved sources and approval authority unchanged.
 No external CLI/model/provider, SSH, server migration, deployment or activation.
+
+## Initial consumer and configured-composition checkpoint — 16 October
+
+Client8b5bb30 sends explicit integer receiptVersion2 only on the new intent and
+refuses a legacy response. Queue64c4738 derives result_version from the immutable
+stored workflow, not a client-selected JSON/header. Current creator/access/expiry
+are rechecked after the actual case lock; incompatible active/completed legacy
+jobs are not silently reused. Runtimef83a49f binds explicit confirmation/restart to
+the same workflow and preserves attempted UNKNOWN/APPROXIMATE dates and screening.
+Intermediate presentation creates no intake PDF or false completed-report claim.
+
+Independent review found a future-date regression when the shared calendar model
+replaced the old parser. Three own probes were RED; final code retains the existing
+future prohibition with approximate-date support. Author added four mode/precision
+regressions. A first incomplete fix ignored the parser's None result and remained
+RED; it is not counted as a fix. An interrupted full run (1212 passed, exit2) also
+does not establish full verification.
+
+The next full run had3140 passes/1 failure in400.79s. Investigation reproduced a
+real configured-startup defect: the legacy analysis adapter appended another CTA
+after the new presenter, including after urgent lawyer routing. Fixd488314 leaves
+versioned navigation with its strictly validating original reader. It does not
+reset test globals to conceal the defect. Four standalone adapter regressions were
+RED2/GREEN4; both receipt-presentation cases now always build configured startup,
+asserting exactly one normal analyze control or one urgent lawyer control.
+
+Independent evidence: queue113 passed/0 skips (including30 own access/race/storage
+probes); final combined runtime934 passed/0 skips,72.91s, including the whole
+Gateway suite and actual PostgreSQL workflow/retention checks. The latter executes
+real queue/worker/orchestrator/clients/Core with synthetic model HTTP and Telegram:
+initial receipt2→NEEDS_FACTS/no report→operation-bound recovered draft→explicit
+answer/confirmation→new receipt2→READY with verified ACTION and checksum-valid PDF.
+Existing UNKNOWN service-date attempts and all original fact rows remain unchanged.
+Fresh configured composition separately preserves legacy PDF/analyze controls.
+Inverting the new adapter guard kills six tests; exact restoration passes13.
+Reports remain outside the repository:
+`/home/danil/.cache/dental-prc-verify.pLetxJ/prc7d-queue-review-20261016.md` and
+`/home/danil/.cache/dental-prc-verify.pLetxJ/prc7d-runtime-review-20261016.md`.
+
+Final immutable source/test tree **fec864ab986a77cd261cf6ab394fac40161aa166**,
+commit **f83a49fb4f51af94151260d72e4137a761c9989d**: **3145 passed,0 skipped,
+516.72s**,302 Telegram-library/test-environment warnings. Fresh migrated parent
+`dental_legal_test_prc7d_composed_20261016` on isolated task cluster55487 plus task
+MinIO. JUnit: `/home/danil/.cache/dental-prc-verify.pLetxJ/prc7d-composed-full-20261016.xml`.
+Ruff/all-three-service mypy144/Compose pass. Actual final Gateway image builds and
+its entrypoint imports pass: dental-prc7d-composed-gateway-20261016,741386ec5bc2.
+Exact-worktree Code Graph refreshed:580 nodes/579 edges; Python impact is incomplete.
+
+Ordinary initial submission remains legacy. Explicit seeded acceptance does not
+establish PRC8–11 early understanding, both ordinary entry paths, semantic model
+quality or complete user-facing readiness. No live model/provider/CLI/SSH call,
+production migration/release, normative approval or activation occurred.

@@ -249,16 +249,28 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
   PostgreSQL+MinIO; Ruff/mypy143/Compose and actual Gateway Docker build pass.
   No model/provider/production activation. See the audit checkpoint for limits.
 
-### PRC7d: initial consumer before producer activation — open
+### PRC7d: initial consumer implemented; ordinary activation remains gated
 
-- [ ] Extend Gateway submission transport with explicit receiptVersion2 intent;
+- [x] Extend Gateway submission transport with explicit receiptVersion2 intent;
   legacy payload/hashes remain unchanged and saved intent survives restart.
-- [ ] Render a report-free receipt as preparation, without preliminary PDF or
+- [x] Render a report-free receipt as preparation, without preliminary PDF or
   success/advice claims; preserve urgent lawyer path and strict source identity.
 - [ ] Verify real submission→initial presentation→analysis queue→shared factual
   form/confirmation, including uncertain attempts and both original entry paths.
 - Split into at most five-file tested increments; this completes PRC7 alongside
   PRC10's confirmed understanding before any ordinary producer is enabled.
+- Client8b5bb30, queue64c4738, adapter fixd488314 and runtimef83a49f preserve the
+  explicit mode, attempted dates/screening and legacy transport. Review found and
+  fixed current-creator recheck, future-date acceptance and configured startup's
+  duplicate analysis control; urgent receipt2 now offers only the actual lawyer card.
+- Independent queue113 and whole-Gateway/runtime934 tests pass with PostgreSQL,
+  zero skips. The latter proves one synthetic initial→NEEDS_FACTS→bound correction
+  →READY/verified ACTION/downloadable PDF chain with immutable originals. It does
+  not prove both ordinary entry paths or live model quality/activation.
+- Full f83a49f/tree fec864a:3145 passed/0 skipped,516.72s on fresh PostgreSQL+MinIO;
+  Ruff/mypy144/Compose and actual Gateway image741386ec5bc2 pass. An earlier full
+  run had1 failure/3140 passes and is not clearance; it exposed the real startup
+  adapter defect, not just test state leakage. PRC8–11 remain open; no server release.
 
 ### PRC8: constrained Hermes understanding, not legal analysis
 

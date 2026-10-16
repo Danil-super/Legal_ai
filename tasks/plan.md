@@ -48,8 +48,18 @@ draft gap found by independent review using Core's shared partial-draft validato
 Independent7b:82 real-PostgreSQL tests pass;7c:307 pass/14 PG skips plus3522 exact
 validator outcome comparisons. Author full3868e20/tree eda5a57:3096 passed/0 skipped,
 341.59s on fresh PostgreSQL+MinIO; Ruff/mypy143/Compose and actual Gateway image pass.
-NEXT: PRC7d initial receipt consumer and PRC8–11 confirmed understanding/shared
-dialogue acceptance. Ordinary producer activation remains gated on their completion.
+PRC7d client8b5bb30, queue64c4738, adapterd488314 and runtimef83a49f complete the
+explicit initial receipt consumer. Independent queue113 and whole-Gateway/runtime
+934 actual PostgreSQL tests pass; the latter also proves a synthetic initial→
+NEEDS_FACTS→bound correction→READY/verified ACTION/PDF chain. Review fixed creator
+access after waits, future-date acceptance and configured startup's duplicate CTA.
+Full f83a49f/tree fec864a:3145 passed/0 skipped,516.72s on fresh PostgreSQL+MinIO;
+Ruff/mypy144/Compose and actual Gateway Docker image pass. The earlier full run's
+one failure is preserved in the audit, not counted as success.
+NEXT: PRC8–11 confirmed understanding/shared dialogue acceptance. Ordinary producer
+activation remains gated on their completion; both ordinary entry paths are not
+proved by explicitly seeded receipt2 acceptance. PRC8a internal interpretation is
+being implemented separately without changing this verified runtime snapshot.
 The V2 writer is opt-in/internal only: ordinary queues remain V1. No server
 migration or complete pre-report dialogue is activated. See
 docs/audit/pre-report-late-preparation-2026-10-15.md.
