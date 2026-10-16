@@ -19,6 +19,27 @@ unauthenticated model-to-Core write API.
 
 ## Wire contract
 
+### PRC8a bounded initial narrative interpreter, not activated
+
+IntakeUnderstanding reuses a supplied existing researcher HermesClient for one
+tool-free call. It changes no model/provider/high/timeout configuration. Input
+must be10–1500 nonblank de-identified characters; local redaction that would alter
+the input refuses it instead of silently changing source offsets. Model errors
+propagate without retry for the later durable manual-continuation adapter.
+
+The output is only DraftSuggestions, never confirmed facts. Validate the existing
+nine-field schema, exact input offsets/nonblank anchors, output privacy, literal
+non-URL service labels, existing service-slot scope and nonfuture factual dates.
+Retain explicit nested date:null for UNKNOWN while checking scope. Schema/offsets
+and the reused scope validator do not establish semantic truth, negate a fact or
+approve a legal conclusion. Future explicit user confirmation remains mandatory.
+Instructions demand abstention for ambiguity, negation and uncertain course/episode
+binding; synthetic transport tests do not prove live model interpretation quality.
+
+This first internal slice has no HTTP entry point, storage write or ordinary UI
+wiring. Protected invocation, subsequent answer interpretation with existing
+confirmed context, cancellation/revisions and confirmation remain PRC8b/9/10.
+
 PreparationResult is an unwrapped RootModel union discriminated by status; every
 variant requires the exact integer resultVersion2 and a strict source:
 operationId, caseId, factSnapshotSha256 and explicit context. Before retrieval,
