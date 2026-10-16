@@ -259,6 +259,13 @@ def _resume_handler(
             if actor is None or query is None or not isinstance(query.data, str):
                 raise ValueError("actor missing")
             draft_id = UUID(query.data.removeprefix("case:draft:"))
+            remote = await bot._legal_core(context).get_intake_draft(draft_id, actor)
+            fields = remote.get("draftData")
+            if isinstance(fields, dict) and "intakeVersion" not in fields:
+                # Core already authorized this exact read. Validate its legacy
+                # identity/state before leaving the new V2-only consumers.
+                bot._saved_draft_selection(draft_id, remote, is_v2=False)
+                return await bot.resume_intake_draft(update, context, preparation=False)
             client = AnswerClient(bot._legal_core(context), actor)
             status = await client.discover(draft_id)
             if status is not None:
