@@ -213,3 +213,19 @@ def test_dependency_composition_reuses_one_configured_researcher_without_new_pro
     assert dependencies.answer_understanding._researcher is researcher
     assert researcher.endpoint.model == "researcher"
     assert researcher.endpoint.timeout_seconds == 65 and researcher.endpoint.stream_response is True
+
+
+@pytest.mark.parametrize("path_kind", ["answer", "understanding", "analyze"])
+def test_non_ascii_wrong_internal_key_is_forbidden_before_any_authority_or_model_call(path_kind):
+    client, calls, path, body = client_scenario()
+    changed_headers = {b"X-Agent-Internal-Key": b"\xff" * 32, b"X-Telegram-User-Id": b"123"}
+    if path_kind == "understanding":
+        path = f"/v1/intake-preparations/{uuid4()}/understand"
+    elif path_kind == "analyze":
+        path = f"/v1/cases/{uuid4()}/analyze"
+        changed_headers[b"Idempotency-Key"] = str(uuid4()).encode()
+    response = client.post(path, headers=changed_headers,
+                           json=body if path_kind != "analyze" else None)
+    assert response.status_code == 403
+    assert response.json() == {"detail": "forbidden"}
+    assert calls == []

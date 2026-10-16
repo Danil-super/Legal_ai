@@ -174,7 +174,7 @@ def create_app(
     )
 
     def require_internal_key(value: str) -> None:
-        if not hmac.compare_digest(value, settings.internal_key):
+        if not hmac.compare_digest(value.encode("utf-8"), settings.internal_key.encode("utf-8")):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
 
     @app.get("/health/live")
