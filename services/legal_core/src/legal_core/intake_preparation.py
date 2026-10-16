@@ -349,6 +349,32 @@ async def read_preparation(
         return result
 
 
+async def discover_preparation(
+    sessions: async_sessionmaker[AsyncSession], *, telegram_user_id: int, draft_id: UUID,
+) -> PreparationOperation | None:
+    """Read the exact current intent without reserving, claiming or dispatching."""
+    async with sessions() as session:
+        actor = await resolve_actor(session, telegram_user_id)
+        draft = await _draft(session, actor, draft_id)
+        await _recheck_after_locks(session, telegram_user_id, actor, draft)
+        _source(draft)
+        intent = _intent(actor, draft, "UNDERSTAND_INTAKE")
+        record = await session.scalar(select(IdempotencyRecord).where(
+            IdempotencyRecord.clinic_id == actor.clinic_id,
+            IdempotencyRecord.actor_membership_id == actor.membership_id,
+            IdempotencyRecord.scope == intent.scope,
+            IdempotencyRecord.key == str(intent.idempotency_key),
+            IdempotencyRecord.resource_type == RESOURCE_TYPE,
+            IdempotencyRecord.resource_id == draft.id,
+        ).with_for_update().execution_options(populate_existing=True))
+        if record is None:
+            return None
+        _validate_binding(actor, draft, record)
+        result = await _checked_result(session, actor, draft, record)
+        await session.commit()
+        return result
+
+
 async def read_understanding_context(
     sessions: async_sessionmaker[AsyncSession], *, telegram_user_id: int, operation_id: UUID,
     lease_token: UUID, expected_revision: int, expected_input_sha256: str,

@@ -45,7 +45,8 @@ def test_actor_start_read_cancel_restart_keep_one_unconfirmed_operation(draft_ow
                     first = await asyncio.wait_for(client.post(path, **kwargs), timeout=2)
                     assert first.status_code == 202, first.text
                     result = first.json()
-                    assert set(result) == {"operationId", "state", "suggestions"}
+                    assert set(result) == {"operationId", "state", "suggestions",
+                                           "source", "acceptance"}
                     assert result["state"] == "PENDING" and result["suggestions"] is None
                     await asyncio.wait_for(entered.wait(), timeout=2)
                     replay = await client.post(path, **kwargs)
@@ -113,3 +114,58 @@ def test_actor_cannot_start_understanding_during_safe_stop(draft_owner, monkeypa
                                json={"expectedRevision": draft["revision"]})
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "ANALYSIS_SAFE_STOP"
+
+
+def test_discovery_does_not_dispatch_and_acceptance_replays_after_restart(draft_owner, monkeypatch):
+    from test_intake_preparation_acceptance import _proposal
+
+    actor, _, _, draft = draft_owner
+    path = f"/v1/telegram-intake-drafts/{draft['id']}/understanding"
+    with application_client() as client:
+        absent = client.get(path, headers=actor_headers(actor))
+        assert absent.status_code == 200, absent.text
+        assert absent.json() == {"operation": None}
+    result, request = _proposal(actor, draft)
+    operation_path = f"/v1/intake-preparations/{result.operation_id}"
+    monkeypatch.setenv("LEGAL_ANALYSIS_SAFE_STOP", "1")
+    with application_client() as client:
+        discovered = client.get(path, headers=actor_headers(actor))
+        assert discovered.status_code == 200, discovered.text
+        status = discovered.json()["operation"]
+        assert status["operationId"] == str(result.operation_id)
+        assert status["source"] == result.source.model_dump(mode="json", by_alias=True)
+        accepted = client.post(operation_path + "/acceptance", headers=actor_headers(actor),
+                               json=request.model_dump(mode="json", by_alias=True))
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["acceptedRevision"] == draft["revision"] + 1
+    with application_client() as restarted:
+        replay = restarted.post(operation_path + "/acceptance", headers=actor_headers(actor),
+                                json=request.model_dump(mode="json", by_alias=True))
+        assert replay.json() == accepted.json()
+        status = restarted.get(operation_path, headers=actor_headers(actor)).json()
+        assert status["state"] == "ACCEPTED"
+        assert status["source"] is None and status["suggestions"] is None
+        assert status["acceptance"] == {"draftId": draft["id"],
+                                        "acceptedRevision": draft["revision"] + 1}
+        assert restarted.get(path, headers=actor_headers(actor)).json() == {"operation": None}
+        assert "leaseToken" not in replay.text and "intent" not in replay.json()
+
+
+@pytest.mark.parametrize("patch", [
+    {"expectedRevision": True}, {"expectedRevision": "2"}, {"expectedRevision": 0},
+    {"expectedProposalSha256": "not-a-hash"}, {"suggestions": {}}, {"clinicId": "foreign"},
+    {"confirmed": True}, {"leaseToken": "private"},
+])
+def test_acceptance_refuses_client_fact_payload_or_non_strict_selectors(draft_owner, patch):
+    from test_intake_preparation_acceptance import _proposal
+
+    actor, _, _, draft = draft_owner
+    result, request = _proposal(actor, draft)
+    with application_client() as client:
+        response = client.post(f"/v1/intake-preparations/{result.operation_id}/acceptance",
+                               headers=actor_headers(actor), json={
+                                   **request.model_dump(mode="json", by_alias=True), **patch,
+                               })
+        assert response.status_code == 422, response.text
+        assert client.get(f"/v1/telegram-intake-drafts/{draft['id']}",
+                          headers=actor_headers(actor)).json()["revision"] == draft["revision"]

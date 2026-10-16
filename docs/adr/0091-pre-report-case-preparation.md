@@ -869,3 +869,10 @@ the same request returns the current owned draft without reapplying or extending
 retention. Receipt validation precedes source freshness on replay only; new model
 completion still requires the exact original source. Cancellation after acceptance
 cannot undo confirmed answers. No new table, policy or personal feature is added.
+
+The actor API now exposes exact current-draft read-only operation discovery and
+explicit acceptance with strict revision/input/proposal selectors. Status responses
+separate pending, proposed, manual and accepted states, with source or acceptance
+metadata only in the matching state. Safe-stop still prevents dispatch but permits
+read, cancellation and factual consent; these operations cannot trigger analysis.
+Gateway imports only the pure shared contracts, not Core API/storage modules.

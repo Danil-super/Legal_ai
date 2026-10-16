@@ -161,11 +161,21 @@ class PreparationStatusResponse(PreparationModel):
     """Public state only: never serialize a private operation dataclass wholesale."""
 
     operation_id: UUID = Field(alias="operationId")
-    state: Literal["PENDING", "PROPOSED", "MANUAL_CONTINUATION"]
+    state: Literal["PENDING", "PROPOSED", "MANUAL_CONTINUATION", "ACCEPTED"]
     suggestions: DraftSuggestions | None
+    source: UnderstandingSource | None = None
+    acceptance: UnderstandingAcceptance | None = None
 
     @model_validator(mode="after")
     def proposed_only(self) -> PreparationStatusResponse:
         if (self.state == "PROPOSED") != (self.suggestions is not None):
             raise ValueError("only a proposed operation may expose unconfirmed suggestions")
+        if (self.state == "PROPOSED") != (self.source is not None):
+            raise ValueError("a proposed operation requires an immutable source binding")
+        if (self.state == "ACCEPTED") != (self.acceptance is not None):
+            raise ValueError("only an accepted operation may expose an acceptance receipt")
         return self
+
+
+class UnderstandingDiscoveryResponse(PreparationModel):
+    operation: PreparationStatusResponse | None

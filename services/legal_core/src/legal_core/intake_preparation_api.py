@@ -11,27 +11,51 @@ from legal_core.case_api import TelegramUserId
 from legal_core.intake_preparation import (
     PreparationOperation,
     cancel_preparation,
+    discover_preparation,
     fail_preparation,
     read_preparation,
     read_understanding_context,
     reserve_preparation,
 )
+from legal_core.intake_preparation_acceptance import AcceptUnderstandingResponse, accept_preparation
 from legal_core.intake_preparation_contracts import (
+    AcceptUnderstandingRequest,
     IntakeUnderstandingContext,
     PreparationStatusResponse,
     StartUnderstandingRequest,
     UnderstandingContextRequest,
+    UnderstandingDiscoveryResponse,
 )
 from legal_core.intake_preparation_runner import IntakePreparationRunner
 
 
 def _public(operation: PreparationOperation) -> PreparationStatusResponse:
     return PreparationStatusResponse(operationId=operation.operation_id,
-                                     state=operation.state, suggestions=operation.suggestions)
+                                     state=operation.state, suggestions=operation.suggestions,
+                                     source=operation.source, acceptance=operation.acceptance)
 
 
 def create_intake_preparation_router(sessions: async_sessionmaker[AsyncSession]) -> APIRouter:
     router = APIRouter()
+
+    @router.get("/v1/telegram-intake-drafts/{draft_id}/understanding",
+                response_model=UnderstandingDiscoveryResponse)
+    async def discover_understanding(
+        draft_id: UUID, telegram_user_id: TelegramUserId,
+    ) -> UnderstandingDiscoveryResponse:
+        operation = await discover_preparation(
+            sessions, telegram_user_id=telegram_user_id, draft_id=draft_id,
+        )
+        return UnderstandingDiscoveryResponse(operation=_public(operation) if operation else None)
+
+    @router.post("/v1/intake-preparations/{operation_id}/acceptance",
+                 response_model=AcceptUnderstandingResponse)
+    async def accept_understanding(
+        operation_id: UUID, request: AcceptUnderstandingRequest, telegram_user_id: TelegramUserId,
+    ) -> AcceptUnderstandingResponse:
+        return await accept_preparation(
+            sessions, telegram_user_id=telegram_user_id, operation_id=operation_id, request=request,
+        )
 
     @router.post("/v1/telegram-intake-drafts/{draft_id}/understanding",
                  response_model=PreparationStatusResponse, status_code=202)
