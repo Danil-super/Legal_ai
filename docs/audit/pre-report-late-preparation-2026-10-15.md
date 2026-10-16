@@ -1,5 +1,59 @@
 # Report-free late preparation checkpoint — 2026-10-15
 
+## Latest internal understanding checkpoint — 16 October
+
+Initial interpreter a1b3888 is internal only: one supplied existing researcher
+client, no provider/model/high/timeout change. Only bounded de-identified source
+text enters the model. Existing nine-field proposals require strict schema/source
+anchors, nonblank literal non-URL service labels, valid service slots and nonfuture
+dates. No file, arbitrary model question, legal claim, risk decision or fact-write
+API is added. Offsets and schema do not prove semantic truth; future explicit user
+confirmation is still required. INTERPRET_ANSWER and ordinary UI are not implemented
+by this slice.
+
+Independent review reproduced protocol-relative IP URL labels, whitespace service
+labels and retained Pydantic validation context. All three were treated as
+actionable structural/privacy-boundary findings, without claiming SSRF or observed
+PII exfiltration. Final45 interpreter tests pass; independent combined regressions
+464 passed plus12 own attack probes. Dropping the URL guard kills8 tests; exact
+restoration passes45. Report:
+`/home/danil/.cache/dental-prc-verify.pLetxJ/prc8a-understanding-review-20261016.md`.
+
+Storage fix14f3755 keeps mandatory nested date:null for UNKNOWN while omitting only
+absent root proposals. Both new PostgreSQL regressions initially failed during
+completion with missing-date validation errors. The fixed27 lifecycle tests pass
+through completion, fresh-session read and reservation replay without draft edits.
+Independent107 tests/0 skips include14 own PostgreSQL probes for empty/root-null
+and optional nested-null values, access/expiry, unchanged drafts and zero legal
+records. Legacy optional-null-omitted caches still read/replay without rewriting;
+corrupt required-date omission fails closed. Reverting to the recursive serializer
+kills5 tests; the exact fix is restored. No migration, backfill or automatic repair.
+Report: `/home/danil/.cache/dental-prc-verify.pLetxJ/prc8-unknown-storage-review-20261016.md`.
+
+Final source/test snapshot: commit **14f3755bf5b4d23df545e27cc8b0a64bf23fd18f**,
+tree **67b3aec6c6200af65faac42b463a6221141fb5a6**. Full result: **3192 passed,
+0 skipped,493.28s**,302 existing Telegram-library/test-environment warnings.
+Fresh migrated parent `dental_legal_test_prc8_final_20261016` on task PostgreSQL55487
+and task MinIO were used. JUnit:
+`/home/danil/.cache/dental-prc-verify.pLetxJ/prc8-final-full-20261016.xml`.
+The preceding a1b3888 full run had3190 passes/0 skips,553.30s, but predates the
+storage fix and is not the final combined gate.
+Ruff/all-three-service mypy145/Compose pass. Final Core image1e091a69f9c4 and
+Agent image3470b0b795e9 build and import their changed modules with networking off.
+Gateway's unaffected COPY set was built at the preceding configured-composition
+checkpoint. Actual Code Graph refreshed:582 nodes/581 edges, limited Python impact.
+
+A further read-only design review identified pending integration obligations:
+private owned lease-context before model invocation, shared existing two-slot
+admission rather than extra model pressure, durable cancellation rather than RAM
+pause, saving quick-entry text before proposals, sanitized Agent validation errors
+and avoiding a circular import. Those future APIs/executors are not present or
+claimed fixed. Plan/todo record their order before any ordinary producer activation.
+
+All fixtures/model HTTP/Telegram outputs are synthetic. No live semantic-quality
+or full legal-readiness claim; no external CLI/model/provider/SSH call, production
+write/release, normative approval or public activation. PRC8b/9/10/11 remain open.
+
 Scope: opt-in internal Core late producer and durable result readers. This is not
 the completed Hermes intake/shared Telegram dialogue or a production release.
 

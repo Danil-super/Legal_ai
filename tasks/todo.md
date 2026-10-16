@@ -274,6 +274,20 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
 
 ### PRC8: constrained Hermes understanding, not legal analysis
 
+- [x] PRC8a initial narrative interpreter only: a1b3888, one existing configured
+  researcher call; strict proposals/anchors, privacy, literal non-URL services,
+  scope and nonfuture dates. No route, ordinary wiring or confirmed-fact write.
+- [x] PRC8 storage prerequisite14f3755: root-only omission preserves nested
+  UNKNOWN date:null. Two regressions were RED then GREEN through completion,
+  fresh-session read/reservation replay and exact JSON, with unchanged drafts.
+- Independent initial-interpretation review464 passed plus12 attacks; storage
+  review107 passed/0 skipped includes14 own real PostgreSQL cases and old-cache
+  compatibility. Required URL/blank-label/validation-context findings are fixed;
+  mutation sensitivity is documented. Author final14f3755/tree67b3aec full suite:
+  3192 passed/0 skipped,493.28s; Ruff/mypy145/Compose and Core/Agent builds pass.
+- The remaining checkboxes below cover complete PRC8, including subsequent answers,
+  protected invocation and manual continuation, not just the internal PRC8a module.
+
 - [ ] Interpret only permitted existing V2 fields, each anchored to actual text;
   absent/ambiguous/negated facts stay unknown, no arbitrary questions or URLs.
 - [ ] Validate de-identification before the call and model result afterwards;
@@ -298,6 +312,13 @@ Use source PYTHONPATH and venv from the spec; commands below are pytest selectio
 - Verify: `python -m pytest -q services/legal_core/tests/test_intake_preparation_api.py services/legal_core/tests/test_intake_preparation_authz.py services/legal_core/tests/test_intake_preparation_races.py` with PostgreSQL.
 - Dependencies: PRC2–3,PRC8. Scope M. Checkpoint D: report-free receipt and
   protected early understanding run without losing pending/expired operations.
+- Implementation ordering within approved scope: private lease/source DTO+Core
+  guard precedes the Agent context client/metadata-only route; shared two-slot
+  admission and shutdown precede actor POST/GET dispatch. Existing /cancel/menu
+  do not invalidate a pending operation, so add an owned operation fence before
+  enabling UI, without archiving the saved draft. Error responses must not echo
+  source bodies; avoid a new top-level case_api import cycle. Split these boundary
+  prerequisites into≤5-file commits with contracts/ADR and authz/race tests.
 
 ### PRC10: confirmed understanding and one pre-report form
 

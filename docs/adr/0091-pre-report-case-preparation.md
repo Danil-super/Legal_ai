@@ -50,6 +50,8 @@ as user facts. Real PostgreSQL tests cover completion, separate-session restart,
 reservation replay, stored JSON and unchanged owned draft. No schema/backfill or
 activation is needed; service-slot/semantic acceptance is still a later boundary.
 
+### Case-bound preparation result
+
 PreparationResult is an unwrapped RootModel union discriminated by status; every
 variant requires the exact integer resultVersion2 and a strict source:
 operationId, caseId, factSnapshotSha256 and explicit context. Before retrieval,

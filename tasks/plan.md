@@ -58,8 +58,13 @@ Ruff/mypy144/Compose and actual Gateway Docker image pass. The earlier full run'
 one failure is preserved in the audit, not counted as success.
 NEXT: PRC8–11 confirmed understanding/shared dialogue acceptance. Ordinary producer
 activation remains gated on their completion; both ordinary entry paths are not
-proved by explicitly seeded receipt2 acceptance. PRC8a internal interpretation is
-being implemented separately without changing this verified runtime snapshot.
+proved by explicitly seeded receipt2 acceptance. PRC8a initial narrative interpreter
+a1b3888 and nested-UNKNOWN storage fix14f3755 are implemented but not wired into
+ordinary intake. Independent interpretation464 +12 attack tests and storage107
+tests pass. Final immutable14f3755/tree67b3aec:3192 passed/0 skipped,493.28s on fresh
+PostgreSQL+MinIO; Ruff/mypy145/Compose and actual Core/Agent containers pass.
+PRC8/9/10 remain incomplete: protected dispatch, subsequent answers and explicit
+user confirmation are not provided by this internal module.
 The V2 writer is opt-in/internal only: ordinary queues remain V1. No server
 migration or complete pre-report dialogue is activated. See
 docs/audit/pre-report-late-preparation-2026-10-15.md.
@@ -104,6 +109,19 @@ exact tasks are in tasks/todo.md. PRC6a handles pre-context limitations;
 PRC6b/6c cover the Core/gateway source-bound recovery boundary.
 Shared contracts/storage/writers are sequential. An independent reviewer may use
 an isolated branch; no parallel implementation of the same contracts.
+
+Read-only next-boundary review16Oct identified implementation obligations, not
+newly active endpoints: preserve the existing aggregate two analysis slots with
+shared admission acquired before job claim; keep private operation tokens inside
+Core↔Agent; use owned current lease/revision/hash/access/safe-stop context before
+model I/O, rather than exposing a source-only model endpoint under the shared key.
+Current /cancel/menu only pause Gateway RAM and need an owned durable operation
+fence for the new mode. Quick entry must save its owned description before model
+proposals, not only after acceptance. Preserve Core's sanitized validation error
+style and avoid the case_api↔intake_preparation import cycle via a focused router
+or local import. Implement contracts/client, private context, shared admission,
+public actor operation API and confirmed UI in bounded≤5-file increments; no
+producer activation or implicit scope/capacity increase follows this review.
 
 ### Storage decision gate and contracts
 
