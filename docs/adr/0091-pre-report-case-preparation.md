@@ -905,3 +905,9 @@ The reviewed clinical factory adds only an explicit default-false composition
 argument and local clinical installers; its exact personal-isolation baseline is
 b1afe5e178998ee037c275574054abcf05fe3d8f. Default startup and personal M1 remain
 unchanged; actual handlers in both modes are checked for personal isolation.
+
+Independent consumer review also reproduced an impossible acceptedRevision ahead
+of the loaded draft producing a false success message. The consumer now refreshes
+once when consent commits between its reads and rejects an ahead-of-current
+receipt, including at the final presentation boundary. The malformed status
+regression was RED before this fix; a genuine intervening commit still recovers.

@@ -50,6 +50,14 @@ async def _checked(
     if binding is not None:
         if binding.draft_id != draft_id:
             raise ValueError("operation belongs to a different draft")
+        if status.acceptance is not None and draft["revision"] < (
+            status.acceptance.accepted_revision
+        ):
+            # Consent can commit between the two reads. Refresh once, never
+            # announce success against an older or impossible draft snapshot.
+            draft = validated_draft(await core.get_intake_draft(draft_id, actor), draft_id)
+            if draft["revision"] < status.acceptance.accepted_revision:
+                raise ValueError("accepted revision is not present in the saved draft")
     else:
         discovered = await client.discover(draft_id)
         if discovered is None or discovered.operation_id != operation:
@@ -68,6 +76,8 @@ async def _show(
     binding = status.source or status.acceptance
     if binding is not None and binding.draft_id != draft_id:
         raise ValueError("receipt draft mismatch")
+    if status.acceptance is not None and draft["revision"] < status.acceptance.accepted_revision:
+        raise ValueError("accepted revision is not present in the saved draft")
     if status.state == "PROPOSED":
         actor = bot._actor_id(update)
         if actor is None:
