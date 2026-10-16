@@ -15,6 +15,14 @@ from legal_core.pseudonymization import contains_obvious_direct_identifier
 ServiceName = Annotated[str, Field(strict=True, min_length=2, max_length=120)]
 
 
+class UnderstandingContextRequest(PreparationModel):
+    """Internal metadata only. The lease must never enter a public receipt."""
+
+    lease_token: UUID = Field(alias="leaseToken")
+    expected_revision: int = Field(alias="expectedRevision", strict=True, ge=1)
+    expected_input_sha256: Sha256 = Field(alias="expectedInputSha256")
+
+
 class IntakeUnderstandingContext(PreparationModel):
     """Private Core→Agent input, never a public receipt or a confirmation."""
 
