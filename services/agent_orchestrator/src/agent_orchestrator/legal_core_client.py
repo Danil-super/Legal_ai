@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any, Literal, overload
 from urllib.parse import urlparse
@@ -20,6 +21,7 @@ from legal_core.analysis_contracts import (
     SemanticReviewInput,
 )
 from legal_core.case_preparation_contracts import LimitedResult
+from legal_core.intake_answer_wire import AnswerContext
 from legal_core.intake_preparation_contracts import (
     IntakeUnderstandingContext,
     UnderstandingContextRequest,
@@ -167,6 +169,38 @@ class LegalCoreClient:
             raise LegalCoreError("UNDERSTANDING_CONTEXT_REFUSED", "Understanding context refused",
                                  status_code=failure_status)
         raise LegalCoreProtocolError("understanding context response contract mismatch")
+
+    async def get_answer_context(
+        self, *, operation_id: UUID, draft_id: UUID, telegram_user_id: int,
+        binding: UnderstandingContextRequest,
+    ) -> AnswerContext:
+        failure_status = None
+        try:
+            request = UnderstandingContextRequest.model_validate(binding.model_dump(by_alias=True))
+            payload = await self._request_json(
+                "POST", f"/v1/intake-answer-preparations/{operation_id}/context",
+                telegram_user_id=telegram_user_id,
+                json_body=request.model_dump(mode="json", by_alias=True),
+            )
+            context = AnswerContext.model_validate(payload)
+            if (
+                context.operation_id == operation_id and context.draft_id == draft_id
+                and context.draft_revision == request.expected_revision
+                and context.input_sha256 == request.expected_input_sha256
+                and context.answer_sha256 == hashlib.sha256(context.answer.encode()).hexdigest()
+                and context.question_sha256 == context.question.question_sha256
+                and type(context.confirmed_context.get("intakeVersion")) is int
+            ):
+                return context
+        except LegalCoreError as error:
+            failure_status = error.status_code
+        except (LegalCoreProtocolError, ValueError, TypeError):
+            pass
+        # Neither Core errors nor malformed bodies may retain private answer/lease headers.
+        if failure_status is not None:
+            raise LegalCoreError("ANSWER_CONTEXT_REFUSED", "Answer context refused",
+                                 status_code=failure_status)
+        raise LegalCoreProtocolError("answer context response contract mismatch")
 
     async def get_analysis_context(
         self,
