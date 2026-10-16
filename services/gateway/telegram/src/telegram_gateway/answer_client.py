@@ -4,6 +4,7 @@ from typing import Any
 from uuid import UUID
 
 from legal_core.intake_answer_contracts import derive_answer_question
+from legal_core.intake_answer_values import validate_answer_shape
 from legal_core.intake_answer_wire import (
     AnswerDiscoveryResponse,
     AnswerStatusResponse,
@@ -43,6 +44,9 @@ class AnswerClient:
             binding = status.source or status.acceptance
             if draft_id is not None and binding is not None and binding.draft_id != draft_id:
                 raise ValueError("draft mismatch")
+            if (status.question is not None and status.interpretation is not None
+                    and status.interpretation.status == "PROPOSED"):
+                validate_answer_shape(status.question, status.interpretation.value)
             return status
         except (ValueError, TypeError, AttributeError):
             pass
@@ -71,6 +75,7 @@ class AnswerClient:
         value = await self._request(
             "GET", f"/v1/telegram-intake-drafts/{draft_id}/answer-interpretations",
         )
+        invalid = False
         try:
             AnswerDiscoveryResponse.model_validate(value)
             if set(value) != {"operation"}:
@@ -78,8 +83,8 @@ class AnswerClient:
             if value["operation"] is None:
                 return None
         except (ValueError, TypeError):
-            value = None
-        if value is None:
+            invalid = True
+        if invalid:
             raise LegalCoreApiError(502, "INVALID_ANSWER_RESPONSE", "Result unavailable")
         return self._status(value["operation"], draft_id=draft_id)
 

@@ -63,7 +63,7 @@ def test_answer_transport_sends_only_actor_revision_answer_and_receipt_selectors
 
 
 @pytest.mark.parametrize("mutation", ["private", "missing", "operation", "draft", "hash",
-                                      "revision", "question", "outcome"])
+                                      "revision", "question", "outcome", "value"])
 def test_malformed_or_stale_public_proposals_are_not_confirmable(mutation):
     async def scenario():
         value = deepcopy(proposed())
@@ -81,6 +81,8 @@ def test_malformed_or_stale_public_proposals_are_not_confirmable(mutation):
             value["source"]["draftRevision"] = True
         elif mutation == "question":
             value["question"]["wizardState"] = "EVENT"
+        elif mutation == "value":
+            value["interpretation"]["value"] = {"inventedLegalDecision": "ACCEPT"}
         else:
             value["state"] = "UNRESOLVED"
 
