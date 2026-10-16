@@ -98,6 +98,14 @@ class AnswerUnderstanding:
         try:
             question = AnswerQuestion.model_validate(question.model_dump(by_alias=True))
             context = _context(draft_data)
+            validation_data = dict(draft_data)
+            if (question.clarification_request is not None
+                    and "analysisClarificationRequests" not in validation_data):
+                # Core deliberately omits routing lists from read-only factual context. Restore
+                # only this bound server question locally; scope/attempt guards still rederive it.
+                validation_data["analysisClarificationRequests"] = [
+                    question.clarification_request.model_dump(mode="json", by_alias=True),
+                ]
             if type(as_of_date) is not date:
                 raise ValueError("invalid date anchor")
         except (ValueError, TypeError, AttributeError):
@@ -117,7 +125,7 @@ class AnswerUnderstanding:
                 proposed = AnswerInterpretation.model_validate(proposed.model_dump(by_alias=True))
                 proposed.validate_source(source)
                 if proposed.status == "PROPOSED":
-                    value = validate_answer_value(question, proposed.value, source, draft_data,
+                    value = validate_answer_value(question, proposed.value, source, validation_data,
                                                   as_of_date=as_of_date)
                     if question.wizard_state == "SERVICES" and isinstance(value, list) and any(
                         not isinstance(service, str) or not any(
