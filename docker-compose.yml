@@ -236,6 +236,7 @@ services:
       dockerfile: services/gateway/telegram/Dockerfile
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Set TELEGRAM_BOT_TOKEN in .env}
+      PRE_REPORT_INTAKE_ENABLED: ${PRE_REPORT_INTAKE_ENABLED:-0}
       LEGAL_CORE_URL: http://legal-core:8000
       LEGAL_EDITOR_GATEWAY_KEY: ${LEGAL_EDITOR_GATEWAY_KEY:-}
       AGENT_ORCHESTRATOR_URL: ${AGENT_ORCHESTRATOR_URL:-}

@@ -210,8 +210,12 @@ jobs:
           test "$HERMES_COMPOSE_OUTCOME" = success
           test "$PRODUCTION_ANALYSIS_COMPOSE_OUTCOME" = success
 
-  postgres-integration:
+  postgres-integration-shard:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     # The first build compiles the pinned MinIO security release from source.
     timeout-minutes: 30
     services:
@@ -302,9 +306,21 @@ jobs:
       - name: PostgreSQL and MinIO integration tests
         env:
           POSTGRES_TEST_CONTAINER: ${{ job.services.postgres.id }}
-        # This bounds the complete growing suite, not an application response or parser.
-        # Real network/parser deadlines remain unchanged and are exercised by the tests.
-        run: timeout 180s python -m pytest -vv services/legal_core/tests
+          SHARD_INDEX: ${{ matrix.shard }}
+        # Every configured test file runs once; each runner owns its own PG/MinIO services.
+        # Keep the existing process deadline and all application/parser/network limits.
+        run: timeout 180s python ops/ci/run_integration_shard.py --index "$SHARD_INDEX" --count 3
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: [postgres-integration-shard]
+    if: always()
+    steps:
+      - name: Require every integration shard to pass
+        env:
+          SHARD_RESULT: ${{ needs.postgres-integration-shard.result }}
+        run: test "$SHARD_RESULT" = success
 
   codeql:
     name: CodeQL

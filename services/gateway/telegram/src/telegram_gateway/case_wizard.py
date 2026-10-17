@@ -8,12 +8,14 @@ from uuid import UUID, uuid4
 
 import httpx2
 from legal_core.analysis_clarifications import AnalysisClarificationAnswers
+from legal_core.contracts import TelegramWorkflowReceipt, TelegramWorkflowResponse
 from legal_core.report_presentation import (
     TELEGRAM_DRAFT_IN_PDF,
     TELEGRAM_SOURCE_LIMITATIONS_IN_PDF,
     present_report,
 )
 from legal_core.upload_filename import source_filename_headers
+from pydantic import TypeAdapter, ValidationError
 
 INTAKE_SCHEMA_VERSION = "dental-case-intake.v1"
 V2_INTAKE_SCHEMA_VERSION = "dental-case-intake.v2"
@@ -21,6 +23,22 @@ MAX_PDF_BYTES = 8 * 1024 * 1024
 DateFactValue: TypeAlias = dict[str, str | None]
 SignalAnswer: TypeAlias = bool | Literal["YES", "NO", "UNKNOWN"]
 _UNKNOWN_DATE_ANSWERS = frozenset({"неизвестно", "не известно", "не знаю", "unknown"})
+_WORKFLOW_RECEIPT: TypeAdapter[TelegramWorkflowReceipt] = TypeAdapter(TelegramWorkflowReceipt)
+
+
+def _validated_workflow_receipt(payload: dict[str, Any], workflow_id: UUID) -> dict[str, Any]:
+    try:
+        receipt = _WORKFLOW_RECEIPT.validate_python(payload)
+        if receipt.workflow_id != workflow_id:
+            raise ValueError("workflow identity mismatch")
+        if (
+            isinstance(receipt, TelegramWorkflowResponse)
+            and receipt.report.case_id != receipt.case.id
+        ):
+            raise ValueError("report case identity mismatch")
+    except (ValidationError, ValueError) as error:
+        raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response") from error
+    return receipt.model_dump(mode="json", by_alias=True)
 
 
 class LegalCoreApiError(Exception):
@@ -843,8 +861,15 @@ class LegalCoreClient:
 
     async def clarification_preview(
         self, case_id: UUID, telegram_user_id: int, *, source_report_id: UUID | None = None,
+        source_operation_id: UUID | None = None,
     ) -> dict[str, Any]:
+        if source_report_id is not None and source_operation_id is not None:
+            raise ValueError("clarification origins are mutually exclusive")
         query = "" if source_report_id is None else f"?report_id={source_report_id}"
+        if source_operation_id is not None:
+            if not isinstance(source_operation_id, UUID):
+                raise ValueError("invalid preparation operation")
+            query = f"?operation_id={source_operation_id}"
         return await self._json_request(
             "GET", f"/v1/cases/{case_id}/clarification-drafts/preview{query}",
             telegram_user_id=telegram_user_id,
@@ -853,9 +878,14 @@ class LegalCoreClient:
     async def create_clarification_draft(
         self, case_id: UUID, telegram_user_id: int, *, expected_sha256: str, key: UUID,
         expected_report_id: UUID | None = None, expected_report_sha256: str | None = None,
+        expected_operation_id: UUID | None = None, expected_operation_sha256: str | None = None,
     ) -> dict[str, Any]:
         if (expected_report_id is None) != (expected_report_sha256 is None):
             raise ValueError("clarification report binding must be provided together")
+        if (expected_operation_id is None) != (expected_operation_sha256 is None):
+            raise ValueError("clarification operation binding must be provided together")
+        if expected_report_id is not None and expected_operation_id is not None:
+            raise ValueError("clarification origins are mutually exclusive")
         payload = {"expectedFactSnapshotSha256": expected_sha256}
         if expected_report_id is not None and expected_report_sha256 is not None:
             if (not isinstance(expected_report_id, UUID)
@@ -864,6 +894,14 @@ class LegalCoreClient:
                 raise ValueError("invalid clarification report binding")
             payload.update(expectedReportId=str(expected_report_id),
                            expectedReportSha256=expected_report_sha256)
+        if expected_operation_id is not None and expected_operation_sha256 is not None:
+            if (not isinstance(expected_operation_id, UUID)
+                    or not isinstance(expected_operation_sha256, str)
+                    or len(expected_operation_sha256) != 64
+                    or any(char not in "0123456789abcdef" for char in expected_operation_sha256)):
+                raise ValueError("invalid clarification operation binding")
+            payload.update(expectedOperationId=str(expected_operation_id),
+                           expectedOperationSha256=expected_operation_sha256)
         return await self._json_request(
             "POST", f"/v1/cases/{case_id}/clarification-drafts",
             telegram_user_id=telegram_user_id, idempotency_key=key,
@@ -909,10 +947,16 @@ class LegalCoreClient:
         telegram_user_id: int,
         *,
         intake_schema_version: str = INTAKE_SCHEMA_VERSION,
+        receipt_version: Literal[2] | None = None,
     ) -> dict[str, Any]:
         if intake_schema_version not in {INTAKE_SCHEMA_VERSION, V2_INTAKE_SCHEMA_VERSION}:
             raise ValueError("unsupported intake schema version")
-        return await self._json_request(
+        if receipt_version is not None and (
+            type(receipt_version) is not int or receipt_version != 2
+            or intake_schema_version != V2_INTAKE_SCHEMA_VERSION
+        ):
+            raise ValueError("unsupported workflow preparation mode")
+        receipt = await self._json_request(
             "POST",
             f"/v1/telegram-case-workflows/{workflow_id}/submissions",
             telegram_user_id=telegram_user_id,
@@ -920,8 +964,13 @@ class LegalCoreClient:
                 "intakeSchemaVersion": intake_schema_version,
                 "locale": "ru-RU",
                 "facts": facts,
+                **({"receiptVersion": 2} if receipt_version == 2 else {}),
             },
         )
+        validated = _validated_workflow_receipt(receipt, workflow_id)
+        if receipt_version == 2 and validated.get("receiptVersion") != 2:
+            raise LegalCoreApiError(502, "INVALID_LEGAL_CORE_RESPONSE", "Invalid response")
+        return validated
 
     async def upload_case_material(
         self,
@@ -980,11 +1029,12 @@ class LegalCoreClient:
     async def get_workflow(
         self, workflow_id: UUID, telegram_user_id: int
     ) -> dict[str, Any]:
-        return await self._json_request(
+        receipt = await self._json_request(
             "GET",
             f"/v1/telegram-case-workflows/{workflow_id}",
             telegram_user_id=telegram_user_id,
         )
+        return _validated_workflow_receipt(receipt, workflow_id)
 
     async def download_pdf(self, report_id: UUID, telegram_user_id: int) -> bytes:
         try:

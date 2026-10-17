@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, overload
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -16,7 +18,14 @@ from legal_core.analysis_contracts import (
     AnalysisContextResponse,
     AnalysisSubmissionRequest,
     AnalysisSubmissionResponse,
+    PreparationResult,
     SemanticReviewInput,
+)
+from legal_core.case_preparation_contracts import LimitedResult
+from legal_core.intake_answer_wire import AnswerContext
+from legal_core.intake_preparation_contracts import (
+    IntakeUnderstandingContext,
+    UnderstandingContextRequest,
 )
 
 
@@ -132,6 +141,72 @@ class LegalCoreClient:
             if owns_client:
                 await client.aclose()
 
+    async def get_understanding_context(
+        self, *, operation_id: UUID, draft_id: UUID, telegram_user_id: int,
+        binding: UnderstandingContextRequest,
+    ) -> IntakeUnderstandingContext:
+        failure_status = None
+        try:
+            request = UnderstandingContextRequest.model_validate(binding.model_dump(by_alias=True))
+            payload = await self._request_json(
+                "POST", f"/v1/intake-preparations/{operation_id}/context",
+                telegram_user_id=telegram_user_id,
+                json_body=request.model_dump(mode="json", by_alias=True),
+            )
+            context = IntakeUnderstandingContext.model_validate(payload)
+            if (
+                context.operation_id == operation_id and context.draft_id == draft_id
+                and context.draft_revision == request.expected_revision
+                and context.input_sha256 == request.expected_input_sha256
+            ):
+                return context
+        except LegalCoreError as error:
+            failure_status = error.status_code
+        except (LegalCoreProtocolError, ValueError, TypeError):
+            pass
+        # Transport errors can retain the request (including keys/lease) or raw JSON body.
+        # Raise outside except, dropping both explicit cause and implicit exception context.
+        if failure_status is not None:
+            raise LegalCoreError("UNDERSTANDING_CONTEXT_REFUSED", "Understanding context refused",
+                                 status_code=failure_status)
+        raise LegalCoreProtocolError("understanding context response contract mismatch")
+
+    async def get_answer_context(
+        self, *, operation_id: UUID, draft_id: UUID, telegram_user_id: int,
+        binding: UnderstandingContextRequest,
+    ) -> AnswerContext:
+        failure_status = None
+        try:
+            request = UnderstandingContextRequest.model_validate(binding.model_dump(by_alias=True))
+            payload = await self._request_json(
+                "POST", f"/v1/intake-answer-preparations/{operation_id}/context",
+                telegram_user_id=telegram_user_id,
+                json_body=request.model_dump(mode="json", by_alias=True),
+            )
+            context = AnswerContext.model_validate(payload)
+            answer_hash = hashlib.sha256(json.dumps(
+                {"answer": context.answer}, ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"),
+            ).encode()).hexdigest()
+            if (
+                context.operation_id == operation_id and context.draft_id == draft_id
+                and context.draft_revision == request.expected_revision
+                and context.input_sha256 == request.expected_input_sha256
+                and context.answer_sha256 == answer_hash
+                and context.question_sha256 == context.question.question_sha256
+                and type(context.confirmed_context.get("intakeVersion")) is int
+            ):
+                return context
+        except LegalCoreError as error:
+            failure_status = error.status_code
+        except (LegalCoreProtocolError, ValueError, TypeError):
+            pass
+        # Neither Core errors nor malformed bodies may retain private answer/lease headers.
+        if failure_status is not None:
+            raise LegalCoreError("ANSWER_CONTEXT_REFUSED", "Answer context refused",
+                                 status_code=failure_status)
+        raise LegalCoreProtocolError("answer context response contract mismatch")
+
     async def get_analysis_context(
         self,
         *,
@@ -144,9 +219,63 @@ class LegalCoreClient:
             telegram_user_id=telegram_user_id,
         )
         try:
-            return AnalysisContextResponse.model_validate(payload)
+            context = AnalysisContextResponse.model_validate(payload)
+            if context.case_id != case_id:
+                raise LegalCoreProtocolError("analysis context case mismatch")
+            return context
         except ValidationError as exc:
             raise LegalCoreProtocolError("analysis context response contract mismatch") from exc
+
+    async def prepare_analysis_context(
+        self, *, case_id: UUID, telegram_user_id: int, idempotency_key: UUID,
+        job_id: UUID | None = None, job_token: UUID | None = None,
+    ) -> AnalysisContextResponse | PreparationResult:
+        payload = await self._request_json(
+            "POST", f"/v1/cases/{case_id}/preparation-context",
+            telegram_user_id=telegram_user_id, idempotency_key=idempotency_key,
+            job_id=job_id, job_token=job_token,
+        )
+        try:
+            if "resultVersion" in payload:
+                result = PreparationResult.model_validate(payload)
+                if (
+                    result.root.source.case_id != case_id
+                    or (
+                        isinstance(result.root, LimitedResult)
+                        and result.root.reason_code in {
+                            "ANALYSIS_DATE_UNCERTAIN", "FACTUAL_SAFETY_UNCERTAIN",
+                            "LEGAL_EVIDENCE_UNAVAILABLE",
+                        }
+                        and result.root.source.context is not None
+                    )
+                ):
+                    raise LegalCoreProtocolError("pre-context result source mismatch")
+                # Core can replay an already verified late result (including
+                # READY) for this exact intent; its real context is retained,
+                # not fabricated and not sent through the models again.
+                return result
+            context = AnalysisContextResponse.model_validate(payload)
+            if context.case_id != case_id:
+                raise LegalCoreProtocolError("analysis context case mismatch")
+            return context
+        except ValidationError as exc:
+            raise LegalCoreProtocolError("preparation context contract mismatch") from exc
+
+    @overload
+    async def submit_reasoning(
+        self, *, context: AnalysisContextResponse, reasoning: ReasoningResult,
+        telegram_user_id: int, idempotency_key: UUID,
+        job_id: UUID | None = None, job_token: UUID | None = None,
+        result_version: Literal[1] = 1,
+    ) -> AnalysisSubmissionResponse: ...
+
+    @overload
+    async def submit_reasoning(
+        self, *, context: AnalysisContextResponse, reasoning: ReasoningResult,
+        telegram_user_id: int, idempotency_key: UUID,
+        job_id: UUID | None = None, job_token: UUID | None = None,
+        result_version: Literal[2],
+    ) -> PreparationResult: ...
 
     async def submit_reasoning(
         self,
@@ -157,7 +286,10 @@ class LegalCoreClient:
         idempotency_key: UUID,
         job_id: UUID | None = None,
         job_token: UUID | None = None,
-    ) -> AnalysisSubmissionResponse:
+        result_version: Literal[1, 2] = 1,
+    ) -> AnalysisSubmissionResponse | PreparationResult:
+        if type(result_version) is not int or result_version not in {1, 2}:
+            raise ValueError("unsupported analysis result version")
         claims = [
             AnalysisClaimInput(
                 claimId=claim.claim_id,
@@ -190,7 +322,8 @@ class LegalCoreClient:
         )
         payload = await self._request_json(
             "POST",
-            f"/v1/cases/{context.case_id}/analysis-submissions",
+            f"/v1/cases/{context.case_id}/"
+            + ("preparation-submissions" if result_version == 2 else "analysis-submissions"),
             telegram_user_id=telegram_user_id,
             idempotency_key=idempotency_key,
             json_body=request.model_dump(mode="json", by_alias=True),
@@ -198,6 +331,21 @@ class LegalCoreClient:
             job_token=job_token,
         )
         try:
+            if result_version == 2:
+                result = PreparationResult.model_validate(payload)
+                source = result.root.source
+                bound = source.context
+                if (
+                    source.case_id != context.case_id
+                    or source.fact_snapshot_sha256 != context.fact_snapshot_sha256
+                    or bound is None or bound.as_of_date != context.as_of_date
+                    or bound.evidence_trace_sha256 != context.evidence_trace_sha256
+                    or bound.clinic_document_context_trace_sha256
+                    != context.clinic_document_context_trace_sha256
+                    or bound.risk_policy_version != context.risk_policy_version
+                ):
+                    raise LegalCoreProtocolError("preparation result context mismatch")
+                return result
             return AnalysisSubmissionResponse.model_validate(payload)
         except ValidationError as exc:
             raise LegalCoreProtocolError("analysis submission response contract mismatch") from exc

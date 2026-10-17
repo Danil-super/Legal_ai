@@ -554,6 +554,15 @@ class IdempotencyRecord(Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("scope", "actor_membership_id", "key"),
+        CheckConstraint(
+            "(lease_token IS NULL) = (lease_until IS NULL)",
+            name="ck_idempotency_preparation_lease_pair",
+        ),
+        CheckConstraint(
+            "lease_token IS NULL OR (resource_type IS NOT NULL "
+            "AND resource_type = 'INTAKE_PREPARATION' AND state = 'IN_PROGRESS')",
+            name="ck_idempotency_preparation_lease_scope",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -568,6 +577,8 @@ class IdempotencyRecord(Base):
     resource_type: Mapped[str | None] = mapped_column(String(40))
     resource_id: Mapped[UUID | None] = mapped_column(UUID_PK)
     response_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    lease_token: Mapped[UUID | None] = mapped_column(UUID_PK)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 
@@ -588,6 +599,11 @@ class TelegramCaseWorkflow(Base):
         ),
         CheckConstraint("state = 'SUCCEEDED'"),
         CheckConstraint("char_length(request_sha256) = 64"),
+        CheckConstraint(
+            "(receipt_version = 1 AND report_id IS NOT NULL) "
+            "OR (receipt_version = 2 AND report_id IS NULL)",
+            name="ck_telegram_workflow_receipt",
+        ),
         ForeignKeyConstraint(
             ["clinic_id", "case_id", "report_id"],
             ["case_reports.clinic_id", "case_reports.case_id", "case_reports.id"],
@@ -604,7 +620,8 @@ class TelegramCaseWorkflow(Base):
     request_sha256: Mapped[str] = mapped_column(String(64))
     state: Mapped[str] = mapped_column(String(20))
     case_id: Mapped[UUID] = mapped_column(UUID_PK)
-    report_id: Mapped[UUID] = mapped_column(UUID_PK)
+    report_id: Mapped[UUID | None] = mapped_column(UUID_PK)
+    receipt_version: Mapped[int] = mapped_column(Integer, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
 

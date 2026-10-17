@@ -1,0 +1,277 @@
+"""Strict one-question values and explicit confirmed updates, with no I/O or ORM."""
+
+from __future__ import annotations
+
+import json
+import re
+from collections.abc import Mapping
+from copy import deepcopy
+from datetime import date
+from decimal import Decimal
+from typing import cast
+
+from pydantic import JsonValue
+
+from legal_core.analysis_clarifications import (
+    AnalysisClarificationAnswers,
+    ClarificationAnswer,
+    ServiceProvidedDate,
+    confirmed_answers,
+)
+from legal_core.contracts import validate_intake_draft_data
+from legal_core.factual_safety_intake import (
+    SCREENING_VERSION,
+    RequestedMoney,
+    validate_partial_screening,
+)
+from legal_core.intake_answer_contracts import AnswerQuestion, derive_answer_question
+from legal_core.intake_preparation_contracts import DraftSuggestions
+from legal_core.intake_service_scope import invalidate_service_clarification_answers
+from legal_core.pseudonymization import pseudonymize_text
+
+_LINK = re.compile(r"//|[a-z][a-z0-9+.-]*:|www\.|(?:[\w-]+\.)+[^\W\d_]{2,63}\b", re.I)
+_MONEY_NUMBER = re.compile(r"[0-9]+(?:[ \u00a0\u202f][0-9]{3})*(?:[.,][0-9]+)?")
+_THOUSAND = re.compile(r"\s*(?:тыс\.?|тысяч(?:\u0430|и|\u0443|ей)?)(?!\w)", re.I)
+_RUB = re.compile(
+    r"₽|\b(?:rub|rubles?|\u0440\u0443\u0431(?:\.|л[\u0430-\u044f]*)?|\u0440\.)(?!\w)", re.I,
+)
+_FOREIGN_CURRENCY = re.compile(
+    r"[$€£¥₴₸₺₾]|\b(?:usd|eur|gbp|jpy|cny|chf|uah|kzt|byn|rur|"
+    r"доллар[\u0430-\u044f]*|евро|юан[\u0430-\u044f]*|фунт[\u0430-\u044f]*|"
+    r"франк[\u0430-\u044f]*|йен[\u0430-\u044f]*|иен[\u0430-\u044f]*|"
+    r"гривн[\u0430-\u044f]*|тенге|лир[\u0430-\u044f]*|лари|белорус[\u0430-\u044f]*)\b", re.I,
+)
+_UNCERTAIN_MONEY = re.compile(
+    r"[-\u2212\u2013\u2014]\s*[0-9]|[<>≈~]|\b(?:не|нет|ни|без|минус|около|примерно|"
+    r"приблизительно|порядка|от|до|между|или|либо|менее|более|"
+    r"миллион[\u0430-\u044f]*|миллиард[\u0430-\u044f]*|млн|млрд)\b",
+    re.I,
+)
+
+
+def _ground_money(value: dict[str, JsonValue], source: str) -> None:
+    """Compare one literal amount, not an NLP/FX parser; unsupported wording stays manual."""
+    if _FOREIGN_CURRENCY.search(source) or _UNCERTAIN_MONEY.search(source):
+        raise ValueError("monetary source is not an unambiguous ruble amount")
+    matches = list(_MONEY_NUMBER.finditer(source))
+    if len(matches) != 1:
+        raise ValueError("monetary source requires one literal amount")
+    match = matches[0]
+    if match.start() and source[match.start() - 1].isalnum():
+        raise ValueError("identifier is not an amount")
+    number = match.group().replace(" ", "").replace("\u00a0", "").replace("\u202f", "")
+    number = number.replace(",", ".")
+    if "." in number and len(number.rsplit(".", 1)[1]) > 2:
+        raise ValueError("unsupported or ambiguous decimal amount")
+    scale = _THOUSAND.match(source, match.end())
+    end = scale.end() if scale is not None else match.end()
+    remainder = (source[:match.start()] + source[end:]).strip(" \t\r\n.,:;!")
+    # The current question supplies RUB for a bare number. For a sentence, require
+    # the currency literally; do not mistake counts, points or another unit for money.
+    if remainder and not _RUB.search(source):
+        raise ValueError("sentence does not identify rubles")
+    kopecks = Decimal(number) * (100000 if scale is not None else 100)
+    if kopecks != value["amountKopecks"]:
+        raise ValueError("proposed amount differs from its literal source")
+
+
+def _question(question: AnswerQuestion) -> AnswerQuestion:
+    return AnswerQuestion.model_validate(
+        question.model_dump(mode="python", by_alias=True, warnings=False),
+    )
+
+
+def _date_not_future(value: ServiceProvidedDate, as_of_date: date | None) -> None:
+    if value.provided_date is not None and date.fromisoformat(value.provided_date) > (
+        as_of_date or date.today()
+    ):
+        raise ValueError("future factual date")
+
+
+def _shape(question: AnswerQuestion, value: object, as_of_date: date | None) -> JsonValue:
+    question = _question(question)
+    field = question.target_field
+    if (field in {"situationAreas", "affectedServices", "clinicActions", "healthSignals"}
+            and not isinstance(value, list)):
+        raise ValueError("multi-valued answers require a JSON list")
+    if field == "eventDate" and not isinstance(value, dict):
+        raise ValueError("factual dates require a JSON object")
+    if field == "eventSummary":
+        if not isinstance(value, str) or not 10 <= len(value.strip()) <= 1500:
+            raise ValueError("event answer must be bounded text")
+        normalized: JsonValue = value
+    elif field == "safetyScreening":
+        if question.screening_field == "amount":
+            if value != "UNKNOWN" and not isinstance(value, dict):
+                raise ValueError("amount requires a JSON object or explicit UNKNOWN")
+            normalized = "UNKNOWN" if value == "UNKNOWN" else RequestedMoney.model_validate(
+                value,
+            ).model_dump(mode="json", by_alias=True)
+        else:
+            if not isinstance(value, str) or value not in {"YES", "NO", "UNKNOWN"}:
+                raise ValueError("safety answer must be an explicit factual signal")
+            normalized = value
+    elif field == "analysisClarificationAnswers":
+        if question.clarification_request is None:
+            raise ValueError("clarification identity is absent")
+        if (question.clarification_request.question_id == "SERVICE_PROVIDED_DATE"
+                and not isinstance(value, dict)):
+            raise ValueError("service dates require a JSON object")
+        answer = ClarificationAnswer.model_validate({
+            **question.clarification_request.model_dump(by_alias=True), "value": value,
+        })
+        if isinstance(answer.value, ServiceProvidedDate):
+            _date_not_future(answer.value, as_of_date)
+        normalized = cast(JsonValue, answer.model_dump(mode="json", by_alias=True)["value"])
+    else:
+        suggestion = DraftSuggestions.model_validate({
+            field: value, "sourceSpans": {field: [{"start": 0, "end": 1}]},
+        })
+        normalized = cast(JsonValue, suggestion.model_dump(mode="json", by_alias=True)[field])
+        if field == "eventDate" and suggestion.event_date is not None:
+            _date_not_future(suggestion.event_date, as_of_date)
+        if field == "affectedServices" and any(
+            len(service.strip()) < 2 or _LINK.search(service)
+            for service in suggestion.affected_services or []
+        ):
+            raise ValueError("service names must be non-URL factual labels")
+    if pseudonymize_text(json.dumps(normalized, ensure_ascii=False)).changed:
+        raise ValueError("answer value contains direct identifiers")
+    return normalized
+
+
+def validate_answer_shape(
+    question: AnswerQuestion, value: object, *, as_of_date: date | None = None,
+) -> JsonValue:
+    """Validate a public value's closed type; not source grounding or authorization."""
+    try:
+        return _shape(question, value, as_of_date)
+    except (ValueError, TypeError, AttributeError):
+        pass
+    raise ValueError("answer does not match the current factual question")
+
+
+def _current_question(
+    data: Mapping[str, object], question: AnswerQuestion,
+) -> AnswerQuestion:
+    validated = _question(question)
+    current = derive_answer_question(data, validated.wizard_state)
+    if current is None or current.question_sha256 != validated.question_sha256:
+        raise ValueError("question is not current")
+    return validated
+
+
+def validate_answer_value(
+    question: AnswerQuestion, value: object, source: str, draft_data: Mapping[str, object],
+    *, as_of_date: date | None = None,
+) -> JsonValue:
+    """Only the actual answer supplies anchors, never another draft field or model memory."""
+    try:
+        validated = _current_question(draft_data, question)
+        if (not isinstance(source, str) or not 1 <= len(source) <= 1500
+                or not source.strip() or pseudonymize_text(source).changed):
+            raise ValueError("answer source must be bounded and de-identified")
+        normalized = _shape(validated, value, as_of_date)
+        if validated.screening_field == "amount" and isinstance(normalized, dict):
+            _ground_money(normalized, source)
+        if validated.target_field == "eventSummary" and normalized != source:
+            raise ValueError("event narrative must be the verbatim user answer")
+        if validated.target_field == "affectedServices" and (
+            not isinstance(normalized, list) or any(
+                not isinstance(service, str) or service not in source for service in normalized
+            )
+        ):
+            raise ValueError("service labels must be literal parts of the actual answer")
+        return normalized
+    except (ValueError, TypeError, AttributeError):
+        pass
+    raise ValueError("answer does not match the current factual question and source")
+
+
+def _apply_normalized(
+    data: Mapping[str, object], validated: AnswerQuestion, normalized: JsonValue,
+) -> dict[str, object]:
+    result = deepcopy(dict(data))
+    validate_intake_draft_data(result)
+    field = validated.target_field
+    if field == "safetyScreening":
+        screening = dict(validate_partial_screening(result.get(
+            field, {"schemaVersion": SCREENING_VERSION},
+        )))
+        if validated.screening_field is None:
+            raise ValueError("screening identity is absent")
+        screening[validated.screening_field] = normalized
+        if validated.screening_field == "moneyRequested":
+            screening.pop("amount", None)
+            if normalized in ("NO", "UNKNOWN"):
+                screening["amount"] = "NOT_REQUESTED" if normalized == "NO" else "UNKNOWN"
+        validate_partial_screening(screening)
+        result[field] = screening
+    elif field == "analysisClarificationAnswers":
+        if validated.clarification_request is None:
+            raise ValueError("clarification identity is absent")
+        existing = AnalysisClarificationAnswers.model_validate(result.get(field, {"answers": []}))
+        added = ClarificationAnswer.model_validate({
+            **validated.clarification_request.model_dump(by_alias=True), "value": normalized,
+        })
+        result[field] = AnalysisClarificationAnswers(
+            answers=[*existing.answers, added],
+        ).model_dump(mode="json", by_alias=True)
+    else:
+        if field == "incomingKind":
+            # Transport metadata is derived here, never supplied by the model.
+            # Existing uploaded text/file provenance remains authoritative.
+            result.setdefault("incomingSourceStatus", "NOT_ATTACHED")
+        if result.get(field) != normalized and field in {"incomingKind", "healthSignals"}:
+            result.pop("safetyScreening", None)
+        if field == "affectedServices":
+            result = invalidate_service_clarification_answers(result, cast(list[str], normalized))
+        elif (field == "situationAreas" and isinstance(normalized, list)
+              and "TREATMENT" not in normalized):
+            result = invalidate_service_clarification_answers(result, None)
+        result[field] = deepcopy(normalized)
+    validate_intake_draft_data(result)
+    confirmed_answers({
+        "INTAKE_VERSION": "GUIDED_V2", "SITUATION_AREAS": result.get("situationAreas"),
+        "AFFECTED_SERVICES": result.get("affectedServices"),
+        "ANALYSIS_CLARIFICATION_ANSWERS": result.get(
+            "analysisClarificationAnswers", {"answers": []},
+        ),
+    })
+    return result
+
+
+def apply_answer_value(
+    data: Mapping[str, object], question: AnswerQuestion, value: object, source: str,
+    *, as_of_date: date | None = None,
+) -> dict[str, object]:
+    """Return a new partial draft after explicit consent; never persist or confirm it here.
+
+    Replacements are limited to the current question and its canonical dependencies.
+    This does not weaken the separate initial-narrative fill-only merge.
+    """
+    try:
+        normalized = validate_answer_value(question, value, source, data, as_of_date=as_of_date)
+        return _apply_normalized(data, _question(question), normalized)
+    except (ValueError, TypeError, AttributeError):
+        pass
+    raise ValueError("answer cannot be applied to this draft")
+
+
+def preview_answer_value(
+    data: Mapping[str, object], question: AnswerQuestion, value: object,
+    *, as_of_date: date | None = None,
+) -> dict[str, object]:
+    """Preview the same dependency diff without retaining or recovering the raw answer.
+
+    This checks the current question and value shape only. It is NOT source
+    grounding, authorization, confirmation or persistence; Core acceptance must
+    still use apply_answer_value with the operation's actual stored answer.
+    """
+    try:
+        validated = _current_question(data, question)
+        normalized = _shape(validated, value, as_of_date)
+        return _apply_normalized(data, validated, normalized)
+    except (ValueError, TypeError, AttributeError):
+        pass
+    raise ValueError("answer cannot be previewed for this draft")

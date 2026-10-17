@@ -93,6 +93,10 @@ from telegram_gateway.ui import (
     main_menu_keyboard,
 )
 from telegram_gateway.update_processor import ActorSerialUpdateProcessor
+from telegram_gateway.workflow_preparation import (
+    decode_workflow_confirmation,
+    preparation_workflow_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -789,7 +793,8 @@ def _v2_single_keyboard(field: str) -> InlineKeyboardMarkup:
         [
             [(label, f"case:v2:single:{field}:{value}")]
             for value, label in v2_choice_items(field)
-        ]
+        ],
+        with_back=field != "incomingKind",
     )
 
 
@@ -854,6 +859,7 @@ async def _prompt_v2_draft(
     update: Update,
     state: WizardState,
     data: dict[str, Any],
+    *, preparation: bool = False,
 ) -> None:
     message = update.effective_message
     data.pop("_v2_prompt_message_id", None)
@@ -926,7 +932,8 @@ async def _prompt_v2_draft(
         prompt = (
             "6/7. При необходимости отправьте один обезличенный .txt, .pdf или .docx до 15 МБ. "
             "Удалите ФИО, контакты, номера карт, изображения и ненужные медицинские сведения. "
-            "Файл не станет нормой и не будет отправлен Hermes."
+            "Файл будет сохранён в материалах кейса. Рекомендации готовятся по описанию "
+            "и подтверждённым ответам."
         )
         rows = [[("Продолжить без файла", "case:v2:material:skip")]]
         if attached:
@@ -978,8 +985,10 @@ async def _prompt_v2_draft(
         workflow_id = UUID(str(data["workflow_id"]))
         if message is not None:
             await reply(
-                "Фактическая карточка подтверждена. Сформировать внутренний отчёт?",
-                reply_markup=confirm_keyboard(workflow_id),
+                ("Фактическая карточка подтверждена. Подготовить рекомендации?"
+                 if preparation else
+                 "Фактическая карточка подтверждена. Сформировать внутренний отчёт?"),
+                reply_markup=confirm_keyboard(workflow_id, preparation=preparation),
             )
 
 
@@ -1167,7 +1176,9 @@ async def v2_material_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return await _advance_v2_draft(update, data)
 
 
-async def confirm_v2_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def confirm_v2_summary(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, preparation: bool = False,
+) -> int:
     if await _answer_callback(update) != "case:v2:summary:confirm":
         return WizardState.SUMMARY
     data = _wizard_data(context)
@@ -1176,12 +1187,12 @@ async def confirm_v2_summary(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await _reply(update, "Перед подтверждением уточните недостающие сведения.")
         await _prompt_v2_draft(update, missing, data)
         return missing
-    if reopen_unknown_screening_question(data) is not None:
+    if not preparation and reopen_unknown_screening_question(data) is not None:
         await _reply(update, "Нужно уточнить неизвестный факт. Если сейчас уточнить нельзя, "
                      "/cancel сохранит черновик; неизвестное не считается ответом «Нет».")
         await _prompt_v2_draft(update, WizardState.SAFETY, data)
         return WizardState.SAFETY
-    await _prompt_v2_draft(update, WizardState.V2_CONFIRM, data)
+    await _prompt_v2_draft(update, WizardState.V2_CONFIRM, data, preparation=preparation)
     return WizardState.V2_CONFIRM
 
 
@@ -1478,11 +1489,12 @@ def _signal_answer(callback: str, name: str) -> str | None:
     return value if value in {"YES", "NO", "UNKNOWN"} else None
 
 
-def confirm_keyboard(workflow_id: UUID) -> InlineKeyboardMarkup:
-    callback = f"case:confirm:{workflow_id}"
+def confirm_keyboard(workflow_id: UUID, *, preparation: bool = False) -> InlineKeyboardMarkup:
+    callback = f"case:confirm{'2' if preparation else ''}:{workflow_id}"
     if len(callback.encode()) > 64:
         raise ValueError("Telegram callback is too long")
-    return _keyboard([[("✅ Сформировать отчёт", callback), ("❌ Отменить", "case:cancel")]])
+    label = "✅ Подготовить рекомендации" if preparation else "✅ Сформировать отчёт"
+    return _keyboard([[(label, callback), ("❌ Отменить", "case:cancel")]])
 
 
 _LEGACY_ANALYSIS_DATE_FIELDS = ("claim_date", "incident_date", "service_date")
@@ -2087,7 +2099,9 @@ async def _prompt_resumed_draft(update: Update, state: WizardState, data: dict[s
             )
 
 
-async def resume_intake_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def resume_intake_draft(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, preparation: bool = False,
+) -> int:
     callback = await _answer_callback(update)
     _clear_pending_admin_grant(context)
     actor_id = _actor_id(update)
@@ -2115,9 +2129,11 @@ async def resume_intake_draft(update: Update, context: ContextTypes.DEFAULT_TYPE
     _clear_wizard(context)
     _clear_pending_inputs(context)
     data = dict(draft_data)
-    if data.get("intakeVersion") == 2 and state in {
+    if data.get("intakeVersion") == 2 and (preparation or state in {
         WizardState.SUMMARY, WizardState.V2_CONFIRM, WizardState.ANALYSIS_CLARIFICATION,
-    }:
+    }):
+        # Navigation checkpoints are not missing facts. Explicit back/edit still
+        # opens its selected field; generic resume asks only what is absent.
         state = _v2_state(v2_next_missing_state(data))
     data.update(
         {
@@ -2634,6 +2650,10 @@ async def _send_workflow_report(
     workflow: dict[str, Any],
     actor_id: int,
 ) -> None:
+    if "receiptVersion" in workflow:
+        text, keyboard = preparation_workflow_message(workflow)
+        await _reply(update, text, reply_markup=keyboard)
+        return
     case = workflow.get("case")
     report = workflow.get("report")
     if workflow.get("state") != "SUCCEEDED" or not isinstance(case, dict):
@@ -2678,9 +2698,11 @@ async def resume_workflow(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if callback is None or actor_id is None:
         return
     try:
-        workflow_id = UUID(callback.removeprefix("case:confirm:"))
+        workflow_id, preparation = decode_workflow_confirmation(callback)
         client = _legal_core(context)
         workflow = await client.get_workflow(workflow_id, actor_id)
+        if preparation and workflow.get("receiptVersion") != 2:
+            raise ValueError("workflow preparation mode mismatch")
         await _send_workflow_report(update, client, workflow, actor_id)
     except (ValueError, LegalCoreApiError, TelegramError) as exc:
         logger.warning("workflow recovery failed: %s", type(exc).__name__)
@@ -2722,20 +2744,25 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     callback = await _answer_callback(update)
     if callback == "case:cancel":
         return await cancel_case(update, context)
-    if callback is None or not callback.startswith("case:confirm:"):
+    if callback is None or not callback.startswith(("case:confirm:", "case:confirm2:")):
         data = _wizard_data(context)
         return WizardState.V2_CONFIRM if _is_v2_draft(data) else WizardState.CONFIRM
     actor_id = _actor_id(update)
     data = _wizard_data(context)
+    preparation = callback.startswith("case:confirm2:")
     if actor_id is None:
         _clear_wizard(context)
         return ConversationHandler.END
     try:
-        workflow_id = UUID(callback.removeprefix("case:confirm:"))
+        workflow_id, preparation = decode_workflow_confirmation(callback)
+        if preparation and not _is_v2_draft(data):
+            raise ValueError("preparation requires a v2 draft")
         if workflow_id != UUID(str(data["workflow_id"])):
             raise ValueError("workflow callback does not match active conversation")
         date_questions = _dates_needing_clarification(data)
-        if date_questions and not (_is_v2_draft(data) and known_urgent_report(data)):
+        if date_questions and not preparation and not (
+            _is_v2_draft(data) and known_urgent_report(data)
+        ):
             if _is_v2_draft(data):
                 await _reply(
                     update,
@@ -2762,7 +2789,7 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                              "Черновик сохранён.")
                 await _prompt_v2_draft(update, missing, data)
                 return missing
-            if reopen_unknown_screening_question(data) is not None:
+            if not preparation and reopen_unknown_screening_question(data) is not None:
                 await _reply(update, "До подтверждения уточните неизвестный факт. "
                              "/cancel сохранит черновик.")
                 await _prompt_v2_draft(update, WizardState.SAFETY, data)
@@ -2770,22 +2797,30 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         client = _legal_core(context)
         if _is_v2_draft(data):
             facts = facts_from_v2_data(_draft_payload(data))
-            workflow = await client.submit_workflow(
-                workflow_id,
-                facts,
-                actor_id,
-                intake_schema_version=V2_INTAKE_SCHEMA_VERSION,
-            )
+            if preparation:
+                workflow = await client.submit_workflow(
+                    workflow_id, facts, actor_id,
+                    intake_schema_version=V2_INTAKE_SCHEMA_VERSION, receipt_version=2,
+                )
+            else:
+                workflow = await client.submit_workflow(
+                    workflow_id, facts, actor_id, intake_schema_version=V2_INTAKE_SCHEMA_VERSION,
+                )
         else:
             facts = facts_from_draft(_draft_from_data(data))
             workflow = await client.submit_workflow(workflow_id, facts, actor_id)
+        if preparation and workflow.get("receiptVersion") != 2:
+            raise ValueError("workflow preparation mode mismatch")
         await _send_workflow_report(update, client, workflow, actor_id)
     except TelegramError as exc:
         logger.warning("case report delivery failed: %s", type(exc).__name__)
         await _reply(
             update,
-            "✅ Карточка сохранена, но Telegram не доставил отчёт. "
-            "Нажмите «Сформировать отчёт» ещё раз — повторный кейс не создаётся.",
+            ("Сведения сохранены, но Telegram не доставил сообщение. "
+             "Нажмите «Подготовить рекомендации» ещё раз — повторный кейс не создаётся.")
+            if preparation else
+            ("✅ Карточка сохранена, но Telegram не доставил отчёт. "
+             "Нажмите «Сформировать отчёт» ещё раз — повторный кейс не создаётся."),
         )
         return WizardState.V2_CONFIRM if _is_v2_draft(data) else WizardState.CONFIRM
     except (KeyError, ValueError, LegalCoreApiError) as exc:
@@ -2796,6 +2831,8 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         logger.warning("case report generation failed: %s", type(exc).__name__)
         await _reply(
             update,
+            ("⚠️ Подготовку пока не удалось подтвердить. Повторите «Подготовить рекомендации» "
+             "или /cancel. Черновик не удалён.") if preparation else
             "⚠️ Отчёт пока не сформирован. Нажмите «Сформировать отчёт» ещё раз или /cancel.",
         )
         return WizardState.V2_CONFIRM if _is_v2_draft(data) else WizardState.CONFIRM
@@ -2810,8 +2847,10 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         logger.warning("intake draft archive after submission failed: %s", type(exc).__name__)
         await _reply(
             update,
-            "Отчёт сформирован. Черновик временно остался в списке; "
-            "повторное подтверждение безопасно.",
+            ("Сведения сохранены. Черновик временно остался в списке; "
+             "повторное подтверждение безопасно.") if preparation else
+            ("Отчёт сформирован. Черновик временно остался в списке; "
+             "повторное подтверждение безопасно."),
         )
 
     _clear_wizard(context)
@@ -3015,7 +3054,8 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
     application.add_handler(TypeHandler(Update, _require_private_chat), group=-99)
     application.add_handler(TypeHandler(Update, _route_input_mode), group=-90)
     application.add_handler(CallbackQueryHandler(
-        create_clarification, pattern=r"^case:clarify:(?:[A-Za-z0-9_-]{43}|[0-9a-f-]{36})$",
+        create_clarification,
+        pattern=r"^case:(?:clarify:(?:[A-Za-z0-9_-]{43}|[0-9a-f-]{36})|clarify2:[A-Za-z0-9_-]{43})$",
     ), group=-2)
     application.add_handler(
         ConversationHandler(
@@ -3125,7 +3165,7 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
                     CallbackQueryHandler(
                         _persisted(confirm_case),
                         pattern=(
-                            r"^(case:cancel|case:confirm:"
+                            r"^(case:cancel|case:confirm2?:"
                             r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
                             r"[0-9a-f]{4}-[0-9a-f]{12})$"
                         ),
@@ -3276,7 +3316,7 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
         CallbackQueryHandler(
             resume_workflow,
             pattern=(
-                r"^case:confirm:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+                r"^case:confirm2?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
                 r"[0-9a-f]{4}-[0-9a-f]{12}$"
             ),
         )

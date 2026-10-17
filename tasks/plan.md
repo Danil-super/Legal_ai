@@ -1,5 +1,227 @@
 # Implementation Plan: Dental Legal AI MVP
 
+## Pre-report case understanding — spec approved 2026-10-15
+
+Contract: SPEC-pre-report-intake-understanding.md, owner approval15Oct.
+This extends the existing case-readiness/FC work, not another product. Preserve
+all earlier unfinished work below. Owner approved execution after clarifying
+Hermes' semantic role on15Oct: it interprets the narrative and subsequent answers,
+suggests factual mappings/questions and the next step; Core enforces the boundaries.
+Execution follows the PRC dependency order. Approval is not a production deployment or legal approval.
+The earlier isolated UI fix6624084 remains unreleased.
+
+Execution checkpoint15Oct: PRC1/2 contracts/storage/runtime and PRC3–5 receipt,
+queue and orchestration readers are implemented with isolated independent reviews.
+The exact Docker COPY-set regression is fixed and a real gateway image builds;
+immutable6eb1d2c full PostgreSQL/MinIO suite passes2904 tests without skips.
+Worker follow-up ebb5520 additionally refreshes/fences the current lease before I/O
+and forwards only the stored result version; its independent fresh PostgreSQL42
+tests pass. Final immutable ebb5520 full run:2910 passed/0 skipped,194.05s.
+The complete Telegram rollback reader is not established until PRC7/10.
+PRC6 late producer is implemented at8a86ce9 with integrity/concurrency/access fixes
+through94a9751. It persists actual verifier/risk identities without intermediate
+reports; only READY renders the real final PDF. Independent review reproduced
+three defects in the initial writer, then verified the fixes (9 tests), and a
+separate real lock-wait access matrix passed20 tests. Author focused regression:
+94 passed. Full94a9751 verification repeated after the execution environment
+reset:2938 passed/0 skipped,171.27s, with fresh migrated PostgreSQL and MinIO.
+Ruff/all-three-service mypy143/Compose pass; the interrupted run is not counted.
+PRC6a Core cd7646a + transport f87d41c implement honest pre-context limitations,
+urgent routing and authenticated retained-result replay. Independent final review
+verified86 focused tests with no outstanding Required/Critical finding. Immutable
+f87d41c full PostgreSQL/MinIO run:2975 passed/0 skipped,189.68s; Ruff/mypy143/Compose
+pass. The new gate preserves safe-stop and does not repeat model work on replay.
+PRC6b recovery7c2dbef (ordering prerequisite9a6ec75) binds intermediate origins
+and draft creation to immutable audit, preserves attempts and original files,
+and checks latest source/access/retention before replay. Independent review found
+same-origin receipt substitution; corrected regression and follow-up41 tests pass.
+Author99 focused tests pass. Final immutable tree91764b7/commit7c2dbef:
+3010 passed/0 skipped,224.57s on isolated PostgreSQL+MinIO; quality checks pass.
+PRC6c codec/client fd68e8f and runtime/router f459747 establish57-byte source-bound
+Telegram callbacks. Actual client/Core/PostgreSQL recovery survives lost replies
+without duplicate drafts; independent review134 tests includes current-source and
+same-clinic creator negatives. Full immutable tree bb5307c (f459747):3053 passed/
+0 skipped,313.72s, isolated PostgreSQL+MinIO; quality checks pass.
+PRC7a b6df566 adds source-bound factual controls; PRC7b f48320b implements the
+explicit report-free initial writer. PRC7c3868e20 closes the malformed returned-
+draft gap found by independent review using Core's shared partial-draft validator.
+Independent7b:82 real-PostgreSQL tests pass;7c:307 pass/14 PG skips plus3522 exact
+validator outcome comparisons. Author full3868e20/tree eda5a57:3096 passed/0 skipped,
+341.59s on fresh PostgreSQL+MinIO; Ruff/mypy143/Compose and actual Gateway image pass.
+PRC7d client8b5bb30, queue64c4738, adapterd488314 and runtimef83a49f complete the
+explicit initial receipt consumer. Independent queue113 and whole-Gateway/runtime
+934 actual PostgreSQL tests pass; the latter also proves a synthetic initial→
+NEEDS_FACTS→bound correction→READY/verified ACTION/PDF chain. Review fixed creator
+access after waits, future-date acceptance and configured startup's duplicate CTA.
+Full f83a49f/tree fec864a:3145 passed/0 skipped,516.72s on fresh PostgreSQL+MinIO;
+Ruff/mypy144/Compose and actual Gateway Docker image pass. The earlier full run's
+one failure is preserved in the audit, not counted as success.
+NEXT: PRC8–11 confirmed understanding/shared dialogue acceptance. Ordinary producer
+activation remains gated on their completion; both ordinary entry paths are not
+proved by explicitly seeded receipt2 acceptance. PRC8a initial narrative interpreter
+a1b3888 and nested-UNKNOWN storage fix14f3755 are implemented but not wired into
+ordinary intake. Independent interpretation464 +12 attack tests and storage107
+tests pass. Final immutable14f3755/tree67b3aec:3192 passed/0 skipped,493.28s on fresh
+PostgreSQL+MinIO; Ruff/mypy145/Compose and actual Core/Agent containers pass.
+PRC8/9/10 remain incomplete: subsequent answers and explicit user confirmation are
+not provided by this internal module. The next bounded runtime checkpoint through
+75b523f implements private source/lease resolution, metadata-only Agent invocation,
+shared two-slot background execution and owner POST/GET/DELETE operations with
+durable cancellation. Independent first-boundary review192 tests passed and fixed
+an exception-retention defect; final background/actor review224 tests/0 skips
+passed with no remaining Required/Critical. Final immutable b48c11b/treef436cd1:
+3292 passed/0 skips/534.29s on fresh PostgreSQL/MinIO; Ruff/mypy149/Compose and
+actual Core/Agent builds pass. Separately reviewed startup pin update preserves
+personal M1; the stronger actual-router canary detects hidden nested prefixes.
+Evidence: docs/audit/pre-report-understanding-runtime-2026-10-16.md.
+The subsequent PRC10 initial-narrative slice now provides durable quick source,
+audit-bound atomic consent/replay, source-bound recovery and short Telegram
+refresh/manual/cancel/edit/menu controls. The opt-in common summary preserves
+UNKNOWN/APPROXIMATE and selects receipt2. Legacy material resume is unchanged.
+Both actual PTB/HTTP/PostgreSQL entries reach one report-free case; model output
+and Telegram delivery are synthetic. The bd86049 full gate was interrupted and
+does not establish clearance. The owner rejected an initial-only test release.
+Subsequent answers now have separate question/answer-bound operations, strict
+target values, explicit consent and durable cancellation; all ten factual question
+families pass real Core/Agent HTTP tests and both full PTB entries pass against
+PostgreSQL. Full immutable86e2c80 PG/MinIO verification passed:3965 tests,
+0 failures/errors/skips,372.88s. Five subsequent independent compatibility guards
+also pass on identical runtime source. Ruff/mypy171, Compose, Bandit, dependency
+audit and three offline container smokes pass. GitHub CI/release/live acceptance
+remain separate gates, not implied by this local result.
+Ordinary default startup is still unchanged. Current evidence and limits:
+docs/audit/pre-report-consent-and-telegram-2026-10-16.md.
+The V2 writer is opt-in/internal only: ordinary queues remain V1. No server
+migration or complete pre-report dialogue is activated. See
+docs/audit/pre-report-late-preparation-2026-10-15.md.
+
+### Architecture and dependency order
+
+One user flow: describe → confirm understood facts → complete missing facts →
+confirm summary → verified report or an understandable limitation. Legal Core
+remains authoritative. The model proposes facts, not law or risk classification.
+
+1. **PRC1–PRC3: prove persistence and reader compatibility first.** Existing
+   AnalysisJob has a required case FK and finalized-case guard; it is not a
+   general draft queue. Existing Telegram workflow submission also unconditionally
+   renders an intake PDF and has a required report FK. Both that initial receipt
+   and late analysis must support intermediate preparation, not merely hide PDFs.
+   Define a bounded versioned result: NEEDS_FACTS / LIMITED / READY / HUMAN_REVIEW,
+   where only a genuinely final report exposes a PDF. Keep legacy V1 shapes and
+   stored reports. Establish reader-compatible baseline before new producers.
+2. **PRC4–PRC7: finish one late-clarification vertical path.** Core validates and
+   durably stores the intermediate result against actor/clinic/case/job and fact/
+   evidence/policy fingerprints, without calling CaseReport/PDF creation. Queue,
+   worker, notifications and UI consume that result as completed preparation,
+   not a failed task or legal READY. An intermediate-bound confirmation opens
+   the same form; finalized case snapshots remain immutable, with explicit new
+   draft confirmation and unchanged attachment ACLs. Then enable report-free
+   initial workflow receipts. Legacy report-bound recovery remains supported.
+3. **PRC8–PRC10: add early understanding and shared pre-report form.** Save an
+   actor-owned draft before a bounded Hermes request. Only permitted existing
+   V2 fields with explicit source-text grounding may be proposed; proposals remain
+   separate from confirmed facts. User accepts/edits the compact review before
+   prefilling. Both entries use the same targeted question/answer form. A course
+   of treatment is not silently assigned one universal date; ask which episode
+   the complaint concerns. Invalidate answers when service scope changes.
+4. **PRC11–PRC12: prove the complete flow and release.** Fresh fictional quick/
+   guided cases, late clarification, UNKNOWN, urgency, restart/double click and
+   source-grounded final plans; full PostgreSQL/MinIO and existing security/CI,
+   independent review, approved immutable-head release and actual persisted
+   live results. Process-local model success is not the completion criterion.
+
+Checkpoints follow PRC1–3, PRC4–5, PRC6/6a/6b/6c, PRC7–9 and PRC10–11;
+exact tasks are in tasks/todo.md. PRC6a handles pre-context limitations;
+PRC6b/6c cover the Core/gateway source-bound recovery boundary.
+Shared contracts/storage/writers are sequential. An independent reviewer may use
+an isolated branch; no parallel implementation of the same contracts.
+
+Read-only next-boundary review16Oct identified implementation obligations, not
+newly active endpoints: preserve the existing aggregate two analysis slots with
+shared admission acquired before job claim; keep private operation tokens inside
+Core↔Agent; use owned current lease/revision/hash/access/safe-stop context before
+model I/O, rather than exposing a source-only model endpoint under the shared key.
+Current /cancel/menu only pause Gateway RAM and need an owned durable operation
+fence for the new mode. Quick entry must save its owned description before model
+proposals, not only after acceptance. Preserve Core's sanitized validation error
+style and avoid the case_api↔intake_preparation import cycle via a focused router
+or local import. Implement contracts/client, private context, shared admission,
+public actor operation API and confirmed UI in bounded≤5-file increments; no
+producer activation or implicit scope/capacity increase follows this review.
+
+### Storage decision gate and contracts
+
+- Planned expansion (no new table): nullable lease_token/lease_until on
+  IdempotencyRecord for the new operation scope; receipt_version(default1) on
+  TelegramCaseWorkflow, report_id nullable only for a report-free V2 receipt;
+  result_version(default1) on AnalysisJob. Keep existing tenant/case/actor FKs
+  and legacy non-null report semantics. PRC1 specifies exact constraints;
+  PRC2 proves the Alembic expansion before producers. These explicit existing-
+  table changes are within the approved plan; exact constraints and proofs precede writes.
+- Reuse existing draft/idempotency/job storage only after a concrete proof.
+  Early understanding cannot borrow a fake finalized case, a fake report FK,
+  an unowned cache or an unlimited in-memory task. Test atomically claimed intent,
+  stable server-derived actor/clinic/draft/revision/content/version intent and
+  token-fenced completion. Atomically reserve/commit before network; complete
+  after reauthorization/revision/expiry checks in a short transaction. No DB lock
+  across Hermes. A crash/unknown outcome expires to manual continuation or an
+  explicit new user intent, never blind model re-execution or endless autoretry.
+- IdempotencyRecord has no automatic TTL. If it contains proposals or intermediate
+  private context, its lifetime, expiry-before-replay and cleanup must explicitly
+  follow the owning draft/case. The early-operation resource_id binds draft.id;
+  its separate resource_type needs expiry/replay and purge support, not reliance
+  on the existing TELEGRAM_INTAKE_DRAFT-only scrubber. Keep only bounded necessary
+  proposals/metadata, not another raw description/evidence copy in a queue.
+  Scrubbing preserves non-content replay tombstones.
+  Retention must also cover abandoned/in-progress records, not only successful ones.
+- PRC1 is a fail-fast gate: if safe bounded draft work cannot fit existing storage,
+  present the exact additional schema/authority needed before building it. A new
+  table/storage system is not approved by this plan. Existing-table additive
+  columns/FK nullability changes listed above need an explicit schema diff with
+  Alembic/RLS/retention/rollback tests before enabling producers; no hidden migration.
+- New result contracts are opt-in and strictly validated, not an unannounced
+  change from required report to null. Versioned idempotency/result namespaces,
+  active-job collision handling and latest-job queries must not reuse legacy
+  cached output as fresh preparation or run two active analyses of one snapshot.
+  Pin a tested reader-compatible rollback minimum; b052f40 is not assumed safe
+  after writing new workflow/result variants. Do not downgrade or erase records.
+- Revalidate actor, subscription, creator/tenant, revision and expiry at read,
+  model completion and confirmation; ignore stale completion after cancel/edit/
+  archive/submit. Restart recovery preserves the durable intent, not gateway RAM.
+- Report-free recovery binds operation/result ID and hash, frozen case facts
+  and available evidence/policy/context fingerprints against a retained server
+  result, not client-selected questions or a fake report. No invented run or
+  evidence ID for a gate that has not executed. Keep legacy case+report recovery;
+  version the new callbacks within Telegram's64-byte bound.
+- Unknown event dates, unknown safety answers and no evidence can stop before
+  submit_analysis. Classify these preparation outcomes in Core as LIMITED or
+  NEEDS_FACTS, not broad exception swallowing. Do not automatically reopen attempted
+  questions in confirm_case or strip UNKNOWN during prefill. Exact-date/evidence/
+  risk gates remain closed: LIMITED is neither legal READY, a known negative
+  fact nor an invented high-risk decision. Offer the existing authorized human path.
+- Keep max3 questions per batch,5 services and11 answers. Exact confirmed values
+  and attempted UNKNOWN/APPROXIMATE are not re-asked. Confirming proposed dates
+  creates user-statement provenance, not automatic VERIFIED legal facts.
+
+### Safety, rollout and risks
+
+HIGH/CRITICAL and v4/10k stay unchanged and must bypass optional preparation waits.
+Manual continuation remains available while understanding is pending/unavailable;
+current policy evaluates user-confirmed facts, never silence or model inference.
+Model/provider/high,55/65/115/125/180 fences, tool-free configuration, trusted sources,
+roles, files-to-model prohibition and patient-send prohibition are unchanged.
+No new model service, payment, PII category, auto approval or reference activation.
+
+Reader-only compatibility may be deployed before producers, default-disabled until
+the reviewed complete slice is approved for activation. Every new critical result
+and recovery contract has an ADR and tests. Existing normative/reference ledgers,
+old case/report snapshots and material ownership are checked before/after release.
+The existing quality bar is not lowered; a new question state does not make legal
+evidence applicable, convert uncertain dates into exact dates or guarantee advice.
+
+Commands and quality gates remain those in the approved spec and AGENTS.md.
+No migration/feature activation is authorized merely by recording this plan.
+
 ## Factual analysis clarification — contract approved 2026-10-14
 
 Status: plan and FC1–FC11 tasks approved by the owner on 2026-10-14. This extends the

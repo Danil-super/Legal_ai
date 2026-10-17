@@ -21,6 +21,10 @@ from legal_core.analysis_clarifications import (
     ClarificationQuestionId,
     ClarificationRequest,
     ClarificationRequestBatch,
+    ServiceProvidedDate,
+)
+from legal_core.intake_service_scope import (
+    invalidate_service_clarification_answers as invalidate_service_scope,
 )
 from legal_core.pseudonymization import pseudonymize_text
 
@@ -292,25 +296,7 @@ def invalidate_service_clarification_answers(
     Slots are positions, not stable service identities: even a reordering invalidates
     all service answers. The global response purpose survives a service edit.
     """
-    if services is not None and not _valid_services(services):
-        raise ValueError("Укажите от одной до пяти услуг.")
-    updated = dict(data)
-    if services is None:
-        updated.pop("affectedServices", None)
-    else:
-        updated["affectedServices"] = list(services)
-    if services != data.get("affectedServices") and "analysisClarificationAnswers" in data:
-        answers = confirmed_clarification_answers(data)
-        retained = AnalysisClarificationAnswers(answers=[
-            answer for answer in answers.answers if answer.service_slot is None
-        ])
-        updated["analysisClarificationAnswers"] = retained.model_dump(mode="json", by_alias=True)
-    if services != data.get("affectedServices") and "analysisClarificationRequests" in data:
-        updated["analysisClarificationRequests"] = [
-            request.model_dump(mode="json", by_alias=True)
-            for request in _stored_clarification_requests(data) if request.service_slot is None
-        ]
-    return updated
+    return invalidate_service_scope(data, services)
 
 
 def clarification_review_blocks(data: dict[str, Any]) -> list[str]:
@@ -433,11 +419,13 @@ def _valid_multi(value: object, field: str) -> bool:
 def _valid_date(value: object, *, exact_required: bool) -> bool:
     if not isinstance(value, dict) or set(value) != {"date", "precision"}:
         return False
-    if value["precision"] == "UNKNOWN":
-        return value["date"] is None and not exact_required
-    if value["precision"] != "EXACT" or not isinstance(value["date"], str):
+    try:
+        parsed = ServiceProvidedDate.model_validate(value)
+        if parsed.provided_date is not None and parse_date_answer(parsed.provided_date) is None:
+            return False
+    except ValueError:
         return False
-    return parse_date_answer(value["date"]) == value
+    return not exact_required or parsed.precision == "EXACT"
 
 
 def _valid_text(value: object, field: str) -> bool:
@@ -530,6 +518,8 @@ def _date_label(value: object) -> str:
     date_value = value.get("date")
     if value.get("precision") == "EXACT" and isinstance(date_value, str):
         return date_value
+    if value.get("precision") == "APPROXIMATE" and _valid_date(value, exact_required=False):
+        return "примерно " + str(date_value)
     return "не указано"
 
 

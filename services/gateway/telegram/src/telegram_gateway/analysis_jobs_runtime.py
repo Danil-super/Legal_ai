@@ -15,13 +15,21 @@ from uuid import UUID
 
 import httpx2
 from legal_core.analysis_clarifications import ClarificationRequestBatch, validate_request_scope
+from legal_core.analysis_contracts import (
+    PreparationJobResponse,
+    PreparationResult,
+    ReportReadyResult,
+)
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest, Forbidden, RetryAfter, TelegramError
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTypes
 
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError
-from telegram_gateway.clarification_intent import encode_clarification_callback
+from telegram_gateway.clarification_intent import (
+    encode_clarification_callback,
+    encode_preparation_callback,
+)
 from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
@@ -57,9 +65,21 @@ class JobSnapshot:
     state: str
     error_code: str | None
     result: dict[str, Any] | None
+    result_version: int = 1
 
     @classmethod
     def parse(cls, payload: dict[str, Any]) -> JobSnapshot:
+        version = payload.get("resultVersion", 1)
+        if type(version) is not int or version not in {1, 2}:
+            raise ValueError("unsupported analysis result version")
+        if version == 2:
+            prepared = PreparationJobResponse.model_validate(payload)
+            return cls(
+                prepared.job_id, prepared.case_id, prepared.state, prepared.error_code,
+                prepared.result.model_dump(mode="json", by_alias=True)
+                if prepared.result is not None else None,
+                result_version=2,
+            )
         try:
             job_id, case_id = UUID(str(payload["jobId"])), UUID(str(payload["caseId"]))
             state, result = payload["state"], payload.get("result")
@@ -71,6 +91,8 @@ class JobSnapshot:
             raise ValueError("completed analysis has no canonical result")
         if state != "SUCCEEDED" and result is not None:
             raise ValueError("nonterminal analysis includes a result")
+        if isinstance(result, dict) and "resultVersion" in result:
+            raise ValueError("versioned result requires a versioned job envelope")
         code = payload.get("errorCode")
         if code is not None and (not isinstance(code, str) or len(code) > 80):
             raise ValueError("invalid analysis error")
@@ -178,12 +200,59 @@ def _report_clarification_callback(job: JobSnapshot) -> str | None:
     return encode_clarification_callback(job.case_id, report_id)
 
 
+def _ready_for_presentation(result: ReportReadyResult) -> dict[str, Any]:
+    """Adapt only a validated READY result for the existing report presentation."""
+    return {
+        "analysisAllowed": True, "riskLevel": result.report.report_json["risk"]["level"],
+        "escalationRequired": False, "escalationId": None,
+        "report": result.report.model_dump(mode="json", by_alias=True),
+    }
+
+
+def _preparation_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
+    result = PreparationResult.model_validate(job.result).root
+    if result.source.case_id != job.case_id:
+        raise ValueError("preparation result case mismatch")
+    if isinstance(result, ReportReadyResult):
+        return job_message(JobSnapshot(
+            job.job_id, job.case_id, job.state, job.error_code, _ready_for_presentation(result),
+        ))
+    rows = [[InlineKeyboardButton(
+        "🔄 Проверить статус", callback_data=f"analysis:status:{job.job_id}",
+    )]]
+    if result.status == "NEEDS_FACTS":
+        text = (
+            "Для подготовки рекомендаций нужно уточнить факты. "
+            "Итоговый ответ ещё не сформирован."
+        )
+    elif result.status == "LIMITED":
+        text = (
+            "Пока недостаточно подтверждённых данных или применимой нормативной базы. "
+            "Юридические рекомендации не сформированы."
+        )
+    else:
+        text = "Кейс направлен юристу. Дальнейшие рекомендации подготовим после его проверки."
+        rows.insert(0, [InlineKeyboardButton(
+            "⚖️ Карточка юриста", callback_data=f"case:escalation:{result.escalation_id}",
+        )])
+    if result.status in {"NEEDS_FACTS", "LIMITED"}:
+        rows.insert(0, [InlineKeyboardButton(
+            "Уточнить факты" if result.status == "NEEDS_FACTS" else "Изменить сведения",
+            callback_data=encode_preparation_callback(job.case_id, result.source.operation_id),
+        )])
+    rows.extend(list(row) for row in back_keyboard().inline_keyboard)
+    return text, InlineKeyboardMarkup(rows)
+
+
 def job_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
     from telegram_gateway.analysis_runtime import (
         analysis_error_message,
         escalation_id_from_analysis,
         telegram_analysis_messages,
     )
+
+    if job.result_version == 2 and job.state == "SUCCEEDED":
+        return _preparation_message(job)
 
     rows = [
         [InlineKeyboardButton("🔄 Проверить статус", callback_data=f"analysis:status:{job.job_id}")]
@@ -320,6 +389,8 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     or current.result is None
                 ):
                     raise ValueError("analysis PDF unavailable")
+                if current.result_version == 2 and current.result.get("status") != "READY":
+                    raise ValueError("preparation has no final PDF")
                 report = current.result.get("report")
                 if (
                     not isinstance(report, dict)
@@ -351,7 +422,13 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if action == "result" and job.result is not None:
             from telegram_gateway.analysis_runtime import telegram_analysis_messages
 
-            for text in telegram_analysis_messages(job.result):
+            if job.result_version == 2:
+                prepared_result = PreparationResult.model_validate(job.result).root
+                messages = telegram_analysis_messages(_ready_for_presentation(prepared_result)) \
+                    if isinstance(prepared_result, ReportReadyResult) else [job_message(job)[0]]
+            else:
+                messages = telegram_analysis_messages(job.result)
+            for text in messages:
                 await context.bot.send_message(
                     chat_id=actor, text=text, reply_markup=job_message(job)[1]
                 )
