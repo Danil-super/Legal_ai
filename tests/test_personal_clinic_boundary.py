@@ -20,13 +20,14 @@ CLINIC_BASELINE = {
         # Owner-requested clinic library unification; personal surface unchanged (ADR 0080).
         "da2a396c379d2cfef32c4d3b2c16160d534a83b2",
     "services/gateway/telegram/src/telegram_gateway/case_experience_runtime.py":
-        # Independently reviewed clinical opt-in; default/personal stay inert (ADR 0091).
-        "6c7145f1a2a29d39a8cafa89d2dd15a5416729cf",
+        # Reviewed atomic full-intake switch; absent/0 stays inert (ADR 0091).
+        "39dbc70fc1009d73808c8e14e061081577959a94",
     "services/legal_core/src/legal_core/main.py":
         # Reviewed owner-approved clinic preparation wiring; personal remains inert (ADR 0091).
         "a37582ab864227bdcccae17b6a21acb99b385c14",
     # Separately reviewed clinical automation pause; no personal surface change (ADR 0064).
-    "docker-compose.yml": "c50d5c9ccd748eebed9bf2240489c898c1c0b5ef",
+    # Reviewed Gateway-only intake flag pass-through; defaults off (ADR 0091).
+    "docker-compose.yml": "9ace2c7b92db76cf03cb4f158d29ed9309e1ffa9",
     "ops/deploy/docker-compose.production.yml": "9d07d50c67787a0da7a13fcfc49907d550298b83",
 }
 
