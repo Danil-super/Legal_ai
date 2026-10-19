@@ -215,7 +215,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, 3, 4, 5]
     # The first build compiles the pinned MinIO security release from source.
     timeout-minutes: 30
     services:
@@ -309,7 +309,7 @@ jobs:
           SHARD_INDEX: ${{ matrix.shard }}
         # Every configured test file runs once; each runner owns its own PG/MinIO services.
         # Keep the existing process deadline and all application/parser/network limits.
-        run: timeout 180s python ops/ci/run_integration_shard.py --index "$SHARD_INDEX" --count 3
+        run: timeout 180s python ops/ci/run_integration_shard.py --index "$SHARD_INDEX" --count 6
 
   postgres-integration:
     runs-on: ubuntu-latest
