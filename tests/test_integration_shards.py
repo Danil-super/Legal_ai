@@ -62,20 +62,23 @@ def test_explicit_python_files_configuration_is_respected(project):
     assert select_files(project, 0, 1) == ["core/tests/test_first.py"]
 
 
-def test_entry_executes_pytest_for_the_complete_shard_without_selective_filters(monkeypatch):
+@pytest.mark.parametrize("count", [3, 6])
+def test_entry_executes_pytest_for_the_complete_shard_without_selective_filters(monkeypatch, count):
     calls = []
     monkeypatch.setattr("ops.ci.run_integration_shard.os.execv",
                         lambda executable, args: calls.append((executable, args)))
-    main(["--index", "1", "--count", "3"])
+    main(["--index", "1", "--count", str(count)])
     assert len(calls) == 1 and calls[0][0] == sys.executable
     assert calls[0][1][:4] == [sys.executable, "-m", "pytest", "-vv"]
-    assert calls[0][1][4:] == select_files(Path(__file__).resolve().parents[1], 1, 3)
+    assert calls[0][1][4:] == select_files(Path(__file__).resolve().parents[1], 1, count)
 
 
-def test_real_suite_roots_are_all_in_the_combined_partition():
+@pytest.mark.parametrize("count", [3, 6])
+def test_real_suite_roots_are_all_in_the_combined_partition(count):
     root = Path(__file__).resolve().parents[1]
-    files = [name for index in range(3) for name in select_files(root, index, 3)]
+    files = [name for index in range(count) for name in select_files(root, index, count)]
     assert len(files) == len(set(files))
+    assert sorted(files) == sorted(select_files(root, 0, 1))
     assert {name.split("/tests/")[0] for name in files if "/tests/" in name} == {
         "services/legal_core", "services/gateway/telegram", "services/agent_orchestrator",
     }
