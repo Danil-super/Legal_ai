@@ -44,7 +44,10 @@ CONTINUING_TREATMENT, HELD_MEDICAL_COMMISSION, OFFERED_CORRECTION, OFFERED_REFUN
 REMOVED_MATERIAL, TERMINATED_CONTRACT, SIGNED_AGREEMENT, OTHER; healthSignals list of
 NO_KNOWN_INFORMATION, COMPLICATION_OR_WORSENING, OTHER_CLINIC, HOSPITALIZATION,
 OTHER_CONSEQUENCE, UNKNOWN. NOTHING_YET, NO_KNOWN_INFORMATION and UNKNOWN are exclusive.
-Safety signals YES, NO, UNKNOWN; amount only {amountKopecks:positive integer,currency:RUB}
+For safetyScreening questions other than amount, value is exactly the scalar string
+YES, NO or UNKNOWN, never an object keyed by screeningField or safetyScreening.
+For example, answer 'Нет' yields value:"NO", not value:{"healthDeteriorationReported":"NO"}.
+For UNRESOLVED, value remains null. Amount only {amountKopecks:positive integer,currency:RUB}
 or UNKNOWN, never rubles in the integer field. SERVICE_PAYMENT_BASIS PAID,
 PUBLICLY_COVERED, OTHER, UNKNOWN; SERVICE_PROVIDED_DATE uses the date object above;
 RESPONSE_PURPOSE RECEIVE_AND_EXPLAIN, ANSWER_REQUEST, OTHER, UNKNOWN.
@@ -111,10 +114,17 @@ class AnswerUnderstanding:
         except (ValueError, TypeError, AttributeError):
             pass
         else:
+            schema = AnswerInterpretation.model_json_schema(by_alias=True)
+            if question.target_field == "safetyScreening" and question.screening_field != "amount":
+                # The wire value is generic JSON across question families. Give the model
+                # the narrower current-question shape; runtime validation stays unchanged.
+                schema["properties"]["value"] = {"anyOf": [
+                    {"type": "string", "enum": ["YES", "NO", "UNKNOWN"]},
+                    {"type": "null"},
+                ]}
             raw = await _complete(
                 self._researcher,
-                system=_SYSTEM + json.dumps(AnswerInterpretation.model_json_schema(by_alias=True),
-                                            ensure_ascii=False, sort_keys=True),
+                system=_SYSTEM + json.dumps(schema, ensure_ascii=False, sort_keys=True),
                 user=json.dumps({"answer": source, "question": question.model_dump(
                     mode="json", by_alias=True), "confirmedContext": context,
                     "asOfDate": as_of_date.isoformat()}, ensure_ascii=False, allow_nan=False),

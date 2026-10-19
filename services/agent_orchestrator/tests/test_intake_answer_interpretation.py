@@ -14,6 +14,7 @@ from agent_orchestrator.hermes_client import (
     HermesUnavailable,
 )
 from agent_orchestrator.intake_answer_interpretation import AnswerUnderstanding
+from legal_core.factual_safety_intake import SCREENING_FIELDS, SCREENING_VERSION
 from legal_core.intake_answer_contracts import (
     AnswerInterpretation,
     AnswerQuestion,
@@ -91,6 +92,44 @@ def test_one_existing_profile_interprets_only_current_question(state, source, va
 def test_explicit_unknown_and_negative_are_attempts_not_abstention(value, source):
     result = run_model(source, proposed(source, value), state="SAFETY")
     assert result.status == "PROPOSED" and result.value == value
+
+
+@pytest.mark.parametrize("field", SCREENING_FIELDS)
+@pytest.mark.parametrize("value,source", [("NO", "Нет"), ("YES", "Да"),
+                                         ("UNKNOWN", "Не знаю"), (None, "Как писал выше")])
+def test_screening_prompt_requires_one_scalar_not_a_nested_screening_object(field, value, source):
+    calls = []
+    data = DATA | {"safetyScreening": {"schemaVersion": SCREENING_VERSION,
+        **{name: "NO" for name in SCREENING_FIELDS[:SCREENING_FIELDS.index(field)]}}}
+    result = run_model(source, unresolved() if value is None else proposed(source, value),
+                       state="SAFETY", data=data, calls=calls)
+    schema = json.loads(calls[0]["messages"][0]["content"].split("JSON Schema:\n", 1)[1])
+    assert schema["properties"]["value"] == {
+        "anyOf": [{"type": "string", "enum": ["YES", "NO", "UNKNOWN"]}, {"type": "null"}],
+    }
+    assert result.value == value
+
+
+def test_nested_screening_response_is_rejected_not_silently_unwrapped():
+    with pytest.raises(HermesProtocolError):
+        run_model("Нет", proposed("Нет", {"healthDeteriorationReported": "NO"}),
+                  state="SAFETY")
+
+
+def test_screening_scalar_schema_does_not_change_amount_or_other_question_families():
+    run_model("Нет", proposed("Нет", "NO"), state="SAFETY")
+    screening = {"schemaVersion": SCREENING_VERSION,
+                 **{field: "NO" for field in SCREENING_FIELDS}, "moneyRequested": "YES"}
+    for state, source, value, data in [
+        ("SAFETY", "1 рубль", {"amountKopecks": 100, "currency": "RUB"},
+         DATA | {"safetyScreening": screening}),
+        ("INCOMING", "Это претензия", "FORMAL_DOCUMENT", DATA),
+    ]:
+        calls = []
+        result = run_model(source, proposed(source, value), state=state, data=data, calls=calls)
+        schema = json.loads(calls[0]["messages"][0]["content"].split("JSON Schema:\n", 1)[1])
+        assert schema == AnswerInterpretation.model_json_schema(by_alias=True)
+        assert result.value == value
 
 
 @pytest.mark.parametrize("reason", ["AMBIGUOUS", "CONTRADICTS_CONFIRMED", "OFF_QUESTION"])
