@@ -566,7 +566,9 @@ def test_migration_scrubs_historical_orphan_replies_without_removing_receipts():
                 "SELECT response_json IS NOT NULL FROM idempotency_records "
                 "WHERE resource_type='TELEGRAM_INTAKE_DRAFT' AND resource_id=:id"
             ), {"id": draft["id"]}).scalar_one()
-        command.upgrade(config, "head")
+        # Exercise this historical backfill, not unrelated later schema expansions.
+        # Keep the strict metadata comparison below; finally restores current head.
+        command.upgrade(config, "c4a0c3f6e852")
         with engine.connect() as connection:
             metadata, reply = connection.execute(text(
                 "SELECT to_jsonb(i) - 'response_json', response_json "

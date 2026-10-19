@@ -1,0 +1,502 @@
+"""Durable early understanding; all transactions end before optional model I/O."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
+from uuid import UUID, uuid4
+
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from legal_core.analysis_safe_stop import require_analysis_running
+from legal_core.case_api import (
+    CASE_INTAKE_ROLES,
+    ActorContext,
+    ApiError,
+    _audit,
+    _canonical_hash,
+    resolve_actor,
+)
+from legal_core.case_preparation_contracts import DraftPreparationIntent
+from legal_core.intake_preparation_contracts import (
+    AcceptUnderstandingRequest,
+    DraftSuggestions,
+    IntakeUnderstandingContext,
+    UnderstandingAcceptance,
+    UnderstandingSource,
+)
+from legal_core.models import (
+    AuditEvent,
+    IdempotencyRecord,
+    SubscriptionEntitlement,
+    TelegramIntakeDraft,
+)
+from legal_core.pseudonymization import contains_obvious_direct_identifier, pseudonymize_text
+
+OperationKind = Literal["UNDERSTAND_INTAKE", "INTERPRET_ANSWER"]
+RESOURCE_TYPE = "INTAKE_PREPARATION"
+LEASE_DURATION = timedelta(seconds=180)
+
+
+@dataclass(frozen=True)
+class PreparationOperation:
+    operation_id: UUID
+    state: Literal["PENDING", "PROPOSED", "MANUAL_CONTINUATION", "ACCEPTED"]
+    lease_token: UUID | None = None
+    suggestions: DraftSuggestions | None = None
+    intent: DraftPreparationIntent | None = None  # Private dispatch metadata, never a public DTO.
+    source: UnderstandingSource | None = None
+    acceptance: UnderstandingAcceptance | None = None
+
+
+async def _draft(
+    session: AsyncSession, actor: ActorContext, draft_id: UUID,
+) -> TelegramIntakeDraft:
+    if actor.role not in CASE_INTAKE_ROLES:
+        raise ApiError(status_code=403, code="CASE_INTAKE_NOT_ALLOWED",
+                       message="Intake not allowed")
+    draft = await session.scalar(select(TelegramIntakeDraft).where(
+        TelegramIntakeDraft.id == draft_id, TelegramIntakeDraft.clinic_id == actor.clinic_id,
+        TelegramIntakeDraft.actor_membership_id == actor.membership_id,
+        TelegramIntakeDraft.status == "DRAFT",
+    ).with_for_update())
+    if draft is None:
+        raise ApiError(status_code=404, code="INTAKE_DRAFT_NOT_FOUND", message="Draft not found")
+    if draft.purge_after <= datetime.now(UTC):
+        raise ApiError(status_code=410, code="INTAKE_DRAFT_EXPIRED", message="Draft expired")
+    return draft
+
+
+def _intent(actor: ActorContext, draft: TelegramIntakeDraft, kind: OperationKind
+            ) -> DraftPreparationIntent:
+    return DraftPreparationIntent(
+        clinicId=actor.clinic_id, actorMembershipId=actor.membership_id,
+        draftId=draft.id, draftRevision=draft.revision, operationKind=kind,
+        inputSha256=_canonical_hash({
+            "draftData": draft.draft_json, "wizardState": draft.wizard_state,
+        }),
+    )
+
+
+def _source(draft: TelegramIntakeDraft) -> str:
+    source = draft.draft_json.get("eventSummary")
+    if (
+        draft.draft_json.get("intakeVersion") != 2 or not isinstance(source, str)
+        or not 10 <= len(source) <= 1500 or contains_obvious_direct_identifier(source)
+    ):
+        raise ApiError(status_code=422, code="UNDERSTANDING_INPUT_INVALID",
+                       message="A bounded de-identified v2 description is required")
+    return source
+
+
+def _result(record: IdempotencyRecord) -> PreparationOperation:
+    if record.state == "IN_PROGRESS":
+        if record.lease_until is not None and record.lease_until > datetime.now(UTC):
+            return PreparationOperation(record.id, "PENDING")
+        record.state, record.lease_token, record.lease_until = "FAILED", None, None
+    if record.state == "SUCCEEDED" and record.response_json is not None:
+        return PreparationOperation(record.id, "PROPOSED",
+                                    suggestions=DraftSuggestions.model_validate(
+                                        record.response_json["suggestions"],
+                                    ))
+    return PreparationOperation(record.id, "MANUAL_CONTINUATION")
+
+
+def _proposal_metadata(intent: DraftPreparationIntent, suggestions: DraftSuggestions
+                       ) -> dict[str, object]:
+    payload = {key: value for key, value in suggestions.model_dump(
+        mode="json", by_alias=True,
+    ).items() if value is not None}
+    return {
+        "draftId": str(intent.draft_id), "revision": intent.draft_revision,
+        "inputSha256": intent.input_sha256, "intentSha256": intent.request_sha256,
+        "proposalSha256": _canonical_hash(payload), "fieldCount": len(suggestions.source_spans),
+    }
+
+
+async def _checked_result(
+    session: AsyncSession, actor: ActorContext, draft: TelegramIntakeDraft,
+    record: IdempotencyRecord,
+) -> PreparationOperation:
+    invalid = False
+    try:
+        result = _result(record)
+        if result.suggestions is None:
+            return result
+        intent = _validate_binding(actor, draft, record)
+        result.suggestions.validate_source(_source(draft))
+        metadata = _proposal_metadata(intent, result.suggestions)
+    except (KeyError, TypeError, ValueError):
+        invalid = True
+    # Do not attach raw validation input to an externally visible error chain.
+    if invalid:
+        raise ApiError(status_code=409, code="PREPARATION_PROPOSAL_INVALID",
+                       message="Proposal is not valid")
+    receipts = (await session.scalars(select(AuditEvent.metadata_json).where(
+        AuditEvent.clinic_id == actor.clinic_id,
+        AuditEvent.actor_membership_id == actor.membership_id,
+        AuditEvent.resource_type == RESOURCE_TYPE, AuditEvent.resource_id == record.id,
+        AuditEvent.action == "INTAKE_PREPARATION_PROPOSED",
+    ))).all()
+    if len(receipts) != 1 or receipts[0] != metadata:
+        raise ApiError(status_code=409, code="PREPARATION_PROPOSAL_INVALID",
+                       message="Proposal binding is not valid")
+    return PreparationOperation(record.id, "PROPOSED", suggestions=result.suggestions,
+                                source=UnderstandingSource(
+                                    draftId=draft.id, draftRevision=draft.revision,
+                                    inputSha256=intent.input_sha256,
+                                    proposalSha256=str(metadata["proposalSha256"]),
+                                ))
+
+
+def _stored_intent(
+    actor: ActorContext, draft: TelegramIntakeDraft, record: IdempotencyRecord,
+) -> DraftPreparationIntent:
+    if record.response_json is None:
+        raise ApiError(status_code=410, code="PREPARATION_EXPIRED", message="Operation expired")
+    try:
+        intent = DraftPreparationIntent.model_validate(record.response_json["intent"])
+    except (KeyError, TypeError, ValueError):
+        intent = None
+    if intent is None:
+        raise ApiError(status_code=409, code="PREPARATION_INTENT_INVALID",
+                       message="Operation intent is not valid")
+    if (
+        intent.clinic_id != actor.clinic_id or intent.actor_membership_id != actor.membership_id
+        or intent.draft_id != draft.id or record.scope != intent.scope
+        or record.key != str(intent.idempotency_key)
+        or record.request_sha256 != intent.request_sha256
+        or record.resource_id != draft.id or record.resource_type != RESOURCE_TYPE
+    ):
+        raise ApiError(status_code=409, code="PREPARATION_INPUT_STALE", message="Draft has changed")
+    return intent
+
+
+def _validate_binding(
+    actor: ActorContext, draft: TelegramIntakeDraft, record: IdempotencyRecord,
+) -> DraftPreparationIntent:
+    intent = _stored_intent(actor, draft, record)
+    if intent != _intent(actor, draft, intent.operation_kind):
+        raise ApiError(status_code=409, code="PREPARATION_INPUT_STALE", message="Draft has changed")
+    return intent
+
+
+async def _acceptance_receipt(
+    session: AsyncSession, actor: ActorContext, draft: TelegramIntakeDraft,
+    record: IdempotencyRecord,
+) -> dict[str, Any] | None:
+    """Receipt replay precedes source freshness, but never current authorization."""
+    intent = _stored_intent(actor, draft, record)
+    receipt = (record.response_json or {}).get("acceptance")
+    if receipt is None:
+        return None
+    valid = False
+    try:
+        proposal = DraftSuggestions.model_validate((record.response_json or {})["suggestions"])
+        metadata = _proposal_metadata(intent, proposal)
+        request = AcceptUnderstandingRequest(
+            expectedRevision=intent.draft_revision, expectedInputSha256=intent.input_sha256,
+            expectedProposalSha256=str(metadata["proposalSha256"]),
+        )
+        valid = (
+            isinstance(receipt, dict)
+            and set(receipt) == {"acceptedRevision", "requestSha256", "proposalSha256",
+                                 "outputSha256"}
+            and type(receipt["acceptedRevision"]) is int
+            and receipt["acceptedRevision"] == intent.draft_revision + 1
+            and draft.revision >= receipt["acceptedRevision"]
+            and record.state == "SUCCEEDED" and record.lease_token is None
+            and record.lease_until is None and intent.operation_kind == "UNDERSTAND_INTAKE"
+            and receipt["proposalSha256"] == metadata["proposalSha256"]
+            and receipt["requestSha256"] == _canonical_hash(request.model_dump(
+                mode="json", by_alias=True,
+            ))
+            and isinstance(receipt["outputSha256"], str)
+            and len(receipt["outputSha256"]) == 64
+        )
+    except (KeyError, TypeError, ValueError):
+        valid = False
+    if valid:
+        expected = {**metadata, **receipt}
+        audits = (await session.scalars(select(AuditEvent.metadata_json).where(
+            AuditEvent.clinic_id == actor.clinic_id,
+            AuditEvent.actor_membership_id == actor.membership_id,
+            AuditEvent.resource_type == RESOURCE_TYPE, AuditEvent.resource_id == record.id,
+            AuditEvent.action == "INTAKE_PREPARATION_ACCEPTED",
+        ))).all()
+        valid = len(audits) == 1 and audits[0] == expected
+    if not valid:
+        raise ApiError(status_code=409, code="PREPARATION_ACCEPTANCE_INVALID",
+                       message="Acceptance binding is not valid")
+    return dict(receipt)
+
+
+async def _recheck_after_locks(
+    session: AsyncSession, telegram_user_id: int, actor: ActorContext, draft: TelegramIntakeDraft,
+) -> None:
+    if await resolve_actor(session, telegram_user_id) != actor:
+        raise ApiError(
+            status_code=403, code="ACTOR_CONTEXT_CHANGED", message="Actor access changed",
+        )
+    # now() is the transaction start; a blocked lock may outlive the entitlement.
+    entitlement = await session.scalar(select(SubscriptionEntitlement.id).where(
+        SubscriptionEntitlement.clinic_id == actor.clinic_id,
+        SubscriptionEntitlement.user_id == actor.user_id,
+        SubscriptionEntitlement.status == "ACTIVE",
+        SubscriptionEntitlement.starts_at <= func.clock_timestamp(),
+        (SubscriptionEntitlement.ends_at.is_(None))
+        | (SubscriptionEntitlement.ends_at > func.clock_timestamp()),
+    ))
+    if entitlement is None:
+        raise ApiError(status_code=403, code="SUBSCRIPTION_INACTIVE", message="Access is inactive")
+    if draft.purge_after <= datetime.now(UTC):
+        raise ApiError(status_code=410, code="INTAKE_DRAFT_EXPIRED", message="Draft expired")
+
+
+async def _locked_owned_operation(
+    session: AsyncSession, telegram_user_id: int, operation_id: UUID,
+) -> tuple[ActorContext, TelegramIntakeDraft, IdempotencyRecord]:
+    actor = await resolve_actor(session, telegram_user_id)
+    criteria = (
+        IdempotencyRecord.id == operation_id, IdempotencyRecord.clinic_id == actor.clinic_id,
+        IdempotencyRecord.actor_membership_id == actor.membership_id,
+        IdempotencyRecord.resource_type == RESOURCE_TYPE,
+    )
+    resource_id = await session.scalar(select(IdempotencyRecord.resource_id).where(*criteria))
+    if resource_id is None:
+        raise ApiError(status_code=404, code="PREPARATION_NOT_FOUND", message="Operation not found")
+    # Same lock order as reservation: draft first, then operation. No lock crosses model I/O.
+    draft = await _draft(session, actor, resource_id)
+    record = await session.scalar(select(IdempotencyRecord).where(*criteria).with_for_update()
+                                  .execution_options(populate_existing=True))
+    if record is None:
+        raise ApiError(status_code=410, code="PREPARATION_EXPIRED", message="Operation expired")
+    await _recheck_after_locks(session, telegram_user_id, actor, draft)
+    return actor, draft, record
+
+
+async def _owned_operation(
+    session: AsyncSession, telegram_user_id: int, operation_id: UUID,
+) -> tuple[ActorContext, TelegramIntakeDraft, IdempotencyRecord]:
+    actor, draft, record = await _locked_owned_operation(session, telegram_user_id, operation_id)
+    _validate_binding(actor, draft, record)
+    return actor, draft, record
+
+
+async def reserve_preparation(
+    sessions: async_sessionmaker[AsyncSession], *, telegram_user_id: int,
+    draft_id: UUID, expected_revision: int, operation_kind: OperationKind,
+) -> PreparationOperation:
+    async with sessions() as session:
+        actor = await resolve_actor(session, telegram_user_id)
+        draft = await _draft(session, actor, draft_id)
+        if draft.revision != expected_revision or type(expected_revision) is not int:
+            raise ApiError(status_code=409, code="INTAKE_DRAFT_REVISION_CONFLICT",
+                           message="Draft revision has changed")
+        _source(draft)
+        intent = _intent(actor, draft, operation_kind)
+        record_id, token = uuid4(), uuid4()
+        inserted = await session.scalar(insert(IdempotencyRecord).values(
+            id=record_id, clinic_id=actor.clinic_id, actor_membership_id=actor.membership_id,
+            scope=intent.scope, key=str(intent.idempotency_key),
+            request_sha256=intent.request_sha256,
+            resource_type=RESOURCE_TYPE, resource_id=draft.id, state="IN_PROGRESS",
+            lease_token=token, lease_until=datetime.now(UTC) + LEASE_DURATION,
+            response_json={"intent": intent.model_dump(mode="json", by_alias=True),
+                           "suggestions": None},
+        ).on_conflict_do_nothing(index_elements=[
+            "scope", "actor_membership_id", "key",
+        ]).returning(IdempotencyRecord.id))
+        record = await session.scalar(select(IdempotencyRecord).where(
+            IdempotencyRecord.clinic_id == actor.clinic_id,
+            IdempotencyRecord.actor_membership_id == actor.membership_id,
+            IdempotencyRecord.scope == intent.scope,
+            IdempotencyRecord.key == str(intent.idempotency_key),
+        ).with_for_update())
+        if record is None or record.request_sha256 != intent.request_sha256:
+            raise ApiError(status_code=409, code="PREPARATION_INTENT_CONFLICT",
+                           message="Operation intent conflict")
+        _validate_binding(actor, draft, record)
+        await _recheck_after_locks(session, telegram_user_id, actor, draft)
+        result = await _checked_result(session, actor, draft, record)
+        if inserted is not None:
+            result = PreparationOperation(record.id, "PENDING", lease_token=token, intent=intent)
+            session.add(_audit(actor=actor, action="INTAKE_PREPARATION_RESERVED",
+                               resource_type=RESOURCE_TYPE, resource_id=record.id,
+                               metadata={"revision": draft.revision, "kind": operation_kind}))
+        await session.commit()
+        return result
+
+
+async def read_preparation(
+    sessions: async_sessionmaker[AsyncSession], *, telegram_user_id: int, operation_id: UUID,
+) -> PreparationOperation:
+    async with sessions() as session:
+        actor, draft, record = await _locked_owned_operation(
+            session, telegram_user_id, operation_id,
+        )
+        receipt = await _acceptance_receipt(session, actor, draft, record)
+        if receipt is not None:
+            return PreparationOperation(record.id, "ACCEPTED", acceptance=UnderstandingAcceptance(
+                draftId=draft.id, acceptedRevision=int(receipt["acceptedRevision"]),
+            ))
+        _validate_binding(actor, draft, record)
+        result = await _checked_result(session, actor, draft, record)
+        await session.commit()
+        return result
+
+
+async def discover_preparation(
+    sessions: async_sessionmaker[AsyncSession], *, telegram_user_id: int, draft_id: UUID,
+) -> PreparationOperation | None:
+    """Read the exact current intent without reserving, claiming or dispatching."""
+    async with sessions() as session:
+        actor = await resolve_actor(session, telegram_user_id)
+        draft = await _draft(session, actor, draft_id)
+        await _recheck_after_locks(session, telegram_user_id, actor, draft)
+        _source(draft)
+        intent = _intent(actor, draft, "UNDERSTAND_INTAKE")
+        record = await session.scalar(select(IdempotencyRecord).where(
+            IdempotencyRecord.clinic_id == actor.clinic_id,
+            IdempotencyRecord.actor_membership_id == actor.membership_id,
+            IdempotencyRecord.scope == intent.scope,
+            IdempotencyRecord.key == str(intent.idempotency_key),
+            IdempotencyRecord.resource_type == RESOURCE_TYPE,
+            IdempotencyRecord.resource_id == draft.id,
+        ).with_for_update().execution_options(populate_existing=True))
+        # The operation lock can wait independently of the already held draft.
+        # Reauthorize after the LAST wait, including the no-operation read path.
+        await _recheck_after_locks(session, telegram_user_id, actor, draft)
+        if record is None:
+            return None
+        _validate_binding(actor, draft, record)
+        result = await _checked_result(session, actor, draft, record)
+        await session.commit()
+        return result
+
+
+async def read_understanding_context(
+    sessions: async_sessionmaker[AsyncSession], *, telegram_user_id: int, operation_id: UUID,
+    lease_token: UUID, expected_revision: int, expected_input_sha256: str,
+) -> IntakeUnderstandingContext:
+    """Release only a current owned source; finish the transaction before model I/O."""
+    require_analysis_running()
+    async with sessions() as session:
+        actor, draft, record = await _owned_operation(session, telegram_user_id, operation_id)
+        intent = _validate_binding(actor, draft, record)
+        if intent.operation_kind != "UNDERSTAND_INTAKE":
+            raise ApiError(status_code=409, code="PREPARATION_KIND_UNSUPPORTED",
+                           message="Operation does not support initial understanding")
+        if (
+            type(expected_revision) is not int or expected_revision != draft.revision
+            or expected_input_sha256 != intent.input_sha256
+        ):
+            raise ApiError(status_code=409, code="PREPARATION_INPUT_STALE",
+                           message="Draft binding does not match")
+        if (
+            record.state != "IN_PROGRESS" or record.lease_token != lease_token
+            or record.lease_until is None or record.lease_until <= datetime.now(UTC)
+        ):
+            raise ApiError(status_code=409, code="PREPARATION_LEASE_EXPIRED",
+                           message="Operation lease is no longer current")
+        require_analysis_running()
+        source = _source(draft)
+        # Do not redact here: changing the source would invalidate proposal offsets.
+        if pseudonymize_text(source).changed:
+            raise ApiError(status_code=422, code="UNDERSTANDING_INPUT_INVALID",
+                           message="A bounded de-identified v2 description is required")
+        result = IntakeUnderstandingContext(
+            operationId=record.id, draftId=draft.id, draftRevision=draft.revision,
+            inputSha256=intent.input_sha256, operationKind="UNDERSTAND_INTAKE", source=source,
+        )
+        session.add(_audit(actor=actor, action="INTAKE_PREPARATION_CONTEXT_READ",
+                           resource_type=RESOURCE_TYPE, resource_id=record.id,
+                           metadata={"revision": draft.revision}))
+        await session.commit()
+        return result
+
+
+async def complete_preparation(
+    sessions: async_sessionmaker[AsyncSession], *, telegram_user_id: int, operation_id: UUID,
+    lease_token: UUID, suggestions: DraftSuggestions,
+) -> PreparationOperation:
+    async with sessions() as session:
+        actor, draft, record = await _owned_operation(session, telegram_user_id, operation_id)
+        if (
+            record.state != "IN_PROGRESS" or record.lease_token != lease_token
+            or record.lease_until is None or record.lease_until <= datetime.now(UTC)
+        ):
+            raise ApiError(status_code=409, code="PREPARATION_LEASE_EXPIRED",
+                           message="Operation lease is no longer current")
+        # Python-mode reparsing preserves strict bool/int distinctions before JSON serialization.
+        checked = DraftSuggestions.model_validate(suggestions.model_dump(by_alias=True))
+        checked.validate_source(_source(draft))
+        record.response_json = {
+            "intent": _intent(actor, draft, DraftPreparationIntent.model_validate(
+                (record.response_json or {})["intent"],
+            ).operation_kind).model_dump(mode="json", by_alias=True),
+            # Omit absent proposals, not mandatory nested date:null for UNKNOWN.
+            "suggestions": {
+                key: value for key, value in checked.model_dump(mode="json", by_alias=True).items()
+                if value is not None
+            },
+        }
+        record.state, record.lease_token, record.lease_until = "SUCCEEDED", None, None
+        session.add(_audit(actor=actor, action="INTAKE_PREPARATION_PROPOSED",
+                           resource_type=RESOURCE_TYPE, resource_id=record.id,
+                           metadata=_proposal_metadata(_validate_binding(actor, draft, record),
+                                                       checked)))
+        await session.flush()
+        result = await _checked_result(session, actor, draft, record)
+        await session.commit()
+        return result
+
+
+async def cancel_preparation(
+    sessions: async_sessionmaker[AsyncSession], *, telegram_user_id: int, operation_id: UUID,
+) -> PreparationOperation:
+    """Owner-only durable fence; no private lease and no draft deletion required."""
+    async with sessions() as session:
+        actor, draft, record = await _locked_owned_operation(
+            session, telegram_user_id, operation_id,
+        )
+        if await _acceptance_receipt(session, actor, draft, record) is not None:
+            raise ApiError(status_code=409, code="PREPARATION_ALREADY_ACCEPTED",
+                           message="Confirmed facts cannot be cancelled")
+        _validate_binding(actor, draft, record)
+        if record.state != "FAILED":
+            record.state, record.lease_token, record.lease_until = "FAILED", None, None
+            record.response_json = {**(record.response_json or {}), "suggestions": None}
+            session.add(_audit(actor=actor, action="INTAKE_PREPARATION_CANCELLED",
+                               resource_type=RESOURCE_TYPE, resource_id=record.id,
+                               metadata={}))
+        await session.commit()
+        return PreparationOperation(record.id, "MANUAL_CONTINUATION")
+
+
+async def fail_preparation(
+    sessions: async_sessionmaker[AsyncSession], *, telegram_user_id: int, operation_id: UUID,
+    lease_token: UUID, reason_code: Literal[
+        "MODEL_TIMEOUT", "MODEL_UNAVAILABLE", "MODEL_PROTOCOL_INVALID",
+    ],
+) -> PreparationOperation:
+    async with sessions() as session:
+        actor, _, record = await _owned_operation(session, telegram_user_id, operation_id)
+        if reason_code not in {"MODEL_TIMEOUT", "MODEL_UNAVAILABLE", "MODEL_PROTOCOL_INVALID"}:
+            raise ValueError("unsupported preparation failure reason")
+        if (
+            record.state != "IN_PROGRESS" or record.lease_token != lease_token
+            or record.lease_until is None or record.lease_until <= datetime.now(UTC)
+        ):
+            raise ApiError(status_code=409, code="PREPARATION_LEASE_EXPIRED",
+                           message="Operation lease is no longer current")
+        record.state, record.lease_token, record.lease_until = "FAILED", None, None
+        session.add(_audit(actor=actor, action="INTAKE_PREPARATION_MANUAL",
+                           resource_type=RESOURCE_TYPE, resource_id=record.id,
+                           metadata={"reasonCode": reason_code}))
+        result = _result(record)
+        await session.commit()
+        return result

@@ -7,11 +7,35 @@ from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 
-from legal_core.analysis_clarifications import (
-    AnalysisClarificationAnswers,
-    ClarificationRequestBatch,
+from legal_core.analysis_clarifications import AnalysisClarificationAnswers
+from legal_core.contracts import (
+    CaseResponse as CaseResponse,
 )
-from legal_core.contracts import CaseStatus, ContractModel, FactKey, MissingFact
+from legal_core.contracts import (
+    CaseStatus,
+    ContractModel,
+    FactKey,
+    MissingFact,
+    validate_intake_draft_data,
+)
+from legal_core.contracts import (
+    CorrectionSource as CorrectionSource,
+)
+from legal_core.contracts import (
+    LegalFragmentResponse as LegalFragmentResponse,
+)
+from legal_core.contracts import (
+    ReportResponse as ReportResponse,
+)
+from legal_core.contracts import (
+    TelegramPreparationReceipt as TelegramPreparationReceipt,
+)
+from legal_core.contracts import (
+    TelegramWorkflowReceipt as TelegramWorkflowReceipt,
+)
+from legal_core.contracts import (
+    TelegramWorkflowResponse as TelegramWorkflowResponse,
+)
 from legal_core.factual_safety_intake import FactualSafetyScreening
 from legal_core.material_preparation import MaterialGroup, MaterialKind, PreparedPart
 from legal_core.review_material_groups import ReviewGroup
@@ -69,51 +93,6 @@ _ENUM_FACT_KEYS = frozenset(
 _DOCUMENT_STATUSES = frozenset({"AVAILABLE", "MISSING", "UNKNOWN", "REQUESTED", "NOT_APPLICABLE"})
 _DOCUMENT_KEYS = frozenset({"CONTRACT", "MEDICAL_RECORD", "INFORMED_CONSENT", "GUARANTEE"})
 _SIGNAL_STATES = frozenset({"YES", "NO", "UNKNOWN"})
-_V1_DRAFT_DATA_KEYS = frozenset(
-    {
-        "incident_type",
-        "service_type",
-        "service_date",
-        "incident_date",
-        "claim_date",
-        "problem_summary",
-        "patient_demand",
-        "demand_amount_kopecks",
-        "formal_claim",
-        "claim_received_at",
-        "response_deadline",
-        "harm_claimed",
-        "hospitalization",
-        "lawyer_contact",
-        "representative_authority",
-        "regulator_or_court",
-        "authority_kind",
-        "authority_document_date",
-        "regulator_threat",
-        "documents_status",
-    }
-)
-_V2_DRAFT_DATA_KEYS = frozenset(
-    {
-        "intakeVersion",
-        "incomingKind",
-        "incomingSourceStatus",
-        "situationAreas",
-        "affectedServices",
-        "eventSummary",
-        "eventDate",
-        "conflictStage",
-        "clinicActions",
-        "clinicActionsNote",
-        "healthSignals",
-        "caseMaterialsStatus",
-        "safetyScreening",
-        "analysisClarificationAnswers",
-        "analysisClarificationRequests",
-        "correctionSource",
-    }
-)
-_DRAFT_DATA_KEYS = _V1_DRAFT_DATA_KEYS | _V2_DRAFT_DATA_KEYS
 _V2_DRAFT_STATES = frozenset(
     {
         "INCOMING",
@@ -202,15 +181,6 @@ class CreateCaseRequest(ContractModel):
     channel: Literal["TELEGRAM"]
 
 
-class CaseResponse(ContractModel):
-    id: UUID
-    public_number: str = Field(alias="publicNumber")
-    status: CaseStatus
-    intake_schema_version: str = Field(alias="intakeSchemaVersion")
-    created_at: datetime = Field(alias="createdAt")
-    early_escalation_id: UUID | None = Field(default=None, alias="earlyEscalationId")
-
-
 ClinicRole = Literal["CLINIC_OWNER", "CLINIC_ADMIN", "CLINIC_LAWYER"]
 
 
@@ -280,24 +250,6 @@ class EscalationQueueResponse(ContractModel):
     next_before: UUID | None = Field(default=None, alias="nextBefore")
 
 
-class CorrectionSource(ContractModel):
-    case_id: UUID = Field(alias="caseId")
-    fact_snapshot_sha256: str = Field(alias="factSnapshotSha256", pattern=r"^[0-9a-f]{64}$")
-    report_id: UUID | None = Field(
-        default=None, alias="reportId", exclude_if=lambda value: value is None
-    )
-    report_sha256: str | None = Field(
-        default=None, alias="reportSha256", pattern=r"^[0-9a-f]{64}$",
-        exclude_if=lambda value: value is None,
-    )
-
-    @model_validator(mode="after")
-    def validate_report_binding(self) -> "CorrectionSource":
-        if (self.report_id is None) != (self.report_sha256 is None):
-            raise ValueError("reportId and reportSha256 must be provided together")
-        return self
-
-
 class TelegramIntakeDraftUpdateRequest(ContractModel):
     expected_revision: int = Field(alias="expectedRevision", ge=1)
     wizard_state: TelegramDraftWizardState = Field(alias="wizardState")
@@ -306,30 +258,7 @@ class TelegramIntakeDraftUpdateRequest(ContractModel):
     @field_validator("draft_data")
     @classmethod
     def validate_draft_data(cls, value: dict[str, Any]) -> dict[str, Any]:
-        if not set(value) <= _DRAFT_DATA_KEYS:
-            raise ValueError("draftData contains unsupported fields")
-        is_v2 = value.get("intakeVersion") == 2
-        allowed = _V2_DRAFT_DATA_KEYS if is_v2 else _V1_DRAFT_DATA_KEYS
-        if not set(value) <= allowed:
-            raise ValueError("draftData mixes incompatible intake versions")
-        if "intakeVersion" in value and not is_v2:
-            raise ValueError("draftData intakeVersion is invalid")
-        if "safetyScreening" in value:
-            from legal_core.factual_safety_intake import validate_partial_screening
-
-            validate_partial_screening(value["safetyScreening"])
-        if "correctionSource" in value:
-            CorrectionSource.model_validate(value["correctionSource"])
-        if "analysisClarificationAnswers" in value:
-            AnalysisClarificationAnswers.model_validate(value["analysisClarificationAnswers"])
-        if "analysisClarificationRequests" in value:
-            ClarificationRequestBatch.model_validate({
-                "requests": value["analysisClarificationRequests"]
-            })
-        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-        if len(encoded.encode()) > 16_384:
-            raise ValueError("draftData exceeds 16384 bytes")
-        return value
+        return validate_intake_draft_data(value)
 
     @model_validator(mode="after")
     def validate_versioned_state(self) -> "TelegramIntakeDraftUpdateRequest":
@@ -387,31 +316,6 @@ class PlatformSubscriptionGrantResponse(ContractModel):
     plan_code: Literal["MVP_MANUAL", "FREE_PILOT"] = Field(alias="planCode")
     status: Literal["ACTIVE"]
     ends_at: datetime | None = Field(alias="endsAt")
-
-
-class LegalFragmentResponse(ContractModel):
-    fragment_id: UUID = Field(alias="fragmentId")
-    version_id: UUID = Field(alias="versionId")
-    document_id: UUID = Field(alias="documentId")
-    article: str | None
-    part: str | None
-    point: str | None
-    structural_path: str = Field(alias="structuralPath")
-    fragment_text: str = Field(alias="fragmentText")
-    text_sha256: str = Field(alias="textSha256")
-    effective_from: date = Field(alias="effectiveFrom")
-    effective_to: date | None = Field(alias="effectiveTo")
-    source_url: str = Field(alias="sourceUrl")
-    raw_sha256: str = Field(alias="rawSha256")
-    document_title: str = Field(alias="documentTitle")
-    issuer: str | None
-    official_number: str | None = Field(alias="officialNumber")
-    version_date: date | None = Field(alias="versionDate")
-    publication_date: date | None = Field(alias="publicationDate")
-    date_basis: Literal["DATED_EDITION", "LAWYER_CURRENT_COPY"] = Field(
-        default="DATED_EDITION", alias="dateBasis"
-    )
-    extraction_limitations: list[str] = Field(default_factory=list, alias="extractionLimitations")
 
 
 class LegalFragmentSearchResponse(ContractModel):
@@ -894,8 +798,6 @@ class AddFactsRequest(ContractModel):
     @classmethod
     def fact_keys_are_unique(cls, facts: list[FactInput]) -> list[FactInput]:
         return _unique_fact_keys(facts)
-
-
 class IntakeResponse(ContractModel):
     case_id: UUID = Field(alias="caseId")
     status: CaseStatus
@@ -911,30 +813,35 @@ class CreateReportRequest(ContractModel):
     locale: Literal["ru-RU"] = "ru-RU"
 
 
-class ReportResponse(ContractModel):
-    id: UUID
-    case_id: UUID = Field(alias="caseId")
-    report_version: int = Field(alias="reportVersion")
-    report_json: dict[str, Any] = Field(alias="reportJson")
-    pdf_sha256: str = Field(alias="pdfSha256")
-    created_at: datetime = Field(alias="createdAt")
-
-
 class TelegramWorkflowSubmissionRequest(ContractModel):
     intake_schema_version: Literal["dental-case-intake.v1", "dental-case-intake.v2"] = Field(
         alias="intakeSchemaVersion"
     )
     locale: Literal["ru-RU"] = "ru-RU"
+    receipt_version: Literal[2] | None = Field(
+        default=None, alias="receiptVersion", exclude_if=lambda value: value is None,
+    )
     facts: list[FactInput] = Field(min_length=1, max_length=20)
+
+    @field_validator("receipt_version", mode="before")
+    @classmethod
+    def receipt_version_is_exact(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("receipt version must be an integer")
+        return value
+
+    @model_validator(mode="after")
+    def preparation_requires_guided_facts(self) -> "TelegramWorkflowSubmissionRequest":
+        if self.receipt_version == 2 and (
+            self.intake_schema_version != "dental-case-intake.v2" or not any(
+                fact.fact_key == FactKey.INTAKE_VERSION and fact.value == {"value": "GUIDED_V2"}
+                for fact in self.facts
+            )
+        ):
+            raise ValueError("preparation receipt requires guided v2 intake")
+        return self
 
     @field_validator("facts")
     @classmethod
     def fact_keys_are_unique(cls, facts: list[FactInput]) -> list[FactInput]:
         return _unique_fact_keys(facts)
-
-
-class TelegramWorkflowResponse(ContractModel):
-    workflow_id: UUID = Field(alias="workflowId")
-    state: Literal["SUCCEEDED"]
-    case: CaseResponse
-    report: ReportResponse

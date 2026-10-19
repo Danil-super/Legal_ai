@@ -1,5 +1,6 @@
 """Versioned public contracts for case intake and evidence-gated reports."""
 
+import json
 from datetime import date, datetime
 from enum import StrEnum
 from typing import Any, Literal
@@ -7,11 +8,88 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from legal_core.analysis_clarifications import ClarificationRequest, validate_unique_requests
+from legal_core.analysis_clarifications import (
+    AnalysisClarificationAnswers,
+    ClarificationRequest,
+    ClarificationRequestBatch,
+    validate_unique_requests,
+)
 
 
 class ContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+_V1_DRAFT_DATA_KEYS = frozenset({
+    "incident_type", "service_type", "service_date", "incident_date", "claim_date",
+    "problem_summary", "patient_demand", "demand_amount_kopecks", "formal_claim",
+    "claim_received_at", "response_deadline", "harm_claimed", "hospitalization",
+    "lawyer_contact", "representative_authority", "regulator_or_court", "authority_kind",
+    "authority_document_date", "regulator_threat", "documents_status",
+})
+_V2_DRAFT_DATA_KEYS = frozenset({
+    "intakeVersion", "incomingKind", "incomingSourceStatus", "situationAreas", "affectedServices",
+    "eventSummary", "eventDate", "conflictStage", "clinicActions", "clinicActionsNote",
+    "healthSignals", "caseMaterialsStatus", "safetyScreening", "analysisClarificationAnswers",
+    "analysisClarificationRequests", "correctionSource",
+})
+
+
+class CorrectionSource(ContractModel):
+    case_id: UUID = Field(alias="caseId")
+    fact_snapshot_sha256: str = Field(alias="factSnapshotSha256", pattern=r"^[0-9a-f]{64}$")
+    report_id: UUID | None = Field(
+        default=None, alias="reportId", exclude_if=lambda value: value is None,
+    )
+    report_sha256: str | None = Field(
+        default=None, alias="reportSha256", pattern=r"^[0-9a-f]{64}$",
+        exclude_if=lambda value: value is None,
+    )
+    operation_id: UUID | None = Field(
+        default=None, alias="operationId", exclude_if=lambda value: value is None,
+    )
+    operation_sha256: str | None = Field(
+        default=None, alias="operationSha256", pattern=r"^[0-9a-f]{64}$",
+        exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def validate_report_binding(self) -> "CorrectionSource":
+        if (self.report_id is None) != (self.report_sha256 is None):
+            raise ValueError("reportId and reportSha256 must be provided together")
+        if (self.operation_id is None) != (self.operation_sha256 is None):
+            raise ValueError("operationId and operationSha256 must be provided together")
+        if self.operation_id is not None and self.report_id is not None:
+            raise ValueError("operation and report origins are mutually exclusive")
+        return self
+
+
+def validate_intake_draft_data(value: dict[str, Any]) -> dict[str, Any]:
+    """Shared bounded partial-draft schema; not fact confirmation or authorization."""
+    if not set(value) <= _V1_DRAFT_DATA_KEYS | _V2_DRAFT_DATA_KEYS:
+        raise ValueError("draftData contains unsupported fields")
+    is_v2 = value.get("intakeVersion") == 2
+    allowed = _V2_DRAFT_DATA_KEYS if is_v2 else _V1_DRAFT_DATA_KEYS
+    if not set(value) <= allowed:
+        raise ValueError("draftData mixes incompatible intake versions")
+    if "intakeVersion" in value and not is_v2:
+        raise ValueError("draftData intakeVersion is invalid")
+    if "safetyScreening" in value:
+        from legal_core.factual_safety_intake import validate_partial_screening
+
+        validate_partial_screening(value["safetyScreening"])
+    if "correctionSource" in value:
+        CorrectionSource.model_validate(value["correctionSource"])
+    if "analysisClarificationAnswers" in value:
+        AnalysisClarificationAnswers.model_validate(value["analysisClarificationAnswers"])
+    if "analysisClarificationRequests" in value:
+        ClarificationRequestBatch.model_validate({
+            "requests": value["analysisClarificationRequests"],
+        })
+    encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if len(encoded.encode()) > 16_384:
+        raise ValueError("draftData exceeds 16384 bytes")
+    return value
 
 
 class CaseStatus(StrEnum):
@@ -26,6 +104,75 @@ class CaseStatus(StrEnum):
     CLOSED = "CLOSED"
     CANCELLED = "CANCELLED"
     CONTENT_PURGED = "CONTENT_PURGED"
+
+
+class CaseResponse(ContractModel):
+    id: UUID
+    public_number: str = Field(alias="publicNumber")
+    status: CaseStatus
+    intake_schema_version: str = Field(alias="intakeSchemaVersion")
+    created_at: datetime = Field(alias="createdAt")
+    early_escalation_id: UUID | None = Field(default=None, alias="earlyEscalationId")
+
+
+class ReportResponse(ContractModel):
+    id: UUID
+    case_id: UUID = Field(alias="caseId")
+    report_version: int = Field(alias="reportVersion")
+    report_json: dict[str, Any] = Field(alias="reportJson")
+    pdf_sha256: str = Field(alias="pdfSha256")
+    created_at: datetime = Field(alias="createdAt")
+
+
+class LegalFragmentResponse(ContractModel):
+    fragment_id: UUID = Field(alias="fragmentId")
+    version_id: UUID = Field(alias="versionId")
+    document_id: UUID = Field(alias="documentId")
+    article: str | None
+    part: str | None
+    point: str | None
+    structural_path: str = Field(alias="structuralPath")
+    fragment_text: str = Field(alias="fragmentText")
+    text_sha256: str = Field(alias="textSha256")
+    effective_from: date = Field(alias="effectiveFrom")
+    effective_to: date | None = Field(alias="effectiveTo")
+    source_url: str = Field(alias="sourceUrl")
+    raw_sha256: str = Field(alias="rawSha256")
+    document_title: str = Field(alias="documentTitle")
+    issuer: str | None
+    official_number: str | None = Field(alias="officialNumber")
+    version_date: date | None = Field(alias="versionDate")
+    publication_date: date | None = Field(alias="publicationDate")
+    date_basis: Literal["DATED_EDITION", "LAWYER_CURRENT_COPY"] = Field(
+        default="DATED_EDITION", alias="dateBasis"
+    )
+    extraction_limitations: list[str] = Field(default_factory=list, alias="extractionLimitations")
+
+
+class TelegramWorkflowResponse(ContractModel):
+    workflow_id: UUID = Field(alias="workflowId")
+    state: Literal["SUCCEEDED"]
+    case: CaseResponse
+    report: ReportResponse
+
+
+class TelegramPreparationReceipt(ContractModel):
+    """Confirmed intake receipt, deliberately without a report or PDF identity."""
+
+    receipt_version: Literal[2] = Field(alias="receiptVersion")
+    workflow_id: UUID = Field(alias="workflowId")
+    state: Literal["SUCCEEDED"]
+    case: CaseResponse
+
+    @field_validator("receipt_version", mode="before")
+    @classmethod
+    def exact_receipt_version(cls, value: object) -> object:
+        if type(value) is not int or value != 2:
+            raise ValueError("unsupported preparation receipt version")
+        return value
+
+
+TelegramWorkflowReceipt = TelegramWorkflowResponse | TelegramPreparationReceipt
 
 
 class FactKey(StrEnum):

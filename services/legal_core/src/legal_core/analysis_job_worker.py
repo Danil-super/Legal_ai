@@ -16,9 +16,16 @@ import httpx
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from legal_core.analysis_jobs import AnalysisJob, ClaimedJob, claim_job, job_result
+from legal_core.analysis_jobs import (
+    AnalysisJob,
+    ClaimedJob,
+    claim_job,
+    job_result,
+    require_job_lease,
+)
 from legal_core.analysis_safe_stop import analysis_safe_stop_active, require_analysis_running
 from legal_core.case_api import ApiError, _tenant_case, resolve_actor
+from legal_core.model_admission import ModelAdmission
 
 logger = logging.getLogger(__name__)
 
@@ -65,17 +72,22 @@ async def execute_job(
         stored = await session.get(AnalysisJob, job.id)
         if stored is not None and await job_result(session, stored) is not None:
             return  # Submission committed before a crash/HTTP timeout; never run the models again.
+        current = await require_job_lease(session, actor, job.case_id, job.id, job.lease_token)
+        result_version = current.result_version
     require_analysis_running()
+    headers = {
+        "X-Agent-Internal-Key": settings.internal_key,
+        "X-Telegram-User-Id": str(job.telegram_user_id),
+        "Idempotency-Key": str(job.id),
+        "X-Analysis-Job-Id": str(job.id),
+        "X-Analysis-Job-Token": str(job.lease_token),
+    }
+    if result_version == 2:
+        headers["X-Analysis-Result-Version"] = "2"
     response = await asyncio.wait_for(
         client.post(
             f"{settings.url}/v1/cases/{job.case_id}/analyze",
-            headers={
-                "X-Agent-Internal-Key": settings.internal_key,
-                "X-Telegram-User-Id": str(job.telegram_user_id),
-                "Idempotency-Key": str(job.id),
-                "X-Analysis-Job-Id": str(job.id),
-                "X-Analysis-Job-Token": str(job.lease_token),
-            },
+            headers=headers,
         ),
         timeout=125,
     )
@@ -112,7 +124,11 @@ async def finish_job(
         )
         if job is None or job.state != "RUNNING" or job.lease_token != claimed.lease_token:
             return
-        result = await job_result(session, job)
+        try:
+            result = await job_result(session, job)
+        except ApiError as exc:
+            # A corrupt/expired retained result is terminal, not an endless RUNNING lease.
+            result, error = None, exc.code
         job.state = "SUCCEEDED" if result is not None else "FAILED"
         job.error_code = None if result is not None else error or "ANALYSIS_RESULT_MISSING"
         job.lease_token = None
@@ -172,7 +188,9 @@ async def worker_once(
 async def run_analysis_worker(
     sessions: async_sessionmaker[AsyncSession],
     settings: WorkerSettings,
+    *, admission: ModelAdmission | None = None,
 ) -> None:
+    admission = admission or ModelAdmission()
     async with httpx.AsyncClient(
         timeout=120, trust_env=False, follow_redirects=False, limits=httpx.Limits(max_connections=2)
     ) as client:
@@ -180,8 +198,11 @@ async def run_analysis_worker(
         async def consumer() -> None:
             while True:
                 try:
-                    if await worker_once(sessions, client, settings):
-                        continue
+                    # Acquire before claim: queued jobs must not age a live lease waiting
+                    # for optional intake work that shares the same two model slots.
+                    async with admission.slot():
+                        if await worker_once(sessions, client, settings):
+                            continue
                 except Exception as exc:
                     logger.warning("analysis_worker_error type=%s", type(exc).__name__)
                 await asyncio.sleep(1)

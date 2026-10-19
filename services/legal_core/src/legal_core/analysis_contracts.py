@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, RootModel, field_validator, model_validator
+from pydantic_core import PydanticSerializationError
 
-from legal_core.api_contracts import LegalFragmentResponse, ReportResponse
 from legal_core.analysis_clarifications import ClarificationRequest, validate_unique_requests
-from legal_core.contracts import ContractModel, FactKey
+from legal_core.case_preparation_contracts import (
+    HumanReviewResult,
+    LimitedResult,
+    NeedsFactsResult,
+    PreparationModel,
+    PreparationResultBase,
+)
+from legal_core.contracts import (
+    CanonicalReport, ContractModel, FactKey, LegalFragmentResponse, ReportResponse,
+)
+from legal_core.risk_engine import fact_snapshot_sha256
 
 
 class ClinicDocumentContextResponse(ContractModel):
@@ -185,4 +195,103 @@ class AnalysisSubmissionResponse(ContractModel):
             raise ValueError("an escalation-required analysis must include escalationId")
         if not self.escalation_required and self.escalation_id is not None:
             raise ValueError("a non-escalated analysis cannot include escalationId")
+        return self
+
+
+class ReportReadyResult(PreparationResultBase):
+    """A typed, context-bound ready result; never an authorization or verifier substitute."""
+
+    status: Literal["READY"]
+    analysis_allowed: Literal[True] = Field(alias="analysisAllowed")
+    report: ReportResponse
+
+    @field_validator("analysis_allowed", mode="before")
+    @classmethod
+    def actual_true(cls, value: object) -> object:
+        if value is not True:
+            raise ValueError("ready analysis must be explicitly allowed")
+        return value
+
+    @field_validator("report", mode="before")
+    @classmethod
+    def revalidate_report(cls, value: object) -> object:
+        return value.model_dump(by_alias=True) if isinstance(value, ReportResponse) else value
+
+    @model_validator(mode="after")
+    def ready_report_matches_source(self) -> ReportReadyResult:
+        try:
+            report_json = self.report.model_dump(mode="json", by_alias=True, warnings="error")
+        except PydanticSerializationError as error:
+            raise ValueError("invalid constructed report content") from error
+        canonical = CanonicalReport.model_validate(report_json["reportJson"])
+        context, analysis, risk = self.source.context, canonical.analysis, canonical.risk
+        if context is None or analysis is None or risk is None:
+            raise ValueError("ready result requires verified legal context")
+        if (
+            canonical.summary.analysis_availability.status != "READY"
+            or analysis.verifier_status != "PASSED"
+            or risk.level not in {"LOW", "MEDIUM"}
+            or risk.escalation_required
+            or canonical.clarification_requests or canonical.missing_facts
+            or canonical.legal_basis.status != "AVAILABLE"
+            or canonical.recommendations.status != "AVAILABLE"
+        ):
+            raise ValueError("ready report cannot be blocked, escalated, or awaiting facts")
+        if (
+            self.source.case_id != self.report.case_id
+            or self.report.case_id != canonical.case.id
+            or self.report.id != canonical.report_id
+            or self.report.report_version != canonical.report_version
+            or self.source.operation_id != analysis.analysis_run_id
+            or self.source.fact_snapshot_sha256 != canonical.fact_snapshot_sha256
+            or context.as_of_date != analysis.as_of_date
+            or context.evidence_trace_sha256 != analysis.evidence_trace_sha256
+            or context.clinic_document_context_trace_sha256
+            != analysis.clinic_document_context_trace_sha256
+            or context.risk_policy_version != risk.policy_version
+        ):
+            raise ValueError("ready report does not match the bound preparation source")
+        if canonical.fact_snapshot_sha256 != fact_snapshot_sha256({
+            FactKey(key): value for key, value in canonical.facts.items()
+        }):
+            raise ValueError("ready report facts do not match their fingerprint")
+        if any(
+            source.effective_from > context.as_of_date
+            or (source.effective_to is not None and context.as_of_date >= source.effective_to)
+            for source in canonical.legal_basis.sources
+        ):
+            raise ValueError("ready report sources must be applicable on the analysis date")
+        return self
+
+
+class PreparationResult(RootModel[Annotated[
+    NeedsFactsResult | LimitedResult | HumanReviewResult | ReportReadyResult,
+    Field(discriminator="status"),
+]]):
+    model_config = ConfigDict(revalidate_instances="always")
+
+
+class PreparationJobResponse(PreparationModel):
+    result_version: Literal[2] = Field(alias="resultVersion")
+    job_id: UUID = Field(alias="jobId")
+    case_id: UUID = Field(alias="caseId")
+    state: Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED"]
+    error_code: str | None = Field(default=None, alias="errorCode", max_length=80)
+    result: PreparationResult | None = None
+
+    @field_validator("result_version", mode="before")
+    @classmethod
+    def exact_version(cls, value: object) -> object:
+        if type(value) is not int or value != 2:
+            raise ValueError("unsupported preparation job version")
+        return value
+
+    @model_validator(mode="after")
+    def coherent_result(self) -> PreparationJobResponse:
+        if (self.state == "SUCCEEDED") != (self.result is not None):
+            raise ValueError("only a completed job can contain a result")
+        if self.result is not None and self.result.root.source.case_id != self.case_id:
+            raise ValueError("preparation result case mismatch")
+        if self.state == "SUCCEEDED" and self.error_code is not None:
+            raise ValueError("successful preparation cannot include a failure")
         return self

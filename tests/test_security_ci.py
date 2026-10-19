@@ -48,7 +48,7 @@ def test_container_smoke_covers_real_images_without_network() -> None:
     assert "assert os.getuid() != 0" in text
 
 
-@pytest.mark.parametrize("job", ["quality", "postgres-integration"])
+@pytest.mark.parametrize("job", ["quality", "postgres-integration-shard"])
 def test_pdf_test_jobs_install_native_tools_before_testing(job: str) -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     steps = workflow["jobs"][job]["steps"]
@@ -65,17 +65,27 @@ def test_pdf_test_jobs_install_native_tools_before_testing(job: str) -> None:
     assert not native_step.get("continue-on-error", False)
     test_index = next(
         index for index, step in enumerate(steps)
-        if "python -m pytest" in step.get("run", "")
+        if ("python -m pytest" in step.get("run", "")
+            or "python ops/ci/run_integration_shard.py" in step.get("run", ""))
     )
     assert native_index < test_index
 
 
 def test_integration_suite_keeps_full_scope_and_a_bounded_process_deadline() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
-    steps = workflow["jobs"]["postgres-integration"]["steps"]
-    test_step = next(step for step in steps if "python -m pytest" in step.get("run", ""))
-    assert test_step["run"] == "timeout 180s python -m pytest -vv services/legal_core/tests"
+    shard = workflow["jobs"]["postgres-integration-shard"]
+    assert shard["strategy"] == {"fail-fast": False, "matrix": {"shard": [0, 1, 2]}}
+    test_step = next(step for step in shard["steps"]
+                     if "python ops/ci/run_integration_shard.py" in step.get("run", ""))
+    assert test_step["run"] == (
+        'timeout 180s python ops/ci/run_integration_shard.py --index "$SHARD_INDEX" --count 3'
+    )
     assert not test_step.get("continue-on-error", False)
+    gate = workflow["jobs"]["postgres-integration"]
+    assert gate["needs"] == ["postgres-integration-shard"]
+    assert gate["if"] == "always()"
+    assert gate["steps"][0]["run"] == 'test "$SHARD_RESULT" = success'
+    assert "postgres-integration" in workflow["jobs"]["deploy-production"]["needs"]
 
 
 @pytest.mark.parametrize("workflow,job", [

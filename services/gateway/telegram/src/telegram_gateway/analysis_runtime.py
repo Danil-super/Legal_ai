@@ -684,6 +684,9 @@ def _install_report_analysis_button() -> None:
         actor_id: int,
     ) -> None:
         await original(update, client, workflow, actor_id)
+        # Versioned readers own their next step, including urgent lawyer routing.
+        if "receiptVersion" in workflow:
+            return
         case_data = workflow.get("case")
         if not isinstance(case_data, dict):
             return
