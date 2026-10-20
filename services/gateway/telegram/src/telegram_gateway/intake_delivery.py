@@ -31,9 +31,9 @@ class _ReadyQuery(CallbackQuery):
 def stop(update: Update, context: ContextTypes.DEFAULT_TYPE, selected_key: str) -> None:
     actor = update.effective_user.id if update.effective_user is not None else None
     tasks = context.application.bot_data.get(_KEY, {})
-    task = tasks.pop((actor, selected_key), None)
-    if task is not None and task is not asyncio.current_task():
-        task.cancel()
+    entry = tasks.pop((actor, selected_key), None)
+    if entry is not None and entry[1] is not asyncio.current_task():
+        entry[1].cancel()
 
 
 def watch(
@@ -46,11 +46,15 @@ def watch(
     app, actor, chat_id, message_id = context.application, user.id, chat.id, message.message_id
     tasks = app.bot_data.setdefault(_KEY, {})
     key = (actor, selected_key)
-    if key in tasks and not tasks[key].done():
-        return
+    expected = {"draftId": str(draft_id), "operationId": str(operation)}
+    previous = tasks.get(key)
+    if previous is not None:
+        if previous[0] == expected and not previous[1].done():
+            return
+        previous[1].cancel()
+        tasks.pop(key, None)
     if len(tasks) >= MAX_WATCHERS:
         return  # The visible recovery controls remain available; never grow without bound.
-    expected = {"draftId": str(draft_id), "operationId": str(operation)}
 
     def current() -> bool:
         return app.user_data.get(actor, {}).get(selected_key) == expected
@@ -61,7 +65,7 @@ def watch(
                 await asyncio.sleep(POLL_INTERVAL)
                 if not current():
                     return
-                status = await client.get(operation)
+                status = await asyncio.wait_for(client.get(operation), timeout=6)
                 if not current():
                     return
                 if status.state == "PENDING":
@@ -84,10 +88,10 @@ def watch(
                 # refresh before it can touch the conversation. No private state APIs.
                 await app.update_processor.process_update(event, dispatch())
                 return
-        except (LegalCoreApiError, ValueError, TypeError, KeyError):
+        except (LegalCoreApiError, ValueError, TypeError, KeyError, TimeoutError):
             return  # Never disclose transport/model errors or replay an unavailable result.
         finally:
-            if tasks.get(key) is asyncio.current_task():
+            if tasks.get(key) == (expected, asyncio.current_task()):
                 tasks.pop(key, None)
 
     pending = deliver()
@@ -95,4 +99,4 @@ def watch(
     # PTB wraps the coroutine: cancellation before the wrapper's first step must
     # also close the inner coroutine (otherwise shutdown emits an unawaited warning).
     task.add_done_callback(lambda _finished: pending.close())
-    tasks[key] = task
+    tasks[key] = (expected, task)
