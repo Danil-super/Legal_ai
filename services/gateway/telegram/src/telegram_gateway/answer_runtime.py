@@ -24,7 +24,7 @@ from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.dialogue_staging import ENABLED, stage
 from telegram_gateway.escalation_workspace import _chunks
 from telegram_gateway.guided_case_intake_v2 import next_missing_state
-from telegram_gateway.intake_delivery import stop, watch
+from telegram_gateway.intake_delivery import recovery_notice, stop, watch
 from telegram_gateway.understanding_client import validated_draft
 
 _SELECTED = "answer_interpretation"
@@ -34,8 +34,36 @@ _STATES = frozenset({"INCOMING", "SITUATION", "SERVICES", "EVENT", "EVENT_DATE",
 Handler = Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, int]]
 
 
+async def keep_active_draft(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                            draft_id: UUID) -> int | None:
+    """Reject historical cross-draft controls; /menu explicitly ends selection."""
+    if context.bot_data.get(ENABLED) is not True:
+        return None
+    data = bot._user_data(context)
+    active = next((value for key in (
+        _SELECTED, "understanding_intake", bot.WIZARD_DATA_KEY,
+    ) if isinstance(value := data.get(key), dict)), None)
+    if active is None:
+        return None
+    selected = active.get("draftId", active.get(bot.DRAFT_ID_KEY))
+    if not isinstance(selected, str) or selected == str(draft_id):
+        return None
+    await bot._answer_callback(update)
+    await bot._reply(update, "Эта кнопка открывает другой черновик. "
+                     "Текущий кейс не изменён. Для смены черновика "
+                     "откройте /menu → «Мои черновики».")
+    wizard = data.get(bot.WIZARD_DATA_KEY)
+    return bot.WizardState[wizard[bot.DRAFT_STATE_KEY]] if isinstance(
+        wizard, dict,
+    ) else ConversationHandler.END
+
+
 def _controls(operation: UUID, draft_id: UUID, *, proposed: bool = False,
-              simplified: bool = False) -> InlineKeyboardMarkup:
+              simplified: bool = False, pending: bool = False) -> InlineKeyboardMarkup:
+    if simplified and pending:
+        return InlineKeyboardMarkup([[InlineKeyboardButton(
+            "Отменить и выйти в меню", callback_data=bound_callback("menu", operation, draft_id),
+        )]])
     actions = ([
         ("✅ Всё верно — сохранить ответ", "accept"), ("Ответить точнее", "edit"),
     ] if proposed else ([
@@ -142,15 +170,21 @@ async def _show(update: Update, context: ContextTypes.DEFAULT_TYPE, status: Answ
         # ConversationHandler entry, never mutate its state from a text pre-handler.
         actor = bot._actor_id(update)
         if actor is not None:
-            watch(update, context, selected_key=_SELECTED, operation=status.operation_id,
+            available = watch(
+                  update, context, selected_key=_SELECTED, operation=status.operation_id,
                   draft_id=draft_id, client=AnswerClient(bot._legal_core(context), actor),
                   callback=bound_callback("refresh", status.operation_id, draft_id))
+            if not available:
+                await recovery_notice(update, draft_id)
         return bot.WizardState[draft["wizardState"]]
+    available = True
     if status.state == "PENDING":
-        pages = ["Обрабатываю ответ… Продолжу автоматически."]
+        pages = ["Обрабатываю ответ. Ничего нажимать не нужно — подождите. "
+                 "Следующий вопрос или итоговая карточка появится автоматически."]
         actor = bot._actor_id(update)
         if actor is not None:
-            watch(update, context, selected_key=_SELECTED, operation=status.operation_id,
+            available = watch(
+                  update, context, selected_key=_SELECTED, operation=status.operation_id,
                   draft_id=draft_id, client=AnswerClient(bot._legal_core(context), actor),
                   callback=bound_callback("refresh", status.operation_id, draft_id))
     else:
@@ -159,7 +193,10 @@ async def _show(update: Update, context: ContextTypes.DEFAULT_TYPE, status: Answ
         await bot._reply(update, text, reply_markup=_controls(
             status.operation_id, draft_id, proposed=status.state == "PROPOSED",
             simplified=context.bot_data.get(ENABLED) is True,
+            pending=status.state == "PENDING",
         ) if index == len(pages) - 1 else None)
+    if not available:
+        await recovery_notice(update, draft_id)
     return bot.WizardState[draft["wizardState"]]
 
 
@@ -292,6 +329,9 @@ def _resume_handler(
             if actor is None or query is None or not isinstance(query.data, str):
                 raise ValueError("actor missing")
             draft_id = UUID(query.data.removeprefix("case:draft:"))
+            kept = await keep_active_draft(update, context, draft_id)
+            if kept is not None:
+                return kept
             remote = await bot._legal_core(context).get_intake_draft(draft_id, actor)
             fields = remote.get("draftData")
             if isinstance(fields, dict) and "intakeVersion" not in fields:

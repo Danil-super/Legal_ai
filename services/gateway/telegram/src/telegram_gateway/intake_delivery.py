@@ -10,7 +10,15 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from telegram import CallbackQuery, Chat, Message, Update, User
+from telegram import (
+    CallbackQuery,
+    Chat,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    Update,
+    User,
+)
 from telegram.ext import ContextTypes
 
 from telegram_gateway.case_wizard import LegalCoreApiError
@@ -18,6 +26,7 @@ from telegram_gateway.case_wizard import LegalCoreApiError
 POLL_INTERVAL = 1.0
 MAX_POLLS = 90
 MAX_WATCHERS = 64
+MAX_READ_FAILURES = 3
 _KEY = "intake_delivery_tasks"
 
 
@@ -26,6 +35,21 @@ class _ReadyQuery(CallbackQuery):
 
     async def answer(self, *args: Any, **kwargs: Any) -> bool:
         return True
+
+
+async def recovery_notice(update: Update, draft_id: UUID) -> None:
+    """Content-free recovery, not a claim that an in-flight operation stopped."""
+    message = update.effective_message
+    if message is not None:
+        await message.reply_text(
+            "Результат разбора пока недоступен. Повторно откройте текущий "
+            "черновик: бот проверит результат. Сохранённые ранее сведения не потеряны.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Продолжить текущий кейс",
+                                      callback_data=f"case:draft:{draft_id}")],
+                [InlineKeyboardButton("← Главное меню", callback_data="menu")],
+            ]),
+        )
 
 
 def stop(update: Update, context: ContextTypes.DEFAULT_TYPE, selected_key: str) -> None:
@@ -39,10 +63,10 @@ def stop(update: Update, context: ContextTypes.DEFAULT_TYPE, selected_key: str) 
 def watch(
     update: Update, context: ContextTypes.DEFAULT_TYPE, *, selected_key: str,
     operation: UUID, draft_id: UUID, client: Any, callback: str,
-) -> None:
+) -> bool:
     user, chat, message = update.effective_user, update.effective_chat, update.effective_message
     if user is None or chat is None or message is None or chat.type != "private":
-        return
+        return False
     app, actor, chat_id, message_id = context.application, user.id, chat.id, message.message_id
     tasks = app.bot_data.setdefault(_KEY, {})
     key = (actor, selected_key)
@@ -50,46 +74,58 @@ def watch(
     previous = tasks.get(key)
     if previous is not None:
         if previous[0] == expected and not previous[1].done():
-            return
+            return True
         previous[1].cancel()
         tasks.pop(key, None)
     if len(tasks) >= MAX_WATCHERS:
-        return  # The visible recovery controls remain available; never grow without bound.
+        return False  # Caller renders recovery inline; never grow without bound.
 
     def current() -> bool:
         return app.user_data.get(actor, {}).get(selected_key) == expected
 
+    async def dispatch_result(*, unavailable: bool = False) -> None:
+        person = User(actor, "Internal refresh", False)
+        anchor = Message(message_id, datetime.now(UTC), Chat(chat_id, "private"),
+                         from_user=person)
+        anchor.set_bot(app.bot)
+        query = _ReadyQuery(id="internal-intake-delivery", from_user=person,
+                            chat_instance="internal", message=anchor, data=callback)
+        query.set_bot(app.bot)
+        event = Update(0, callback_query=query)
+        event.set_bot(app.bot)
+
+        async def dispatch() -> None:
+            if current():
+                if unavailable:
+                    await recovery_notice(event, draft_id)
+                else:
+                    await app.process_update(event)
+
+        # Recovery and results share the same actor fence as menu/cancel/edit.
+        await app.update_processor.process_update(event, dispatch())
+
     async def deliver() -> None:
         try:
+            failures = 0
             for _ in range(MAX_POLLS):
                 await asyncio.sleep(POLL_INTERVAL)
                 if not current():
                     return
-                status = await asyncio.wait_for(client.get(operation), timeout=6)
+                try:
+                    status = await asyncio.wait_for(client.get(operation), timeout=6)
+                except (LegalCoreApiError, ValueError, TypeError, KeyError, TimeoutError):
+                    failures += 1
+                    if failures >= MAX_READ_FAILURES:
+                        break
+                    continue  # Retry this GET only, never restart the model.
                 if not current():
                     return
+                failures = 0
                 if status.state == "PENDING":
                     continue
-                person = User(actor, "Internal refresh", False)
-                anchor = Message(message_id, datetime.now(UTC), Chat(chat_id, "private"),
-                                 from_user=person)
-                anchor.set_bot(app.bot)
-                query = _ReadyQuery(id="internal-intake-delivery", from_user=person,
-                                    chat_instance="internal", message=anchor, data=callback)
-                query.set_bot(app.bot)
-                event = Update(0, callback_query=query)
-                event.set_bot(app.bot)
-
-                async def dispatch(event: Update = event) -> None:
-                    if current():
-                        await app.process_update(event)
-
-                # A menu/cancel/edit already queued for this actor always fences the
-                # refresh before it can touch the conversation. No private state APIs.
-                await app.update_processor.process_update(event, dispatch())
+                await dispatch_result()
                 return
-        except (LegalCoreApiError, ValueError, TypeError, KeyError, TimeoutError):
-            return  # Never disclose transport/model errors or replay an unavailable result.
+            await dispatch_result(unavailable=True)
         finally:
             if tasks.get(key) == (expected, asyncio.current_task()):
                 tasks.pop(key, None)
@@ -100,3 +136,4 @@ def watch(
     # also close the inner coroutine (otherwise shutdown emits an unawaited warning).
     task.add_done_callback(lambda _finished: pending.close())
     tasks[key] = (expected, task)
+    return True
