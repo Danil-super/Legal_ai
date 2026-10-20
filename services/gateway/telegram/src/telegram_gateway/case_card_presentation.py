@@ -3,6 +3,8 @@
 
 from typing import Any
 
+from legal_core.factual_safety_intake import validate_partial_screening
+
 from telegram_gateway.factual_safety_intake import screening_summary
 from telegram_gateway.guided_case_intake_v2 import choice_items, clarification_review_blocks
 
@@ -25,16 +27,48 @@ _LABELS = {
     "PATIENT_DEMAND": "Требование пациента", "DEMAND_AMOUNT": "Запрошенная сумма",
     "HOSPITALIZATION": "Госпитализация", "HARM_CLAIMED": "Сообщение о вреде здоровью",
     "FORMAL_CLAIM": "Письменная претензия", "LAWYER_CONTACT": "Обращение представителя",
+    "REGULATOR_OR_COURT": "Суд или контролирующий орган",
+    "REGULATOR_THREAT": "Намерение обратиться в суд или орган",
+    "REPRESENTATIVE_AUTHORITY": "Полномочия представителя",
+    "AUTHORITY_KIND": "Суд или орган", "INCIDENT_TYPES": "Вид ситуации",
+    "PRIMARY_INCIDENT_TYPE": "Основная ситуация", "CLINIC_DOCUMENTS": "Документы клиники",
 }
 _DEMANDS = {
     "REFUND_DEMAND": "возврат денег", "COMPENSATION_DEMAND": "компенсация",
     "NO_SPECIFIC_DEMAND": "конкретных требований пока нет", "REWORK_DEMAND": "повторное лечение",
     "CORRECTION_DEMAND": "коррекция", "EXPLANATION_DEMAND": "разъяснение ситуации",
     "OTHER": "другое требование", "UNKNOWN": "неизвестно",
+    "NEGATIVE_REVIEW_PRESSURE": "обращение сопровождается негативным отзывом",
+}
+_INCIDENTS = {
+    "QUALITY_COMPLAINT": "качество лечения", "PAYMENT_DISPUTE": "оплата или возврат",
+    "INFORMED_CONSENT": "согласие или документы", "PERSONAL_DATA": "персональные данные",
+    "OTHER": "другая ситуация", "UNKNOWN": "неизвестно",
+}
+_DOCUMENTS = {
+    "CONTRACT": "Договор", "MEDICAL_RECORD": "Медицинская документация",
+    "INFORMED_CONSENT": "Информированное согласие",
+}
+_DOCUMENT_STATUS = {
+    "AVAILABLE": "есть по сведениям сотрудника", "MISSING": "отсутствует",
+    "UNKNOWN": "наличие неизвестно",
 }
 
 
+def _documents(value: object) -> str:
+    if not isinstance(value, dict):
+        return "формат сведений не распознан"
+    return "; ".join(
+        f"{_DOCUMENTS.get(key, 'Документ не распознан')}: "
+        + (_DOCUMENT_STATUS.get(status, "статус не распознан")
+           if isinstance(status, str) else "статус не распознан")
+        for key, status in value.items()
+    )
+
+
 def _value(value: object) -> str:
+    if isinstance(value, bool):
+        return "да" if value else "нет"
     if isinstance(value, str):
         return {"YES": "да", "NO": "нет", "UNKNOWN": "неизвестно"}.get(value, value)
     if isinstance(value, dict):
@@ -69,10 +103,16 @@ def case_fact_blocks(facts: dict[str, Any]) -> list[str]:
                                  for item in values)
         elif key in _LABELS:
             label = _LABELS[key]
-            if key == "PATIENT_DEMAND" and isinstance(value, list):
-                rendered = "; ".join(_DEMANDS.get(item, "требование не распознано")
+            if key in {"PATIENT_DEMAND", "INCIDENT_TYPES", "PRIMARY_INCIDENT_TYPE"}:
+                choices = _DEMANDS if key == "PATIENT_DEMAND" else _INCIDENTS
+                values = value if isinstance(value, list) else [value]
+                rendered = "; ".join(choices.get(item, "сведения не распознаны")
                                      if isinstance(item, str) else "требование не распознано"
-                                     for item in value)
+                                     for item in values)
+            elif key == "CLINIC_DOCUMENTS":
+                rendered = _documents(value)
+            elif key == "AUTHORITY_KIND" and value == "COURT":
+                rendered = "суд"
             else:
                 rendered = _value(value)
         else:
@@ -80,8 +120,13 @@ def case_fact_blocks(facts: dict[str, Any]) -> list[str]:
             continue
         blocks.append(f"{label}: {rendered or 'не указано'}")
     data = {"affectedServices": facts.get("AFFECTED_SERVICES")}
+    if "FACTUAL_SAFETY_SCREENING" in facts:
+        try:
+            screening = validate_partial_screening(facts["FACTUAL_SAFETY_SCREENING"])
+            blocks.extend(screening_summary({"safetyScreening": screening}))
+        except (ValueError, KeyError, TypeError):
+            unknown = True
     try:
-        blocks.extend(screening_summary({"safetyScreening": facts.get("FACTUAL_SAFETY_SCREENING")}))
         blocks.extend(clarification_review_blocks({
             **data, "analysisClarificationAnswers": facts.get("ANALYSIS_CLARIFICATION_ANSWERS",
                                                              {"answers": []}),
