@@ -1,5 +1,15 @@
 # Dental Legal AI task list
 
+## Explicit factual coverage correction — 20 October 2026
+
+- [x] Reproduce the model-facing negation/schema defects independently.
+- [x] Fix explicit negative extraction guidance and closed partial screening schema.
+- [x] Cover complete/partial/unknown/conflicting facts and unchanged Core validation.
+- [ ] Verify question reduction with fictional current-provider diagnostics.
+- [ ] Complete quality gates, independent review and release authorization.
+
+No new provider, model/effort, risk/auth policy or legal approval is authorized.
+
 ## Conversational intake correction — 20 October 2026
 
 - [x] Reproduce missing automatic delivery and redundant result controls with PTB tests.
@@ -10,11 +20,14 @@
 - [x] Reproduce/fix lost-reply menu trapping; retain authorization/cancellation fences.
 - [x] Independently review Core and Gateway; retain mutation and adversarial regressions.
 - [x] Verify old/new quick/guided paths through real HTTP, PostgreSQL and analysis enqueue.
-- [ ] Complete final clean PostgreSQL/MinIO suite and GitHub CI for PR #103/#104.
-- [ ] Obtain owner release approval, release in dependency order, then verify live delivery.
+- [x] Complete final clean PostgreSQL/MinIO suite and GitHub CI for PR #103/#104.
+- [x] Obtain owner release approval, release in dependency order, then verify live delivery.
 
 No production release, new risk policy, normative approval, provider/model switch,
 or personal-feature activation is implied by the completed implementation tasks.
+Release103/104 is separately recorded in tasks/plan.md; the remaining question
+coverage limitation is tracked above. Their live smoke used synthetic incoming
+Telegram updates, real Core/Hermes/jobs and actual owner-only PDF delivery.
 
 ## Pre-report case understanding — PRC, 2026-10-15
 
