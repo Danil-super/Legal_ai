@@ -23,6 +23,12 @@ class StagingCore(UnderstandingCore, AnswerCore):
         self.stages = {}
 
     async def _json_request(self, method, path, *, telegram_user_id, **kwargs):
+        if method == "GET" and path.endswith("/answer-interpretations"):
+            assert telegram_user_id == ACTOR
+            matches = [record["status"] for record in self.operations.values()
+                       if "answer" in record and record["revision"] == self.draft["revision"]
+                       and record["status"]["state"] in {"PENDING", "PROPOSED", "UNRESOLVED"}]
+            return {"operation": deepcopy(matches[0]) if matches else None}
         if not path.endswith("/draft-staging"):
             return await super()._json_request(method, path, telegram_user_id=telegram_user_id,
                                                **kwargs)
