@@ -54,6 +54,51 @@ def test_case_card_and_actions_distinguish_owner_and_resolved_case():
     assert not any("Завершить" in b.text for row in buttons for b in row)
 
 
+def test_v2_case_card_explains_facts_without_json_or_internal_codes():
+    facts = {
+        "INTAKE_VERSION": "GUIDED_V2",
+        "EVENT_SUMMARY": "Учебный пример: пациент просит пояснить стоимость консультации.",
+        "INCOMING_COMMUNICATION": "MESSAGE_OR_REQUEST",
+        "SITUATION_AREAS": ["TREATMENT"],
+        "AFFECTED_SERVICES": ["консультация"],
+        "EVENT_DATE": {"date": "2026-09-12", "precision": "EXACT"},
+        "CLINIC_ACTIONS": ["INVITED_FOR_EXAMINATION"],
+        "HEALTH_CONSEQUENCE_SIGNALS": ["UNKNOWN"],
+        "FACTUAL_SAFETY_SCREENING": {
+            "schemaVersion": "factual-safety-intake.v1",
+            "hospitalizationReported": "NO", "healthDeteriorationReported": "UNKNOWN",
+            "moneyRequested": "YES", "amount": {"amountKopecks": 1_000_050, "currency": "RUB"},
+        },
+        "ANALYSIS_CLARIFICATION_ANSWERS": {"answers": [{
+            "questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 0,
+            "value": {"date": "2026-08-20", "precision": "APPROXIMATE"},
+        }]},
+    }
+    card = render_case_card({
+        "publicNumber": "DL-TEST-2", "riskLevel": "HIGH", "status": "REQUIRED",
+        "reasonCodes": ["HIGH_DEMAND_AMOUNT"], "facts": facts, "report": None,
+    })
+    assert "стоимость консультации" in card and "2026-09-12" in card
+    assert "на осмотр" in card.casefold()
+    assert "2026-08-20" in card and "примерно" in card
+    assert "10000 \u0440\u0443\u0431. 50 \u043a\u043e\u043f." in card
+    assert "неизвестно" in card and "госпитализации: нет" in card.casefold()
+    for code in ("EVENT_SUMMARY", "INVITED_FOR_EXAMINATION", "GUIDED_V2",
+                 "SERVICE_PROVIDED_DATE", "schemaVersion", "Legal Core"):
+        assert code not in card
+    assert "{" not in card and "[" not in card
+
+
+def test_unknown_case_fact_format_is_visible_without_dumping_internal_payload():
+    card = render_case_card({
+        "facts": {"NEW_INTERNAL_FACT": {"hidden": "INTERNAL_VALUE"}},
+        "reasonCodes": ["NEW_INTERNAL_REASON"],
+    })
+    assert "сведен" in card.casefold()
+    assert "NEW_INTERNAL_FACT" not in card and "INTERNAL_VALUE" not in card
+    assert "NEW_INTERNAL_REASON" not in card and "{" not in card
+
+
 def test_resolution_requires_explicit_conclusion_and_is_not_posted_as_normal_reply():
     import pytest
     from telegram.ext import ApplicationHandlerStop

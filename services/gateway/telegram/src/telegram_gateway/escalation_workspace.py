@@ -9,10 +9,12 @@ from io import BytesIO
 from typing import Any
 from uuid import UUID
 
+from legal_core.report_presentation import risk_level_label
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from telegram_gateway import bot as gateway_bot
+from telegram_gateway.case_card_presentation import case_fact_blocks
 from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.ui import back_keyboard
 
@@ -32,19 +34,6 @@ REASONS = {
     "AUTHORITY_OR_COURT_DOCUMENT_REPORTED": "Получен документ суда или органа",
     "LAWYER_OR_REPRESENTATIVE_CONTACT": "Обращение юриста или представителя",
     "OFFICIAL_REGULATOR_OR_COURT_SIGNAL": "Обращение в суд или контролирующий орган",
-}
-FACT_LABELS = {
-    "PROBLEM_SUMMARY": "Описание ситуации",
-    "SERVICE_TYPE": "Услуга",
-    "SERVICE_DATE": "Дата услуги",
-    "INCIDENT_DATE": "Дата проблемы",
-    "CLAIM_DATE": "Дата обращения",
-    "PATIENT_DEMAND": "Требование",
-    "DEMAND_AMOUNT": "Сумма требования",
-    "HOSPITALIZATION": "Госпитализация",
-    "HARM_CLAIMED": "Заявленный вред",
-    "RESPONSE_DEADLINE": "Срок ответа",
-    "FACTUAL_SAFETY_SCREENING": "Уточнения фактов",
 }
 
 
@@ -100,10 +89,6 @@ def discussion_messages(payload: dict[str, Any]) -> tuple[str, ...]:
     return _chunks(blocks)
 
 
-def _fact_text(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
-
-
 def render_case_card(detail: dict[str, Any]) -> str:
     states = {"REQUIRED": "Ожидает юриста", "IN_PROGRESS": "В работе", "RESOLVED": "Завершён"}
     assigned = (
@@ -115,28 +100,29 @@ def render_case_card(detail: dict[str, Any]) -> str:
     )
     lines = [
         f"⚖️ КЕЙС {detail.get('publicNumber', '')}",
-        f"Риск: {detail.get('riskLevel', '')}",
+        risk_level_label(detail.get("riskLevel")),
         f"Статус: {states.get(str(detail.get('status')), 'Неизвестен')}",
         f"Ответственный: {assigned}",
         "",
         "Причины передачи:",
     ]
-    lines.extend(f"• {REASONS.get(code, code)}" for code in detail.get("reasonCodes", []))
+    lines.extend(f"• {REASONS.get(code, 'Причину передачи нужно уточнить у юриста')}"
+                 for code in detail.get("reasonCodes", []))
     facts = detail.get("facts", {})
     if isinstance(facts, dict):
         lines.extend(["", "Обстоятельства (полностью — в карточке ниже):"])
-        for key, value in facts.items():
+        for block in case_fact_blocks(facts):
             if len("\n".join(lines)) > 2300:
                 lines.append("… остальные обстоятельства — в полной карточке.")
                 break
-            lines.append(f"{FACT_LABELS.get(key, key)}: {_fact_text(value)[:400]}")
+            lines.append(block[:400])
     lines.extend(
         [
             "",
-            "Канонический отчёт Legal Core доступен в полной карточке. "
-            "Статус готовности юридического анализа указан в самом отчёте."
+            "Подготовленный отчёт доступен в полной карточке."
             if detail.get("report")
-            else "Проверенный отчёт ещё не сформирован; юрист может уточнять ситуацию.",
+            else "Отчёт ещё не сформирован. Передано юристу: он проверит ситуацию "
+            "и подготовит рекомендации.",
             "Внутреннее обсуждение клиники. Автоотправка пациенту отключена.",
         ]
     )
