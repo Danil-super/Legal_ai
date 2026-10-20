@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 from telegram_gateway import bot
 from telegram_gateway.case_wizard import LegalCoreApiError
+from telegram_gateway.understanding_intent import bound_callback
 from test_answer_runtime import AnswerCore
 from test_confirmed_understanding_runtime import TEXT
 from test_dialog_isolation import ACTOR, DRAFT
@@ -78,3 +79,31 @@ def test_review_summary_submission_preserves_authoritative_draft_and_source_guar
         asyncio.run(bot._persisted(bot.confirm_case)(update, context))
     core.submit_workflow.assert_not_awaited()
     enqueue.assert_not_awaited()
+
+
+@pytest.mark.parametrize("action", ["command", "menu", "manual"])
+@pytest.mark.parametrize("failure", ["current_pending", "discovery_failed", "access_denied"])
+def test_review_superseded_fallback_never_clears_without_current_owned_discovery(action, failure):
+    async def scenario():
+        async with simplified_harness() as (app, core, sent, dispatch):
+            await dispatch("quick:start")
+            await dispatch("text:" + TEXT)
+            operation = core.starts[-1]
+            request = core._json_request
+
+            async def unavailable_operation(method, path, **kwargs):
+                if method == "GET" and (
+                    path == f"/v1/intake-preparations/{operation}"
+                    or (failure == "discovery_failed" and path.endswith("/understanding"))
+                ):
+                    raise LegalCoreApiError(503, "UNAVAILABLE", "synthetic failure")
+                return await request(method, path, **kwargs)
+
+            core._json_request = unavailable_operation
+            core.deny = failure == "access_denied"
+            selector = "/menu" if action == "command" else bound_callback(action, operation, DRAFT)
+            await dispatch(selector)
+            assert "understanding_intake" in app.user_data[ACTOR]
+            assert core.starts == [operation] and not core.cancels and not core.stages
+            assert_no_intermediate_consent_or_report(core, sent)
+    asyncio.run(scenario())
