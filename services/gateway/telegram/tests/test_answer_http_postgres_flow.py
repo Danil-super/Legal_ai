@@ -16,6 +16,7 @@ from legal_core.intake_preparation import complete_preparation
 from legal_core.intake_preparation_contracts import DraftSuggestions
 from sqlalchemy import text
 from telegram_gateway import bot
+from telegram_gateway.analysis_jobs_runtime import JOBS_CLIENT_KEY, AnalysisJobsClient
 from telegram_gateway.answer_intent import bound_callback
 from telegram_gateway.case_wizard import LegalCoreClient
 from telegram_gateway.factual_safety_intake import screening_question
@@ -46,20 +47,23 @@ class HeldDispatch:
 
 
 @asynccontextmanager
-async def full_harness():
+async def full_harness(*, simplified=False):
     import test_case_experience as original
     factory = original.build_application_with_case_experience
     with patch.object(original, "build_application_with_case_experience", lambda token: factory(
         token, enable_understanding=True, enable_answer_interpretation=True,
+        enable_simplified_dialogue=simplified,
     )):
         async with harness() as items:
             yield items
 
 
 @pytest.mark.parametrize("entry", ["quick-service", "guided-treatment"])
+@pytest.mark.parametrize("simplified", [False, True], ids=["per-answer", "single-summary"])
 def test_both_entries_confirm_every_later_free_answer_before_one_report_free_case(
-    preparation_workflow, monkeypatch, entry,
+    preparation_workflow, monkeypatch, entry, simplified,
 ):
+    monkeypatch.setattr("telegram_gateway.intake_delivery.POLL_INTERVAL", 0.01)
     core, actor, _, _, engine = preparation_workflow
     runner = HeldDispatch()
     core.app.state.intake_preparation_runner = runner
@@ -92,13 +96,22 @@ def test_both_entries_confirm_every_later_free_answer_before_one_report_free_cas
         return response.json()
 
     async def scenario():
-        async with (full_harness() as (app, _fake, sent, dispatch), httpx2.AsyncClient(
+        async with (full_harness(simplified=simplified) as (app, _fake, sent, dispatch),
+                    httpx2.AsyncClient(
             base_url="http://core.test", transport=httpx2.MockTransport(bridge),
         ) as http):
             app.bot_data[bot.LEGAL_CORE_CLIENT_KEY] = LegalCoreClient(http)
+            if simplified:
+                app.bot_data[JOBS_CLIENT_KEY] = AnalysisJobsClient(http, "synthetic-internal-key")
 
             async def send(value):
                 await dispatch(value, actor=actor)
+
+            async def delivered(selection):
+                async def done():
+                    while (actor, selection) in app.bot_data.get("intake_delivery_tasks", {}):
+                        await asyncio.sleep(0.01)
+                await asyncio.wait_for(done(), timeout=8)
 
             if entry == "quick-service":
                 await send("quick:start")
@@ -116,9 +129,13 @@ def test_both_entries_confirm_every_later_free_answer_before_one_report_free_cas
                         "sourceSpans": {"incomingKind": [{"start": 0, "end": len(SOURCE)}]},
                     }),
                 ))
-                await send(initial_callback("refresh", claim.operation_id, draft_id))
-                assert saved(draft_id) == original and counts() == (0, 0, 0, 0)
-                await send(initial_callback("accept", claim.operation_id, draft_id))
+                if simplified:
+                    await delivered("understanding_intake")
+                    assert saved(draft_id)["draftData"]["incomingKind"] == "COMPLAINT"
+                else:
+                    await send(initial_callback("refresh", claim.operation_id, draft_id))
+                    assert saved(draft_id) == original and counts() == (0, 0, 0, 0)
+                    await send(initial_callback("accept", claim.operation_id, draft_id))
                 app.user_data[actor].clear()
                 await send(f"case:draft:{draft_id}")
             else:
@@ -145,20 +162,24 @@ def test_both_entries_confirm_every_later_free_answer_before_one_report_free_cas
                         "sourceSpans": [{"start": 0, "end": len(source)}],
                     }),
                 ))
-                await send(bound_callback("refresh", claim.operation_id, draft_id))
-                assert saved(draft_id) == reserved
-                assert counts() == (0, 0, 0, 0) and not submissions
-                await send(bound_callback("accept", claim.operation_id, draft_id))
+                if simplified:
+                    await delivered("answer_interpretation")
+                else:
+                    await send(bound_callback("refresh", claim.operation_id, draft_id))
+                    assert saved(draft_id) == reserved
+                    assert counts() == (0, 0, 0, 0) and not submissions
+                    await send(bound_callback("accept", claim.operation_id, draft_id))
                 accepted = saved(draft_id)
                 assert accepted["revision"] > reserved["revision"]
-                await send(bound_callback("accept", claim.operation_id, draft_id))
-                # Receipt replay never reapplies facts or advances navigation again.
-                assert saved(draft_id) == accepted
+                if not simplified:
+                    await send(bound_callback("accept", claim.operation_id, draft_id))
+                    # Receipt replay never reapplies facts or advances navigation again.
+                    assert saved(draft_id) == accepted
                 with engine.connect() as connection:
                     assert connection.scalar(text(
                         "SELECT count(*) FROM audit_events "
                         "WHERE action='INTAKE_ANSWER_ACCEPTED' AND resource_id=:id"
-                    ), {"id": claim.operation_id}) == 1
+                    ), {"id": claim.operation_id}) == (0 if simplified else 1)
                 interpreted_states.append(expected_state)
                 assert counts() == (0, 0, 0, 0)
 
@@ -240,10 +261,11 @@ def test_both_entries_confirm_every_later_free_answer_before_one_report_free_cas
             confirmed = deepcopy(bot._draft_payload(data))
             assert not submissions and counts() == (0, 0, 0, 0)
             await send("case:v2:summary:confirm")
-            assert any(button.callback_data == f"case:confirm2:{draft_id}"
-                       for row in sent[-1]["reply_markup"].inline_keyboard for button in row)
-            assert not submissions and counts() == (0, 0, 0, 0)
-            await send(f"case:confirm2:{draft_id}")
+            if not simplified:
+                assert any(button.callback_data == f"case:confirm2:{draft_id}"
+                           for row in sent[-1]["reply_markup"].inline_keyboard for button in row)
+                assert not submissions and counts() == (0, 0, 0, 0)
+                await send(f"case:confirm2:{draft_id}")
             assert len(submissions) == 1, exchanges[-10:]
             assert submissions[0][1] == 201
             receipt = submissions[0][2]
@@ -253,7 +275,9 @@ def test_both_entries_confirm_every_later_free_answer_before_one_report_free_cas
             with engine.connect() as connection:
                 assert connection.scalar(text("SELECT count(*) FROM cases")) == 1
                 assert connection.scalar(text("SELECT count(*) FROM case_reports")) == 0
-                assert connection.scalar(text("SELECT count(*) FROM analysis_jobs")) == 0
+                assert connection.scalar(text("SELECT count(*) FROM analysis_jobs")) == (
+                    1 if simplified else 0
+                )
                 assert connection.scalar(text(
                     "SELECT value_json FROM case_facts WHERE fact_key='EVENT_DATE'"
                 )) == UNKNOWN_DATE
