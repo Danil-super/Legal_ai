@@ -1,5 +1,23 @@
 # Implementation Plan: Dental Legal AI MVP
 
+## Intake waiting and active-draft navigation — 20 October 2026
+
+Owner report after PR105: unclear waiting, stopped/resume detour and apparent
+repeat of the source description. Production metadata distinguishes explicit
+cancellation from model failure and shows that the later EVENT belongs to a
+different old draft. Preserve both drafts; do not rewrite real user data.
+
+1. Independently reproduce manual detour and source-preservation controls.
+2. Clarify pending copy, remove normal manual detours, resume legacy manual and
+   initial failures automatically into the same shared missing-facts wizard.
+3. Prevent stale controls silently replacing the active draft; /menu remains
+   the explicit way to choose another saved draft (ADR0094).
+4. Verify quick/guided, failure/restart and final-summary/report regressions;
+   complete quality gates and independent review before proposing release.
+
+One final summary confirmation remains. No provider/model/risk/legal-approval
+changes and no production release are implied by local implementation.
+
 ## Explicit factual coverage correction — 20 October 2026
 
 The owner requested continuation after the production quick/guided smoke exposed

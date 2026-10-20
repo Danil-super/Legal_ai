@@ -34,7 +34,7 @@ def _controls(operation: UUID, draft_id: UUID, *, proposed: bool = False,
     actions = ([
         ("✅ Всё верно — продолжить", "accept"), ("Исправить описание", "edit"),
     ] if proposed else ([
-        ("Изменить описание", "edit"), ("Продолжить без разбора", "manual"),
+        # Waiting is not a choice between two intake branches.
     ] if simplified else [
         ("Проверить результат", "refresh"), ("Продолжить без разбора", "manual"),
         ("Исправить описание", "edit"),
@@ -42,7 +42,8 @@ def _controls(operation: UUID, draft_id: UUID, *, proposed: bool = False,
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(label, callback_data=bound_callback(action, operation, draft_id))]
         for label, action in actions
-    ] + [[InlineKeyboardButton("← Главное меню", callback_data=bound_callback(
+    ] + [[InlineKeyboardButton("Отменить и выйти в меню" if simplified else "← Главное меню",
+                              callback_data=bound_callback(
         "menu", operation, draft_id,
     ))]])
 
@@ -103,7 +104,8 @@ async def _show(
         if actor is None:
             raise ValueError("actor required")
         await UnderstandingClient(bot._legal_core(context), actor).proposal_draft(status, draft)
-    if status.state in {"ACCEPTED", "MANUAL_CONTINUATION"}:
+    simplified = context.bot_data.get(ENABLED) is True
+    if status.state in {"ACCEPTED", "MANUAL_CONTINUATION"} and not simplified:
         data.pop(_SELECTED, None)
         await bot._reply(
             update, "Сведения сохранены. Продолжим с недостающих вопросов. "
@@ -112,10 +114,10 @@ async def _show(
         )
         return
     data[_SELECTED] = {"draftId": str(draft_id), "operationId": str(status.operation_id)}
-    simplified = context.bot_data.get(ENABLED) is True
     if status.state == "PENDING" or simplified:
         await bot._reply(
-            update, "Разбираю ситуацию. Результат появится автоматически.",
+            update, "Разбираю ситуацию. Ничего нажимать не нужно — подождите. "
+            "Следующий вопрос или итоговая карточка появится автоматически.",
             reply_markup=_controls(status.operation_id, draft_id, simplified=simplified),
         )
         actor = bot._actor_id(update)
@@ -176,7 +178,8 @@ async def receive_description(update: Update, context: ContextTypes.DEFAULT_TYPE
     raise ApplicationHandlerStop
 
 
-async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                   *, continue_question: bool = False) -> int | None:
     value = await bot._answer_callback(update)
     actor = bot._actor_id(update)
     if value is None or actor is None:
@@ -223,6 +226,15 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     )]]),
                 )
             else:
+                if continue_question and action == "manual":
+                    from telegram_gateway.answer_runtime import _open
+
+                    # This callback runs INSIDE the ConversationHandler. Recheck
+                    # the owned snapshot after fencing; never resume cached facts.
+                    draft = validated_draft(await core.get_intake_draft(draft_id, actor),
+                                            draft_id)
+                    return await _open(update, context, draft,
+                                       accepted_revision=draft["revision"])
                 await bot._reply(
                     update, "Разбор остановлен. Описание и ответы сохранены в черновике."
                     if status.state != "ACCEPTED" else "Подтверждённые сведения сохранены.",
@@ -301,6 +313,25 @@ async def fence_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 def install_understanding(application: bot.TelegramApplication) -> None:
     """Explicit opt-in composition; no global monkeypatch or background PTB tasks."""
+    simplified = application.bot_data.get(ENABLED) is True
+
+    async def resume_manual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        from telegram_gateway.answer_runtime import keep_active_draft
+
+        query = update.callback_query
+        try:
+            if query is None or not isinstance(query.data, str):
+                raise ValueError("selector required")
+            _action, _operation, draft_id = parse_bound_callback(query.data)
+        except ValueError:
+            await bot._answer_callback(update)
+            return ConversationHandler.END
+        kept = await keep_active_draft(update, context, draft_id)
+        if kept is not None:
+            return kept
+        state = await controls(update, context, continue_question=True)
+        return ConversationHandler.END if state is None else state
+
     async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         value = await bot._answer_callback(update)
         actor = bot._actor_id(update)
@@ -343,8 +374,14 @@ def install_understanding(application: bot.TelegramApplication) -> None:
             if getattr(handler, "callback", None) is guided_intake_runtime.receive_description:
                 handler.callback = receive_description
             if isinstance(handler, ConversationHandler):
+                if simplified and handler.name == "administrator-case-intake-v1":
+                    handler.entry_points.insert(0, CallbackQueryHandler(
+                        resume_manual, pattern=r"^understanding:m1:",
+                    ))
                 for entry in handler.entry_points:
                     if entry.callback is bot.resume_intake_draft:
                         entry.callback = resume
     application.add_handler(TypeHandler(Update, fence_navigation), group=-95)
-    application.add_handler(CallbackQueryHandler(controls, pattern=r"^understanding:"), group=-7)
+    application.add_handler(CallbackQueryHandler(
+        controls, pattern=r"^understanding:(?!m1:)" if simplified else r"^understanding:",
+    ), group=-7)

@@ -99,3 +99,29 @@ def test_guided_resume_skips_completed_event_checkpoint_without_initial_model_st
                            for item in sent)
             assert not core.starts and not core.jobs and not core.accepts
     asyncio.run(scenario())
+
+
+def test_immediate_initial_model_failure_also_opens_missing_question_automatically():
+    async def scenario():
+        async with simplified_harness() as (app, core, sent, dispatch):
+            request = core._json_request
+
+            async def already_failed(method, path, **kwargs):
+                result = await request(method, path, **kwargs)
+                if method == "POST" and path.endswith("/understanding"):
+                    core.operations[core.starts[-1]]["status"].update(
+                        state="MANUAL_CONTINUATION", suggestions=None, source=None,
+                    )
+                    result.update(state="MANUAL_CONTINUATION", suggestions=None, source=None)
+                return result
+
+            core._json_request = already_failed
+            await dispatch("quick:start")
+            await dispatch("text:" + TEXT)
+            await await_state(app, "INCOMING")
+            assert core.draft["draftData"]["eventSummary"] == TEXT
+            assert not any(button.text == "Продолжить уточнение"
+                           for item in sent if item.get("reply_markup")
+                           for row in item["reply_markup"].inline_keyboard for button in row)
+            assert len(core.starts) == 1 and not core.jobs and not core.accepts
+    asyncio.run(scenario())

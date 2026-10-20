@@ -1,5 +1,15 @@
 # Dental Legal AI task list
 
+## Intake waiting and active-draft navigation — 20 October 2026
+
+- [x] Read-only incident correlation without accessing narrative text.
+- [x] Independent RED manual-detour reproduction; source-retention controls.
+- [x] Explicit waiting with no unnecessary manual branch in both entries.
+- [x] Legacy manual and immediate failure continue to the missing question.
+- [x] Stale cross-draft controls preserve the current draft.
+- [ ] Full disposable-database regression and quality gates.
+- [ ] Independent review and separate release decision; no deploy claimed.
+
 ## Explicit factual coverage correction — 20 October 2026
 
 - [x] Reproduce the model-facing negation/schema defects independently.
