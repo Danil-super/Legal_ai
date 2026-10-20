@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from test_case_api import actor_headers, application_client
-from test_intake_preparation_context import _binding
+from test_intake_preparation_context import _binding, _reference_date
 from test_intake_preparation_lifecycle import SOURCE, _reserve, _run, draft_owner
 
 pytestmark = pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1",
@@ -37,6 +37,7 @@ def test_internal_context_endpoint_returns_only_exact_owned_model_input(draft_ow
             "operationId": str(lease.operation_id), "draftId": draft["id"],
             "draftRevision": draft["revision"], "inputSha256": body["expectedInputSha256"],
             "operationKind": "UNDERSTAND_INTAKE", "source": SOURCE,
+            "asOfDate": _reference_date(lease),
         }
         assert str(lease.lease_token) not in response.text
         actual = client.get(f"/v1/telegram-intake-drafts/{draft['id']}",
