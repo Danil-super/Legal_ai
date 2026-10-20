@@ -29,13 +29,16 @@ _SELECTED = "understanding_intake"
 _EDIT = "understanding_edit_draft"
 
 
-def _controls(operation: UUID, draft_id: UUID, *, proposed: bool = False) -> InlineKeyboardMarkup:
+def _controls(operation: UUID, draft_id: UUID, *, proposed: bool = False,
+              simplified: bool = False) -> InlineKeyboardMarkup:
     actions = ([
         ("✅ Всё верно — продолжить", "accept"), ("Исправить описание", "edit"),
-    ] if proposed else [
+    ] if proposed else ([
+        ("Изменить описание", "edit"), ("Продолжить без разбора", "manual"),
+    ] if simplified else [
         ("Проверить результат", "refresh"), ("Продолжить без разбора", "manual"),
         ("Исправить описание", "edit"),
-    ])
+    ]))
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(label, callback_data=bound_callback(action, operation, draft_id))]
         for label, action in actions
@@ -71,6 +74,17 @@ async def _checked(
     return status, draft
 
 
+async def _superseded(core: Any, actor: int, draft_id: UUID) -> bool:
+    """A current owned draft with no current intent can safely leave an old selector.
+
+    For example, staging may have committed while both POST replies were lost.
+    The old proposal is then deliberately stale, not a still-running operation
+    that needs cancelling. Transport/auth failures never establish this proof.
+    """
+    validated_draft(await core.get_intake_draft(draft_id, actor), draft_id)
+    return await UnderstandingClient(core, actor).discover(draft_id) is None
+
+
 async def _show(
     update: Update, context: ContextTypes.DEFAULT_TYPE,
     status: PreparationStatusResponse, draft: dict[str, Any],
@@ -102,7 +116,7 @@ async def _show(
     if status.state == "PENDING" or simplified:
         await bot._reply(
             update, "Разбираю ситуацию. Результат появится автоматически.",
-            reply_markup=_controls(status.operation_id, draft_id),
+            reply_markup=_controls(status.operation_id, draft_id, simplified=simplified),
         )
         actor = bot._actor_id(update)
         if actor is not None:
@@ -167,7 +181,7 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     actor = bot._actor_id(update)
     if value is None or actor is None:
         raise ApplicationHandlerStop
-    operation = draft_id = None
+    operation = draft_id = action = None
     try:
         action, operation, draft_id = parse_bound_callback(value)
         core = bot._legal_core(context)
@@ -217,6 +231,23 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             await _show(update, context, status, draft)
     except (KeyError, TypeError, ValueError, LegalCoreApiError):
+        if action in {"menu", "manual"} and draft_id is not None:
+            try:
+                if await _superseded(bot._legal_core(context), actor, draft_id):
+                    stop(update, context, _SELECTED)
+                    bot._user_data(context).pop(_SELECTED, None)
+                    bot._user_data(context).pop(_EDIT, None)
+                    bot._clear_wizard(context)
+                    if action == "menu":
+                        await bot.menu(update, context)
+                    else:
+                        await bot._reply(update, "Черновик сохранён. Можно продолжить заполнение.",
+                                         reply_markup=quick_intake_runtime._continue_keyboard(
+                                             draft_id,
+                                         ))
+                    raise ApplicationHandlerStop
+            except (KeyError, TypeError, ValueError, LegalCoreApiError):
+                pass
         await bot._reply(
             update, "Не удалось подтвердить результат действия. Ничего не считаем "
             "отменённым или подтверждённым до проверки. Проверьте результат либо "
@@ -244,6 +275,7 @@ async def fence_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     actor = bot._actor_id(update)
     if actor is None:
         raise ApplicationHandlerStop
+    draft_id = None
     try:
         draft_id, operation = UUID(selected["draftId"]), UUID(selected["operationId"])
         core = bot._legal_core(context)
@@ -251,10 +283,17 @@ async def fence_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if status.state in {"PENDING", "PROPOSED"}:
             await UnderstandingClient(core, actor).cancel(operation)
     except (KeyError, TypeError, ValueError, LegalCoreApiError):
-        await bot._answer_callback(update)
-        await bot._reply(update, "Не удалось подтвердить остановку разбора. "
-                         "Сначала проверьте результат последней карточки; черновик сохранён.")
-        raise ApplicationHandlerStop from None
+        try:
+            superseded = draft_id is not None and await _superseded(
+                bot._legal_core(context), actor, draft_id,
+            )
+        except (KeyError, TypeError, ValueError, LegalCoreApiError):
+            superseded = False
+        if not superseded:
+            await bot._answer_callback(update)
+            await bot._reply(update, "Не удалось подтвердить остановку разбора. "
+                             "Откройте текущий черновик позже; сохранённые ответы не потеряны.")
+            raise ApplicationHandlerStop from None
     data.pop(_SELECTED, None)
     stop(update, context, _SELECTED)
     data.pop(_EDIT, None)

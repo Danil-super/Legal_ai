@@ -34,13 +34,16 @@ _STATES = frozenset({"INCOMING", "SITUATION", "SERVICES", "EVENT", "EVENT_DATE",
 Handler = Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, int]]
 
 
-def _controls(operation: UUID, draft_id: UUID, *, proposed: bool = False) -> InlineKeyboardMarkup:
+def _controls(operation: UUID, draft_id: UUID, *, proposed: bool = False,
+              simplified: bool = False) -> InlineKeyboardMarkup:
     actions = ([
         ("✅ Всё верно — сохранить ответ", "accept"), ("Ответить точнее", "edit"),
-    ] if proposed else [
+    ] if proposed else ([
+        ("Изменить ответ", "edit"), ("Выбрать вариант кнопкой", "manual"),
+    ] if simplified else [
         ("Проверить результат", "refresh"), ("Ответить точнее", "edit"),
         ("Выбрать ответ кнопкой", "manual"),
-    ]) + [("← Главное меню", "menu")]
+    ])) + [("← Главное меню", "menu")]
     return InlineKeyboardMarkup([[InlineKeyboardButton(
         label, callback_data=bound_callback(action, operation, draft_id),
     )] for label, action in actions])
@@ -155,6 +158,7 @@ async def _show(update: Update, context: ContextTypes.DEFAULT_TYPE, status: Answ
     for index, text in enumerate(pages):
         await bot._reply(update, text, reply_markup=_controls(
             status.operation_id, draft_id, proposed=status.state == "PROPOSED",
+            simplified=context.bot_data.get(ENABLED) is True,
         ) if index == len(pages) - 1 else None)
     return bot.WizardState[draft["wizardState"]]
 

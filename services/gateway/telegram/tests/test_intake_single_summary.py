@@ -94,6 +94,12 @@ def assert_no_intermediate_consent_or_report(core, sent):
                    for value in callbacks)
 
 
+def assert_automatic_progress_has_no_refresh_controls(sent):
+    assert not any(button.text == "Проверить результат"
+                   for message in sent if message.get("reply_markup")
+                   for row in message["reply_markup"].inline_keyboard for button in row)
+
+
 def test_simplified_quick_description_stages_and_opens_working_next_question_automatically():
     async def scenario():
         async with simplified_harness() as (app, core, sent, dispatch):
@@ -107,6 +113,7 @@ def test_simplified_quick_description_stages_and_opens_working_next_question_aut
             assert list(core.stages) == [operation] and core.starts == [operation]
             assert core.draft["draftData"]["incomingKind"] == "COMPLAINT"
             assert_no_intermediate_consent_or_report(core, sent)
+            assert_automatic_progress_has_no_refresh_controls(sent)
             await dispatch("case:v2:multi:situationAreas:TREATMENT")
             await dispatch("case:v2:multi:situationAreas:DONE")
             assert core.draft["draftData"]["situationAreas"] == ["TREATMENT"]
@@ -128,6 +135,7 @@ def test_simplified_followup_answer_stages_and_asks_next_question_without_indivi
             assert list(core.stages) == [operation] and core.starts == [operation]
             assert core.draft["draftData"]["incomingKind"] == "COMPLAINT"
             assert_no_intermediate_consent_or_report(core, sent)
+            assert_automatic_progress_has_no_refresh_controls(sent)
             await dispatch("case:v2:multi:situationAreas:TREATMENT")
             await dispatch("case:v2:multi:situationAreas:DONE")
             assert app.user_data[ACTOR][bot.WIZARD_DATA_KEY][bot.DRAFT_STATE_KEY] == "SERVICES"
