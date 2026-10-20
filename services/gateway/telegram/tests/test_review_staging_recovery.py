@@ -46,6 +46,9 @@ def test_review_current_draft_recovers_both_lost_staging_replies_after_ram_resta
             await asyncio.wait_for(exhausted(), 2)
             assert core.draft["draftData"]["incomingKind"] == "COMPLAINT"
             assert list(core.stages) == [operation]
+            await dispatch("/menu")
+            assert "understanding_intake" not in app.user_data[ACTOR]
+            assert "answer_interpretation" not in app.user_data[ACTOR]
             app.user_data[ACTOR].clear()
             await dispatch(f"case:draft:{DRAFT}")
             assert app.user_data[ACTOR][bot.WIZARD_DATA_KEY][bot.DRAFT_STATE_KEY] == "SITUATION"
