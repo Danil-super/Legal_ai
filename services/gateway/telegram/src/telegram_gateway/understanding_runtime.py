@@ -18,6 +18,7 @@ from telegram_gateway import bot, guided_intake_runtime, quick_intake_runtime
 from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.escalation_workspace import _chunks
 from telegram_gateway.guided_case_intake_v2 import parse_answer
+from telegram_gateway.intake_delivery import stop, watch
 from telegram_gateway.understanding_client import UnderstandingClient, validated_draft
 from telegram_gateway.understanding_intent import bound_callback, parse_bound_callback
 from telegram_gateway.understanding_review import proposal_blocks
@@ -28,10 +29,12 @@ _EDIT = "understanding_edit_draft"
 
 
 def _controls(operation: UUID, draft_id: UUID, *, proposed: bool = False) -> InlineKeyboardMarkup:
-    actions = ([("✅ Всё верно — продолжить", "accept")] if proposed else []) + [
-        ("Проверить результат", "refresh"), ("Заполнить вручную", "manual"),
-        ("Исправить описание", "edit"), ("Отменить разбор", "cancel"),
-    ]
+    actions = ([
+        ("✅ Всё верно — продолжить", "accept"), ("Исправить описание", "edit"),
+    ] if proposed else [
+        ("Проверить результат", "refresh"), ("Продолжить без разбора", "manual"),
+        ("Исправить описание", "edit"),
+    ])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(label, callback_data=bound_callback(action, operation, draft_id))]
         for label, action in actions
@@ -73,6 +76,8 @@ async def _show(
 ) -> None:
     draft_id = UUID(draft["id"])
     data = bot._user_data(context)
+    if status.state != "PENDING":
+        stop(update, context, _SELECTED)
     binding = status.source or status.acceptance
     if binding is not None and binding.draft_id != draft_id:
         raise ValueError("receipt draft mismatch")
@@ -94,10 +99,14 @@ async def _show(
     data[_SELECTED] = {"draftId": str(draft_id), "operationId": str(status.operation_id)}
     if status.state == "PENDING":
         await bot._reply(
-            update, "Описание сохранено. Разбираем сведения из сообщения. "
-            "Можно проверить результат или продолжить анкету вручную, не дожидаясь разбора.",
+            update, "Разбираю ситуацию. Результат появится автоматически.",
             reply_markup=_controls(status.operation_id, draft_id),
         )
+        actor = bot._actor_id(update)
+        if actor is not None:
+            watch(update, context, selected_key=_SELECTED, operation=status.operation_id,
+                  draft_id=draft_id, client=UnderstandingClient(bot._legal_core(context), actor),
+                  callback=bound_callback("refresh", status.operation_id, draft_id))
         return
     if status.suggestions is None:
         raise ValueError("proposal missing")
@@ -174,6 +183,7 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             elif status.state != "MANUAL_CONTINUATION":
                 await client.cancel(operation)  # fence BEFORE any RAM reset or source edit
             data = bot._user_data(context)
+            stop(update, context, _SELECTED)
             data.pop(_SELECTED, None)
             data.pop(_EDIT, None)
             quick_intake_runtime._clear_quick(context)
@@ -242,6 +252,7 @@ async def fence_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                          "Сначала проверьте результат последней карточки; черновик сохранён.")
         raise ApplicationHandlerStop from None
     data.pop(_SELECTED, None)
+    stop(update, context, _SELECTED)
     data.pop(_EDIT, None)
 
 
