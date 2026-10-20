@@ -20,8 +20,9 @@ CLINIC_BASELINE = {
         # Owner-requested clinic library unification; personal surface unchanged (ADR 0080).
         "da2a396c379d2cfef32c4d3b2c16160d534a83b2",
     "services/gateway/telegram/src/telegram_gateway/case_experience_runtime.py":
-        # Reviewed atomic full-intake switch; absent/0 stays inert (ADR 0091).
-        "39dbc70fc1009d73808c8e14e061081577959a94",
+        # Independently reviewed owner-requested single-summary clinical dialogue;
+        # the existing validated flag stays off by default, personal remains inert.
+        "a129dc9d49206572020b549418fa55dd3916f417",
     "services/legal_core/src/legal_core/main.py":
         # Reviewed owner-approved clinic preparation wiring; personal remains inert (ADR 0091).
         "a37582ab864227bdcccae17b6a21acb99b385c14",
@@ -121,11 +122,11 @@ def test_route_isolation_canary_rejects_hidden_personal_include_prefix(nested):
         _assert_clinical_understanding_routes(app)
 
 
-@pytest.mark.parametrize("enable_understanding,enable_answers", [
-    (False, False), (True, False), (True, True),
+@pytest.mark.parametrize("enable_understanding,enable_answers,enable_dialogue", [
+    (False, False, False), (True, False, False), (True, True, False), (True, True, True),
 ])
 def test_clinic_composition_registers_no_personal_handlers(
-    monkeypatch, enable_understanding, enable_answers,
+    monkeypatch, enable_understanding, enable_answers, enable_dialogue,
 ):
     from telegram.ext import CallbackQueryHandler, CommandHandler, ConversationHandler
     from telegram_gateway.case_experience_runtime import build_application_with_case_experience
@@ -134,7 +135,9 @@ def test_clinic_composition_registers_no_personal_handlers(
     app = build_application_with_case_experience(
         "123456:" + "q" * 40, enable_understanding=enable_understanding,
         enable_answer_interpretation=enable_answers,
+        enable_simplified_dialogue=enable_dialogue,
     )
+    assert app.bot_data["intake_simplified_dialogue"] is enable_dialogue
     checked = 0
 
     def inspect_handler(handler):
