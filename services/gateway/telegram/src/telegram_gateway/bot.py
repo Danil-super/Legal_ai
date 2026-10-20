@@ -896,10 +896,8 @@ async def _prompt_v2_draft(
         )
     elif state is WizardState.EVENT_DATE:
         await reply(
-            "3/7. Когда это произошло? Укажите точную дату ГГГГ-ММ-ДД или ДД.ММ.ГГГГ. "
-            "Если дата неизвестна, напишите «неизвестно» — соберём остальные факты. "
-            "Для юридического анализа дату потребуется уточнить; срочный кейс "
-            "можно передать юристу без неё. /cancel сохранит черновик.",
+            "Когда это произошло? Укажите дату, например 18.10.2026. "
+            "Если не знаете точную дату, так и напишите.",
             reply_markup=_v2_keyboard([]),
         )
     elif state is WizardState.CHRONOLOGY:
@@ -955,9 +953,7 @@ async def _prompt_v2_draft(
             rows.append([("Подтвердить известное без других уточнений",
                           "case:safety:known:confirm")])
         await reply(
-            "Уточнение фактов перед фабулой. Юридическую оценку делать не нужно.\n\n"
-            + prompt + "\n«Не знаю» не считается отрицательным ответом. "
-            "При подтверждении только известного остальные уточнения останутся неизвестными.",
+            prompt + "\nЕсли сведений нет, выберите «Не знаю».",
             reply_markup=_v2_keyboard(rows),
         )
     elif state is WizardState.SUMMARY:
@@ -2742,6 +2738,12 @@ async def choose_case_date_to_clarify(
 
 async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     callback = await _answer_callback(update)
+    if callback == "case:v2:summary:confirm" and context.bot_data.get(
+        "intake_simplified_dialogue"
+    ) is True:
+        # The current summary's explicit click authorizes both submission and
+        # analysis. Existing source-message/revision checks run in _persisted.
+        callback = f"case:confirm2:{_wizard_data(context).get('workflow_id')}"
     if callback == "case:cancel":
         return await cancel_case(update, context)
     if callback is None or not callback.startswith(("case:confirm:", "case:confirm2:")):
@@ -2811,7 +2813,12 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             workflow = await client.submit_workflow(workflow_id, facts, actor_id)
         if preparation and workflow.get("receiptVersion") != 2:
             raise ValueError("workflow preparation mode mismatch")
-        await _send_workflow_report(update, client, workflow, actor_id)
+        if preparation and context.bot_data.get("intake_simplified_dialogue") is True:
+            from telegram_gateway.dialogue_submission import present_submission
+
+            await present_submission(update, context, workflow)
+        else:
+            await _send_workflow_report(update, client, workflow, actor_id)
     except TelegramError as exc:
         logger.warning("case report delivery failed: %s", type(exc).__name__)
         await _reply(
