@@ -16,6 +16,7 @@ from telegram.ext import (
 
 from telegram_gateway import bot, guided_intake_runtime, quick_intake_runtime
 from telegram_gateway.case_wizard import LegalCoreApiError
+from telegram_gateway.dialogue_staging import ENABLED, stage
 from telegram_gateway.escalation_workspace import _chunks
 from telegram_gateway.guided_case_intake_v2 import parse_answer
 from telegram_gateway.intake_delivery import stop, watch
@@ -97,7 +98,8 @@ async def _show(
         )
         return
     data[_SELECTED] = {"draftId": str(draft_id), "operationId": str(status.operation_id)}
-    if status.state == "PENDING":
+    simplified = context.bot_data.get(ENABLED) is True
+    if status.state == "PENDING" or simplified:
         await bot._reply(
             update, "Разбираю ситуацию. Результат появится автоматически.",
             reply_markup=_controls(status.operation_id, draft_id),
@@ -106,7 +108,9 @@ async def _show(
         if actor is not None:
             watch(update, context, selected_key=_SELECTED, operation=status.operation_id,
                   draft_id=draft_id, client=UnderstandingClient(bot._legal_core(context), actor),
-                  callback=bound_callback("refresh", status.operation_id, draft_id))
+                  callback=f"case:draft:{draft_id}" if simplified else bound_callback(
+                      "refresh", status.operation_id, draft_id,
+                  ))
         return
     if status.suggestions is None:
         raise ValueError("proposal missing")
@@ -275,6 +279,17 @@ def install_understanding(application: bot.TelegramApplication) -> None:
             ) else None
             if status is not None and status.state in {"PENDING", "PROPOSED"}:
                 status, draft = await _checked(core, actor, status.operation_id, draft_id)
+                if context.bot_data.get(ENABLED) is True and status.state == "PROPOSED":
+                    from telegram_gateway.answer_runtime import _open
+
+                    if status.source is None:
+                        raise ValueError("current proposal required")
+                    saved = await stage(UnderstandingClient(core, actor), status, draft,
+                                        answer=False)
+                    stop(update, context, _SELECTED)
+                    bot._user_data(context).pop(_SELECTED, None)
+                    return await _open(update, context, saved,
+                                       accepted_revision=status.source.draft_revision + 1)
                 bot._clear_wizard(context)
                 await _show(update, context, status, draft)
                 return ConversationHandler.END

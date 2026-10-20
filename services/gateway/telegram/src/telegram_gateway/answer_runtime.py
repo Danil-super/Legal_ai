@@ -21,6 +21,7 @@ from telegram_gateway.answer_client import AnswerClient
 from telegram_gateway.answer_intent import bound_callback, parse_bound_callback
 from telegram_gateway.answer_review import review_blocks
 from telegram_gateway.case_wizard import LegalCoreApiError
+from telegram_gateway.dialogue_staging import ENABLED, stage
 from telegram_gateway.escalation_workspace import _chunks
 from telegram_gateway.guided_case_intake_v2 import next_missing_state
 from telegram_gateway.intake_delivery import stop, watch
@@ -124,6 +125,24 @@ async def _show(update: Update, context: ContextTypes.DEFAULT_TYPE, status: Answ
     if status.state == "MANUAL_CONTINUATION":
         data.pop(_SELECTED, None)
         return await _open(update, context, draft)
+    if context.bot_data.get(ENABLED) is True and status.state == "PROPOSED":
+        if update.callback_query is not None:
+            actor = bot._actor_id(update)
+            if actor is None or status.source is None:
+                raise ValueError("current actor and proposal required")
+            saved = await stage(AnswerClient(bot._legal_core(context), actor), status, draft,
+                                answer=True)
+            data.pop(_SELECTED, None)
+            return await _open(update, context, saved,
+                               accepted_revision=status.source.draft_revision + 1)
+        # A fast POST can already contain the proposal. Advance only through a
+        # ConversationHandler entry, never mutate its state from a text pre-handler.
+        actor = bot._actor_id(update)
+        if actor is not None:
+            watch(update, context, selected_key=_SELECTED, operation=status.operation_id,
+                  draft_id=draft_id, client=AnswerClient(bot._legal_core(context), actor),
+                  callback=bound_callback("refresh", status.operation_id, draft_id))
+        return bot.WizardState[draft["wizardState"]]
     if status.state == "PENDING":
         pages = ["Обрабатываю ответ… Продолжу автоматически."]
         actor = bot._actor_id(update)

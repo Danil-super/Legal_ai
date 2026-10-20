@@ -28,10 +28,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 def build_application_with_case_experience(
     token: str, *, enable_understanding: bool = False, enable_answer_interpretation: bool = False,
+    enable_simplified_dialogue: bool = False,
 ) -> gateway_bot.TelegramApplication:
     if enable_answer_interpretation and not enable_understanding:
         raise ValueError("Answer interpretation requires shared preparation")
+    if enable_simplified_dialogue and not enable_answer_interpretation:
+        raise ValueError("Simplified dialogue requires complete interpretation")
     application = build_application_with_diagnostics(token)
+    application.bot_data["intake_simplified_dialogue"] = enable_simplified_dialogue
     install_guided_intake(application)
     if enable_understanding:
         from telegram_gateway.preparation_form_runtime import install_preparation_form
@@ -60,6 +64,7 @@ def main() -> None:
     application = build_application_with_case_experience(
         gateway_bot.load_token(), enable_understanding=enabled,
         enable_answer_interpretation=enabled,
+        enable_simplified_dialogue=enabled,
     )
     application.run_polling(
         allowed_updates=gateway_bot.ALLOWED_UPDATES,
