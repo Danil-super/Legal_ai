@@ -1,5 +1,22 @@
 # Implementation Plan: Dental Legal AI MVP
 
+## Explicit factual coverage correction — 20 October 2026
+
+The owner requested continuation after the production quick/guided smoke exposed
+redundant factual questions. Fix the initial interpreter's blanket instruction to
+omit negated facts and its uninformative generic safety dictionary schema. Keep
+the existing optional proposal contract, single model call, source grounding,
+staging, final summary consent and all Core validation unchanged (ADR0093).
+
+1. Independently reproduce the actual model-facing prompt/schema defects.
+2. Explain explicit NO versus missing/unknown information and expose the existing
+   closed partial screening shape, deriving it from Core's existing schema.
+3. Verify complete, partial, ambiguous and conflicting fictional inputs; prove
+   that staging complete suggestions avoids redundant questions. Do not claim
+   mock tests prove live model extraction completeness.
+4. Run quality gates and independent review; test the current provider/profile on
+   fictional cases before requesting release. No model/effort/risk/auth changes.
+
 ## Conversational intake correction — owner request 20 October 2026
 
 One ordinary flow: description → missing factual questions → one final summary
@@ -8,11 +25,14 @@ operate model polling or approve every interpreted field. Interpretations remain
 provisional draft data until that final explicit confirmation. ADR 0092 and the
 automatic-delivery ADR define the additive server/Telegram boundaries.
 
-Implementation and independent Core/Gateway reviews are complete on isolated
-branches. PR #103 is the additive staging prerequisite; stacked PR #104 is the
-simplified dialogue. Preserve all earlier work below. The complete fresh PG/MinIO
-run, GitHub CI, owner release approval and post-deploy live checks remain separate
-gates; local tests do not establish provider availability or legal correctness.
+Implementation and independent Core/Gateway reviews completed on isolated branches.
+PR103/104 passed their exact-head checks, were owner-authorized and released through
+successful main CI deployments (39385721439/39386050888). Revision f5c1fcd passed
+both owner-only fictional live entries: READY/LOW, verified applicable sources and
+actual PDF delivery. The fresh full local suite passed4149tests without skips.
+The live smoke also exposed incomplete initial extraction: quick9follow-ups,
+guided14. This establishes the paths, not minimal questions or full legal quality.
+Preserve all earlier work below and the explicit coverage correction above.
 
 ## Pre-report case understanding — spec approved 2026-10-15
 
