@@ -61,9 +61,22 @@ def test_full_card_preserves_long_free_text_and_v2_unknown_precision():
 
 @pytest.mark.parametrize("level", ["LOW", "HIGH"])
 def test_full_card_includes_readable_existing_report_without_internal_payload(level):
-    from test_report_presentation import presentation_report
-
-    report = presentation_report(level=level, guided=True).model_dump(mode="json", by_alias=True)
+    report = {
+        "facts": {"CLINIC_ACTIONS": ["INVITED_FOR_EXAMINATION"]},
+        "summary": {"neutralDescription": "Учебная ситуация.",
+                    "analysisAvailability": {"status": "READY"}},
+        "recommendations": {"status": "AVAILABLE", "items": ["Синтетическая проверка."]},
+        "draftResponse": {"status": "AVAILABLE", "text": "Синтетический черновик <ответа>."}
+        if level == "LOW" else {"status": "BLOCKED"},
+        "risk": {"level": level, "escalationRequired": level == "HIGH"},
+        "legalConclusions": [{"text": "Синтетический проверенный вывод.",
+                              "evidenceFragmentIds": ["synthetic-fragment"]}],
+        "legalBasis": {"status": "AVAILABLE", "sources": [{
+            "fragmentId": "synthetic-fragment", "documentTitle": "Синтетический акт",
+            "structuralPath": "article:10/part:2/point:3",
+            "extractionLimitations": ["Таблица не извлечена"],
+        }]},
+    }
     text = full_case_text({"facts": report["facts"], "report": report, "riskLevel": level})
     for content in ("Синтетическая проверка.", "Синтетический проверенный вывод.",
                     "Синтетический акт", "Таблица не извлечена", "статья 10"):
