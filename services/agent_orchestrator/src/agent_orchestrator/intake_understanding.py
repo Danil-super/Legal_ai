@@ -26,7 +26,10 @@ answer. Explicit unknowns may be suggested as UNKNOWN. 'Сведений нет'
 event did not happen. A denial of one consequence or demand does not deny all consequences
 or demands. Preserve the difference between an event date and the
 date of each service. Do not assign the beginning of a course to the disputed episode or apply
-one date/payment to several services. Omit ambiguous episode bindings and relative dates.
+one date/payment to several services. Omit ambiguous episode bindings. Resolve relative dates
+only when the separate server asOfDate is present: 'этого года' uses its year, 'вчера' its
+previous calendar day. Preserve approximate precision and never infer an unspecified episode.
+Without asOfDate omit relative dates and do not invent a reference date or missing year.
 Copy service names literally from the source anchors, without URLs or instructions. Service
 answers require their matching proposed service slot and TREATMENT area. A hospital being
 mentioned is not proof of hospitalization. Do not invent negative safety answers.
@@ -77,16 +80,19 @@ class IntakeUnderstanding:
     def __init__(self, *, researcher: HermesClient) -> None:
         self._researcher = researcher
 
-    async def understand(self, source: str) -> DraftSuggestions:
+    async def understand(self, source: str, *, as_of_date: date | None = None) -> DraftSuggestions:
         if (
             not isinstance(source, str) or not 10 <= len(source) <= 1500
             or not source.strip() or pseudonymize_text(source).changed
         ):
             raise ValueError("understanding input must be bounded and de-identified")
+        user_context = {"source": source}
+        if as_of_date is not None:
+            user_context["asOfDate"] = as_of_date.isoformat()
         raw = await self._researcher.complete_json(
             system=_SYSTEM + json.dumps(_proposal_schema(),
                                         ensure_ascii=False, sort_keys=True),
-            user=json.dumps({"source": source}, ensure_ascii=False),
+            user=json.dumps(user_context, ensure_ascii=False),
         )
         try:
             proposed = DraftSuggestions.model_validate(raw)
@@ -112,8 +118,9 @@ class IntakeUnderstanding:
             })
             dates = [proposed.event_date, *(answer.value for answer in answers.answers
                                            if isinstance(answer.value, ServiceProvidedDate))]
+            reference_date = as_of_date if as_of_date is not None else date.today()
             if any(item is not None and item.provided_date is not None
-                   and date.fromisoformat(item.provided_date) > date.today() for item in dates):
+                   and date.fromisoformat(item.provided_date) > reference_date for item in dates):
                 raise ValueError("future factual date")
             return proposed
         except (ValueError, TypeError):
