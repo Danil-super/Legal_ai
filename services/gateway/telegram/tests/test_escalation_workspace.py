@@ -99,6 +99,19 @@ def test_unknown_case_fact_format_is_visible_without_dumping_internal_payload():
     assert "NEW_INTERNAL_REASON" not in card and "{" not in card
 
 
+def test_full_case_download_preserves_long_facts_without_internal_json():
+    from telegram_gateway.escalation_workspace import full_case_text
+
+    description = "Учебные обстоятельства ситуации. " * 70 + "Конец описания."
+    text = full_case_text({
+        "publicNumber": "DL-TEST-3", "riskLevel": "HIGH", "status": "REQUIRED",
+        "reasonCodes": [], "facts": {"EVENT_SUMMARY": description}, "report": None,
+    })
+    assert description in text
+    assert "EVENT_SUMMARY" not in text and "Legal Core" not in text
+    assert "{" not in text and "null" not in text
+
+
 def test_resolution_requires_explicit_conclusion_and_is_not_posted_as_normal_reply():
     import pytest
     from telegram.ext import ApplicationHandlerStop

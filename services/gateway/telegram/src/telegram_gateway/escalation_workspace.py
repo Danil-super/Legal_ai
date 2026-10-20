@@ -4,12 +4,11 @@
 from __future__ import annotations
 
 import base64
-import json
 from io import BytesIO
 from typing import Any
 from uuid import UUID
 
-from legal_core.report_presentation import risk_level_label
+from legal_core.report_presentation import present_report, risk_level_label
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
@@ -89,7 +88,7 @@ def discussion_messages(payload: dict[str, Any]) -> tuple[str, ...]:
     return _chunks(blocks)
 
 
-def render_case_card(detail: dict[str, Any]) -> str:
+def render_case_card(detail: dict[str, Any], *, compact: bool = True) -> str:
     states = {"REQUIRED": "Ожидает юриста", "IN_PROGRESS": "В работе", "RESOLVED": "Завершён"}
     assigned = (
         "вы"
@@ -110,12 +109,13 @@ def render_case_card(detail: dict[str, Any]) -> str:
                  for code in detail.get("reasonCodes", []))
     facts = detail.get("facts", {})
     if isinstance(facts, dict):
-        lines.extend(["", "Обстоятельства (полностью — в карточке ниже):"])
+        lines.extend(["", "Обстоятельства (полностью — в карточке ниже):"
+                      if compact else "Обстоятельства:"])
         for block in case_fact_blocks(facts):
-            if len("\n".join(lines)) > 2300:
+            if compact and len("\n".join(lines)) > 2300:
                 lines.append("… остальные обстоятельства — в полной карточке.")
                 break
-            lines.append(block[:400])
+            lines.append(block[:400] if compact else block)
     lines.extend(
         [
             "",
@@ -126,7 +126,23 @@ def render_case_card(detail: dict[str, Any]) -> str:
             "Внутреннее обсуждение клиники. Автоотправка пациенту отключена.",
         ]
     )
-    return "\n".join(lines)[:3900]
+    text = "\n".join(lines)
+    return text[:3900] if compact else text
+
+
+def full_case_text(detail: dict[str, Any]) -> str:
+    text = render_case_card(detail, compact=False)
+    report = detail.get("report")
+    if isinstance(report, dict):
+        presentation = present_report(report)
+        sections = ["\n".join(presentation.header)]
+        sections.extend(block.title + "\n" + "\n".join(block.lines)
+                        for block in presentation.blocks)
+        if presentation.disclaimer:
+            sections.append(presentation.disclaimer)
+        sections.extend(presentation.source_caveats)
+        text += "\n\nСОХРАНЁННЫЙ ОТЧЁТ:\n" + "\n\n".join(sections)
+    return text
 
 
 def workspace_keyboard(
@@ -317,17 +333,15 @@ async def workspace_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     )
             elif action == "card":
                 detail = await client.get_escalation(escalation_id, actor)
-                text = render_case_card(detail) + "\n\nВСЕ ОБСТОЯТЕЛЬСТВА:\n"
-                text += json.dumps(detail.get("facts", {}), ensure_ascii=False, indent=2)
-                text += "\n\nКАНОНИЧЕСКИЙ ОТЧЁТ LEGAL CORE:\n"
-                text += json.dumps(detail.get("report"), ensure_ascii=False, indent=2)
+                text = full_case_text(detail)
                 message = update.effective_message
                 if message is not None:
                     await message.reply_document(
                         document=InputFile(
                             BytesIO(text.encode()), filename=f"case-{escalation_id}.txt"
                         ),
-                        caption="Полная обезличенная карточка и канонический отчёт Legal Core.",
+                        caption=("Полная обезличенная карточка и сохранённый отчёт, "
+                                 "если он подготовлен."),
                         reply_markup=InlineKeyboardMarkup(
                             [
                                 [
