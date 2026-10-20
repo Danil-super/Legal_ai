@@ -21,7 +21,8 @@ def test_main_passes_one_validated_flag_to_both_clinical_consumers(value, enable
     monkeypatch.setattr(runtime.gateway_bot, "load_token", lambda: "synthetic-token")
     runtime.main()
     factory.assert_called_once_with("synthetic-token", enable_understanding=enabled,
-                                    enable_answer_interpretation=enabled)
+                                    enable_answer_interpretation=enabled,
+                                    enable_simplified_dialogue=enabled)
     app.run_polling.assert_called_once_with(allowed_updates=bot.ALLOWED_UPDATES,
                                            bootstrap_retries=3, drop_pending_updates=False)
 
@@ -62,6 +63,7 @@ def test_real_main_composition_remains_clinical_even_with_personal_preview_reque
     monkeypatch.setattr(Application, "run_polling", poll)
     runtime.main()
     app = applications[0]
+    assert app.bot_data["intake_simplified_dialogue"] is enabled
     assert any(getattr(handler, "callback", None) is route_input
                for group in app.handlers.values() for handler in group) is enabled
     pending = [handler for group in app.handlers.values() for handler in group]

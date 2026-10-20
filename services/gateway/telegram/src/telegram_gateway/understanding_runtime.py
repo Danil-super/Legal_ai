@@ -16,8 +16,10 @@ from telegram.ext import (
 
 from telegram_gateway import bot, guided_intake_runtime, quick_intake_runtime
 from telegram_gateway.case_wizard import LegalCoreApiError
+from telegram_gateway.dialogue_staging import ENABLED, stage
 from telegram_gateway.escalation_workspace import _chunks
 from telegram_gateway.guided_case_intake_v2 import parse_answer
+from telegram_gateway.intake_delivery import stop, watch
 from telegram_gateway.understanding_client import UnderstandingClient, validated_draft
 from telegram_gateway.understanding_intent import bound_callback, parse_bound_callback
 from telegram_gateway.understanding_review import proposal_blocks
@@ -27,11 +29,16 @@ _SELECTED = "understanding_intake"
 _EDIT = "understanding_edit_draft"
 
 
-def _controls(operation: UUID, draft_id: UUID, *, proposed: bool = False) -> InlineKeyboardMarkup:
-    actions = ([("✅ Всё верно — продолжить", "accept")] if proposed else []) + [
-        ("Проверить результат", "refresh"), ("Заполнить вручную", "manual"),
-        ("Исправить описание", "edit"), ("Отменить разбор", "cancel"),
-    ]
+def _controls(operation: UUID, draft_id: UUID, *, proposed: bool = False,
+              simplified: bool = False) -> InlineKeyboardMarkup:
+    actions = ([
+        ("✅ Всё верно — продолжить", "accept"), ("Исправить описание", "edit"),
+    ] if proposed else ([
+        ("Изменить описание", "edit"), ("Продолжить без разбора", "manual"),
+    ] if simplified else [
+        ("Проверить результат", "refresh"), ("Продолжить без разбора", "manual"),
+        ("Исправить описание", "edit"),
+    ]))
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(label, callback_data=bound_callback(action, operation, draft_id))]
         for label, action in actions
@@ -67,12 +74,25 @@ async def _checked(
     return status, draft
 
 
+async def _superseded(core: Any, actor: int, draft_id: UUID) -> bool:
+    """A current owned draft with no current intent can safely leave an old selector.
+
+    For example, staging may have committed while both POST replies were lost.
+    The old proposal is then deliberately stale, not a still-running operation
+    that needs cancelling. Transport/auth failures never establish this proof.
+    """
+    validated_draft(await core.get_intake_draft(draft_id, actor), draft_id)
+    return await UnderstandingClient(core, actor).discover(draft_id) is None
+
+
 async def _show(
     update: Update, context: ContextTypes.DEFAULT_TYPE,
     status: PreparationStatusResponse, draft: dict[str, Any],
 ) -> None:
     draft_id = UUID(draft["id"])
     data = bot._user_data(context)
+    if status.state != "PENDING":
+        stop(update, context, _SELECTED)
     binding = status.source or status.acceptance
     if binding is not None and binding.draft_id != draft_id:
         raise ValueError("receipt draft mismatch")
@@ -92,12 +112,19 @@ async def _show(
         )
         return
     data[_SELECTED] = {"draftId": str(draft_id), "operationId": str(status.operation_id)}
-    if status.state == "PENDING":
+    simplified = context.bot_data.get(ENABLED) is True
+    if status.state == "PENDING" or simplified:
         await bot._reply(
-            update, "Описание сохранено. Разбираем сведения из сообщения. "
-            "Можно проверить результат или продолжить анкету вручную, не дожидаясь разбора.",
-            reply_markup=_controls(status.operation_id, draft_id),
+            update, "Разбираю ситуацию. Результат появится автоматически.",
+            reply_markup=_controls(status.operation_id, draft_id, simplified=simplified),
         )
+        actor = bot._actor_id(update)
+        if actor is not None:
+            watch(update, context, selected_key=_SELECTED, operation=status.operation_id,
+                  draft_id=draft_id, client=UnderstandingClient(bot._legal_core(context), actor),
+                  callback=f"case:draft:{draft_id}" if simplified else bound_callback(
+                      "refresh", status.operation_id, draft_id,
+                  ))
         return
     if status.suggestions is None:
         raise ValueError("proposal missing")
@@ -154,7 +181,7 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     actor = bot._actor_id(update)
     if value is None or actor is None:
         raise ApplicationHandlerStop
-    operation = draft_id = None
+    operation = draft_id = action = None
     try:
         action, operation, draft_id = parse_bound_callback(value)
         core = bot._legal_core(context)
@@ -174,6 +201,7 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             elif status.state != "MANUAL_CONTINUATION":
                 await client.cancel(operation)  # fence BEFORE any RAM reset or source edit
             data = bot._user_data(context)
+            stop(update, context, _SELECTED)
             data.pop(_SELECTED, None)
             data.pop(_EDIT, None)
             quick_intake_runtime._clear_quick(context)
@@ -203,6 +231,23 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             await _show(update, context, status, draft)
     except (KeyError, TypeError, ValueError, LegalCoreApiError):
+        if action in {"menu", "manual"} and draft_id is not None:
+            try:
+                if await _superseded(bot._legal_core(context), actor, draft_id):
+                    stop(update, context, _SELECTED)
+                    bot._user_data(context).pop(_SELECTED, None)
+                    bot._user_data(context).pop(_EDIT, None)
+                    bot._clear_wizard(context)
+                    if action == "menu":
+                        await bot.menu(update, context)
+                    else:
+                        await bot._reply(update, "Черновик сохранён. Можно продолжить заполнение.",
+                                         reply_markup=quick_intake_runtime._continue_keyboard(
+                                             draft_id,
+                                         ))
+                    raise ApplicationHandlerStop
+            except (KeyError, TypeError, ValueError, LegalCoreApiError):
+                pass
         await bot._reply(
             update, "Не удалось подтвердить результат действия. Ничего не считаем "
             "отменённым или подтверждённым до проверки. Проверьте результат либо "
@@ -230,6 +275,7 @@ async def fence_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     actor = bot._actor_id(update)
     if actor is None:
         raise ApplicationHandlerStop
+    draft_id = None
     try:
         draft_id, operation = UUID(selected["draftId"]), UUID(selected["operationId"])
         core = bot._legal_core(context)
@@ -237,11 +283,19 @@ async def fence_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if status.state in {"PENDING", "PROPOSED"}:
             await UnderstandingClient(core, actor).cancel(operation)
     except (KeyError, TypeError, ValueError, LegalCoreApiError):
-        await bot._answer_callback(update)
-        await bot._reply(update, "Не удалось подтвердить остановку разбора. "
-                         "Сначала проверьте результат последней карточки; черновик сохранён.")
-        raise ApplicationHandlerStop from None
+        try:
+            superseded = draft_id is not None and await _superseded(
+                bot._legal_core(context), actor, draft_id,
+            )
+        except (KeyError, TypeError, ValueError, LegalCoreApiError):
+            superseded = False
+        if not superseded:
+            await bot._answer_callback(update)
+            await bot._reply(update, "Не удалось подтвердить остановку разбора. "
+                             "Откройте текущий черновик позже; сохранённые ответы не потеряны.")
+            raise ApplicationHandlerStop from None
     data.pop(_SELECTED, None)
+    stop(update, context, _SELECTED)
     data.pop(_EDIT, None)
 
 
@@ -264,6 +318,17 @@ def install_understanding(application: bot.TelegramApplication) -> None:
             ) else None
             if status is not None and status.state in {"PENDING", "PROPOSED"}:
                 status, draft = await _checked(core, actor, status.operation_id, draft_id)
+                if context.bot_data.get(ENABLED) is True and status.state == "PROPOSED":
+                    from telegram_gateway.answer_runtime import _open
+
+                    if status.source is None:
+                        raise ValueError("current proposal required")
+                    saved = await stage(UnderstandingClient(core, actor), status, draft,
+                                        answer=False)
+                    stop(update, context, _SELECTED)
+                    bot._user_data(context).pop(_SELECTED, None)
+                    return await _open(update, context, saved,
+                                       accepted_revision=status.source.draft_revision + 1)
                 bot._clear_wizard(context)
                 await _show(update, context, status, draft)
                 return ConversationHandler.END

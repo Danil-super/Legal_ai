@@ -1,5 +1,19 @@
 # Implementation Plan: Dental Legal AI MVP
 
+## Conversational intake correction — owner request 20 October 2026
+
+One ordinary flow: description → missing factual questions → one final summary
+confirmation → queued recommendations or lawyer routing. The manager must not
+operate model polling or approve every interpreted field. Interpretations remain
+provisional draft data until that final explicit confirmation. ADR 0092 and the
+automatic-delivery ADR define the additive server/Telegram boundaries.
+
+Implementation and independent Core/Gateway reviews are complete on isolated
+branches. PR #103 is the additive staging prerequisite; stacked PR #104 is the
+simplified dialogue. Preserve all earlier work below. The complete fresh PG/MinIO
+run, GitHub CI, owner release approval and post-deploy live checks remain separate
+gates; local tests do not establish provider availability or legal correctness.
+
 ## Pre-report case understanding — spec approved 2026-10-15
 
 Contract: SPEC-pre-report-intake-understanding.md, owner approval15Oct.

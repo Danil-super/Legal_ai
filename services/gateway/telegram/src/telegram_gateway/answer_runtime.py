@@ -21,8 +21,10 @@ from telegram_gateway.answer_client import AnswerClient
 from telegram_gateway.answer_intent import bound_callback, parse_bound_callback
 from telegram_gateway.answer_review import review_blocks
 from telegram_gateway.case_wizard import LegalCoreApiError
+from telegram_gateway.dialogue_staging import ENABLED, stage
 from telegram_gateway.escalation_workspace import _chunks
 from telegram_gateway.guided_case_intake_v2 import next_missing_state
+from telegram_gateway.intake_delivery import stop, watch
 from telegram_gateway.understanding_client import validated_draft
 
 _SELECTED = "answer_interpretation"
@@ -32,12 +34,16 @@ _STATES = frozenset({"INCOMING", "SITUATION", "SERVICES", "EVENT", "EVENT_DATE",
 Handler = Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, int]]
 
 
-def _controls(operation: UUID, draft_id: UUID, *, proposed: bool = False) -> InlineKeyboardMarkup:
-    actions = ([("✅ Всё верно — сохранить ответ", "accept")] if proposed else []) + [
+def _controls(operation: UUID, draft_id: UUID, *, proposed: bool = False,
+              simplified: bool = False) -> InlineKeyboardMarkup:
+    actions = ([
+        ("✅ Всё верно — сохранить ответ", "accept"), ("Ответить точнее", "edit"),
+    ] if proposed else ([
+        ("Изменить ответ", "edit"), ("Выбрать вариант кнопкой", "manual"),
+    ] if simplified else [
         ("Проверить результат", "refresh"), ("Ответить точнее", "edit"),
-        ("Заполнить вручную", "manual"), ("Отменить разбор", "cancel"),
-        ("← Главное меню", "menu"),
-    ]
+        ("Выбрать ответ кнопкой", "manual"),
+    ])) + [("← Главное меню", "menu")]
     return InlineKeyboardMarkup([[InlineKeyboardButton(
         label, callback_data=bound_callback(action, operation, draft_id),
     )] for label, action in actions])
@@ -109,6 +115,8 @@ async def _show(update: Update, context: ContextTypes.DEFAULT_TYPE, status: Answ
                 draft: dict[str, Any]) -> int:
     draft_id = UUID(draft["id"])
     data = bot._user_data(context)
+    if status.state != "PENDING":
+        stop(update, context, _SELECTED)
     if status.state == "ACCEPTED":
         if status.acceptance is None:
             raise ValueError("acceptance receipt missing")
@@ -120,14 +128,37 @@ async def _show(update: Update, context: ContextTypes.DEFAULT_TYPE, status: Answ
     if status.state == "MANUAL_CONTINUATION":
         data.pop(_SELECTED, None)
         return await _open(update, context, draft)
+    if context.bot_data.get(ENABLED) is True and status.state == "PROPOSED":
+        if update.callback_query is not None:
+            actor = bot._actor_id(update)
+            if actor is None or status.source is None:
+                raise ValueError("current actor and proposal required")
+            saved = await stage(AnswerClient(bot._legal_core(context), actor), status, draft,
+                                answer=True)
+            data.pop(_SELECTED, None)
+            return await _open(update, context, saved,
+                               accepted_revision=status.source.draft_revision + 1)
+        # A fast POST can already contain the proposal. Advance only through a
+        # ConversationHandler entry, never mutate its state from a text pre-handler.
+        actor = bot._actor_id(update)
+        if actor is not None:
+            watch(update, context, selected_key=_SELECTED, operation=status.operation_id,
+                  draft_id=draft_id, client=AnswerClient(bot._legal_core(context), actor),
+                  callback=bound_callback("refresh", status.operation_id, draft_id))
+        return bot.WizardState[draft["wizardState"]]
     if status.state == "PENDING":
-        pages = ["Разбираем ответ на текущий вопрос. Факт ещё не подтверждён. "
-                 "Можно проверить результат или продолжить вручную, не дожидаясь разбора."]
+        pages = ["Обрабатываю ответ… Продолжу автоматически."]
+        actor = bot._actor_id(update)
+        if actor is not None:
+            watch(update, context, selected_key=_SELECTED, operation=status.operation_id,
+                  draft_id=draft_id, client=AnswerClient(bot._legal_core(context), actor),
+                  callback=bound_callback("refresh", status.operation_id, draft_id))
     else:
         pages = list(_chunks(review_blocks(status, draft["draftData"])))
     for index, text in enumerate(pages):
         await bot._reply(update, text, reply_markup=_controls(
             status.operation_id, draft_id, proposed=status.state == "PROPOSED",
+            simplified=context.bot_data.get(ENABLED) is True,
         ) if index == len(pages) - 1 else None)
     return bot.WizardState[draft["wizardState"]]
 
@@ -155,6 +186,7 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         elif action not in {"menu", "manual"}:
             raise ValueError("confirmed answer cannot be cancelled")
         data = bot._user_data(context)
+        stop(update, context, _SELECTED)
         data.pop(_SELECTED, None)
         data.pop(_MANUAL, None)
         if action == "menu":
@@ -208,6 +240,7 @@ async def route_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             if status is not None:
                 await _cancel(client, status.operation_id)
             data.pop(_SELECTED, None)
+            stop(update, context, _SELECTED)
             data.pop(_MANUAL, None)
             return
         remote = await _draft(core, actor, draft_id)

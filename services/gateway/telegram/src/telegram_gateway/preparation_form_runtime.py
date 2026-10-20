@@ -23,6 +23,10 @@ def install_preparation_form(application: bot.TelegramApplication) -> None:
                     if (isinstance(step, CallbackQueryHandler)
                             and isinstance(step.pattern, re.Pattern)
                             and step.pattern.pattern == r"^case:v2:summary:confirm$"):
-                        step.callback = bot._persisted(confirm_preparation_summary)
+                        step.callback = bot._persisted(
+                            bot.confirm_case if application.bot_data.get(
+                                "intake_simplified_dialogue"
+                            ) is True else confirm_preparation_summary,
+                        )
                         return
     raise RuntimeError("shared intake summary handler is missing")

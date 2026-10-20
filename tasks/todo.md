@@ -1,5 +1,21 @@
 # Dental Legal AI task list
 
+## Conversational intake correction — 20 October 2026
+
+- [x] Reproduce missing automatic delivery and redundant result controls with PTB tests.
+- [x] Deliver results through the actor-serial dispatcher; fence superseded operations.
+- [x] Stage grounded proposals without per-answer acceptance or case/report creation.
+- [x] Confirm the full factual summary once, then submit and enqueue analysis automatically.
+- [x] Shorten entry/questions; remove refresh controls from normal simplified dialogue.
+- [x] Reproduce/fix lost-reply menu trapping; retain authorization/cancellation fences.
+- [x] Independently review Core and Gateway; retain mutation and adversarial regressions.
+- [x] Verify old/new quick/guided paths through real HTTP, PostgreSQL and analysis enqueue.
+- [ ] Complete final clean PostgreSQL/MinIO suite and GitHub CI for PR #103/#104.
+- [ ] Obtain owner release approval, release in dependency order, then verify live delivery.
+
+No production release, new risk policy, normative approval, provider/model switch,
+or personal-feature activation is implied by the completed implementation tasks.
+
 ## Pre-report case understanding — PRC, 2026-10-15
 
 - [x] Owner approved SPEC-pre-report-intake-understanding.md on15Oct.
