@@ -21,6 +21,7 @@ from legal_core.intake_answer_wire import (
     AnswerStatusResponse,
     StartAnswerRequest,
 )
+from legal_core.intake_draft_staging import StageDraftResponse, stage_answer
 from legal_core.intake_preparation_acceptance import AcceptUnderstandingResponse
 from legal_core.intake_preparation_contracts import (
     AcceptUnderstandingRequest,
@@ -80,6 +81,13 @@ def create_answer_router(sessions: async_sessionmaker[AsyncSession]) -> APIRoute
                      actor: TelegramUserId) -> AcceptUnderstandingResponse:
         return await accept_answer(sessions, telegram_user_id=actor,
                                    operation_id=operation_id, request=request)
+
+    @router.post("/v1/intake-answer-preparations/{operation_id}/draft-staging",
+                 response_model=StageDraftResponse)
+    async def stage(operation_id: UUID, request: AcceptUnderstandingRequest,
+                    actor: TelegramUserId) -> StageDraftResponse:
+        return await stage_answer(sessions, telegram_user_id=actor,
+                                  operation_id=operation_id, request=request)
 
     @router.post("/v1/intake-answer-preparations/{operation_id}/context",
                  response_model=AnswerContext, dependencies=[Depends(_require_agent_internal_key)])

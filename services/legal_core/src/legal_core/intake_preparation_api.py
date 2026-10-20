@@ -9,6 +9,7 @@ from legal_core.analysis_api import _require_agent_internal_key
 from legal_core.analysis_safe_stop import require_analysis_running
 from legal_core.case_api import TelegramUserId
 from legal_core.intake_answer_api import create_answer_router
+from legal_core.intake_draft_staging import StageDraftResponse, stage_preparation
 from legal_core.intake_preparation import (
     PreparationOperation,
     cancel_preparation,
@@ -56,6 +57,15 @@ def create_intake_preparation_router(sessions: async_sessionmaker[AsyncSession])
         operation_id: UUID, request: AcceptUnderstandingRequest, telegram_user_id: TelegramUserId,
     ) -> AcceptUnderstandingResponse:
         return await accept_preparation(
+            sessions, telegram_user_id=telegram_user_id, operation_id=operation_id, request=request,
+        )
+
+    @router.post("/v1/intake-preparations/{operation_id}/draft-staging",
+                 response_model=StageDraftResponse)
+    async def stage_understanding(
+        operation_id: UUID, request: AcceptUnderstandingRequest, telegram_user_id: TelegramUserId,
+    ) -> StageDraftResponse:
+        return await stage_preparation(
             sessions, telegram_user_id=telegram_user_id, operation_id=operation_id, request=request,
         )
 
