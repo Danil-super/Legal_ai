@@ -27,7 +27,7 @@ def test_legacy_manual_with_reauthorization_denied_never_opens_or_mutates(ram_lo
             assert dict(app.user_data[ACTOR]) == previous
             assert core.draft == draft
             assert not core.cancels and not core.stages and not core.jobs and not core.accepts
-            assert "Не удалось" in sent[-1]["text"]
+            assert "подтвердить результат действия" in sent[-1]["text"]
 
     asyncio.run(scenario())
 

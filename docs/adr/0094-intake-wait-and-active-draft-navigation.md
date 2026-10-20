@@ -33,7 +33,16 @@ generic resume skips an already populated EVENT checkpoint.
   on generic continuation; explicit Back/edit can intentionally reopen it.
 
 No schema, API, model, effort, risk threshold, clinical access, normative approval
-or legal-evidence behavior changes. No raw texts in tests or audit evidence.
+or legal-evidence behavior changes. No real patient texts in tests or audit evidence.
+
+Independent review reproduced a further waiting defect: one failed GET silently
+ended delivery. Retry only GET of the same operation, with at most three
+consecutive failures and the existing finite polling budget. Exhaustion sends a
+content-free recovery notice through the same actor-serial selection fence.
+Watcher-capacity exhaustion sends the notice in the current handler, without
+spawning an unbounded recovery task. Neither notice cancels the model, accepts
+facts, reveals error payloads, nor promises a completed result. The explicit
+continue action reopens the same draft and reauthorizes through Core.
 
 ## Verification and limits
 

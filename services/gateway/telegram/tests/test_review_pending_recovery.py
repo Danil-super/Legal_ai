@@ -51,3 +51,46 @@ def test_one_transient_status_read_is_retried_or_user_gets_clear_recovery(initia
             )
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("initial", [True, False], ids=["quick", "followup"])
+def test_watcher_capacity_exhaustion_has_explicit_recovery_instead_of_false_wait(initial):
+    async def scenario():
+        async with simplified_harness() as (app, core, sent, dispatch):
+            await dispatch("quick:start" if initial else f"case:draft:{DRAFT}")
+            with patch.object(intake_delivery, "MAX_WATCHERS", 0):
+                await dispatch("text:" + TEXT)
+            assert "Повторно откройте" in sent[-1]["text"]
+            assert not app.bot_data.get("intake_delivery_tasks")
+            assert not core.cancels and not core.stages and not core.jobs
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["read", "pending"])
+def test_exhausted_polling_has_content_free_recovery_without_stopping_operation(failure):
+    async def scenario():
+        async with simplified_harness() as (app, core, sent, dispatch):
+            await dispatch("quick:start")
+            request = core._json_request
+
+            async def unavailable(method, path, **kwargs):
+                if failure == "read" and method == "GET" and "/intake-preparations/" in path:
+                    raise LegalCoreApiError(503, "UNAVAILABLE", "synthetic private error")
+                return await request(method, path, **kwargs)
+
+            core._json_request = unavailable
+            with patch.object(intake_delivery, "POLL_INTERVAL", 0.001), patch.object(
+                intake_delivery, "MAX_POLLS", 3,
+            ):
+                await dispatch("text:" + TEXT)
+
+                async def done():
+                    while app.bot_data.get("intake_delivery_tasks"):
+                        await asyncio.sleep(0.001)
+                await asyncio.wait_for(done(), 1)
+
+            assert "Повторно откройте" in sent[-1]["text"]
+            assert "synthetic private error" not in sent[-1]["text"]
+            assert "understanding_intake" in app.user_data[ACTOR]
+            assert len(core.starts) == 1 and not core.cancels and not core.stages and not core.jobs
+    asyncio.run(scenario())

@@ -19,7 +19,7 @@ from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.dialogue_staging import ENABLED, stage
 from telegram_gateway.escalation_workspace import _chunks
 from telegram_gateway.guided_case_intake_v2 import parse_answer
-from telegram_gateway.intake_delivery import stop, watch
+from telegram_gateway.intake_delivery import recovery_notice, stop, watch
 from telegram_gateway.understanding_client import UnderstandingClient, validated_draft
 from telegram_gateway.understanding_intent import bound_callback, parse_bound_callback
 from telegram_gateway.understanding_review import proposal_blocks
@@ -122,11 +122,14 @@ async def _show(
         )
         actor = bot._actor_id(update)
         if actor is not None:
-            watch(update, context, selected_key=_SELECTED, operation=status.operation_id,
+            available = watch(
+                  update, context, selected_key=_SELECTED, operation=status.operation_id,
                   draft_id=draft_id, client=UnderstandingClient(bot._legal_core(context), actor),
                   callback=f"case:draft:{draft_id}" if simplified else bound_callback(
                       "refresh", status.operation_id, draft_id,
                   ))
+            if not available:
+                await recovery_notice(update, draft_id)
         return
     if status.suggestions is None:
         raise ValueError("proposal missing")

@@ -24,7 +24,7 @@ from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.dialogue_staging import ENABLED, stage
 from telegram_gateway.escalation_workspace import _chunks
 from telegram_gateway.guided_case_intake_v2 import next_missing_state
-from telegram_gateway.intake_delivery import stop, watch
+from telegram_gateway.intake_delivery import recovery_notice, stop, watch
 from telegram_gateway.understanding_client import validated_draft
 
 _SELECTED = "answer_interpretation"
@@ -170,16 +170,21 @@ async def _show(update: Update, context: ContextTypes.DEFAULT_TYPE, status: Answ
         # ConversationHandler entry, never mutate its state from a text pre-handler.
         actor = bot._actor_id(update)
         if actor is not None:
-            watch(update, context, selected_key=_SELECTED, operation=status.operation_id,
+            available = watch(
+                  update, context, selected_key=_SELECTED, operation=status.operation_id,
                   draft_id=draft_id, client=AnswerClient(bot._legal_core(context), actor),
                   callback=bound_callback("refresh", status.operation_id, draft_id))
+            if not available:
+                await recovery_notice(update, draft_id)
         return bot.WizardState[draft["wizardState"]]
+    available = True
     if status.state == "PENDING":
         pages = ["Обрабатываю ответ. Ничего нажимать не нужно — подождите. "
                  "Следующий вопрос или итоговая карточка появится автоматически."]
         actor = bot._actor_id(update)
         if actor is not None:
-            watch(update, context, selected_key=_SELECTED, operation=status.operation_id,
+            available = watch(
+                  update, context, selected_key=_SELECTED, operation=status.operation_id,
                   draft_id=draft_id, client=AnswerClient(bot._legal_core(context), actor),
                   callback=bound_callback("refresh", status.operation_id, draft_id))
     else:
@@ -190,6 +195,8 @@ async def _show(update: Update, context: ContextTypes.DEFAULT_TYPE, status: Answ
             simplified=context.bot_data.get(ENABLED) is True,
             pending=status.state == "PENDING",
         ) if index == len(pages) - 1 else None)
+    if not available:
+        await recovery_notice(update, draft_id)
     return bot.WizardState[draft["wizardState"]]
 
 
