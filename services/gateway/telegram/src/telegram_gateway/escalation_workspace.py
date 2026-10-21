@@ -93,6 +93,8 @@ def render_case_card(detail: dict[str, Any], *, compact: bool = True) -> str:
     assigned = (
         "вы"
         if detail.get("assignedToMe")
+        else "владелец клиники"
+        if detail.get("assignedRole") == "CLINIC_OWNER"
         else "другой юрист"
         if detail.get("assignedMembershipId")
         else "не назначен"
@@ -146,7 +148,7 @@ def full_case_text(detail: dict[str, Any]) -> str:
 
 
 def workspace_keyboard(
-    escalation_id: UUID, detail: dict[str, Any], *, can_manage: bool
+    escalation_id: UUID, detail: dict[str, Any], *, can_manage: bool, can_assign: bool = False
 ) -> InlineKeyboardMarkup:
     rows = [
         [
@@ -182,6 +184,9 @@ def workspace_keyboard(
                     )
                 ]
             )
+    if can_assign and detail.get("status") != "RESOLVED":
+        rows.append([InlineKeyboardButton("👤 Передать юристу",
+                                          callback_data=f"esc:assign:{escalation_id}")])
     rows.append([InlineKeyboardButton("← К списку кейсов", callback_data="case:escalations")])
     rows.extend(list(row) for row in back_keyboard().inline_keyboard)
     return InlineKeyboardMarkup(rows)
@@ -202,6 +207,7 @@ async def show_workspace(
     membership = await client.get_actor(actor)
     history = await client.get_escalation_discussion(escalation_id, actor, before=before, limit=5)
     data = gateway_bot._user_data(context)
+    data.pop("escalation_assignment_pending", None)
     gateway_bot._clear_pending_admin_grant(context)
     data.pop("quick_intake_pending", None)
     data.pop("quick_intake_candidate", None)
@@ -214,6 +220,7 @@ async def show_workspace(
         escalation_id,
         detail,
         can_manage=membership.get("role") in {"CLINIC_OWNER", "CLINIC_LAWYER"},
+        can_assign=membership.get("role") == "CLINIC_OWNER",
     )
     rows = list(keyboard.inline_keyboard)
     if history.get("nextBefore"):
@@ -283,6 +290,11 @@ async def workspace_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     gateway_bot._clear_pending_admin_grant(context)
     try:
         client = gateway_bot._legal_core(context)
+        if query.data.startswith(("esc:assign:", "esc:pick:", "esc:confirm-assign:")):
+            from telegram_gateway.escalation_assignment import handle_assignment
+
+            await handle_assignment(update, context)
+            raise ApplicationHandlerStop
         if query.data.startswith("esc:q:"):
             from telegram_gateway.analysis_runtime import _show_escalation_queue
 
@@ -358,6 +370,12 @@ async def workspace_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     except (LegalCoreApiError, ValueError) as exc:
         code = exc.code if isinstance(exc, LegalCoreApiError) else "INVALID_ACTION"
         messages = {
+            "CLINIC_OWNER_REQUIRED": "Передавать кейсы может только владелец клиники.",
+            "ESCALATION_ASSIGNMENT_CHANGED": "Ответственный уже изменился. Откройте кейс заново.",
+            "LAWYER_UNAVAILABLE": "У юриста сейчас нет доступа. Проверьте команду клиники.",
+            "LAWYER_NOT_FOUND": "Юрист недоступен для назначения в этой клинике.",
+            "CASE_CLOSED": "Кейс закрыт — передать его нельзя.",
+            "INVALID_ACTION": "Кнопка недействительна. Откройте карточку заново.",
             "ESCALATION_ALREADY_ASSIGNED": "Кейс уже взят другим юристом. Обновите карточку.",
             "ESCALATION_UNAVAILABLE": "Кейс уже взят или завершён. Обновите карточку.",
             "ASSIGNEE_REQUIRED": "Завершить кейс может только ответственный юрист.",
