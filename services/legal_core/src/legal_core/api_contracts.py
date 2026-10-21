@@ -191,6 +191,7 @@ class ActorResponse(ContractModel):
 class ClinicMemberResponse(ContractModel):
     telegram_user_id: int = Field(alias="telegramUserId")
     role: ClinicRole
+    membership_id: UUID | None = Field(default=None, alias="membershipId")
 
 
 class ClinicMemberListResponse(ContractModel):
@@ -212,6 +213,11 @@ class EscalationDiscussionMessageRequest(ContractModel):
         if not normalized:
             raise ValueError("body must not be blank")
         return normalized
+
+
+class EscalationAssignmentRequest(ContractModel):
+    assigned_membership_id: UUID = Field(alias="assignedMembershipId")
+    expected_assigned_membership_id: UUID | None = Field(alias="expectedAssignedMembershipId")
 
 
 class EscalationDiscussionMessageResponse(ContractModel):
@@ -243,6 +249,7 @@ class EscalationDetailResponse(EscalationQueueItemResponse):
     case_status: str = Field(alias="caseStatus")
     facts: dict[str, Any]
     report: dict[str, Any] | None = None
+    assigned_role: ClinicRole | None = Field(default=None, alias="assignedRole")
 
 
 class EscalationQueueResponse(ContractModel):
