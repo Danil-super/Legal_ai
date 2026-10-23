@@ -9,6 +9,9 @@ from uuid import uuid4
 
 import pytest
 from alembic import command
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.orm import Session
@@ -227,6 +230,19 @@ def test_retention_scrubs_preparation_in_all_states_and_preserves_tombstones(
             assert session.get(TelegramIntakeDraft, draft_id) is not None
 
 
+def _downgrade_preparation_revision() -> None:
+    # Exercise this revision's guard, not an unrelated later migration's data guard.
+    migration = ScriptDirectory.from_config(alembic_config()).get_revision("d10a6b3e7f91")
+    assert migration is not None
+    owner = create_engine(owner_database_url())
+    try:
+        with owner.begin() as connection:
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.module.downgrade()
+    finally:
+        owner.dispose()
+
+
 def test_downgrade_refuses_to_erase_retained_preparation_records(runtime_storage):
     _, clinic, actor, tenant_session = runtime_storage
     with tenant_session() as session:
@@ -235,10 +251,12 @@ def test_downgrade_refuses_to_erase_retained_preparation_records(runtime_storage
             key=str(uuid4()), request_sha256="a" * 64, state="FAILED",
             resource_type="INTAKE_PREPARATION", resource_id=uuid4(), response_json=None,
         ))
-    with pytest.raises(ProgrammingError, match="cannot downgrade"):
-        command.downgrade(alembic_config(), "c4a0c3f6e852")
     with tenant_session() as session:
-        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "d10a6b3e7f91"
+        original_revision = session.scalar(text("SELECT version_num FROM alembic_version"))
+    with pytest.raises(ProgrammingError, match="cannot downgrade"):
+        _downgrade_preparation_revision()
+    with tenant_session() as session:
+        assert session.scalar(text("SELECT version_num FROM alembic_version")) == original_revision
 
 
 def test_downgrade_waits_for_inflight_preparation_before_checking_retained_data(runtime_storage):
@@ -254,7 +272,7 @@ def test_downgrade_waits_for_inflight_preparation_before_checking_retained_data(
                     resource_type="INTAKE_PREPARATION", resource_id=uuid4(),
                 ))
                 session.flush()  # Hold the write transaction open while downgrade starts.
-                future = executor.submit(command.downgrade, config, "c4a0c3f6e852")
+                future = executor.submit(_downgrade_preparation_revision)
                 blocked = False
                 deadline = monotonic() + 5
                 with owner.connect() as connection:
