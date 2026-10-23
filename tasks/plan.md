@@ -15,6 +15,16 @@ and failure/replay boundaries, then complete independent review and full isolate
 quality gates. Production release remains a separate owner decision. No provider,
 model/effort, risk/auth, normative approval or schema change is included.
 
+Verification checkpoint: source65f338d passed4339tests/0failures/0skips in six
+fresh migrated PostgreSQL databases and separate MinIO buckets,311files with
+complete non-overlapping selection. Independent review's three reproduced
+recovery/uncertainty/race findings are fixed;44cleanup checks are included. All
+three service images build; Ruff/mypy178/Compose/Bandit/dependency audit pass.
+The unchanged live researcher extracted the two dates correctly in two synthetic
+probes (including streaming). PR108 is prepared; no production change or universal
+model-quality guarantee follows. The remaining decision is owner-approved release
+after successful CI, then a deployed smoke check.
+
 ## Intake waiting and active-draft navigation — 20 October 2026
 
 Owner report after PR105: unclear waiting, stopped/resume detour and apparent
