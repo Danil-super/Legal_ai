@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram_gateway import bot
 from telegram_gateway.answer_client import AnswerClient
 from telegram_gateway.case_wizard import LegalCoreApiError
+from telegram_gateway.intake_cleanup import finish_waiting_prompt
 from telegram_gateway.intake_delivery import stop
 from telegram_gateway.understanding_client import validated_draft
 
@@ -48,5 +49,8 @@ async def recover_current(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
         data[_MANUAL] = {"draftId": str(draft_id), "revision": draft["revision"]}
     # A completed current question can move to the next missing one. This is
     # navigation over re-read facts, not proof that the old operation was saved.
-    return await _open(update, context, draft,
-                       accepted_revision=draft["revision"] if question is None else None)
+    following = await _open(update, context, draft,
+                            accepted_revision=draft["revision"] if question is None else None)
+    await finish_waiting_prompt(update, context, operation,
+                                bot._wizard_data(context).get("_v2_prompt_message_id"))
+    return following

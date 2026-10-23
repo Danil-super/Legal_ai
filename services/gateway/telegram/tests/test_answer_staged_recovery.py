@@ -16,7 +16,7 @@ from telegram_gateway.case_wizard import LegalCoreApiError
 from test_answer_runtime import AnswerCore
 from test_dialog_isolation import ACTOR, DRAFT
 from test_intake_single_summary import simplified_harness
-from test_intake_transient_cleanup import delivery_finished
+from test_intake_transient_cleanup import cleanup_harness, delivery_finished, message_with
 
 
 def amount_draft():
@@ -108,6 +108,22 @@ def fail_amount_operation(core, operation):
         "operationId": str(operation), "state": "MANUAL_CONTINUATION",
         "question": None, "interpretation": None, "source": None, "acceptance": None,
     }
+
+
+def test_failed_amount_wait_is_retired_but_unsaved_answer_is_kept_after_reopening_question():
+    async def scenario():
+        async with cleanup_harness() as (app, core, _sent, dispatch, visible, deleted,
+                                         _events, _failures):
+            operation = await enter_amount(app, core, dispatch)
+            waiting = message_with(visible, "Обрабатываю ответ")
+            fail_amount_operation(core, operation)
+            await delivery_finished(app)
+            current = message_with(visible, "Какую сумму просит пациент")
+            assert waiting in deleted, "failed operation must not leave obsolete waiting controls"
+            assert current not in deleted
+            assert 2 not in deleted, "unsaved amount text must stay visible"
+
+    asyncio.run(scenario())
 
 
 def test_failed_amount_interpretation_automatically_reopens_question_instead_of_dead_error():

@@ -255,8 +255,11 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if operation is not None and draft_id is not None:
             from telegram_gateway.answer_recovery import recover_current
 
-            recovered = await recover_current(update, context, action=action,
-                                               operation=operation, draft_id=draft_id)
+            try:
+                recovered = await recover_current(update, context, action=action,
+                                                   operation=operation, draft_id=draft_id)
+            except (ValueError, KeyError, TypeError, LegalCoreApiError):
+                recovered = None
             if recovered is not None:
                 return recovered
         rows = [[InlineKeyboardButton("Открыть текущий черновик",

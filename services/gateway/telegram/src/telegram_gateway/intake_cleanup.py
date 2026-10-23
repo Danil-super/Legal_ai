@@ -112,6 +112,15 @@ async def _delete_ids(update: Update, context: ContextTypes.DEFAULT_TYPE, step: 
 async def finish_waiting(update: Update, context: ContextTypes.DEFAULT_TYPE, operation: UUID,
                          sent: object) -> None:
     """An unresolved answer stays; only its obsolete wait can disappear after correction UI."""
+    chat = update.effective_chat
+    if chat is None or getattr(sent, "chat_id", None) != chat.id:
+        return
+    await finish_waiting_prompt(update, context, operation, getattr(sent, "message_id", None))
+
+
+async def finish_waiting_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                               operation: UUID, prompt_id: object) -> None:
+    """Use an actually delivered current prompt ID, never invent a saved-answer receipt."""
     if context.user_data is None:
         return
     previous = context.user_data.get(KEY)
@@ -119,10 +128,8 @@ async def finish_waiting(update: Update, context: ContextTypes.DEFAULT_TYPE, ope
             and previous[0] == operation and isinstance(previous[1], Step)):
         return
     step = previous[1]
-    if getattr(sent, "chat_id", None) != step.chat:
-        return
     await _delete_ids(update, context, replace(step, messages=step.waits),
-                      getattr(sent, "message_id", None))
+                      prompt_id)
 
 
 async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE, operation: UUID,
