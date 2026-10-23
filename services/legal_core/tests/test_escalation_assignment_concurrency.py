@@ -26,7 +26,7 @@ def test_assignment_rechecks_case_after_lock_wait(blocked_resource, case_change)
         with application_client() as client:
             target = _add_member(client, owner, clinic, owner + 2_000_000_000, "CLINIC_LAWYER")
             before = _history(escalation)
-            with engine.connect() as blocker, ThreadPoolExecutor(max_workers=1) as pool:
+            with engine.connect() as blocker, ThreadPoolExecutor(max_workers=2) as pool:
                 transaction = blocker.begin()
                 blocker.execute(text("SET LOCAL statement_timeout = '5s'"))
                 blocker_pid = blocker.scalar(text("SELECT pg_backend_pid()"))
@@ -60,19 +60,47 @@ def test_assignment_rechecks_case_after_lock_wait(blocked_resource, case_change)
                         assert not pending.done(), "assignment never reached the held row lock"
                         sleep(0.01)
                     assert blocked, "assignment did not block on the intended PostgreSQL row"
-                    change = (
-                        "status='CLOSED',closed_at=now()" if case_change == "closed"
-                        else "retention_due_at=now()-interval '1 minute'"
+                    assignment_pid = blocker.scalar(text(
+                        "SELECT pid FROM pg_stat_activity "
+                        "WHERE :pid=ANY(pg_blocking_pids(pid)) LIMIT 1"
+                    ), {"pid": blocker_pid})
+
+                    def change_case():
+                        change = (
+                            "status='CLOSED'" if case_change == "closed"
+                            else "retention_due_at=now()-interval '1 minute'"
+                        )
+                        with engine.begin() as connection:
+                            connection.execute(text("SET LOCAL statement_timeout = '5s'"))
+                            connection.execute(text(
+                                f"UPDATE cases SET {change} "
+                                "WHERE id=(SELECT case_id FROM case_escalations WHERE id=:id)"
+                            ), {"id": escalation})
+
+                    changing = pool.submit(change_case)
+                    serialized_first = False
+                    deadline = monotonic() + 3
+                    while monotonic() < deadline and not changing.done():
+                        serialized_first = bool(blocker.scalar(text(
+                            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                            "WHERE :pid=ANY(pg_blocking_pids(pid)))"
+                        ), {"pid": assignment_pid}))
+                        if serialized_first:
+                            break
+                        sleep(0.01)
+                    assert serialized_first or changing.done(), (
+                        "case update neither committed nor waited"
                     )
-                    blocker.execute(text(
-                        f"UPDATE cases SET {change} "
-                        "WHERE id=(SELECT case_id FROM case_escalations WHERE id=:id)"
-                    ), {"id": escalation})
                     transaction.commit()
                 finally:
                     if transaction.is_active:
                         transaction.rollback()
                 response = pending.result(timeout=10)
+                changing.result(timeout=10)
+            if serialized_first:
+                assert response.status_code == 200, response.json()
+                assert len(_history(escalation)[0]) == len(before[0]) + 1
+                return
             expected_status, expected_code = (
                 (409, "CASE_CLOSED") if case_change == "closed"
                 else (410, "CASE_CONTENT_EXPIRED")
