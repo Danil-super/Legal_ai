@@ -51,6 +51,7 @@ def test_assignment_rechecks_case_after_lock_wait(blocked_resource, case_change)
                     deadline = monotonic() + 10
                     blocked = False
                     while monotonic() < deadline:
+                        blocker.execute(text("SELECT pg_stat_clear_snapshot()"))
                         blocked = bool(blocker.scalar(text(
                             "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
                             "WHERE :pid = ANY(pg_blocking_pids(pid)))"
@@ -81,6 +82,7 @@ def test_assignment_rechecks_case_after_lock_wait(blocked_resource, case_change)
                     serialized_first = False
                     deadline = monotonic() + 3
                     while monotonic() < deadline and not changing.done():
+                        blocker.execute(text("SELECT pg_stat_clear_snapshot()"))
                         serialized_first = bool(blocker.scalar(text(
                             "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
                             "WHERE :pid=ANY(pg_blocking_pids(pid)))"
