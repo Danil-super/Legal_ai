@@ -4,15 +4,16 @@
 from __future__ import annotations
 
 import base64
-import json
 from io import BytesIO
 from typing import Any
 from uuid import UUID
 
+from legal_core.report_presentation import present_report, risk_level_label
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from telegram_gateway import bot as gateway_bot
+from telegram_gateway.case_card_presentation import case_fact_blocks
 from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.ui import back_keyboard
 
@@ -32,19 +33,6 @@ REASONS = {
     "AUTHORITY_OR_COURT_DOCUMENT_REPORTED": "Получен документ суда или органа",
     "LAWYER_OR_REPRESENTATIVE_CONTACT": "Обращение юриста или представителя",
     "OFFICIAL_REGULATOR_OR_COURT_SIGNAL": "Обращение в суд или контролирующий орган",
-}
-FACT_LABELS = {
-    "PROBLEM_SUMMARY": "Описание ситуации",
-    "SERVICE_TYPE": "Услуга",
-    "SERVICE_DATE": "Дата услуги",
-    "INCIDENT_DATE": "Дата проблемы",
-    "CLAIM_DATE": "Дата обращения",
-    "PATIENT_DEMAND": "Требование",
-    "DEMAND_AMOUNT": "Сумма требования",
-    "HOSPITALIZATION": "Госпитализация",
-    "HARM_CLAIMED": "Заявленный вред",
-    "RESPONSE_DEADLINE": "Срок ответа",
-    "FACTUAL_SAFETY_SCREENING": "Уточнения фактов",
 }
 
 
@@ -100,51 +88,67 @@ def discussion_messages(payload: dict[str, Any]) -> tuple[str, ...]:
     return _chunks(blocks)
 
 
-def _fact_text(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
-
-
-def render_case_card(detail: dict[str, Any]) -> str:
+def render_case_card(detail: dict[str, Any], *, compact: bool = True) -> str:
     states = {"REQUIRED": "Ожидает юриста", "IN_PROGRESS": "В работе", "RESOLVED": "Завершён"}
     assigned = (
         "вы"
         if detail.get("assignedToMe")
+        else "владелец клиники"
+        if detail.get("assignedRole") == "CLINIC_OWNER"
         else "другой юрист"
         if detail.get("assignedMembershipId")
         else "не назначен"
     )
     lines = [
         f"⚖️ КЕЙС {detail.get('publicNumber', '')}",
-        f"Риск: {detail.get('riskLevel', '')}",
+        risk_level_label(detail.get("riskLevel")),
         f"Статус: {states.get(str(detail.get('status')), 'Неизвестен')}",
         f"Ответственный: {assigned}",
         "",
         "Причины передачи:",
     ]
-    lines.extend(f"• {REASONS.get(code, code)}" for code in detail.get("reasonCodes", []))
+    lines.extend(f"• {REASONS.get(code, 'Причину передачи нужно уточнить у юриста')}"
+                 for code in detail.get("reasonCodes", []))
     facts = detail.get("facts", {})
     if isinstance(facts, dict):
-        lines.extend(["", "Обстоятельства (полностью — в карточке ниже):"])
-        for key, value in facts.items():
-            if len("\n".join(lines)) > 2300:
+        lines.extend(["", "Обстоятельства (полностью — в карточке ниже):"
+                      if compact else "Обстоятельства:"])
+        for block in case_fact_blocks(facts):
+            if compact and len("\n".join(lines)) > 2300:
                 lines.append("… остальные обстоятельства — в полной карточке.")
                 break
-            lines.append(f"{FACT_LABELS.get(key, key)}: {_fact_text(value)[:400]}")
+            lines.append(block[:400] if compact else block)
     lines.extend(
         [
             "",
-            "Канонический отчёт Legal Core доступен в полной карточке. "
-            "Статус готовности юридического анализа указан в самом отчёте."
+            "Подготовленный отчёт доступен в полной карточке."
             if detail.get("report")
-            else "Проверенный отчёт ещё не сформирован; юрист может уточнять ситуацию.",
+            else "Отчёт ещё не сформирован. Передано юристу: он проверит ситуацию "
+            "и подготовит рекомендации.",
             "Внутреннее обсуждение клиники. Автоотправка пациенту отключена.",
         ]
     )
-    return "\n".join(lines)[:3900]
+    text = "\n".join(lines)
+    return text[:3900] if compact else text
+
+
+def full_case_text(detail: dict[str, Any]) -> str:
+    text = render_case_card(detail, compact=False)
+    report = detail.get("report")
+    if isinstance(report, dict):
+        presentation = present_report(report)
+        sections = ["\n".join(presentation.header)]
+        sections.extend(block.title + "\n" + "\n".join(block.lines)
+                        for block in presentation.blocks)
+        if presentation.disclaimer:
+            sections.append(presentation.disclaimer)
+        sections.extend(presentation.source_caveats)
+        text += "\n\nСОХРАНЁННЫЙ ОТЧЁТ:\n" + "\n\n".join(sections)
+    return text
 
 
 def workspace_keyboard(
-    escalation_id: UUID, detail: dict[str, Any], *, can_manage: bool
+    escalation_id: UUID, detail: dict[str, Any], *, can_manage: bool, can_assign: bool = False
 ) -> InlineKeyboardMarkup:
     rows = [
         [
@@ -180,6 +184,9 @@ def workspace_keyboard(
                     )
                 ]
             )
+    if can_assign and detail.get("status") != "RESOLVED":
+        rows.append([InlineKeyboardButton("👤 Передать юристу",
+                                          callback_data=f"esc:assign:{escalation_id}")])
     rows.append([InlineKeyboardButton("← К списку кейсов", callback_data="case:escalations")])
     rows.extend(list(row) for row in back_keyboard().inline_keyboard)
     return InlineKeyboardMarkup(rows)
@@ -200,6 +207,7 @@ async def show_workspace(
     membership = await client.get_actor(actor)
     history = await client.get_escalation_discussion(escalation_id, actor, before=before, limit=5)
     data = gateway_bot._user_data(context)
+    data.pop("escalation_assignment_pending", None)
     gateway_bot._clear_pending_admin_grant(context)
     data.pop("quick_intake_pending", None)
     data.pop("quick_intake_candidate", None)
@@ -212,6 +220,7 @@ async def show_workspace(
         escalation_id,
         detail,
         can_manage=membership.get("role") in {"CLINIC_OWNER", "CLINIC_LAWYER"},
+        can_assign=membership.get("role") == "CLINIC_OWNER",
     )
     rows = list(keyboard.inline_keyboard)
     if history.get("nextBefore"):
@@ -281,6 +290,11 @@ async def workspace_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     gateway_bot._clear_pending_admin_grant(context)
     try:
         client = gateway_bot._legal_core(context)
+        if query.data.startswith(("esc:assign:", "esc:pick:", "esc:confirm-assign:")):
+            from telegram_gateway.escalation_assignment import handle_assignment
+
+            await handle_assignment(update, context)
+            raise ApplicationHandlerStop
         if query.data.startswith("esc:q:"):
             from telegram_gateway.analysis_runtime import _show_escalation_queue
 
@@ -331,17 +345,15 @@ async def workspace_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     )
             elif action == "card":
                 detail = await client.get_escalation(escalation_id, actor)
-                text = render_case_card(detail) + "\n\nВСЕ ОБСТОЯТЕЛЬСТВА:\n"
-                text += json.dumps(detail.get("facts", {}), ensure_ascii=False, indent=2)
-                text += "\n\nКАНОНИЧЕСКИЙ ОТЧЁТ LEGAL CORE:\n"
-                text += json.dumps(detail.get("report"), ensure_ascii=False, indent=2)
+                text = full_case_text(detail)
                 message = update.effective_message
                 if message is not None:
                     await message.reply_document(
                         document=InputFile(
                             BytesIO(text.encode()), filename=f"case-{escalation_id}.txt"
                         ),
-                        caption="Полная обезличенная карточка и канонический отчёт Legal Core.",
+                        caption=("Полная обезличенная карточка и сохранённый отчёт, "
+                                 "если он подготовлен."),
                         reply_markup=InlineKeyboardMarkup(
                             [
                                 [
@@ -358,6 +370,12 @@ async def workspace_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     except (LegalCoreApiError, ValueError) as exc:
         code = exc.code if isinstance(exc, LegalCoreApiError) else "INVALID_ACTION"
         messages = {
+            "CLINIC_OWNER_REQUIRED": "Передавать кейсы может только владелец клиники.",
+            "ESCALATION_ASSIGNMENT_CHANGED": "Ответственный уже изменился. Откройте кейс заново.",
+            "LAWYER_UNAVAILABLE": "У юриста сейчас нет доступа. Проверьте команду клиники.",
+            "LAWYER_NOT_FOUND": "Юрист недоступен для назначения в этой клинике.",
+            "CASE_CLOSED": "Кейс закрыт — передать его нельзя.",
+            "INVALID_ACTION": "Кнопка недействительна. Откройте карточку заново.",
             "ESCALATION_ALREADY_ASSIGNED": "Кейс уже взят другим юристом. Обновите карточку.",
             "ESCALATION_UNAVAILABLE": "Кейс уже взят или завершён. Обновите карточку.",
             "ASSIGNEE_REQUIRED": "Завершить кейс может только ответственный юрист.",

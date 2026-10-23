@@ -799,6 +799,19 @@ class LegalCoreClient:
             telegram_user_id=telegram_user_id, payload={"body": body},
         )
 
+    async def assign_escalation(
+        self, escalation_id: UUID, telegram_user_id: int, *, assigned_membership_id: UUID,
+        expected_assigned_membership_id: UUID | None,
+    ) -> dict[str, Any]:
+        return await self._json_request(
+            "POST", f"/v1/case-escalations/{escalation_id}/assign",
+            telegram_user_id=telegram_user_id, payload={
+                "assignedMembershipId": str(assigned_membership_id),
+                "expectedAssignedMembershipId": str(expected_assigned_membership_id)
+                if expected_assigned_membership_id else None,
+            },
+        )
+
     async def post_escalation_discussion_message(
         self, escalation_id: UUID, telegram_user_id: int, *, body: str
     ) -> dict[str, Any]:

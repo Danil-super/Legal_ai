@@ -237,3 +237,107 @@ def test_switching_from_discussion_does_not_send_new_case_text_to_old_case(
                 await app.shutdown()
 
     asyncio.run(scenario())
+
+
+def test_owner_transfer_reaches_lawyer_conclusion_through_real_dispatcher(monkeypatch):
+    """Exercise actual callbacks and message routing, with Telegram/Core network fakes."""
+    monkeypatch.setenv("AGENT_ORCHESTRATOR_URL", "http://agent-orchestrator:8010")
+    monkeypatch.setenv("AGENT_INTERNAL_KEY", "test-key-" * 8)
+    lawyer = ACTOR + 1
+
+    class AssignmentCore(Core):
+        def __init__(self):
+            super().__init__()
+            self.assignee = ACTOR
+            self.status = "IN_PROGRESS"
+            self.transfers = []
+
+        async def get_actor(self, actor):
+            return {"role": "CLINIC_OWNER" if actor == ACTOR else "CLINIC_LAWYER"}
+
+        async def get_escalation(self, escalation, actor):
+            return {**await super().get_escalation(escalation, actor),
+                    "assignedToMe": actor == self.assignee,
+                    "assignedMembershipId": str(DRAFT if self.assignee == ACTOR else ESCALATION),
+                    "assignedRole": (await self.get_actor(self.assignee))["role"]}
+
+        async def list_clinic_members(self, actor):
+            assert actor == ACTOR
+            return {"items": [{"membershipId": str(ESCALATION), "telegramUserId": lawyer,
+                               "role": "CLINIC_LAWYER"}]}
+
+        async def assign_escalation(self, escalation, actor, **payload):
+            assert actor == ACTOR and escalation == ESCALATION
+            assert payload == {"assigned_membership_id": ESCALATION,
+                               "expected_assigned_membership_id": DRAFT}
+            self.transfers.append(payload)
+            self.assignee = lawyer
+            self.assigned = True
+            return await self.get_escalation(escalation, actor)
+
+    async def scenario():
+        sent, errors = [], []
+
+        async def fake_post(self, endpoint, data=None, **kwargs):
+            if endpoint == "getMe":
+                return {"id": 123, "is_bot": True, "first_name": "Test", "username": "test_bot"}
+            if endpoint == "answerCallbackQuery":
+                return True
+            sent.append(data)
+            return {"message_id": len(sent) + 100, "date": 1,
+                    "chat": {"id": data["chat_id"], "type": "private"},
+                    "text": data.get("text", "")}
+
+        def callback(prefix):
+            for item in reversed(sent):
+                markup = item.get("reply_markup")
+                if markup:
+                    for row in markup.inline_keyboard:
+                        for button in row:
+                            if str(button.callback_data).startswith(prefix):
+                                return button.callback_data
+            raise AssertionError(prefix)
+
+        with patch.object(ExtBot, "_post", fake_post):
+            app = build_application_with_quick_intake("123456:unit_test_token_value_1234567890")
+            core = AssignmentCore()
+            app.bot_data["legal_core_client"] = core
+
+            async def record_error(update, context):
+                errors.append(context.error)
+
+            async def dispatch(actor, content):
+                sequence = len(sent) + 1
+                user = {"id": actor, "is_bot": False, "first_name": "Tester"}
+                message = {"message_id": sequence, "date": 1,
+                           "chat": {"id": actor, "type": "private"}, "from": user}
+                payload = {"update_id": sequence}
+                if content.startswith("text:"):
+                    message["text"] = content.removeprefix("text:")
+                    payload["message"] = message
+                else:
+                    payload["callback_query"] = {"id": str(sequence), "chat_instance": "test",
+                                                 "from": user, "message": message, "data": content}
+                await asyncio.wait_for(app.process_update(Update.de_json(payload, app.bot)), 5)
+
+            app.add_error_handler(record_error)
+            await app.initialize()
+            try:
+                await dispatch(ACTOR, f"case:escalation:{ESCALATION}")
+                await dispatch(ACTOR, callback("esc:assign:"))
+                await dispatch(ACTOR, callback("esc:pick:"))
+                assert core.transfers == []
+                await dispatch(ACTOR, callback("esc:confirm-assign:"))
+                assert len(core.transfers) == 1
+                await dispatch(lawyer, f"case:escalation:{ESCALATION}")
+                await dispatch(lawyer, "text:Уточните дату получения требования.")
+                await dispatch(lawyer, callback("esc:resolve:"))
+                await dispatch(lawyer, "text:Проверка завершена. Рекомендации направлены клинике.")
+                assert errors == []
+                assert core.posts == ["Уточните дату получения требования."]
+                assert core.conclusions == ["Проверка завершена. Рекомендации направлены клинике."]
+                assert core.status == "RESOLVED"
+            finally:
+                await app.shutdown()
+
+    asyncio.run(scenario())

@@ -382,7 +382,16 @@ class CaseEscalationWorkflowEvent(Base):
             ["clinic_users.clinic_id", "clinic_users.id"],
             ondelete="RESTRICT",
         ),
-        CheckConstraint("action IN ('CLAIMED', 'RESOLVED')"),
+        ForeignKeyConstraint(
+            ["clinic_id", "assigned_membership_id"],
+            ["clinic_users.clinic_id", "clinic_users.id"], ondelete="RESTRICT",
+            name="fk_escalation_workflow_assignee",
+        ),
+        CheckConstraint(
+            "(action = 'ASSIGNED' AND assigned_membership_id IS NOT NULL) OR "
+            "(action IN ('CLAIMED', 'RESOLVED') AND assigned_membership_id IS NULL)",
+            name="ck_escalation_workflow_assignment",
+        ),
         Index("ix_escalation_workflow_thread", "clinic_id", "escalation_id", "sequence"),
     )
     id: Mapped[UUID] = mapped_column(
@@ -392,6 +401,7 @@ class CaseEscalationWorkflowEvent(Base):
     clinic_id: Mapped[UUID] = mapped_column(UUID_PK)
     escalation_id: Mapped[UUID] = mapped_column(UUID_PK)
     actor_membership_id: Mapped[UUID] = mapped_column(UUID_PK)
+    assigned_membership_id: Mapped[UUID | None] = mapped_column(UUID_PK)
     action: Mapped[str] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=UTC_NOW)
 
