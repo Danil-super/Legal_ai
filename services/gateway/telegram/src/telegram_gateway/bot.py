@@ -18,7 +18,7 @@ from uuid import UUID
 
 import httpx2
 from legal_core.pseudonymization import pseudonymize_text
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Message, Update
 from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 from telegram.ext import (
     Application,
@@ -374,10 +374,11 @@ async def _reply(
     text: str,
     *,
     reply_markup: InlineKeyboardMarkup | None = None,
-) -> None:
+) -> Message | None:
     message = update.effective_message
     if message is not None:
-        await message.reply_text(text, reply_markup=reply_markup)
+        return await message.reply_text(text, reply_markup=reply_markup)
+    return None
 
 
 def _clear_pending_inputs(context: ContextTypes.DEFAULT_TYPE | None) -> None:
@@ -1636,6 +1637,10 @@ async def _persist_selected_transition(
                 reply_markup=_keyboard([[("Открыть текущий черновик", f"case:draft:{draft_id}")]]),
             )
             return WizardState[str(data[DRAFT_STATE_KEY])]
+    from telegram_gateway.intake_cleanup import capture, delete_saved
+
+    completed_step = capture(update, str(draft_id), data.get(DRAFT_REVISION_KEY),
+                             str(data.get(DRAFT_STATE_KEY)), data.get("_v2_prompt_message_id"))
     before = _draft_payload(data)
     next_state = await handler(update, context)
     if not isinstance(next_state, WizardState):
@@ -1668,6 +1673,10 @@ async def _persist_selected_transition(
             "⚠️ Черновик не удалось сохранить. Откройте /menu → «Мои черновики» и попробуйте снова.",
         )
         return ConversationHandler.END
+    if (saved.get("id") == str(draft_id) and saved.get("wizardState") == next_state.name
+            and saved.get("draftData") == _draft_payload(data) and saved_revision == revision + 1):
+        await delete_saved(update, context, completed_step, saved,
+                           data.get("_v2_prompt_message_id"))
     return next_state
 
 

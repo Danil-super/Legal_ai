@@ -19,6 +19,7 @@ from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.dialogue_staging import ENABLED, stage
 from telegram_gateway.escalation_workspace import _chunks
 from telegram_gateway.guided_case_intake_v2 import parse_answer
+from telegram_gateway.intake_cleanup import finish, remember_wait
 from telegram_gateway.intake_delivery import recovery_notice, stop, watch
 from telegram_gateway.understanding_client import UnderstandingClient, validated_draft
 from telegram_gateway.understanding_intent import bound_callback, parse_bound_callback
@@ -115,11 +116,12 @@ async def _show(
         return
     data[_SELECTED] = {"draftId": str(draft_id), "operationId": str(status.operation_id)}
     if status.state == "PENDING" or simplified:
-        await bot._reply(
+        sent = await bot._reply(
             update, "Разбираю ситуацию. Ничего нажимать не нужно — подождите. "
             "Следующий вопрос или итоговая карточка появится автоматически.",
             reply_markup=_controls(status.operation_id, draft_id, simplified=simplified),
         )
+        remember_wait(update, context, status.operation_id, draft, sent)
         actor = bot._actor_id(update)
         if actor is not None:
             available = watch(
@@ -361,8 +363,11 @@ def install_understanding(application: bot.TelegramApplication) -> None:
                                         answer=False)
                     stop(update, context, _SELECTED)
                     bot._user_data(context).pop(_SELECTED, None)
-                    return await _open(update, context, saved,
-                                       accepted_revision=status.source.draft_revision + 1)
+                    following = await _open(update, context, saved,
+                                            accepted_revision=status.source.draft_revision + 1)
+                    await finish(update, context, status.operation_id, saved,
+                                 bot._wizard_data(context))
+                    return following
                 bot._clear_wizard(context)
                 await _show(update, context, status, draft)
                 return ConversationHandler.END
