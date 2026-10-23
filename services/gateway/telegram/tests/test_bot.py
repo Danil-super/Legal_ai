@@ -222,9 +222,9 @@ def test_main_menu_exposes_frequent_actions_as_clear_allowlisted_buttons() -> No
     keyboard = main_menu_keyboard()
     buttons = [button for row in keyboard.inline_keyboard for button in row]
 
-    assert len(buttons) == 9
+    assert len(buttons) == 8
     assert {button.callback_data for button in buttons} <= MAIN_MENU_CALLBACKS
-    assert {"case:start", "quick:start", "case:drafts", "account:id", "help"} <= {
+    assert {"quick:start", "case:drafts", "account:id", "help"} <= {
         button.callback_data for button in buttons
     }
     assert all(button.text.strip() for button in buttons)
@@ -363,7 +363,7 @@ def test_owner_menu_combines_administrator_and_lawyer_actions() -> None:
     callbacks = {button.callback_data for row in keyboard.inline_keyboard for button in row}
 
     assert {
-        "case:start",
+        "quick:start",
         "clinicdocs:open",
         "case:escalations",
         "legalbase:open",

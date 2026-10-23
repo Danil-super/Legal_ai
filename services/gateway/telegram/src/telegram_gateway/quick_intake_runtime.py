@@ -136,7 +136,7 @@ def _continue_keyboard(draft_id: UUID) -> InlineKeyboardMarkup:
 def _manual_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("📝 Создать кейс вручную", callback_data="case:start")],
+            [InlineKeyboardButton("✍️ Описать ситуацию", callback_data="quick:start")],
             *back_keyboard().inline_keyboard,
         ]
     )

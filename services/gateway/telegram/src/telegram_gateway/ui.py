@@ -170,11 +170,10 @@ def main_menu_keyboard(
     case_rows = [
         [
             InlineKeyboardButton(
-                "🧩 Описать ситуацию одним сообщением",
+                "📝 Создать кейс",
                 callback_data="quick:start",
             )
         ],
-        [InlineKeyboardButton("📝 Создать кейс", callback_data="case:start")],
         [InlineKeyboardButton("📂 Мои черновики", callback_data="case:drafts")],
     ]
     if role in {"CLINIC_OWNER", "CLINIC_ADMIN"}:
