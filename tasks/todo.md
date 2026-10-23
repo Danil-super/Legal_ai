@@ -1,5 +1,20 @@
 # Dental Legal AI task list
 
+## Simple intake and failed amount recovery — 23 October 2026
+
+- [x] Correlate the failed amount operation using metadata only; reproduce dead controls.
+- [x] Recover the independently authorized current question; preserve active-draft fences.
+- [x] Parse literal ruble scalars without a model, retaining Core validation and final consent.
+- [x] Keep one multi-select card; explicit idempotent choices and «Продолжить →».
+- [x] Offer one narrative-first new-case entry; retain resumable historical drafts.
+- [x] Reproduce/fix nested navigation failure and obsolete waiting-message cleanup.
+- [ ] Finish independent delta review and immutable full PostgreSQL/MinIO gates.
+- [ ] Obtain separate release decision and verify deployed behavior.
+
+Contracts: ADR0098/0099. No model/profile, policy, source approval, access or schema
+change. No automatic patient delivery. The original narrative, files and summary
+stay in chat; an unsaved answer is not deleted on failed interpretation.
+
 ## Intake dates and transient message cleanup — 23 October 2026
 
 - [x] Reproduce missing initial date reference and missing cleanup independently.

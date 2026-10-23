@@ -746,3 +746,13 @@ reference-content guards → combined regression/CI/review → separately approv
 Root owns CI and upload wire; isolated gateway and Core agents own their narrow
 reproductions/fixes. Reference package independence requires an explicit owner
 auth-contract choice; no roles or legal approvals are changed implicitly.
+# Simple intake incident correction — 23 October 2026
+
+Implement the owner's explicit simplicity contract in three bounded slices:
+owned-question recovery and literal money (ADR0098); stable persisted checklist
+cards; one visible narrative-first creation entry (ADR0099). Preserve all existing
+Core evidence/date/risk gates and one final summary consent. Historical guided
+drafts remain resumable. Verify through actual PTB composition, independent
+adversarial review and isolated full PostgreSQL/MinIO gates, then request a separate
+release decision. Production is unchanged by local implementation/testing.
+
