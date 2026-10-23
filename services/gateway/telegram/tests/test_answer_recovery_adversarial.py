@@ -8,7 +8,8 @@ import pytest
 from telegram_gateway import bot
 from telegram_gateway.answer_intent import bound_callback
 from telegram_gateway.case_wizard import LegalCoreApiError
-from test_answer_staged_recovery import enter_amount, fail_amount_operation
+from test_answer_runtime import AnswerCore
+from test_answer_staged_recovery import enter_amount, fail_amount_operation, lose_stage_receipts
 from test_dialog_isolation import ACTOR, DRAFT
 from test_intake_single_summary import simplified_harness
 from test_intake_transient_cleanup import delivery_finished
@@ -96,5 +97,31 @@ def test_obsolete_other_draft_button_cannot_replace_current_active_draft():
             assert "answer_manual_once" not in data
             assert not core.stages and not core.cancels
             assert any("другой черновик" in item.get("text", "") for item in sent[before:])
+
+    asyncio.run(scenario())
+
+
+def test_recovery_navigation_write_failure_keeps_a_usable_draft_reopen_instead_of_raising():
+    async def scenario():
+        async with simplified_harness() as (app, core, sent, dispatch):
+            operation = await enter_amount(app, core, dispatch)
+            lose_stage_receipts(core, commit=True)
+
+            async def unavailable_navigation(*_args, **_kwargs):
+                raise LegalCoreApiError(503, "UNAVAILABLE", "Synthetic navigation write failure")
+
+            core.save_intake_draft = unavailable_navigation
+            before = len(sent)
+            AnswerCore.propose(core, {"amountKopecks": 1_000_000, "currency": "RUB"})
+            await delivery_finished(app)
+
+            await dispatch(bound_callback("refresh", operation, DRAFT))
+
+            assert core.draft["draftData"]["safetyScreening"]["amount"] == {
+                "amountKopecks": 1_000_000, "currency": "RUB",
+            }
+            assert any(button.callback_data == f"case:draft:{DRAFT}"
+                       for item in sent[before:] if item.get("reply_markup")
+                       for row in item["reply_markup"].inline_keyboard for button in row)
 
     asyncio.run(scenario())
