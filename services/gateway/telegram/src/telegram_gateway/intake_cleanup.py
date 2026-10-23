@@ -1,6 +1,8 @@
 """Exact, ephemeral step IDs: no history sweep, no text storage, no restart guessing."""
 
 import asyncio
+import hashlib
+import json
 import logging
 from dataclasses import dataclass, replace
 from typing import Any
@@ -24,6 +26,9 @@ class Step:
     draft: str
     revision: int
     messages: tuple[int, ...]
+    waits: tuple[int, ...] = ()
+    saved_revision: int | None = None
+    saved_sha256: str | None = None
 
 
 def capture(update: Update, draft: str, revision: object, state: str,
@@ -68,7 +73,8 @@ def remember_wait(update: Update, context: ContextTypes.DEFAULT_TYPE, operation:
             step = old
     # A bounded number of explicitly sent waits, never a range of message IDs.
     ids = tuple(dict.fromkeys((*step.messages, message_id)))
-    context.user_data[KEY] = (operation, replace(step, messages=ids[-8:]))
+    waits = tuple(dict.fromkeys((*step.waits, message_id)))
+    context.user_data[KEY] = (operation, replace(step, messages=ids[-8:], waits=waits[-8:]))
 
 
 async def delete_saved(update: Update, context: ContextTypes.DEFAULT_TYPE, step: Step | None,
@@ -78,6 +84,16 @@ async def delete_saved(update: Update, context: ContextTypes.DEFAULT_TYPE, step:
     if (step is None or user is None or chat is None or chat.type != "private"
             or (user.id, chat.id) != (step.actor, step.chat) or saved.get("id") != step.draft
             or type(revision) is not int or revision <= step.revision
+            or type(current_prompt) is not int or current_prompt < 1):
+        return
+    await _delete_ids(update, context, step, current_prompt)
+
+
+async def _delete_ids(update: Update, context: ContextTypes.DEFAULT_TYPE, step: Step,
+                      current_prompt: object) -> None:
+    user, chat = update.effective_user, update.effective_chat
+    if (user is None or chat is None or chat.type != "private"
+            or (user.id, chat.id) != (step.actor, step.chat)
             or type(current_prompt) is not int or current_prompt < 1):
         return
     try:
@@ -93,6 +109,22 @@ async def delete_saved(update: Update, context: ContextTypes.DEFAULT_TYPE, step:
         logger.info("intake transient message deletion timed out")
 
 
+async def finish_waiting(update: Update, context: ContextTypes.DEFAULT_TYPE, operation: UUID,
+                         sent: object) -> None:
+    """An unresolved answer stays; only its obsolete wait can disappear after correction UI."""
+    if context.user_data is None:
+        return
+    previous = context.user_data.get(KEY)
+    if not (isinstance(previous, tuple) and len(previous) == 2
+            and previous[0] == operation and isinstance(previous[1], Step)):
+        return
+    step = previous[1]
+    if getattr(sent, "chat_id", None) != step.chat:
+        return
+    await _delete_ids(update, context, replace(step, messages=step.waits),
+                      getattr(sent, "message_id", None))
+
+
 async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE, operation: UUID,
                  saved: dict[str, Any], wizard: dict[str, Any]) -> None:
     if context.user_data is None:
@@ -103,3 +135,44 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE, operation: 
         return
     context.user_data.pop(KEY, None)  # Freeze IDs before awaiting Telegram or later navigation.
     await delete_saved(update, context, previous[1], saved, wizard.get("_v2_prompt_message_id"))
+
+
+def remember_saved(context: ContextTypes.DEFAULT_TYPE, operation: UUID,
+                   saved: dict[str, Any]) -> None:
+    """Retain staging proof before next-prompt I/O, not an inference from revision movement."""
+    if context.user_data is None:
+        return
+    previous = context.user_data.get(KEY)
+    if not (isinstance(previous, tuple) and len(previous) == 2
+            and previous[0] == operation and isinstance(previous[1], Step)):
+        return
+    step, revision = previous[1], saved.get("revision")
+    if saved.get("id") != step.draft or type(revision) is not int or revision <= step.revision:
+        return
+    fingerprint = hashlib.sha256(json.dumps(
+        saved["draftData"], sort_keys=True, ensure_ascii=False, allow_nan=False,
+    ).encode()).hexdigest()
+    context.user_data[KEY] = (operation, replace(
+        step, saved_revision=revision, saved_sha256=fingerprint,
+    ))
+
+
+async def recover_saved(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                        saved: dict[str, Any], wizard: dict[str, Any]) -> None:
+    """Called only after an authorized resume has actually delivered its current prompt."""
+    if context.user_data is None:
+        return
+    previous = context.user_data.get(KEY)
+    if not (isinstance(previous, tuple) and len(previous) == 2 and isinstance(previous[1], Step)):
+        return
+    operation, step = previous
+    revision = saved.get("revision")
+    if (step.saved_revision is None or step.saved_sha256 is None
+            or saved.get("id") != step.draft or type(revision) is not int
+            or revision < step.saved_revision):
+        return
+    fingerprint = hashlib.sha256(json.dumps(
+        saved["draftData"], sort_keys=True, ensure_ascii=False, allow_nan=False,
+    ).encode()).hexdigest()
+    if fingerprint == step.saved_sha256:
+        await finish(update, context, operation, saved, wizard)

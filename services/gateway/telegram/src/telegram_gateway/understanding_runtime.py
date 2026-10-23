@@ -19,7 +19,7 @@ from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.dialogue_staging import ENABLED, stage
 from telegram_gateway.escalation_workspace import _chunks
 from telegram_gateway.guided_case_intake_v2 import parse_answer
-from telegram_gateway.intake_cleanup import finish, remember_wait
+from telegram_gateway.intake_cleanup import finish, remember_saved, remember_wait
 from telegram_gateway.intake_delivery import recovery_notice, stop, watch
 from telegram_gateway.understanding_client import UnderstandingClient, validated_draft
 from telegram_gateway.understanding_intent import bound_callback, parse_bound_callback
@@ -361,6 +361,7 @@ def install_understanding(application: bot.TelegramApplication) -> None:
                         raise ValueError("current proposal required")
                     saved = await stage(UnderstandingClient(core, actor), status, draft,
                                         answer=False)
+                    remember_saved(context, status.operation_id, saved)
                     stop(update, context, _SELECTED)
                     bot._user_data(context).pop(_SELECTED, None)
                     following = await _open(update, context, saved,

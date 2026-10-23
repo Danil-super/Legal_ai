@@ -24,7 +24,14 @@ from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.dialogue_staging import ENABLED, stage
 from telegram_gateway.escalation_workspace import _chunks
 from telegram_gateway.guided_case_intake_v2 import next_missing_state
-from telegram_gateway.intake_cleanup import finish, remember_answer, remember_wait
+from telegram_gateway.intake_cleanup import (
+    finish,
+    finish_waiting,
+    recover_saved,
+    remember_answer,
+    remember_saved,
+    remember_wait,
+)
 from telegram_gateway.intake_delivery import recovery_notice, stop, watch
 from telegram_gateway.understanding_client import validated_draft
 
@@ -164,6 +171,7 @@ async def _show(update: Update, context: ContextTypes.DEFAULT_TYPE, status: Answ
                 raise ValueError("current actor and proposal required")
             saved = await stage(AnswerClient(bot._legal_core(context), actor), status, draft,
                                 answer=True)
+            remember_saved(context, status.operation_id, saved)
             data.pop(_SELECTED, None)
             following = await _open(update, context, saved,
                                     accepted_revision=status.source.draft_revision + 1)
@@ -200,6 +208,8 @@ async def _show(update: Update, context: ContextTypes.DEFAULT_TYPE, status: Answ
         ) if index == len(pages) - 1 else None)
         if status.state == "PENDING":
             remember_wait(update, context, status.operation_id, draft, sent)
+        elif index == len(pages) - 1:
+            await finish_waiting(update, context, status.operation_id, sent)
     if not available:
         await recovery_notice(update, draft_id)
     return bot.WizardState[draft["wizardState"]]
@@ -363,6 +373,8 @@ def _resume_handler(
         state = await original(update, context)
         if not isinstance(state, int):
             raise ValueError("intake resume returned no conversation state")
+        if state != ConversationHandler.END:
+            await recover_saved(update, context, remote, bot._wizard_data(context))
         return state
 
     return resume
