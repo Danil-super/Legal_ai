@@ -113,3 +113,35 @@ def test_returning_to_card_cancels_pending_resolution():
         await show_workspace(update, context, ESC)
         assert "escalation_resolution_pending" not in context.user_data
     asyncio.run(scenario())
+
+
+def test_starting_assignment_cancels_an_unsubmitted_conclusion():
+    async def scenario():
+        update, context, core = setup()
+        context.user_data["escalation_resolution_pending"] = str(ESC)
+        context.user_data["escalation_discussion_id"] = str(ESC)
+        await action(update, context, f"esc:assign:{ESC}")
+        assert "escalation_resolution_pending" not in context.user_data
+        assert "escalation_discussion_id" not in context.user_data
+        core.assign_escalation.assert_not_awaited()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("invalid", ["expired", "unselected", "forged", "cancelled"])
+def test_invalid_or_cancelled_confirmation_never_assigns(invalid):
+    async def scenario():
+        update, context, core = setup()
+        await action(update, context, f"esc:assign:{ESC}")
+        pick = callback(update, "esc:pick:")
+        if invalid != "unselected":
+            await action(update, context, pick)
+        confirm = pick.replace("esc:pick:", "esc:confirm-assign:")
+        if invalid == "expired":
+            context.user_data["escalation_assignment_pending"]["expires"] = 0
+        elif invalid == "forged":
+            confirm = "esc:confirm-assign:" + "0" * 32
+        elif invalid == "cancelled":
+            await show_workspace(update, context, ESC)
+        await action(update, context, confirm)
+        core.assign_escalation.assert_not_awaited()
+    asyncio.run(scenario())
