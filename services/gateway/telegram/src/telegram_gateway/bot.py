@@ -18,7 +18,7 @@ from uuid import UUID
 
 import httpx2
 from legal_core.pseudonymization import pseudonymize_text
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Message, Update
 from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 from telegram.ext import (
     Application,
@@ -374,10 +374,11 @@ async def _reply(
     text: str,
     *,
     reply_markup: InlineKeyboardMarkup | None = None,
-) -> None:
+) -> Message | None:
     message = update.effective_message
     if message is not None:
-        await message.reply_text(text, reply_markup=reply_markup)
+        return await message.reply_text(text, reply_markup=reply_markup)
+    return None
 
 
 def _clear_pending_inputs(context: ContextTypes.DEFAULT_TYPE | None) -> None:
@@ -896,7 +897,7 @@ async def _prompt_v2_draft(
         )
     elif state is WizardState.EVENT_DATE:
         await reply(
-            "Когда это произошло? Укажите дату, например 18.10.2026. "
+            "Когда пациент обратился по этой ситуации? Укажите дату, например 18.10.2026. "
             "Если не знаете точную дату, так и напишите.",
             reply_markup=_v2_keyboard([]),
         )
@@ -928,9 +929,12 @@ async def _prompt_v2_draft(
     elif state is WizardState.MATERIALS:
         attached = data.get("caseMaterialsStatus") == "ATTACHED"
         prompt = (
-            "6/7. При необходимости отправьте один обезличенный .txt, .pdf или .docx до 15 МБ. "
+            "6/7. Если есть, приложите обезличенную претензию, переписку или договор — "
+            "юрист сможет их посмотреть. Можно продолжить без файла. "
+            "Форматы: .txt, .pdf или .docx до 15 МБ. "
+            "Файл сохраняется в материалах кейса. "
             "Удалите ФИО, контакты, номера карт, изображения и ненужные медицинские сведения. "
-            "Файл будет сохранён в материалах кейса. Рекомендации готовятся по описанию "
+            "Рекомендации готовятся по описанию "
             "и подтверждённым ответам."
         )
         rows = [[("Продолжить без файла", "case:v2:material:skip")]]
@@ -1634,6 +1638,10 @@ async def _persist_selected_transition(
                 reply_markup=_keyboard([[("Открыть текущий черновик", f"case:draft:{draft_id}")]]),
             )
             return WizardState[str(data[DRAFT_STATE_KEY])]
+    from telegram_gateway.intake_cleanup import capture, delete_saved
+
+    completed_step = capture(update, str(draft_id), data.get(DRAFT_REVISION_KEY),
+                             str(data.get(DRAFT_STATE_KEY)), data.get("_v2_prompt_message_id"))
     before = _draft_payload(data)
     next_state = await handler(update, context)
     if not isinstance(next_state, WizardState):
@@ -1666,6 +1674,10 @@ async def _persist_selected_transition(
             "⚠️ Черновик не удалось сохранить. Откройте /menu → «Мои черновики» и попробуйте снова.",
         )
         return ConversationHandler.END
+    if (saved.get("id") == str(draft_id) and saved.get("wizardState") == next_state.name
+            and saved.get("draftData") == _draft_payload(data) and saved_revision == revision + 1):
+        await delete_saved(update, context, completed_step, saved,
+                           data.get("_v2_prompt_message_id"))
     return next_state
 
 

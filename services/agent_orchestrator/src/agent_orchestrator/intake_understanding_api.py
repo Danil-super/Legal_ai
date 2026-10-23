@@ -73,7 +73,9 @@ def create_understanding_router(
                 ):
                     raise LegalCoreProtocolError("understanding context binding mismatch")
                 async with asyncio.timeout(stage_timeout):
-                    suggestions = await understanding.understand(context.source)
+                    suggestions = await understanding.understand(
+                        context.source, as_of_date=context.as_of_date,
+                    )
                 return UnderstandingProposal(
                     operationId=operation_id, draftId=context.draft_id,
                     draftRevision=context.draft_revision, inputSha256=context.input_sha256,

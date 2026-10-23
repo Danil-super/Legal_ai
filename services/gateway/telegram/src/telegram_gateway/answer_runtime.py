@@ -24,6 +24,14 @@ from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.dialogue_staging import ENABLED, stage
 from telegram_gateway.escalation_workspace import _chunks
 from telegram_gateway.guided_case_intake_v2 import next_missing_state
+from telegram_gateway.intake_cleanup import (
+    finish,
+    finish_waiting,
+    recover_saved,
+    remember_answer,
+    remember_saved,
+    remember_wait,
+)
 from telegram_gateway.intake_delivery import recovery_notice, stop, watch
 from telegram_gateway.understanding_client import validated_draft
 
@@ -163,9 +171,12 @@ async def _show(update: Update, context: ContextTypes.DEFAULT_TYPE, status: Answ
                 raise ValueError("current actor and proposal required")
             saved = await stage(AnswerClient(bot._legal_core(context), actor), status, draft,
                                 answer=True)
+            remember_saved(context, status.operation_id, saved)
             data.pop(_SELECTED, None)
-            return await _open(update, context, saved,
-                               accepted_revision=status.source.draft_revision + 1)
+            following = await _open(update, context, saved,
+                                    accepted_revision=status.source.draft_revision + 1)
+            await finish(update, context, status.operation_id, saved, bot._wizard_data(context))
+            return following
         # A fast POST can already contain the proposal. Advance only through a
         # ConversationHandler entry, never mutate its state from a text pre-handler.
         actor = bot._actor_id(update)
@@ -190,11 +201,15 @@ async def _show(update: Update, context: ContextTypes.DEFAULT_TYPE, status: Answ
     else:
         pages = list(_chunks(review_blocks(status, draft["draftData"])))
     for index, text in enumerate(pages):
-        await bot._reply(update, text, reply_markup=_controls(
+        sent = await bot._reply(update, text, reply_markup=_controls(
             status.operation_id, draft_id, proposed=status.state == "PROPOSED",
             simplified=context.bot_data.get(ENABLED) is True,
             pending=status.state == "PENDING",
         ) if index == len(pages) - 1 else None)
+        if status.state == "PENDING":
+            remember_wait(update, context, status.operation_id, draft, sent)
+        elif index == len(pages) - 1:
+            await finish_waiting(update, context, status.operation_id, sent)
     if not available:
         await recovery_notice(update, draft_id)
     return bot.WizardState[draft["wizardState"]]
@@ -313,6 +328,7 @@ async def route_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if derive_answer_question(remote["draftData"], remote["wizardState"]) is None:
             raise ValueError("no current factual question")
         status = await client.start(draft_id, remote["revision"], text)
+        remember_answer(update, context, status.operation_id, remote, wizard)
         await _show(update, context, status, remote)
     except (ValueError, KeyError, TypeError, LegalCoreApiError):
         await bot._reply(update, "Ответ пока не подтверждён. Проверьте обезличивание и "
@@ -357,6 +373,14 @@ def _resume_handler(
         state = await original(update, context)
         if not isinstance(state, int):
             raise ValueError("intake resume returned no conversation state")
+        if state != ConversationHandler.END:
+            # original() reauthorizes/reloads: bind cleanup to what was actually
+            # rendered, never to the earlier discovery read across that await.
+            wizard = bot._wizard_data(context)
+            rendered = {"id": wizard.get(bot.DRAFT_ID_KEY),
+                        "revision": wizard.get(bot.DRAFT_REVISION_KEY),
+                        "draftData": bot._draft_payload(wizard)}
+            await recover_saved(update, context, rendered, wizard)
         return state
 
     return resume

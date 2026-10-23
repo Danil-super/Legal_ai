@@ -411,6 +411,7 @@ async def read_understanding_context(
         result = IntakeUnderstandingContext(
             operationId=record.id, draftId=draft.id, draftRevision=draft.revision,
             inputSha256=intent.input_sha256, operationKind="UNDERSTAND_INTAKE", source=source,
+            asOfDate=record.created_at.astimezone(UTC).date(),
         )
         session.add(_audit(actor=actor, action="INTAKE_PREPARATION_CONTEXT_READ",
                            resource_type=RESOURCE_TYPE, resource_id=record.id,

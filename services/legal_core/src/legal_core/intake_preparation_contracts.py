@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -40,6 +41,19 @@ class IntakeUnderstandingContext(PreparationModel):
     input_sha256: Sha256 = Field(alias="inputSha256")
     operation_kind: Literal["UNDERSTAND_INTAKE"] = Field(alias="operationKind")
     source: str = Field(strict=True, min_length=10, max_length=1500)
+    as_of_date: date | None = Field(default=None, alias="asOfDate")
+
+    @field_validator("as_of_date", mode="before")
+    @classmethod
+    def calendar_reference_only(cls, value: object) -> object:
+        # Core supplies calendar dates; never silently coerce timestamps or datetimes.
+        if value is None or type(value) is date:
+            return value
+        if isinstance(value, str) and len(value) == 10:
+            parsed = date.fromisoformat(value)
+            if parsed.isoformat() == value:
+                return parsed
+        raise ValueError("reference must be an ISO calendar date")
 
 
 class SourceSpan(PreparationModel):

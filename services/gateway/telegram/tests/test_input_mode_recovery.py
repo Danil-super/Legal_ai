@@ -51,6 +51,7 @@ def context_with_draft(state: bot.WizardState) -> SimpleNamespace:
 
 def fake_update(*, text: str = "", callback: str | None = None) -> SimpleNamespace:
     return SimpleNamespace(
+        effective_chat=None,
         effective_user=SimpleNamespace(id=ACTOR_ID),
         effective_message=SimpleNamespace(
             text=text, message_id=3, reply_text=AsyncMock(), reply_document=AsyncMock()

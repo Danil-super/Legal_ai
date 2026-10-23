@@ -1,6 +1,7 @@
 """Only a live, owned understanding lease may release the bounded model input."""
 
 import os
+from datetime import UTC, date
 from uuid import uuid4
 
 import pytest
@@ -28,6 +29,18 @@ def _binding(lease):
         engine.dispose()
 
 
+def _reference_date(lease):
+    engine = create_engine(owner_database_url())
+    try:
+        with engine.connect() as connection:
+            created_at = connection.scalar(text(
+                "SELECT created_at FROM idempotency_records WHERE id=:id"
+            ), {"id": lease.operation_id})
+            return created_at.astimezone(UTC).date().isoformat()
+    finally:
+        engine.dispose()
+
+
 def _context(sessions, actor, lease, intent, **changes):
     kwargs = {
         "telegram_user_id": actor, "operation_id": lease.operation_id,
@@ -47,6 +60,7 @@ def test_context_is_exact_minimal_and_releases_all_locks_before_model_io(draft_o
         "operationId": str(lease.operation_id), "draftId": draft["id"],
         "draftRevision": draft["revision"], "inputSha256": intent["inputSha256"],
         "operationKind": "UNDERSTAND_INTAKE", "source": SOURCE,
+        "asOfDate": _reference_date(lease),
     }
     engine = create_engine(owner_database_url())
     try:
@@ -58,6 +72,26 @@ def test_context_is_exact_minimal_and_releases_all_locks_before_model_io(draft_o
             assert connection.scalar(text(
                 "SELECT state FROM idempotency_records WHERE id=:id FOR UPDATE NOWAIT"
             ), {"id": lease.operation_id}) == "IN_PROGRESS"
+    finally:
+        engine.dispose()
+
+
+def test_reference_date_is_persisted_operation_day_in_utc_across_context_replays(draft_owner):
+    actor, _, _, draft = draft_owner
+    lease = _run(lambda sessions: _reserve(sessions, actor, draft))
+    intent = _binding(lease)
+    engine = create_engine(owner_database_url())
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE idempotency_records SET created_at="
+                "TIMESTAMPTZ '2025-01-01 00:15:00+03' WHERE id=:id"
+            ), {"id": lease.operation_id})
+        first = _run(lambda sessions: _context(sessions, actor, lease, intent))
+        replay = _run(lambda sessions: _context(sessions, actor, lease, intent))
+        assert first.as_of_date == replay.as_of_date == date(2024, 12, 31)
+        assert replay.source == first.source == SOURCE
+        assert replay.input_sha256 == intent["inputSha256"]
     finally:
         engine.dispose()
 

@@ -232,6 +232,9 @@ def prepare_selected_draft(context: SimpleNamespace, update: SimpleNamespace) ->
     """Seed the server boundary and the originating prompt for direct handler tests."""
     from telegram_gateway import bot
 
+    # These direct-handler doubles do not simulate a private Telegram chat.
+    # Real-PTB cleanup behavior is exercised in test_intake_transient_cleanup.
+    update.effective_chat = None
     data = context.user_data[bot.WIZARD_DATA_KEY]
     client = context.bot_data[bot.LEGAL_CORE_CLIENT_KEY]
     if isinstance(client, FakeReportPipeline | FakeLegalCore) and client.saved_draft is None:
@@ -913,6 +916,7 @@ def test_v2_choice_flow_persists_plain_language_values_without_legal_qualificati
     assert "harm_claimed" not in data
 
     select_treatment = SimpleNamespace(
+        effective_chat=None,
         callback_query=FakeQuery("case:v2:multi:situationAreas:TREATMENT"),
         effective_user=SimpleNamespace(id=7_000_000_001),
         effective_message=message,
@@ -922,6 +926,7 @@ def test_v2_choice_flow_persists_plain_language_values_without_legal_qualificati
         == WizardState.SITUATION
     )
     complete = SimpleNamespace(
+        effective_chat=None,
         callback_query=FakeQuery("case:v2:multi:situationAreas:DONE"),
         effective_user=SimpleNamespace(id=7_000_000_001),
         effective_message=message,
