@@ -187,6 +187,13 @@ async def harness():
         if endpoint == "answerCallbackQuery":
             return True
         data = dict(data or {})
+        if endpoint == "editMessageReplyMarkup":
+            index = data["message_id"] - 101
+            sent[index]["reply_markup"] = data["reply_markup"]
+            return {"message_id": data["message_id"], "date": 1,
+                    "chat": {"id": data.get("chat_id", ACTOR), "type": "private"},
+                    "text": sent[index].get("text", ""),
+                    "reply_markup": data["reply_markup"].to_dict()}
         sent.append(data)
         return {"message_id": len(sent) + 100, "date": 1,
                 "chat": {"id": data.get("chat_id", ACTOR), "type": "private"},
@@ -219,6 +226,20 @@ async def harness():
                                             "length": len(content)}]
                 body["message"] = message
             else:
+                if content.startswith("case:v2:multi:") and not content.endswith(":DONE"):
+                    prefix, value = content.rsplit(":", 1)
+                    if not value.startswith(("+", "-")):
+                        # Existing scenario shorthand means clicking the currently
+                        # shown control, whose new payload explicitly adds/removes.
+                        for item in reversed(sent):
+                            markup = item.get("reply_markup")
+                            if markup is not None:
+                                match = next((button.callback_data for row in markup.inline_keyboard
+                                    for button in row if button.callback_data in {
+                                        prefix + ":+" + value, prefix + ":-" + value}), None)
+                                if match is not None:
+                                    content = str(match)
+                                    break
                 for index in range(len(sent) - 1, -1, -1):
                     markup = sent[index].get("reply_markup")
                     if markup is not None and any(

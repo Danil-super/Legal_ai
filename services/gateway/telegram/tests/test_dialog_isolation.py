@@ -158,6 +158,13 @@ def test_switching_from_discussion_does_not_send_new_case_text_to_old_case(
                 return {"id": 123, "is_bot": True, "first_name": "Test", "username": "test_bot"}
             if endpoint == "answerCallbackQuery":
                 return True
+            if endpoint == "editMessageReplyMarkup":
+                message_id = data["message_id"]
+                sent[message_id - 101]["reply_markup"] = data["reply_markup"]
+                return {"message_id": message_id, "date": 1,
+                        "chat": {"id": ACTOR, "type": "private"},
+                        "text": sent[message_id - 101].get("text", ""),
+                        "reply_markup": data["reply_markup"].to_dict()}
             sent.append(data)
             return {
                 "message_id": len(sent) + 100,
@@ -194,7 +201,11 @@ def test_switching_from_discussion_does_not_send_new_case_text_to_old_case(
                         for index in range(len(sent) - 1, -1, -1):
                             markup = sent[index].get("reply_markup")
                             if markup is not None and any(
-                                button.callback_data == content
+                                button.callback_data == content or (
+                                    content.startswith("case:v2:multi:") and
+                                    button.callback_data == content.rsplit(":", 1)[0]
+                                    + ":+" + content.rsplit(":", 1)[1]
+                                )
                                 for row in markup.inline_keyboard for button in row
                             ):
                                 message["message_id"] = index + 101

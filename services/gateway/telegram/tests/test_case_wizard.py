@@ -79,6 +79,9 @@ class FakeQuery:
     async def answer(self, text: str | None = None, show_alert: bool = False) -> None:
         self.answers.append((text, show_alert))
 
+    async def edit_message_reply_markup(self, **kwargs: object) -> None:
+        self.edited_markup = kwargs["reply_markup"]
+
 
 class FakeLegalCore:
     def __init__(self, response: dict[str, Any] | Exception) -> None:
