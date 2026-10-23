@@ -236,9 +236,11 @@ def _downgrade_preparation_revision() -> None:
     assert migration is not None
     owner = create_engine(owner_database_url())
     try:
-        with owner.begin() as connection:
-            with Operations.context(MigrationContext.configure(connection)):
-                migration.module.downgrade()
+        with (
+            owner.begin() as connection,
+            Operations.context(MigrationContext.configure(connection)),
+        ):
+            migration.module.downgrade()
     finally:
         owner.dispose()
 
