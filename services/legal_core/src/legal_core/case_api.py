@@ -940,9 +940,12 @@ def create_case_router(
     ) -> EscalationDetailResponse:
         actor = await resolve_actor(session, telegram_user_id)
         _require_clinic_owner(actor)
+        visible_escalation = await _discussion_escalation(session, actor, escalation_id)
+        # Retention locks Case before deleting escalation history; keep that order.
+        case = await _tenant_case(session, actor, visible_escalation.case_id, for_update=True)
         escalation = await lock_lawyer_escalation(session, actor, escalation_id)
-        case = await _tenant_case(session, actor, escalation.case_id)
-        if case.status == "CLOSED" or case.closed_at is not None:
+        # closed_at confirms the intake and starts retention; it does not close lawyer work.
+        if case.status == "CLOSED":
             raise ApiError(status_code=409, code="CASE_CLOSED", message="Case is closed")
         state, assignee = await _escalation_state(session, actor, escalation_id)
         if state == "RESOLVED":
@@ -956,16 +959,17 @@ def create_case_router(
         if recipient is None:
             raise ApiError(status_code=404, code="LAWYER_NOT_FOUND", message="Lawyer not found")
         membership, user = recipient
-        entitlement = await session.scalar(select(SubscriptionEntitlement.id).where(
+        entitlement = await session.scalar(select(SubscriptionEntitlement).where(
             SubscriptionEntitlement.clinic_id == actor.clinic_id,
             SubscriptionEntitlement.user_id == user.id,
-            SubscriptionEntitlement.status == "ACTIVE",
-            SubscriptionEntitlement.starts_at <= func.now(),
-            (SubscriptionEntitlement.ends_at.is_(None))
-            | (SubscriptionEntitlement.ends_at > func.now()),
         ).with_for_update())
+        # Row locks fence changes, but wall-clock expiration can pass during a lock wait.
+        _require_case_content_available(case)
+        now = datetime.now(UTC)
         if (membership.role != "CLINIC_LAWYER" or membership.status != "ACTIVE"
-                or user.status != "ACTIVE" or entitlement is None):
+                or user.status != "ACTIVE" or entitlement is None
+                or entitlement.status != "ACTIVE" or entitlement.starts_at > now
+                or (entitlement.ends_at is not None and entitlement.ends_at <= now)):
             raise ApiError(status_code=409, code="LAWYER_UNAVAILABLE", message="Lawyer unavailable")
         if assignee != payload.assigned_membership_id:
             if assignee != payload.expected_assigned_membership_id:

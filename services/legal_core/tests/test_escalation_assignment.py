@@ -174,12 +174,10 @@ def test_foreign_escalation_and_target_are_hidden_without_writes(assignment) -> 
         assert _history(escalation) == before
 
 
-@pytest.mark.parametrize("closed", ["status", "closed_at"])
-def test_closed_case_cannot_receive_an_assignment(assignment, closed) -> None:
+def test_closed_case_cannot_receive_an_assignment(assignment) -> None:
     client, owner, escalation, _, _, target = assignment
-    change = "status='CLOSED'" if closed == "status" else "closed_at=now()"
     _sql(
-        f"UPDATE cases SET {change} "
+        "UPDATE cases SET status='CLOSED' "
         "WHERE id=(SELECT case_id FROM case_escalations WHERE id=:id)",
         id=escalation,
     )
@@ -192,6 +190,23 @@ def test_closed_case_cannot_receive_an_assignment(assignment, closed) -> None:
     assert denied.status_code == 409, denied.json()
     assert denied.json()["error"]["code"] == "CASE_CLOSED"
     assert _history(escalation) == before
+
+
+def test_finalized_intake_is_not_a_closed_lawyer_case(assignment) -> None:
+    client, owner, escalation, _, _, target = assignment
+    # Production confirmation sets closed_at to start retention, before lawyer work.
+    _sql(
+        "UPDATE cases SET closed_at=now(),retention_due_at=now()+interval '90 days' "
+        "WHERE id=(SELECT case_id FROM case_escalations WHERE id=:id)",
+        id=escalation,
+    )
+    assigned = client.post(
+        f"/v1/case-escalations/{escalation}/assign",
+        headers=actor_headers(owner),
+        json={"assignedMembershipId": str(target), "expectedAssignedMembershipId": None},
+    )
+    assert assigned.status_code == 200, assigned.json()
+    assert assigned.json()["assignedMembershipId"] == str(target)
 
 
 @pytest.mark.parametrize("unavailable", ["membership", "user", "role", "entitlement"])

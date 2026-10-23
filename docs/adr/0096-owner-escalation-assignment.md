@@ -21,7 +21,11 @@ or audit write on rejection. A repeat when the current assignee already equals t
 target returns current detail without another event; this is state-idempotence,
 not a guarantee of replaying an old operation after intervening assignments.
 
-Serialize claim/assignment/resolve on the existing escalation lock. Preserve true
+Assignment locks Case before escalation, matching retention's order, then locks
+the recipient and entitlement. Check wall-clock retention and entitlement validity
+again after waits. `closed_at` means intake confirmation, not completed lawyer work:
+confirmed, retained cases remain assignable; Case status CLOSED and escalation
+status RESOLVED do not. Serialize claim/assignment/resolve on the escalation lock. Preserve true
 actor identity in append-only history: new ASSIGNED event stores owner as actor
 and the target in a separate nullable same-tenant foreign-key column. Old events
 remain unchanged; all detail/queue readers use the new target when present.
