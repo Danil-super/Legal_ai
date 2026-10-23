@@ -374,7 +374,13 @@ def _resume_handler(
         if not isinstance(state, int):
             raise ValueError("intake resume returned no conversation state")
         if state != ConversationHandler.END:
-            await recover_saved(update, context, remote, bot._wizard_data(context))
+            # original() reauthorizes/reloads: bind cleanup to what was actually
+            # rendered, never to the earlier discovery read across that await.
+            wizard = bot._wizard_data(context)
+            rendered = {"id": wizard.get(bot.DRAFT_ID_KEY),
+                        "revision": wizard.get(bot.DRAFT_REVISION_KEY),
+                        "draftData": bot._draft_payload(wizard)}
+            await recover_saved(update, context, rendered, wizard)
         return state
 
     return resume

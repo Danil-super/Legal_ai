@@ -26,7 +26,8 @@ def test_initial_model_receives_authoritative_calendar_and_separate_event_servic
         instructions = request["system"].split("JSON Schema:", 1)[0]
         assert "Omit ambiguous episode bindings and relative dates" not in instructions
         assert "этого года" in instructions and "asOfDate" in instructions
-        assert "event date" in instructions and "service" in instructions
+        assert "eventDate is the patient's communication/complaint date" in instructions
+        assert "SERVICE_PROVIDED_DATE is the date of that particular service" in instructions
         assert result.event_date is None  # No fact invented when model abstains.
 
     asyncio.run(scenario())
