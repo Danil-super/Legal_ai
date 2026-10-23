@@ -284,6 +284,41 @@ def test_reopening_after_saved_result_and_failed_prompt_cleans_obsolete_wait(ini
     asyncio.run(scenario())
 
 
+def test_recovery_cleanup_checks_the_facts_of_the_prompt_actually_rendered_not_an_earlier_read():
+    async def scenario():
+        async with cleanup_harness() as (app, core, _sent, dispatch, visible, deleted,
+                                         _events, failures):
+            await dispatch(f"case:draft:{DRAFT}")
+            await dispatch("text:" + TEXT)
+            waiting_id = message_with(visible, "Обрабатываю ответ")
+            failures["question"] = True
+            AnswerCore.propose(core, "COMPLAINT")
+            await delivery_finished(app)
+            assert core.stages and waiting_id not in deleted
+
+            original_get, changed = core.get_intake_draft, False
+
+            async def concurrent_edit_between_reads(draft, actor):
+                nonlocal changed
+                snapshot = await original_get(draft, actor)
+                if not changed:
+                    changed = True
+                    # The first authorized read is genuine, but no longer the
+                    # snapshot the following resume handler will display.
+                    core.draft["draftData"]["incomingKind"] = "FORMAL_DOCUMENT"
+                    core.draft["revision"] += 1
+                return snapshot
+
+            core.get_intake_draft = concurrent_edit_between_reads
+            failures["question"] = False
+            await dispatch(f"case:draft:{DRAFT}")
+
+            assert core.draft["draftData"]["incomingKind"] == "FORMAL_DOCUMENT"
+            assert waiting_id not in deleted and 2 not in deleted
+            assert message_with(visible, "С чем связана ситуация") not in deleted
+    asyncio.run(scenario())
+
+
 def test_reopened_draft_cleans_its_new_wait_without_guessing_old_or_user_message_ids():
     async def scenario():
         async with cleanup_harness() as (app, core, _sent, dispatch, visible, deleted,
