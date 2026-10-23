@@ -1,5 +1,19 @@
 # Dental Legal AI task list
 
+## Intake dates and transient message cleanup — 23 October 2026
+
+- [x] Reproduce missing initial date reference and missing cleanup independently.
+- [x] Bind private initial context to the persisted UTC operation day, with tests.
+- [x] Explain distinct service/complaint dates; preserve both through Core merge.
+- [x] Clean known transient IDs after durable progress and next-prompt delivery.
+- [x] Verify staging/save/send failures, late menu completion and Telegram refusal.
+- [ ] Complete adversarial review, real PostgreSQL regressions and full gates.
+- [ ] Check synthetic extraction against the existing live model without changing it.
+- [ ] Obtain separate release approval; verify deployed behavior afterward.
+
+Prompt/merge tests alone do not prove live semantic extraction. Existing historical
+messages are not retrospectively deleted; unknown old IDs are deliberately kept.
+
 ## Intake waiting and active-draft navigation — 20 October 2026
 
 - [x] Read-only incident correlation without accessing narrative text.

@@ -1,5 +1,20 @@
 # Implementation Plan: Dental Legal AI MVP
 
+## Intake dates and transient message cleanup — 23 October 2026
+
+Owner reproduced stale waiting messages and a redundant date question on a new
+quick case. Reuse the bounded, previously approved temporal-context increment
+(ADR0095), not the unfinished multi-field proposal overhaul. Bind initial model
+interpretation to Core's persisted operation calendar and distinguish complaint
+date from service date. Preserve uncertainty and the final summary confirmation.
+
+Record exact transient message IDs and clean them only after durable save/staging
+and successful next-prompt delivery (ADR0097). Preserve narratives, files and
+summaries; no history sweep or guessed IDs after restart. Reproduce quick/guided
+and failure/replay boundaries, then complete independent review and full isolated
+quality gates. Production release remains a separate owner decision. No provider,
+model/effort, risk/auth, normative approval or schema change is included.
+
 ## Intake waiting and active-draft navigation — 20 October 2026
 
 Owner report after PR105: unclear waiting, stopped/resume detour and apparent
