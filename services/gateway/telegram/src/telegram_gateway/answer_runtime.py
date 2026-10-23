@@ -252,10 +252,21 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                          "Разбор остановлен. Напишите ответ на текущий вопрос заново.")
         return await _open(update, context, draft)
     except (ValueError, KeyError, TypeError, LegalCoreApiError):
-        await bot._reply(update, "Не удалось подтвердить результат действия. "
-                         "Ничего не считаем сохранённым или отменённым до проверки.",
-                         reply_markup=_controls(operation, draft_id)
-                         if operation is not None and draft_id is not None else None)
+        if operation is not None and draft_id is not None:
+            from telegram_gateway.answer_recovery import recover_current
+
+            recovered = await recover_current(update, context, action=action,
+                                               operation=operation, draft_id=draft_id)
+            if recovered is not None:
+                return recovered
+        rows = [[InlineKeyboardButton("Открыть текущий черновик",
+                                      callback_data=f"case:draft:{draft_id}")]] if (
+            draft_id is not None
+        ) else []
+        rows.append([InlineKeyboardButton("← Главное меню", callback_data="menu")])
+        await bot._reply(update, "Не удалось обновить шаг. Сохранённые сведения остаются в черновике. "
+                         "Откройте текущий черновик — продолжим с сохранённых сведений.",
+                         reply_markup=InlineKeyboardMarkup(rows))
         return ConversationHandler.END
 
 
