@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 from telegram.error import BadRequest, NetworkError
-from telegram.ext import ExtBot
+from telegram.ext import ApplicationHandlerStop, ExtBot
 from telegram_gateway.case_wizard import LegalCoreApiError
 from test_answer_runtime import AnswerCore
 from test_confirmed_understanding_runtime import TEXT
@@ -25,6 +25,20 @@ async def cleanup_harness():
         original = ExtBot._post
         visible, deleted, events = {}, set(), []
         failures = {"question": False, "delete": False}
+        delivery_error = NetworkError("Synthetic next-question delivery failure")
+
+        async def expected_delivery_error(_update, context):
+            if context.error is delivery_error:
+                # The transport fault is intentional. Do not let the shared
+                # harness's accumulating unexpected-error guard latch this one.
+                raise ApplicationHandlerStop
+
+        error_handlers = list(app.error_handlers.items())
+        for handler, _block in error_handlers:
+            app.remove_error_handler(handler)
+        app.add_error_handler(expected_delivery_error)
+        for handler, block in error_handlers:
+            app.add_error_handler(handler, block=block)
 
         async def transport(self, endpoint, data=None, **kwargs):
             payload = dict(data or {})
@@ -40,7 +54,7 @@ async def cleanup_harness():
                 "С чем связана ситуация" in payload.get("text", "")
             ):
                 events.append(("failed-send", None, core.draft["revision"]))
-                raise NetworkError("Synthetic next-question delivery failure")
+                raise delivery_error
             result = await original(self, endpoint, data=data, **kwargs)
             if endpoint in {"sendMessage", "editMessageText"}:
                 message_id = result["message_id"]
@@ -205,6 +219,23 @@ def test_failed_staging_preserves_unsaved_short_answer_and_current_question():
     asyncio.run(scenario())
 
 
+def test_unresolved_followup_retires_wait_but_retains_unconfirmed_answer_for_correction():
+    async def scenario():
+        async with cleanup_harness() as (app, core, _sent, dispatch, visible, deleted,
+                                         _events, _failures):
+            await dispatch(f"case:draft:{DRAFT}")
+            question_id = message_with(visible, "Что поступило от пациента")
+            await dispatch("text:Синтетическое неоднозначное сообщение")
+            waiting_id = message_with(visible, "Обрабатываю ответ")
+            AnswerCore.propose(core, None, reason="AMBIGUOUS")
+            await delivery_finished(app)
+
+            assert "incomingKind" not in core.draft["draftData"] and not core.stages
+            assert waiting_id in deleted, "finished unresolved analysis must not look in-flight"
+            assert question_id not in deleted and 2 not in deleted
+    asyncio.run(scenario())
+
+
 def test_failed_next_prompt_preserves_previous_question_and_short_answer_for_recovery():
     async def scenario():
         async with cleanup_harness() as (app, core, _sent, dispatch, visible, deleted,
@@ -220,6 +251,36 @@ def test_failed_next_prompt_preserves_previous_question_and_short_answer_for_rec
             assert any(event[0] == "failed-send" for event in events)
             assert question_id not in deleted and 2 not in deleted
             assert question_id in visible
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("initial", [True, False], ids=["description", "followup"])
+def test_reopening_after_saved_result_and_failed_prompt_cleans_obsolete_wait(initial):
+    async def scenario():
+        async with cleanup_harness() as (app, core, _sent, dispatch, visible, deleted,
+                                         _events, failures):
+            await dispatch("quick:start" if initial else f"case:draft:{DRAFT}")
+            await dispatch("text:" + TEXT)
+            waiting_id = message_with(visible, "Разбираю ситуацию" if initial else
+                                      "Обрабатываю ответ")
+            failures["question"] = True
+            if initial:
+                core.propose(incomingKind="COMPLAINT")
+            else:
+                AnswerCore.propose(core, "COMPLAINT")
+            await delivery_finished(app)
+            assert waiting_id not in deleted
+            assert core.stages, "the interruption happened after durable staging"
+
+            failures["question"] = False
+            await dispatch(f"case:draft:{DRAFT}")
+
+            assert waiting_id in deleted, "successful recovery must retire its own waiting card"
+            assert message_with(visible, "С чем связана ситуация") not in deleted
+            if initial:
+                assert 2 not in deleted
+            else:
+                assert 2 in deleted
     asyncio.run(scenario())
 
 
