@@ -10,7 +10,7 @@ from decimal import Decimal
 from agent_orchestrator.hermes_client import HermesClient, HermesProtocolError, HermesUnavailable
 from legal_core.intake_answer_contracts import AnswerInterpretation, AnswerQuestion
 from legal_core.intake_answer_values import validate_answer_value
-from legal_core.intake_preparation_contracts import DraftSuggestions
+from legal_core.intake_preparation_contracts import DraftSuggestions, SourceSpan
 from legal_core.pseudonymization import pseudonymize_text
 
 _CONTEXT_FIELDS = frozenset({
@@ -134,7 +134,7 @@ class AnswerUnderstanding:
                         pass
                     else:
                         return AnswerInterpretation(status="PROPOSED", value=value,
-                            sourceSpans=[{"start": 0, "end": len(source)}])
+                            sourceSpans=[SourceSpan(start=0, end=len(source))])
             schema = AnswerInterpretation.model_json_schema(by_alias=True)
             if question.target_field == "safetyScreening" and question.screening_field != "amount":
                 # The wire value is generic JSON across question families. Give the model

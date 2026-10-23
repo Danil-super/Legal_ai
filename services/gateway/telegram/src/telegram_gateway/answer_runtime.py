@@ -264,7 +264,7 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             draft_id is not None
         ) else []
         rows.append([InlineKeyboardButton("← Главное меню", callback_data="menu")])
-        await bot._reply(update, "Не удалось обновить шаг. Сохранённые сведения остаются в черновике. "
+        await bot._reply(update, "Не удалось обновить шаг. Сведения остаются в черновике. "
                          "Откройте текущий черновик — продолжим с сохранённых сведений.",
                          reply_markup=InlineKeyboardMarkup(rows))
         return ConversationHandler.END
