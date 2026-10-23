@@ -149,7 +149,7 @@ class LegalCoreClient:
         try:
             request = UnderstandingContextRequest.model_validate(binding.model_dump(by_alias=True))
             payload = await self._request_json(
-                "POST", f"/v1/intake-preparations/{operation_id}/context",
+                "POST", f"/v1/intake-preparations/{operation_id}/context?includeCalendar=true",
                 telegram_user_id=telegram_user_id,
                 json_body=request.model_dump(mode="json", by_alias=True),
             )

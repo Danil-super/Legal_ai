@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.analysis_api import _require_agent_internal_key
@@ -120,17 +120,22 @@ def create_intake_preparation_router(sessions: async_sessionmaker[AsyncSession])
     @router.post(
         "/v1/intake-preparations/{operation_id}/context",
         response_model=IntakeUnderstandingContext,
+        response_model_exclude_none=True,
         dependencies=[Depends(_require_agent_internal_key)],
     )
     async def understanding_context(
         operation_id: UUID,
         request: UnderstandingContextRequest,
         telegram_user_id: TelegramUserId,
+        include_calendar: bool = Query(default=False, alias="includeCalendar"),
     ) -> IntakeUnderstandingContext:
-        return await read_understanding_context(
+        context = await read_understanding_context(
             sessions, telegram_user_id=telegram_user_id, operation_id=operation_id,
             lease_token=request.lease_token, expected_revision=request.expected_revision,
             expected_input_sha256=request.expected_input_sha256,
         )
+        # Old strict readers never receive the additive field. Old Core ignores
+        # the new reader's query parameter, so either service can roll first.
+        return context if include_calendar else context.model_copy(update={"as_of_date": None})
 
     return router

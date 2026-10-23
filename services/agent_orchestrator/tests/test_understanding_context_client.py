@@ -53,6 +53,7 @@ def test_client_sends_only_private_metadata_and_checks_all_source_bindings():
     request = requests[0]
     assert request.method == "POST"
     assert request.url.path == f"/v1/intake-preparations/{operation}/context"
+    assert dict(request.url.params) == {"includeCalendar": "true"}
     assert json.loads(request.content) == binding.model_dump(mode="json", by_alias=True)
     assert request.headers["x-telegram-user-id"] == "123"
     assert request.headers["x-agent-internal-key"] == "k" * 32

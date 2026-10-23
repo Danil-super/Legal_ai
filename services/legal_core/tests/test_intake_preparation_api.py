@@ -25,20 +25,27 @@ def _request(actor, lease):
     )
 
 
-def test_internal_context_endpoint_returns_only_exact_owned_model_input(draft_owner, monkeypatch):
+@pytest.mark.parametrize("calendar", [None, "false", "true"])
+def test_internal_context_endpoint_returns_only_exact_owned_model_input(
+    draft_owner, monkeypatch, calendar,
+):
     monkeypatch.setenv("AGENT_INTERNAL_KEY", KEY)
     actor, _, _, draft = draft_owner
     lease = _run(lambda sessions: _reserve(sessions, actor, draft))
     path, headers, body = _request(actor, lease)
+    if calendar is not None:
+        path += "?includeCalendar=" + calendar
     with application_client() as client:
         response = client.post(path, headers=headers, json=body)
         assert response.status_code == 200, response.text
-        assert response.json() == {
+        expected = {
             "operationId": str(lease.operation_id), "draftId": draft["id"],
             "draftRevision": draft["revision"], "inputSha256": body["expectedInputSha256"],
             "operationKind": "UNDERSTAND_INTAKE", "source": SOURCE,
-            "asOfDate": _reference_date(lease),
         }
+        if calendar == "true":
+            expected["asOfDate"] = _reference_date(lease)
+        assert response.json() == expected
         assert str(lease.lease_token) not in response.text
         actual = client.get(f"/v1/telegram-intake-drafts/{draft['id']}",
                             headers=actor_headers(actor)).json()

@@ -34,10 +34,12 @@ No universal semantic guarantee follows from a prompt or an accepted date span.
 
 ## Compatibility and rollout
 
-Deploy updated Core/Agent contract readers before the new Core producer. An old
-strict Agent rejects the additional response key; therefore reverting Agent alone
-while the new producer runs is not a compatible rollback. Revert/disable the Core
-producer first, or retain the new reader. New readers accept old context shapes.
+The Agent requests the optional calendar with `?includeCalendar=true`. The private
+Core endpoint omits `asOfDate` entirely unless requested (not even a null key).
+An old strict Agent therefore retains its exact response shape on new Core; an
+old Core ignores the new query parameter and a new Agent accepts its old shape.
+This allows either rollout/rollback order without a mixed-version parser failure.
+The flag requests representation, not a caller-selected date or new access.
 Existing operation hashes, public receipts, snapshots and database schema do not
 change. No migration, backfill, legal approval or production release in this slice.
 
