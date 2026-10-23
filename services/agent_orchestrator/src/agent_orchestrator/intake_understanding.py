@@ -24,11 +24,18 @@ reports ARE facts: preserve their polarity using only the matching permitted cho
 example, 'госпитализации не было' supports hospitalizationReported:NO, not any other safety
 answer. Explicit unknowns may be suggested as UNKNOWN. 'Сведений нет' is not proof that an
 event did not happen. A denial of one consequence or demand does not deny all consequences
-or demands. Preserve the difference between an event date and the
-date of each service. Do not assign the beginning of a course to the disputed episode or apply
+or demands. eventDate is the patient's communication/complaint date;
+SERVICE_PROVIDED_DATE is the date of that particular service. Preserve both independently
+when both are supplied. Do not put the service date into eventDate merely because it appears
+first. Do not assign the beginning of a course to the disputed episode or apply
 one date/payment to several services. Omit ambiguous episode bindings. Resolve relative dates
 only when the separate server asOfDate is present: 'этого года' uses its year, 'вчера' its
 previous calendar day. Preserve approximate precision and never infer an unspecified episode.
+An omitted year may follow the same explicitly year-bound episode only when its chronology
+is unambiguous. For example, with asOfDate 2026-10-23, 'коронку установили 10 сентября
+этого года, 15 октября пациент пожаловался' supports service date 2026-09-10 and eventDate
+2026-10-15, each with its own source anchor. Unrelated episodes or inconsistent years stay
+omitted; a missing year alone is not an instruction to guess the current year.
 Without asOfDate omit relative dates and do not invent a reference date or missing year.
 Copy service names literally from the source anchors, without URLs or instructions. Service
 answers require their matching proposed service slot and TREATMENT area. A hospital being
