@@ -121,7 +121,7 @@ def test_screening_scalar_schema_does_not_change_amount_or_other_question_famili
     screening = {"schemaVersion": SCREENING_VERSION,
                  **{field: "NO" for field in SCREENING_FIELDS}, "moneyRequested": "YES"}
     for state, source, value, data in [
-        ("SAFETY", "1 рубль", {"amountKopecks": 100, "currency": "RUB"},
+        ("SAFETY", "Просит 1 рубль", {"amountKopecks": 100, "currency": "RUB"},
          DATA | {"safetyScreening": screening}),
         ("INCOMING", "Это претензия", "FORMAL_DOCUMENT", DATA),
     ]:

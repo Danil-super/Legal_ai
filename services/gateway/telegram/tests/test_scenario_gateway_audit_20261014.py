@@ -203,7 +203,7 @@ def test_old_unchecked_multi_button_does_not_reverse_the_current_checked_selecti
             await dispatch("case:start")
             await dispatch("case:v2:single:incomingKind:COMPLAINT")
             unchecked_message = len(sent) + 100
-            callback = "case:v2:multi:situationAreas:TREATMENT"
+            callback = "case:v2:multi:situationAreas:+TREATMENT"
             await dispatch_raw(app, content=callback, message_id=unchecked_message)
             assert core.draft["draftData"]["situationAreas"] == ["TREATMENT"]
             await dispatch_raw(app, content=callback, message_id=unchecked_message, update_id=1001)

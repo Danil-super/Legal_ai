@@ -1,5 +1,15 @@
 # Implementation Plan: Dental Legal AI MVP
 
+## Simple intake incident correction — 23 October 2026
+
+Implement the owner's explicit simplicity contract in three bounded slices:
+owned-question recovery and literal money (ADR0098); stable persisted checklist
+cards; one visible narrative-first creation entry (ADR0099). Preserve all existing
+Core evidence/date/risk gates and one final summary consent. Historical guided
+drafts remain resumable. Verify through actual PTB composition, independent
+adversarial review and isolated full PostgreSQL/MinIO gates, then request a separate
+release decision. Production is unchanged by local implementation/testing.
+
 ## Intake dates and transient message cleanup — 23 October 2026
 
 Owner reproduced stale waiting messages and a redundant date question on a new

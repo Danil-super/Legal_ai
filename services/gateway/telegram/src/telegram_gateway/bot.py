@@ -804,12 +804,12 @@ def _v2_multi_keyboard(field: str, selected: list[str]) -> InlineKeyboardMarkup:
         [
             (
                 ("✅ " if value in selected else "") + label,
-                f"case:v2:multi:{field}:{value}",
+                f"case:v2:multi:{field}:{'-' if value in selected else '+'}{value}",
             )
         ]
         for value, label in v2_choice_items(field)
     ]
-    rows.append([("Продолжить", f"case:v2:multi:{field}:DONE")])
+    rows.append([("Продолжить →", f"case:v2:multi:{field}:DONE")])
     return _v2_keyboard(rows)
 
 
@@ -1039,6 +1039,11 @@ async def choose_v2_multi(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     _, version, action, field, value = parts
     if (version, action) != ("v2", "multi") or field not in _V2_MULTI_FIELDS:
         return current
+    expected_field = {WizardState.SITUATION: "situationAreas",
+                      WizardState.CLINIC_ACTIONS: "clinicActions",
+                      WizardState.HEALTH: "healthSignals"}.get(current)
+    if field != expected_field:
+        return current
     selected = data.get(field)
     values = list(selected) if isinstance(selected, list) else []
     if value == "DONE":
@@ -1052,6 +1057,11 @@ async def choose_v2_multi(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             data.clear()
             data.update(updated)
         return await _advance_v2_draft(update, data)
+    desired = value[:1] if value[:1] in {"+", "-"} else None
+    if desired is not None:
+        value = value[1:]
+        if (desired == "+" and value in values) or (desired == "-" and value not in values):
+            return current
     if value in values:
         values.remove(value)
     else:
@@ -1067,7 +1077,6 @@ async def choose_v2_multi(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         data.update(updated)
     if field == "healthSignals":
         data.pop("safetyScreening", None)
-    await _prompt_v2_draft(update, current, data)
     return current
 
 
@@ -1639,7 +1648,9 @@ async def _persist_selected_transition(
             )
             return WizardState[str(data[DRAFT_STATE_KEY])]
     from telegram_gateway.intake_cleanup import capture, delete_saved
+    from telegram_gateway.multi_choice_runtime import render_selection, selection_field
 
+    checklist = selection_field(update, data.get(DRAFT_STATE_KEY))
     completed_step = capture(update, str(draft_id), data.get(DRAFT_REVISION_KEY),
                              str(data.get(DRAFT_STATE_KEY)), data.get("_v2_prompt_message_id"))
     before = _draft_payload(data)
@@ -1647,6 +1658,9 @@ async def _persist_selected_transition(
     if not isinstance(next_state, WizardState):
         return next_state
     if _draft_payload(data) == before and data.get(DRAFT_STATE_KEY) == next_state.name:
+        if checklist is not None:
+            await render_selection(update, data,
+                                   _v2_multi_keyboard(checklist, data.get(checklist, [])))
         return next_state
     actor_id = _actor_id(update)
     try:
@@ -1664,6 +1678,11 @@ async def _persist_selected_transition(
         saved_revision = saved.get("revision")
         if not isinstance(saved_revision, int) or saved_revision < 1:
             raise ValueError("draft response is invalid")
+        if checklist is not None and (
+            saved.get("id") != str(draft_id) or saved.get("wizardState") != next_state.name
+            or saved.get("draftData") != _draft_payload(data) or saved_revision != revision + 1
+        ):
+            raise ValueError("checklist persistence receipt mismatch")
         data[DRAFT_REVISION_KEY] = saved_revision
         data[DRAFT_STATE_KEY] = next_state.name
     except (KeyError, ValueError, LegalCoreApiError) as exc:
@@ -1674,7 +1693,9 @@ async def _persist_selected_transition(
             "⚠️ Черновик не удалось сохранить. Откройте /menu → «Мои черновики» и попробуйте снова.",
         )
         return ConversationHandler.END
-    if (saved.get("id") == str(draft_id) and saved.get("wizardState") == next_state.name
+    if checklist is not None:
+        await render_selection(update, data, _v2_multi_keyboard(checklist, data.get(checklist, [])))
+    elif (saved.get("id") == str(draft_id) and saved.get("wizardState") == next_state.name
             and saved.get("draftData") == _draft_payload(data) and saved_revision == revision + 1):
         await delete_saved(update, context, completed_step, saved,
                            data.get("_v2_prompt_message_id"))

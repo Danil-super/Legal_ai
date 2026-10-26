@@ -17,8 +17,8 @@ CLINIC_BASELINE = {
     "services/gateway/telegram/src/telegram_gateway/__main__.py":
         "dc29188aba35fcd386a7b132f0c4a012026497ae",
     "services/gateway/telegram/src/telegram_gateway/ui.py":
-        # Owner-requested clinic library unification; personal surface unchanged (ADR 0080).
-        "da2a396c379d2cfef32c4d3b2c16160d534a83b2",
+        # Reviewed owner-requested single clinical case entry; personal stays hidden (ADR 0099).
+        "c9adedf6e5711e244be6f7a569e1b721c6e5068d",
     "services/gateway/telegram/src/telegram_gateway/case_experience_runtime.py":
         # Independently reviewed owner-requested single-summary clinical dialogue;
         # the existing validated flag stays off by default, personal remains inert.
