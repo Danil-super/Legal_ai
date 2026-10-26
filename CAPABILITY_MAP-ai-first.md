@@ -1,0 +1,25 @@
+# Capability map: AI-first case resolution
+
+## Status
+
+The owner approved the two-part direction on26October2026 and clarified that the
+bot must provide useful recommendations quickly, without pointless/repeated
+questions. This approves capability boundaries, not an unreviewed API/schema,
+risk-policy activation, implementation plan or production release.
+
+This map extends CAPABILITY_MAP.md; existing module IDs are not renamed.
+
+| Module id | Responsibility | Existing providers |
+|---|---|---|
+| `ai-first-resolution` | Decision-relevant clarification, grounded internal action plan, useful AI work product for lawyer review | `case-core`, `legal-retrieval`, `risk-escalation`, `agent-orchestration`; delivery through `telegram-gateway` |
+| `escalation-policy` | Separately versioned revision of overly broad automatic escalation triggers | `case-core`, `risk-escalation` |
+
+Build/release order: `ai-first-resolution` first, then `escalation-policy`.
+That order is a safety/release prerequisite, not a circular runtime dependency.
+The first module consumes current risk decisions without changing them.
+
+Module spec: SPEC-ai-first-resolution.md, behavioral direction approved26October;
+detailed plan/tasks are awaiting review in tasks/plan.md and tasks/todo.md.
+The second module gets its own reviewed specification before policy changes.
+Keep the existing10,000RUB threshold pending that review; this initiative does
+not silently increase it, reapprove legislation or remove mandatory urgent routing.

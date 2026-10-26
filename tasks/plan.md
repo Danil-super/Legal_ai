@@ -1,5 +1,78 @@
 # Implementation Plan: Dental Legal AI MVP
 
+## AI-first resolution — approved specification, proposed plan26October2026
+
+Module: `ai-first-resolution`; contract: SPEC-ai-first-resolution.md; map:
+CAPABILITY_MAP-ai-first.md. The owner approved the behavioral contract and said
+to proceed. This section extends the same clinical intake/report work; it neither
+overwrites nor closes the earlier incomplete sections. No new risk-policy version,
+model/profile change, storage expansion or production release is authorized here.
+Baseline: deployed main2eec73b; separate worktree/branch preserves the dirty desktop
+copy. Detailed executable checklist is AIF01–AIF11 in tasks/todo.md, pending review.
+
+### Verified seams and implementation decisions
+
+- Follow-up interpretation currently has a single-field output, anchors only in the
+  latest answer, and a context allowlist without the original eventSummary. Rich
+  replies must become explicitly source-bound factual candidates, not an unchecked
+  prompt expansion or automatic overwrite of confirmed facts.
+- Core prepare_analysis_context can return HUMAN_REVIEW before reasoning is called.
+  Preserve that immediate routing. Add a distinct internal work-product path, never
+  set analysisAllowed=true just to make an unapproved lawyer draft look final.
+- Current workspace work notes ask the lawyer to write a plan/review/conclusion.
+  Replace that empty starting point with an AI proposal to review; retain original,
+  corrected and approved versions, assigned-lawyer/owner controls and audit.
+- Reuse existing actors, privacy guards, jobs/leases, evidence verification,
+  reference-case applicability and report presentation where proven compatible.
+  No generic new workflow engine or second questionnaire. Do not assume that an
+  idempotency cache or canonical CaseReport can safely store this new work product.
+
+### Dependency and delivery order
+
+AIF01 reproductions → AIF02 exact contract/storage proof → checkpoint;
+AIF03 full-context model proposal → AIF04 authorized factual staging → AIF05 material
+questions → checkpoint; AIF06 internal draft context → AIF07 grounded generation →
+AIF08 durable draft result → checkpoint; AIF09 readable delivery → AIF10 human review
+→ AIF11 integrated quality/performance/release readiness → checkpoint.
+
+Read-compatible contracts precede their producers. Keep new behavior disabled until
+all participating readers and writers are verified. No partial rollout that leaves
+lawyers seeing empty drafts while claiming the new workflow is ready.
+
+### Safety and scope checkpoints
+
+After AIF02 review the exact API/data contract and storage feasibility with the owner.
+If a new table, migration or access expansion is needed, stop for explicit agreement
+before implementing it; split that work into <=5-file increments. Later checkpoints
+verify behavior and regressions, not reopen already approved product requirements.
+Before implementation every task must remain <=5files; split, do not silently widen.
+Independent review precedes merge; external model CLI needs separately agreed command.
+
+Current v4 and10,000RUB boundary stay unchanged in this module. The separately
+specified `escalation-policy` module addresses automatic HIGH for ordinary written
+requests or insufficiently differentiated health signals only after this useful AI
+work product exists. No unreviewed downgrading of urgent risk to meet speed goals.
+
+### Verification, risks and release
+
+First prove no repeats and a prepared solution on synthetic scenarios, then source/
+tenant/staleness/retention protections. A missing fact may justify a precise question,
+not an invented answer; missing legal evidence permits only a labelled limited plan.
+An AI outage must not delay urgent notification or trap navigation.
+
+Measure acknowledgement, first useful question and final-plan times separately;
+targets2/45/90seconds remain provisional performance goals under a healthy provider.
+Track repeated/irrelevant-question counts without raw text in telemetry. Preserve
+high reasoning and independent evidence verification; no new external observability
+service or dependency. Actual live-model probes are synthetic and reported honestly.
+
+Use the existing pytest/Ruff/mypy/Compose commands and complete disposable PostgreSQL/
+MinIO partition. Packaging and production-image checks cover shared-contract changes.
+Legal quality review must assess usefulness of the proposed solution and source
+support, not just successful HTTP/PDF output. CI and separate owner release approval
+remain gates; deploy SHA/health, ledger, real Telegram behavior and model smoke are
+verified afterward. This proposed plan does not change the running bot.
+
 ## Simple intake incident correction — 23 October 2026
 
 Implement the owner's explicit simplicity contract in three bounded slices:

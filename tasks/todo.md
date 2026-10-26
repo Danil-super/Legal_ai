@@ -1,5 +1,159 @@
 # Dental Legal AI task list
 
+## AI-first resolution — AIF,26October2026
+
+- [x] Owner approved behavioral contract SPEC-ai-first-resolution.md.
+- [ ] Owner reviews the detailed AIF01–AIF11 plan below before implementation.
+
+This extends the existing clinical intake/report work; earlier incomplete tasks
+remain untouched. File names marked new are proposed, not existing implementations.
+All runtime tasks use RED→GREEN, source-bound authorization, focused tests and an
+atomic commit. Commands below use the current worktree's source PYTHONPATH and
+`python -m pytest -q`; new test paths are not claimed to exist or pass yet.
+
+### AIF01: Reproduce the lawyer's actual workflow gaps
+
+- [ ] Acceptance: a complete narrative needs no repeated factual questions; a rich
+  later answer retains every explicit relevant fact; HIGH routing has a prepared
+  work-product requirement rather than a manual-write instruction as its only result.
+- Verify: actual PTB/Core-boundary reproductions plus the existing strict safety
+  controls; distinguish expected new RED tests from existing regressions.
+- Files(2,new): gateway tests/test_ai_first_scenarios.py; Core
+  tests/test_ai_first_preparation.py. Dependencies:none. Scope:S.
+
+### AIF02: Prove the exact contract and versioned storage boundary
+
+- [ ] Acceptance: define typed source segments/factual candidates, material-question
+  reasons and a separate internal work product; prove version/audit/retention and
+  compatibility feasibility before selecting storage. Unknowns are not safe defaults.
+- Verify: Core tests/test_ai_first_contracts.py and tests/test_ai_first_storage_feasibility.py
+  (new), including real runtime-role PostgreSQL access and stale-source rejection.
+- Files(5): Core intake_answer_contracts.py, case_preparation_contracts.py;
+  those2new tests; docs/adr/<next-ai-first-contract>.md (new).
+  Dependencies:AIF01. Scope:M. No new table/API producer activated.
+
+### Checkpoint A: Contract/storage approval
+
+- [ ] Review the concrete contract and feasibility proof; request explicit approval
+  for any migration, new table or permission expansion before implementing it.
+- [ ] Keep canonical reports, old readers, risk policy and existing source gates intact.
+
+### AIF03: Interpret the retained narrative and rich follow-up together
+
+- [ ] Acceptance: a bounded, pseudonymized request includes approved retained source
+  segments and typed current facts; current answer plus additional factual candidates
+  are source-grounded; contradictions/corrections are explicit, never guessed facts.
+- Verify: Agent tests/test_ai_first_interpretation.py and tests/test_ai_first_source_guards.py
+  (new); cover dates/amount/actions, relative-date reference, multi-service scope,
+  negation, injection, missing source spans and unchanged literal-money shortcut.
+- Files(4): Agent intake_answer_interpretation.py, intake_understanding.py; those2tests.
+  Dependencies:AIF02 approval. Scope:M. Existing provider/profile/high unchanged.
+
+### AIF04: Stage only current authorized factual candidates
+
+- [ ] Acceptance: Core emits only allowed retained context and validates every candidate
+  against its correct source, actor/draft/revision; one atomic staging update preserves
+  unknowns and conflicts; no case-fact finalization before summary consent.
+- Verify: Core tests/test_ai_first_staging.py and tests/test_ai_first_context_auth.py (new)
+  with PostgreSQL, replay/edit/expiry/revocation/other-clinic and lost-receipt cases.
+- Files(5): Core intake_answer_lifecycle.py, intake_draft_staging.py,
+  intake_answer_operations.py; those2tests. Dependencies:AIF03. Scope:M.
+
+### AIF05: Ask only genuinely material missing questions
+
+- [ ] Acceptance: known values and explicit unknowns are not repeated; each selected
+  question has a decision/safety reason; no mandatory seven-step traversal, optional
+  file gate or per-answer consent. Required safety/effective-date checks stay enforced.
+- Verify: Core tests/test_material_questions.py and Gateway test_ai_first_scenarios.py;
+  actual dispatcher, partial/multi-service/contradiction cases, stable checklists and
+  working navigation after provider failure.
+- Files(5): Core intake_answer_contracts.py; Gateway guided_case_intake_v2.py,
+  answer_runtime.py; those2tests (Core file new). Dependencies:AIF04. Scope:M.
+
+### Checkpoint B: Complete and sparse descriptions work usefully
+
+- [ ] Demonstrate complete description→summary and only material follow-up for a
+  sparse description; no lost facts, repeated confirmed values or weakened Core gate.
+- [ ] Packaging, focused regressions, Ruff and mypy pass before draft producers.
+
+### AIF06: Authorize an internal lawyer-draft context without delaying escalation
+
+- [ ] Acceptance: urgent queue/notification is unchanged and independent of AI;
+  separate draft context contains only permissible current facts, approved applicable
+  evidence and allowed reference examples. It is not an analysisAllowed override.
+- Verify: Core tests/test_lawyer_draft_context.py and tests/test_lawyer_draft_auth.py
+  (new), real HTTP/PostgreSQL, source/version/lease/retention and foreign-actor guards.
+- Files(5): Core lawyer_work_products.py (new), analysis_api.py,
+  case_preparation.py; those2tests. Dependencies:Checkpoint A/B. Scope:M.
+
+### AIF07: Generate a concrete, evidence-grounded proposed solution
+
+- [ ] Acceptance: existing model produces options, preferred next steps and conditions;
+  legal claims pass existing evidence verification; insufficient facts/evidence yield
+  a clearly limited useful plan, not invented obligations or medical prescriptions.
+- Verify: Agent tests/test_lawyer_draft_generation.py and tests/test_lawyer_draft_api.py
+  (new); citation tampering, irrelevant examples, unsupported certainty, provider faults.
+- Files(5): Agent lawyer_draft_generation.py and lawyer_draft_api.py (new), main.py;
+  those2tests. Dependencies:AIF06. Scope:M. No tool/shell privileges for the model.
+
+### AIF08: Retain and deliver draft results durably
+
+- [ ] Acceptance: background result is versioned, bound to source/evidence and distinct
+  from a final report; retries do not duplicate work and stale completion cannot replace
+  corrected facts or a human-approved version. Failure keeps actionable recovery.
+- Verify: Core tests/test_lawyer_draft_lifecycle.py (new) with PostgreSQL, concurrency,
+  restart, lost-reply and retention tests. Approved AIF02 storage decision is mandatory.
+- Files(5): Core lawyer_work_products.py, analysis_job_worker.py, analysis_jobs.py,
+  case_preparation.py; that test. Dependencies:AIF07. Scope:M. Split any storage
+  expansion into separately approved increments, never hide a migration in this task.
+
+### Checkpoint C: A real prepared work product reaches the lawyer
+
+- [ ] HIGH/CRITICAL notifications stay immediate; a populated AI proposal becomes
+  available without the lawyer first writing a plan. Source/evidence gates still hold.
+- [ ] Compatible readers precede producers; no fake report IDs or VERIFIED labels.
+
+### AIF09: Show a readable plan instead of manual drafting instructions
+
+- [ ] Acceptance: existing report style presents ordinary internal recommendations and
+  the explicitly unapproved lawyer draft; missing data has a useful next action;
+  no duplicated menus, technical dump or export button for a nonexistent final report.
+- Verify: Gateway tests/test_ai_first_plan_delivery.py and tests/test_ai_first_legacy_readers.py
+  (new), actual PTB routing, long output, stale controls, existing PDF snapshots/readers.
+- Files(5): Gateway case_wizard.py, escalation_workspace.py,
+  lawyer_draft_presentation.py (new); those2tests. Dependencies:AIF08. Scope:M.
+
+### AIF10: Review, correct and approve a prepared proposal
+
+- [ ] Acceptance: the authorized lawyer/owner can evaluate the existing AI draft,
+  correct it or ask a targeted question; versions and audit remain separate. Approval
+  neither reapproves norms nor automatically sends to the patient/closes the case.
+- Verify: Core tests/test_lawyer_work_product_review.py and Gateway
+  tests/test_lawyer_work_product_review_runtime.py (new), including reassignment,
+  stale revision, foreign clinic, withdrawn rights and ungrounded edited citations.
+- Files(5): Core lawyer_work_products.py, analysis_api.py; Gateway
+  lawyer_work_product_review.py (new); those2tests. Dependencies:AIF09. Scope:M.
+
+### AIF11: Verify usefulness, speed and release readiness
+
+- [ ] Acceptance: end-to-end complete/sparse/5000RUB/written/urgent scenarios meet the
+  contract; measurements report question repetition and2/45/90second timing targets
+  honestly. A lawyer can review a solution rather than author most content first.
+- Verify: full pytest + disposable six-shard PostgreSQL/MinIO + Ruff/mypy/Compose,
+  production-image checks; independent review, representative live synthetic model
+  probes and human legal-quality evaluation. No release from mock-only success.
+- Files(max5): gateway test_ai_first_scenarios.py; tests/test_ai_first_quality.py and
+  tests/test_ai_first_rollout.py (new); docker-compose.yml and the approved Core feature
+  settings file if opt-in wiring is needed. Dependencies:AIF10. Scope:M; split if larger.
+
+### Checkpoint D: Separate release decision
+
+- [ ] All gates and legal-quality findings resolved; no skipped/deleted safeguards.
+- [ ] Obtain explicit release/enablement approval, then verify deployed SHA, health,
+  ledger and real Telegram/model behavior; preserve a code rollback path.
+- [ ] Only afterward specify `escalation-policy`; do not silently change current v4
+  or10,000RUB threshold as part of making AI drafts available.
+
 ## Simple intake and failed amount recovery — 23 October 2026
 
 - [x] Correlate the failed amount operation using metadata only; reproduce dead controls.
