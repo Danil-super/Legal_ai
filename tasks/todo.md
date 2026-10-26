@@ -3,7 +3,7 @@
 ## AI-first resolution — AIF,26October2026
 
 - [x] Owner approved behavioral contract SPEC-ai-first-resolution.md.
-- [ ] Owner reviews the detailed AIF01–AIF11 plan below before implementation.
+- [x] Owner approved the detailed AIF01–AIF11 plan ("да, работай").
 
 This extends the existing clinical intake/report work; earlier incomplete tasks
 remain untouched. File names marked new are proposed, not existing implementations.

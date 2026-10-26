@@ -4,16 +4,19 @@
 
 Module: `ai-first-resolution`; contract: SPEC-ai-first-resolution.md; map:
 CAPABILITY_MAP-ai-first.md. The owner approved the behavioral contract and said
-to proceed. This section extends the same clinical intake/report work; it neither
+to proceed and approved AIF01–AIF11 ("да, работай"). This section extends the same
+clinical intake/report work; it neither
 overwrites nor closes the earlier incomplete sections. No new risk-policy version,
 model/profile change, storage expansion or production release is authorized here.
 Baseline: deployed main2eec73b; separate worktree/branch preserves the dirty desktop
-copy. Detailed executable checklist is AIF01–AIF11 in tasks/todo.md, pending review.
+copy. Detailed executable checklist is the approved AIF01–AIF11 in tasks/todo.md.
 
 ### Verified seams and implementation decisions
 
-- Follow-up interpretation currently has a single-field output, anchors only in the
-  latest answer, and a context allowlist without the original eventSummary. Rich
+- Follow-up interpretation currently has a single-field output and anchors only in
+  the latest answer. The original eventSummary is already added separately by
+  _context after its allowlist projection; do not incorrectly treat its absence
+  from _CONTEXT_FIELDS as missing narrative transport. Rich
   replies must become explicitly source-bound factual candidates, not an unchecked
   prompt expansion or automatic overwrite of confirmed facts.
 - Core prepare_analysis_context can return HUMAN_REVIEW before reasoning is called.

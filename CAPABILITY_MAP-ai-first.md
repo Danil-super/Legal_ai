@@ -19,7 +19,8 @@ That order is a safety/release prerequisite, not a circular runtime dependency.
 The first module consumes current risk decisions without changing them.
 
 Module spec: SPEC-ai-first-resolution.md, behavioral direction approved26October;
-detailed plan/tasks are awaiting review in tasks/plan.md and tasks/todo.md.
+detailed AIF01–AIF11 plan/tasks were then approved ("да, работай"). Concrete
+contract/storage review and release approval remain the documented checkpoints.
 The second module gets its own reviewed specification before policy changes.
 Keep the existing10,000RUB threshold pending that review; this initiative does
 not silently increase it, reapprove legislation or remove mandatory urgent routing.
