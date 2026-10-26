@@ -8,8 +8,9 @@
 - [x] Keep one multi-select card; explicit idempotent choices and «Продолжить →».
 - [x] Offer one narrative-first new-case entry; retain resumable historical drafts.
 - [x] Reproduce/fix nested navigation failure and obsolete waiting-message cleanup.
-- [ ] Finish independent delta review and immutable full PostgreSQL/MinIO gates.
-- [ ] Obtain separate release decision and verify deployed behavior.
+- [x] Finish independent delta review and full PostgreSQL/MinIO gates (audit26October).
+- [x] Obtain conditional owner release approval after successful checks.
+- [ ] Complete GitHub CI, release and verify deployed behavior.
 
 Contracts: ADR0098/0099. No model/profile, policy, source approval, access or schema
 change. No automatic patient delivery. The original narrative, files and summary
