@@ -39,5 +39,6 @@ USER app
 # Import the real composed entry point without starting polling or requiring credentials.
 # A green source-tree test suite does not prove that COPY included every shared dependency.
 RUN python -c "import telegram_gateway.__main__, telegram_gateway.analysis_jobs_runtime"
+RUN python -c "import telegram_gateway.lawyer_work_product_runtime"
 
 CMD ["python", "-m", "telegram_gateway"]

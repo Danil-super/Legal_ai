@@ -29,6 +29,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 def build_application_with_case_experience(
     token: str, *, enable_understanding: bool = False, enable_answer_interpretation: bool = False,
     enable_simplified_dialogue: bool = False,
+    enable_lawyer_work_products: bool = False,
 ) -> gateway_bot.TelegramApplication:
     if enable_answer_interpretation and not enable_understanding:
         raise ValueError("Answer interpretation requires shared preparation")
@@ -48,6 +49,10 @@ def build_application_with_case_experience(
 
             install_answer_interpretation(application)
     install_work_notes(application)
+    if enable_lawyer_work_products:
+        from telegram_gateway.lawyer_work_product_runtime import install
+
+        install(application)
     application.add_handler(CommandHandler("help", help_command), group=-8)
     return application
 
@@ -57,6 +62,9 @@ def main() -> None:
     if value not in {"0", "1"}:
         raise RuntimeError("PRE_REPORT_INTAKE_ENABLED must be exactly 0 or 1")
     enabled = value == "1"
+    draft_flag = os.getenv("AI_FIRST_LAWYER_DRAFT_ENABLED", "0")
+    if draft_flag not in {"0", "1"}:
+        raise RuntimeError("AI_FIRST_LAWYER_DRAFT_ENABLED must be exactly 0 or 1")
     logging.basicConfig(
         format="%(asctime)s %(levelname)s %(name)s %(message)s", level=logging.INFO,
     )
@@ -65,6 +73,7 @@ def main() -> None:
         gateway_bot.load_token(), enable_understanding=enabled,
         enable_answer_interpretation=enabled,
         enable_simplified_dialogue=enabled,
+        **({"enable_lawyer_work_products": True} if draft_flag == "1" else {}),
     )
     application.run_polling(
         allowed_updates=gateway_bot.ALLOWED_UPDATES,

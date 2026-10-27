@@ -78,3 +78,29 @@ def test_real_main_composition_remains_clinical_even_with_personal_preview_reque
             pending.extend(children)
     poll.assert_called_once_with(allowed_updates=bot.ALLOWED_UPDATES,
                                  bootstrap_retries=3, drop_pending_updates=False)
+
+
+def test_lawyer_plan_ui_requires_its_explicit_independent_flag(monkeypatch):
+    monkeypatch.setenv("PRE_REPORT_INTAKE_ENABLED", "0")
+    monkeypatch.setenv("AI_FIRST_LAWYER_DRAFT_ENABLED", "1")
+    factory = Mock(return_value=Mock())
+    monkeypatch.setattr(runtime, "build_application_with_case_experience", factory)
+    monkeypatch.setattr(runtime.gateway_bot, "load_token", lambda: "synthetic-token")
+    runtime.main()
+    factory.assert_called_once_with("synthetic-token", enable_understanding=False,
+                                    enable_answer_interpretation=False,
+                                    enable_simplified_dialogue=False,
+                                    enable_lawyer_work_products=True)
+
+
+@pytest.mark.parametrize("flag", ["", "yes", "true", " 1", "2"])
+def test_invalid_lawyer_plan_flag_fails_before_token_or_factory(monkeypatch, flag):
+    monkeypatch.setenv("PRE_REPORT_INTAKE_ENABLED", "0")
+    monkeypatch.setenv("AI_FIRST_LAWYER_DRAFT_ENABLED", flag)
+    token, factory = Mock(), Mock()
+    monkeypatch.setattr(runtime, "build_application_with_case_experience", factory)
+    monkeypatch.setattr(runtime.gateway_bot, "load_token", token)
+    with pytest.raises(RuntimeError, match="AI_FIRST_LAWYER_DRAFT_ENABLED"):
+        runtime.main()
+    token.assert_not_called()
+    factory.assert_not_called()

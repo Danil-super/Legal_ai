@@ -223,6 +223,13 @@ async def show_workspace(
         can_assign=membership.get("role") == "CLINIC_OWNER",
     )
     rows = list(keyboard.inline_keyboard)
+    if context.bot_data.get("ai_first_lawyer_draft_enabled") is True:
+        from telegram_gateway.lawyer_work_product_runtime import available
+
+        if await available(context, escalation_id, detail, actor):
+            rows.insert(0, (InlineKeyboardButton(
+                "📋 План решения", callback_data=f"lawplan:open:{escalation_id}",
+            ),))
     if history.get("nextBefore"):
         rows.insert(
             0,

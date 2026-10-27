@@ -54,6 +54,7 @@ import telegram_gateway.analysis_jobs_runtime
 import telegram_gateway.understanding_review
 import telegram_gateway.answer_client
 import telegram_gateway.answer_runtime
+import telegram_gateway.lawyer_work_product_runtime
 import legal_core.contracts
 assert pathlib.Path(legal_core.contracts.__file__).is_relative_to(sys.argv[2])
 assert importlib.util.find_spec('legal_core.case_api') is None
@@ -124,3 +125,11 @@ def test_packaging_check_detects_missing_rich_factual_contracts(tmp_path: Path) 
     result = _import_runtime(tmp_path)
     assert result.returncode != 0
     assert "No module named 'legal_core.intake_factual_candidates'" in result.stderr
+
+
+def test_packaging_check_detects_missing_lawyer_work_product_contracts(tmp_path: Path) -> None:
+    _copy_runtime(tmp_path)
+    (tmp_path / "services/legal_core/src/legal_core/lawyer_work_product_contracts.py").unlink()
+    result = _import_runtime(tmp_path)
+    assert result.returncode != 0
+    assert "No module named 'legal_core.lawyer_work_product_contracts'" in result.stderr

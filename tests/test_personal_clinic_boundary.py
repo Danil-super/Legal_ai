@@ -20,9 +20,9 @@ CLINIC_BASELINE = {
         # Reviewed owner-requested single clinical case entry; personal stays hidden (ADR 0099).
         "c9adedf6e5711e244be6f7a569e1b721c6e5068d",
     "services/gateway/telegram/src/telegram_gateway/case_experience_runtime.py":
-        # Independently reviewed owner-requested single-summary clinical dialogue;
-        # the existing validated flag stays off by default, personal remains inert.
-        "a129dc9d49206572020b549418fa55dd3916f417",
+        # Owner-approved opt-in clinical plan review (2026-10-27 lawyer-work-product UI ADR);
+        # both clinical flags default off, personal entry points remain inert.
+        "aa615e00250d8d0ab3159a911e7ce13514424616",
     "services/legal_core/src/legal_core/main.py":
         # Owner-approved clinical work-product routes; personal remains inert (AIF08 ADR).
         "0a37aed06336cfc12c4016df8ff10eb8858addef",
