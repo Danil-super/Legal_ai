@@ -5,7 +5,9 @@
 27 October 2026. AIF01 reproductions and AIF02 inactive contracts/storage proof
 implement the approved SPEC-ai-first-resolution.md plan. These changes add no
 producer, endpoint, migration, feature flag or production behavior. The storage
-proposal below awaits Checkpoint A approval from tasks/todo.md.
+proposal below received Checkpoint A owner approval ("продолжай", 27 October 2026)
+in reply to the concrete one-table/Alembic request. Production release remains a
+separate decision; approval does not mean the table or runtime path exists yet.
 
 ## Confirmed problems
 

@@ -57,10 +57,12 @@ atomic commit. Commands below use the current worktree's source PYTHONPATH and
   Prefer one additive immutable tenant-scoped `case_work_product_versions` table;
   keep the existing background queue and current permissions. Existing caches can
   hold JSON but do not themselves enforce a case-wide immutable version ledger.
-- [ ] Review the concrete contract and feasibility proof; request explicit approval
+- [x] Review the concrete contract and feasibility proof; request explicit approval
   for any migration, new table or permission expansion before implementing it.
-- [x] Concrete proposal is prepared and independently reviewed. Await owner decision
-  on the one-table/Alembic proposal before implementing AIF03 or a storage producer.
+- [x] Concrete proposal prepared and independently reviewed; owner confirmed the
+  proposed table and Alembic migration with "продолжай" on 27 October 2026 in reply
+  to the concrete Checkpoint A request. Proceed with AIF03; implement the additive
+  table before its AIF08 producer, together with isolation/retention tests.
 - [ ] Keep canonical reports, old readers, risk policy and existing source gates intact.
 
 ### AIF03: Interpret the retained narrative and rich follow-up together
