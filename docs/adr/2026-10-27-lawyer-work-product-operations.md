@@ -58,3 +58,11 @@ wall-clock lease expiry after flush, and a real writer blocked behind Case while
 the actual retention function completes without a version-table deadlock.
 Independent review, combined UI/Agent verification, full gates and a separate
 production release decision remain; local tests do not establish universal legal quality.
+
+Acceptance reuses the private loader's already fenced AnalysisState. The public
+human review retrieves once before the final provenance guard, then reuses those
+citations when appending its child version. This avoids a second optional embedding
+request while source locks are held. Actual HTTP/PostgreSQL regression tests assert
+one retrieval per write, alongside the existing post-flush authorization checks.
+Core/worker accept true|1; the common Compose/Telegram deployment flag uses0|1,
+defaults0, and is passed to all three services. No existing model/profile changes.

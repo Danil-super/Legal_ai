@@ -38,7 +38,7 @@ def _resume_optional_lawyer_draft(
     return (
         result_version == 2 and isinstance(result, PreparationResult)
         and isinstance(result.root, HumanReviewResult)
-        and os.getenv("AI_FIRST_LAWYER_DRAFT_ENABLED", "false").strip().lower() == "true"
+        and os.getenv("AI_FIRST_LAWYER_DRAFT_ENABLED", "0").strip().lower() in {"true", "1"}
     )
 
 

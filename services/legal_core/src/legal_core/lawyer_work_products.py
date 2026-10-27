@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.analysis_api import (
+    AnalysisState,
     _analysis_date,
     _require_agent_internal_key,
     _retrieve_analysis_state,
@@ -140,7 +141,8 @@ def _new_version(actor: ActorContext, content: InternalWorkProduct, *, origin: s
 
 
 async def _view(session: AsyncSession, *, actor: ActorContext, case: Case,
-                row: CaseWorkProductVersion) -> LawyerWorkProductView:
+                row: CaseWorkProductVersion,
+                loaded_state: AnalysisState | None = None) -> LawyerWorkProductView:
     content = InternalWorkProduct.model_validate(row.payload_json)
     if content.content_sha256 != row.content_sha256:
         raise _stale()
@@ -153,14 +155,23 @@ async def _view(session: AsyncSession, *, actor: ActorContext, case: Case,
         current = False
     if current:
         try:
-            policy = await _policy(session)
-            if policy.domain.version != content.risk_policy_version:
-                raise _stale()
-            state = await _retrieve_analysis_state(
-                session, actor=actor, case=case, facts=facts,
-                as_of_date=_analysis_date(facts), policy=policy,
-            )
-            await require_lawyer_draft_sources_current(session, actor=actor, state=state)
+            if loaded_state is None:
+                policy = await _policy(session)
+                if policy.domain.version != content.risk_policy_version:
+                    raise _stale()
+                state = await _retrieve_analysis_state(
+                    session, actor=actor, case=case, facts=facts,
+                    as_of_date=_analysis_date(facts), policy=policy,
+                )
+                await require_lawyer_draft_sources_current(session, actor=actor, state=state)
+            else:
+                # The private loader already fenced this exact state. Repeating
+                # retrieval here could invoke embeddings while source locks are held.
+                state = loaded_state
+                if (state.case.id != case.id or state.case.clinic_id != actor.clinic_id
+                        or state.fact_snapshot_sha256 != content.source.fact_snapshot_sha256
+                        or state.risk_policy.domain.version != content.risk_policy_version):
+                    raise _stale()
             bound = content.source.context
             if (bound is None or state.as_of_date != bound.as_of_date
                     or state.evidence_trace_sha256 != bound.evidence_trace_sha256
@@ -293,7 +304,8 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
         result = None
         if row is not None and row.source_operation_id == payload.expected_preparation_operation_id:
             result = await _view(session, actor=loaded.actor,
-                                  case=loaded.analysis_state.case, row=row)
+                                  case=loaded.analysis_state.case, row=row,
+                                  loaded_state=loaded.analysis_state)
         await _private_finish(session, actor=loaded.actor, case=loaded.analysis_state.case,
                                telegram_user_id=telegram_user_id, job_id=x_analysis_job_id,
                                job_token=x_analysis_job_token)
@@ -334,7 +346,7 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
                     != source.model_dump(mode="json", by_alias=True)):
                 raise _stale()
             response.status_code = 200
-            view = await _view(session, actor=actor, case=state.case, row=row)
+            view = await _view(session, actor=actor, case=state.case, row=row, loaded_state=state)
             await _private_finish(session, actor=actor, case=state.case,
                                    telegram_user_id=telegram_user_id, job_id=x_analysis_job_id,
                                    job_token=x_analysis_job_token)
@@ -400,7 +412,7 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
                                      "operationKey": str(idempotency_key),
                                      "verifierRunId": str(verifier.analysis_run_id),
                                      "sourceOperationId": str(source.operation_id)}))
-        view = await _view(session, actor=actor, case=state.case, row=row)
+        view = await _view(session, actor=actor, case=state.case, row=row, loaded_state=state)
         if not view.is_current:
             raise _stale()
         await _private_finish(session, actor=actor, case=state.case,
@@ -483,9 +495,14 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
                                      "requestSha256": request_hash,
                                      "operationKey": str(idempotency_key),
                                      "contentSha256": new_row.content_sha256}))
-        result = await _view(session, actor=actor, case=case, row=new_row)
-        if not result.is_current:
-            raise _stale()
+        # Source/case/assignment locks from the displayed-version check remain
+        # held. Human edits change no source identity; no network retrieval belongs
+        # between this flush and the final authorization/commit.
+        result = LawyerWorkProductView.model_validate({
+            "versionId": new_row.id, "reviewState": new_row.review_state, "origin": "HUMAN",
+            "isCurrent": True, "contentSha256": new_row.content_sha256,
+            "content": content, "citations": existing.citations,
+        })
         await recheck_submission_access(session, actor=actor, telegram_user_id=telegram_user_id,
                                         case=case)
         _require_enabled()

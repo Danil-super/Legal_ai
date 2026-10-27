@@ -12,6 +12,7 @@ from sqlalchemy import text
 
 from legal_core.lawyer_work_product_contracts import LawyerWorkProductView
 from legal_core import lawyer_work_products
+from legal_core import lawyer_draft_context
 from test_case_api import actor_headers, seed_admin
 from test_lawyer_draft_context import read, routed_case as routed_case
 from test_verified_copy_analysis_e2e import isolated_database as isolated_database
@@ -301,3 +302,38 @@ def test_writer_locks_case_before_version_table_so_real_retention_cannot_deadloc
                 transaction.rollback()
     with routed_case[9].connect() as db:
         assert db.scalar(text("SELECT count(*) FROM case_work_product_versions")) == 0
+
+
+@pytest.mark.parametrize("boundary", ["submit", "review"])
+def test_final_acceptance_does_not_repeat_retrieval_while_source_locks_are_held(
+    routed_case, monkeypatch, boundary,
+):
+    body = submission(routed_case)
+    if boundary == "review":
+        created = post(routed_case, body)
+        assert created.status_code == 201, created.text
+        owner_role(routed_case)
+        assert routed_case[0].post(plan_path(routed_case).rsplit("/", 1)[0] + "/claim",
+                                   headers=actor_headers(routed_case[1])).status_code == 200
+    calls = []
+    real = lawyer_draft_context._retrieve_analysis_state
+
+    async def record(*args, **kwargs):
+        calls.append("retrieval")
+        assert len(calls) == 1, "repeated retrieval could call embeddings after the final guard"
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(lawyer_work_products, "_retrieve_analysis_state", record)
+    monkeypatch.setattr(lawyer_draft_context, "_retrieve_analysis_state", record)
+    # The same numeric deploy flag enables Core and the worker; UI uses exactly0|1.
+    monkeypatch.setenv("AI_FIRST_LAWYER_DRAFT_ENABLED", "1")
+    if boundary == "submit":
+        result = post(routed_case, body)
+    else:
+        result = routed_case[0].post(plan_path(routed_case) + "/reviews",
+                                     headers=actor_headers(routed_case[1], uuid4()), json={
+            "expectedVersionId": created.json()["versionId"],
+            "expectedContentSha256": created.json()["contentSha256"], "decision": "APPROVE",
+        })
+    assert result.status_code == 201, result.text
+    assert calls == ["retrieval"]

@@ -49,7 +49,7 @@ from legal_core.risk_policy_repository import ApprovedRiskPolicy, ApprovedRiskPo
 
 
 def _require_enabled() -> None:
-    if os.getenv("AI_FIRST_LAWYER_DRAFT_ENABLED", "false").strip().lower() != "true":
+    if os.getenv("AI_FIRST_LAWYER_DRAFT_ENABLED", "0").strip().lower() not in {"true", "1"}:
         raise ApiError(status_code=503, code="LAWYER_DRAFT_DISABLED",
                        message="Internal lawyer-draft context is not enabled")
 
