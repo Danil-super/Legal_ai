@@ -43,3 +43,29 @@ Tests cover creator/tenant/key/lease, source tampering, facts/policy/retention,
 unknown date and unavailable evidence, real Case/Job lock waits, and access or
 policy withdrawal after actual retrieval. Disabling the creator guard makes the
 creator-change lock-wait test fail. Personal composition remains isolated.
+
+Final source freshness is transaction-owned. Independent review reproduced a
+retired clinic contract remaining in the returned context when its approval was
+withdrawn after retrieval. The same race existed for the legal editor whose
+active role makes a normative approval current. `require_lawyer_draft_sources_current`
+now locks only the selected provenance in stable ID order, then re-reads the
+approved, date-applicable selected fragments and verifies their complete content
+and exact evidence/context traces. It neither substitutes newly retrieved
+evidence nor commits. Legal versions precede source/document/reviewer locks,
+matching the existing legal approval version-first order. Clinic versions use
+`FOR UPDATE`: approval-event INSERTs require the conflicting foreign-key
+`KEY SHARE` lock, whereas `FOR SHARE` would not fence those INSERTs. Row counts
+are bounded by the existing retrieval limits (30 legal and 20 clinic fragments).
+
+Locks last until the caller's transaction ends. Model/network calls must finish
+before invoking this final guard; the loader rechecks actor, entitlement,
+retention, lease, facts, policy and operator flags after the new possible waits.
+This helper is reusable by the later internal writer/view/review boundary, whose
+own authorization and case/escalation locking remain mandatory. It verifies
+the selected provenance, not whether a newly added document would be relevant.
+
+Regression tests exercise real HTTP retirement and legal reviewer revocation
+after retrieval, actual blocking of both withdrawals until the caller commits,
+source withdrawal and membership/lease loss across real provenance lock waits,
+and changed exact traces. These changes do not alter approval rules or grant
+new database permissions. Audit remains IDs and hashes only.
