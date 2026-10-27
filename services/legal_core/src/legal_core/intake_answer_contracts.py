@@ -112,6 +112,9 @@ class AnswerInterpretation(PreparationModel):
     reason_code: Literal["AMBIGUOUS", "CONTRADICTS_CONFIRMED", "OFF_QUESTION"] | None = Field(
         default=None, alias="reasonCode",
     )
+    factual_proposal: FactualContextProposal | None = Field(
+        default=None, alias="factualProposal", exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def coherent_interpretation(self) -> Self:
@@ -120,6 +123,8 @@ class AnswerInterpretation(PreparationModel):
                 raise ValueError("proposed answers require a value and literal source anchors")
         elif self.value is not None or self.reason_code is None:
             raise ValueError("unresolved answers require only a bounded reason, never a value")
+        if self.status != "PROPOSED" and self.factual_proposal is not None:
+            raise ValueError("additional facts require a resolved current answer")
         return self
 
     def validate_source(self, source: str) -> None:
@@ -282,3 +287,6 @@ class MaterialQuestion(PreparationModel):
     reason_code: Literal["SAFETY_DECISION", "SOURCE_APPLICABILITY", "ACTION_SELECTION"] = Field(
         alias="reasonCode",
     )
+
+
+AnswerInterpretation.model_rebuild()
