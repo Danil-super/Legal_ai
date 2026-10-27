@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
-from legal_core.database import database_url
+from legal_core.database import database_url, owner_database_url
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import ProgrammingError
 
@@ -51,6 +51,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
             "cases",
             "case_facts",
             "case_reports",
+            "case_work_product_versions",
             "audit_events",
             "idempotency_records",
             "telegram_case_workflows",
@@ -82,7 +83,8 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 text(
                     "SELECT relname FROM pg_class "
                     "WHERE relrowsecurity AND relname IN "
-                    "('cases','case_facts','case_reports','audit_events','idempotency_records',"
+                    "('cases','case_facts','case_reports','case_work_product_versions',"
+                    "'audit_events','idempotency_records',"
                     "'telegram_case_workflows','telegram_intake_drafts','subscription_entitlements',"
                     "'case_materials','reference_evaluation_access_grants',"
                     "'reference_evaluation_cases','reference_evaluation_case_versions',"
@@ -97,7 +99,8 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                     "SELECT c.relname FROM pg_trigger t "
                     "JOIN pg_class c ON c.oid=t.tgrelid "
                     "WHERE NOT t.tgisinternal AND c.relname IN "
-                    "('case_facts','case_reports','telegram_case_workflows','legal_approval_events',"
+                    "('case_facts','case_reports','case_work_product_versions',"
+                    "'telegram_case_workflows','legal_approval_events',"
                     "'legal_sources','legal_documents','legal_versions','legal_fragments',"
                     "'subscription_entitlement_events','risk_policy_versions','risk_policy_events',"
                     "'case_risk_assessments','case_escalations','case_analysis_runs',"
@@ -139,6 +142,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 "cases",
                 "case_facts",
                 "case_reports",
+                "case_work_product_versions",
                 "audit_events",
                 "idempotency_records",
                 "telegram_case_workflows",
@@ -162,6 +166,7 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
             assert set(triggers) == {
                 "case_facts",
                 "case_reports",
+                "case_work_product_versions",
                 "telegram_case_workflows",
                 "legal_approval_events",
                 "legal_sources",
@@ -202,21 +207,28 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                 "release_expired_reference_evaluation_version",
             }
 
-        with engine.connect() as connection:
-            v2_evidence_exists = bool(
-                connection.scalar(
-                    text(
-                        "SELECT EXISTS ("
-                        "SELECT 1 FROM legal_versions "
-                        "WHERE artifact_kind = 'THIRD_PARTY_VERIFIED_COPY' "
-                        "UNION ALL "
-                        "SELECT 1 FROM legal_approval_events "
-                        "WHERE policy_version = 'dental-legal-approval.v2'"
-                        ")"
+        # The migration owner must inspect protected history across tenants; an
+        # unscoped runtime read intentionally cannot see work-product rows.
+        migration_owner = create_engine(owner_database_url())
+        try:
+            with migration_owner.connect() as connection:
+                guarded_history_exists = bool(
+                    connection.scalar(
+                        text(
+                            "SELECT EXISTS ("
+                            "SELECT 1 FROM legal_versions "
+                            "WHERE artifact_kind = 'THIRD_PARTY_VERIFIED_COPY' "
+                            "UNION ALL "
+                            "SELECT 1 FROM legal_approval_events "
+                            "WHERE policy_version = 'dental-legal-approval.v2' "
+                            "UNION ALL SELECT 1 FROM case_work_product_versions"
+                            ")"
+                        )
                     )
                 )
-            )
-        if v2_evidence_exists:
+        finally:
+            migration_owner.dispose()
+        if guarded_history_exists:
             with pytest.raises(ProgrammingError, match="cannot downgrade"):
                 command.downgrade(config, "f19b4c6e7d20")
         else:

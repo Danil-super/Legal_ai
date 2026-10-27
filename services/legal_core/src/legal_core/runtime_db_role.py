@@ -121,6 +121,7 @@ def provision_runtime_role() -> str:
             "legal_prepared_part_versions",
             "legal_reference_review_events",
             "reference_evaluation_review_events",
+            "case_work_product_versions",
         ):
             cursor.execute("SELECT to_regclass(%s)", (f"public.{ledger}",))
             found = cursor.fetchone()
