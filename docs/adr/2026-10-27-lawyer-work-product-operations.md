@@ -31,11 +31,30 @@ normative approval or patient delivery; existing discussion supports targeted qu
 Retain the AI original and every human version, and never let a stale AI completion
 replace human work. Replays reauthorize and check retention/source bindings.
 
-Routes to implement with authz, source/fencing, lost-response and concurrency tests:
+Implemented routes, all default-off behind AI_FIRST_LAWYER_DRAFT_ENABLED:
 
 - Internal POST `/v1/cases/{case_id}/lawyer-work-products` (Agent key and live v2 lease).
+- Internal POST `/v1/cases/{case_id}/lawyer-work-products/lookup` (same creator/lease;
+  returns a retained version or null so an HTTP retry need not rerun the model).
 - GET `/v1/case-escalations/{escalation_id}/work-product` (current actor authorization).
 - POST `/v1/case-escalations/{escalation_id}/work-product/reviews` (assigned human only).
 
-This types-first increment has no endpoints, writer or review side effects. Runtime
-implementation, independent review, full gates and a separate release decision remain.
+Core owns the initial summary from confirmed facts, bounded verified ACTION steps,
+deduplicated verified references and factual gaps. It rejects the entire proposal
+when claims fail verification or no verified action exists. It cannot turn an empty
+model answer into a useful-looking plan. AI retries bind to their original source
+and hash-only audited receipt; a new automatic completion cannot replace human work.
+Human review appends an immediate child version and never changes the AI original.
+
+Case is locked before accessing the version table, matching retention. Source
+provenance and current policy stay locked through commit, and actor, wall-clock
+entitlement/retention, lease and operator flags are checked after actual persistence
+or replay waits. Stale source/last-version failures cannot be approved. Receipts
+contain only version IDs; retained content lives solely in the case-retained table.
+
+Real HTTP/PostgreSQL tests cover submission/replay, failed semantic/structural gates,
+role/tenant/assignment, human revision/approval, stale facts, revocation/safe-stop and
+wall-clock lease expiry after flush, and a real writer blocked behind Case while
+the actual retention function completes without a version-table deadlock.
+Independent review, combined UI/Agent verification, full gates and a separate
+production release decision remain; local tests do not establish universal legal quality.

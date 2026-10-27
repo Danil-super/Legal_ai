@@ -24,8 +24,8 @@ CLINIC_BASELINE = {
         # the existing validated flag stays off by default, personal remains inert.
         "a129dc9d49206572020b549418fa55dd3916f417",
     "services/legal_core/src/legal_core/main.py":
-        # Owner-approved private clinical lawyer context; personal remains inert (AIF06 ADR).
-        "b9c06b49e2b14665295017235595b695af7baf4c",
+        # Owner-approved clinical work-product routes; personal remains inert (AIF08 ADR).
+        "0a37aed06336cfc12c4016df8ff10eb8858addef",
     # Separately reviewed clinical automation pause; no personal surface change (ADR 0064).
     # Reviewed Gateway-only intake flag pass-through; defaults off (ADR 0091).
     # Owner-approved clinical multi-fact intake flag; defaults off (ADR0101).
@@ -84,6 +84,10 @@ def _assert_clinical_understanding_routes(app):
         "/v1/intake-preparations/{operation_id}",
         "/v1/intake-preparations/{operation_id}/context",
         "/v1/cases/{case_id}/lawyer-draft-context",
+        "/v1/cases/{case_id}/lawyer-work-products",
+        "/v1/cases/{case_id}/lawyer-work-products/lookup",
+        "/v1/case-escalations/{escalation_id}/work-product",
+        "/v1/case-escalations/{escalation_id}/work-product/reviews",
     } <= paths
 
 
