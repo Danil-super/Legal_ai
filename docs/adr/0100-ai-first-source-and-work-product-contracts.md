@@ -31,7 +31,7 @@ source ID, draft revision and exact SHA256. Core selects allowed sources; knowin
 an ID/hash is not permission to read or use one. `RetainedSourceAnchor` identifies
 the exact nonblank character span in an allowed segment.
 
-`FactualContextProposal` carries up to twelve distinct existing question identities,
+`FactualContextProposal` carries up to twenty-four distinct existing question identities,
 each with a candidate JSON value and one to three source anchors. It has a 16000
 character serialized budget. Source validation reparses nested instances, accepts
 at most sixteen segments/12000 source characters, rejects unknown/changed sources

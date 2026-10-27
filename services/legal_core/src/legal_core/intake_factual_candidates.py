@@ -71,7 +71,19 @@ def allowed_factual_questions(
     requests = ClarificationRequestBatch.model_validate({
         "requests": data.get("analysisClarificationRequests", []),
     }).requests
+    if current.wizard_state == "SERVICES":
+        # These are extraction slots within the primary service proposal, not
+        # current service identities. Core binds them after validating its names.
+        questions.extend(AnswerQuestion.model_validate({
+            "schemaVersion": "intake-answer-question.v1", "wizardState": "ANALYSIS_CLARIFICATION",
+            "targetField": "analysisClarificationAnswers", "scopeBasis": "PROPOSED_SERVICES",
+            "serviceScopeSha256": current.service_scope_sha256,
+            "clarificationRequest": {"questionId": question_id, "serviceSlot": slot},
+        }) for slot in range(5)
+            for question_id in ("SERVICE_PROVIDED_DATE", "SERVICE_PAYMENT_BASIS"))
     for request in requests:
+        if current.wizard_state == "SERVICES" and request.service_slot is not None:
+            continue
         question = derive_answer_question({
             **data, "analysisClarificationRequests": [request.model_dump(by_alias=True)],
         }, "ANALYSIS_CLARIFICATION")
@@ -141,10 +153,31 @@ def apply_factual_answer(
     values = validate_factual_proposal(proposal, checked_sources, allowed, data,
                                        as_of_date=as_of_date)
     still_allowed = {item.question_sha256 for item in allowed_factual_questions(result, current)}
+    sources_by_id = {item.source_id: item for item in checked_sources}
     for candidate, value in zip(proposal.candidates, values, strict=True):
         question, field = candidate.question, candidate.question.target_field
         if question.question_sha256 not in still_allowed:
             raise ValueError("current answer changed the additional fact's scope")
+        if question.scope_basis == "PROPOSED_SERVICES":
+            request = question.clarification_request
+            services = result.get("affectedServices")
+            if (current.wizard_state != "SERVICES" or request is None
+                    or request.service_slot is None or not isinstance(services, list)
+                    or request.service_slot >= len(services)):
+                raise ValueError("proposed service slot has no validated primary service")
+            label = services[request.service_slot]
+            if not isinstance(label, str) or not any(
+                label in sources_by_id[anchor.source_id].text[anchor.start:anchor.end]
+                for anchor in candidate.anchors
+            ):
+                raise ValueError("additional service fact must anchor its own literal service")
+            # Re-derive against the validated proposed list. An old attempt (even
+            # UNKNOWN) makes this None and cannot be silently overwritten.
+            rebound = derive_answer_question({
+                **result, "analysisClarificationRequests": [request.model_dump(by_alias=True)],
+            }, "ANALYSIS_CLARIFICATION")
+            if rebound is None or rebound.clarification_request != request:
+                raise ValueError("additional service fact repeats an existing attempt")
         if field == "safetyScreening":
             raw = result.get(field, {"schemaVersion": SCREENING_VERSION})
             if not isinstance(raw, dict):

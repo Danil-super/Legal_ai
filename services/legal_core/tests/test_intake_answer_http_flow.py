@@ -141,8 +141,13 @@ async def run_flow(*, actor, clinic, state, data, answer, value, unresolved=Fals
             supplied = json.loads(model_calls[-1]["messages"][1]["content"])
             additions = []
             for field, (extra_value, literal) in extra_facts.items():
+                field_name = field[0] if isinstance(field, tuple) else field
                 target = next(item for item in supplied["allowedQuestions"]
-                              if item["targetField"] == field)
+                              if item["targetField"] == field_name and (
+                                  not isinstance(field, tuple)
+                                  or (item["clarificationRequest"]["questionId"] == field[1]
+                                      and item["clarificationRequest"]["serviceSlot"] == field[2])
+                              ))
                 segment = next(item for item in supplied["retainedSources"]
                                if literal in item["text"])
                 start = segment["text"].index(literal)
@@ -340,7 +345,12 @@ async def run_flow(*, actor, clinic, state, data, answer, value, unresolved=Fals
                     else:
                         assert result[question.target_field] == value
                     for field, (extra_value, _) in (extra_facts or {}).items():
-                        assert result[field] == extra_value
+                        if isinstance(field, tuple):
+                            assert next(item["value"] for item in result[field[0]]["answers"]
+                                        if item["questionId"] == field[1]
+                                        and item["serviceSlot"] == field[2]) == extra_value
+                        else:
+                            assert result[field] == extra_value
                     replayed = await core_http.post(operation + suffix,
                                                     headers=actor_headers(actor), json=consent)
                     assert replayed.status_code == 200 and replayed.json() == receipt
@@ -397,9 +407,17 @@ def test_rich_reply_uses_real_core_agent_http_and_stages_all_facts_with_one_mode
     clinic, _ = seed_admin(actor)
     asyncio.run(run_flow(
         actor=actor, clinic=clinic, state="SERVICES", data={"situationAreas": ["TREATMENT"]},
-        answer="Установка коронки. Обращение 15.10.2026. Пригласили на осмотр.",
+        answer="Установка коронки выполнена 10.10.2026, платно. "
+               "Обращение 15.10.2026. Пригласили на осмотр.",
         value=["Установка коронки"], staging=True, extra_facts={
             "eventDate": ({"date": "2026-10-15", "precision": "EXACT"}, "15.10.2026"),
             "clinicActions": (["INVITED_FOR_EXAMINATION"], "Пригласили на осмотр"),
+            ("analysisClarificationAnswers", "SERVICE_PROVIDED_DATE", 0): (
+                {"date": "2026-10-10", "precision": "EXACT"},
+                "Установка коронки выполнена 10.10.2026, платно.",
+            ),
+            ("analysisClarificationAnswers", "SERVICE_PAYMENT_BASIS", 0): (
+                "PAID", "Установка коронки выполнена 10.10.2026, платно.",
+            ),
         },
     ))

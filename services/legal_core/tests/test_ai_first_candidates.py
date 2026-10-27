@@ -220,8 +220,7 @@ def test_replacing_services_cannot_apply_an_additional_date_bound_to_old_slots()
                 {"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 0},
             ]}
     current = derive_answer_question(data, "SERVICES")
-    extra = next(item for item in allowed_factual_questions(data, current)
-                 if item.clarification_request is not None)
+    extra = derive_answer_question(data, "ANALYSIS_CLARIFICATION")
     answer = "Новая услуга, проведена 15.10.2026."
     sources = retained_answer_sources(uuid4(), 3, data, answer)
     interpreted = AnswerInterpretation.model_validate({
@@ -268,3 +267,108 @@ def test_actual_replacement_keeps_existing_dependency_invalidation():
         sourceSpans=[{"start": 0, "end": len(source)}])
     result = apply_factual_answer(data, current, interpreted, source, [], as_of_date=AS_OF)
     assert "safetyScreening" not in result
+
+
+def test_new_service_reply_preserves_its_payment_and_date_before_analysis_requests_exist():
+    data = {**DATA, "situationAreas": ["TREATMENT"]}
+    current = derive_answer_question(data, "SERVICES")
+    allowed = allowed_factual_questions(data, current)
+    date_question = next(item for item in allowed if item.clarification_request is not None
+                         and item.clarification_request.question_id == "SERVICE_PROVIDED_DATE"
+                         and item.clarification_request.service_slot == 0)
+    payment = next(item for item in allowed if item.clarification_request is not None
+                   and item.clarification_request.question_id == "SERVICE_PAYMENT_BASIS"
+                   and item.clarification_request.service_slot == 0)
+    answer = "Установка коронки выполнена 15.10.2026, услуга платная."
+    sources = retained_answer_sources(uuid4(), 3, data, answer)
+    interpreted = AnswerInterpretation.model_validate({
+        "status": "PROPOSED", "value": ["Установка коронки"],
+        "sourceSpans": [{"start": 0, "end": len("Установка коронки")}],
+        "factualProposal": {"schemaVersion": "ai-first-factual-proposal.v1", "candidates": [
+            candidate(date_question, sources[-1], {"date": "2026-10-15", "precision": "EXACT"},
+                      answer), candidate(payment, sources[-1], "PAID", answer),
+        ]},
+    })
+    result = apply_factual_answer(data, current, interpreted, answer, sources, as_of_date=AS_OF)
+    assert result["affectedServices"] == ["Установка коронки"]
+    assert result["analysisClarificationAnswers"] == {"answers": [
+        {"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 0,
+         "value": {"date": "2026-10-15", "precision": "EXACT"}},
+        {"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 0, "value": "PAID"},
+    ]}
+
+
+@pytest.mark.parametrize("fault", ["out-of-bounds", "no-service-label", "existing-unknown"])
+def test_new_service_templates_cannot_escape_slots_or_replace_existing_attempts(fault):
+    data = {**DATA, "situationAreas": ["TREATMENT"]}
+    if fault == "existing-unknown":
+        data["affectedServices"] = ["Установка коронки"]
+        data["analysisClarificationAnswers"] = {"answers": [{
+            "questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 0,
+            "value": {"date": None, "precision": "UNKNOWN"},
+        }]}
+    current = derive_answer_question(data, "SERVICES")
+    slot = 4 if fault == "out-of-bounds" else 0
+    extra = next(item for item in allowed_factual_questions(data, current)
+                 if item.scope_basis == "PROPOSED_SERVICES"
+                 and item.clarification_request.question_id == "SERVICE_PROVIDED_DATE"
+                 and item.clarification_request.service_slot == slot)
+    answer = "Установка коронки выполнена 15.10.2026."
+    sources = retained_answer_sources(uuid4(), 3, data, answer)
+    value = AnswerInterpretation.model_validate({
+        "status": "PROPOSED", "value": ["Установка коронки"],
+        "sourceSpans": [{"start": 0, "end": len("Установка коронки")}],
+        "factualProposal": {"schemaVersion": "ai-first-factual-proposal.v1", "candidates": [
+            candidate(extra, sources[-1], {"date": "2026-10-15", "precision": "EXACT"},
+                      "15.10.2026" if fault == "no-service-label" else answer),
+        ]},
+    })
+    before = deepcopy(data)
+    with pytest.raises(ValueError):
+        apply_factual_answer(data, current, value, answer, sources, as_of_date=AS_OF)
+    assert data == before
+
+
+def test_rich_five_service_reply_can_retain_all_explicit_supported_fields_in_one_batch():
+    services = ["Установка коронки", "Пломба", "Имплантация", "Удаление зуба", "Лечение каналов"]
+    clauses = [f"{label} выполнена 10.10.2026, платно." for label in services]
+    answer = " ".join(clauses) + (
+        " Первое устное обращение поступило 15.10.2026. Клиника пока ничего не сделала."
+        " Ухудшения и госпитализации не было, представителей нет, письменных требований,"
+        " документов суда и угроз обращения к нему нет. Пациент просит вернуть 5000 рублей."
+    )
+    data = {**DATA, "situationAreas": ["TREATMENT"]}
+    current = derive_answer_question(data, "SERVICES")
+    sources = retained_answer_sources(uuid4(), 3, data, answer)
+    additions = []
+    values = {"incomingKind": "MESSAGE_OR_REQUEST", "conflictStage": "FIRST",
+              "clinicActions": ["NOTHING_YET"], "healthSignals": ["NO_KNOWN_INFORMATION"],
+              "eventDate": {"date": "2026-10-15", "precision": "EXACT"}}
+    for question in allowed_factual_questions(data, current):
+        literal = answer
+        if question.scope_basis is not None:
+            request = question.clarification_request
+            literal = clauses[request.service_slot]
+            value = "PAID" if request.question_id == "SERVICE_PAYMENT_BASIS" else {
+                "date": "2026-10-10", "precision": "EXACT",
+            }
+        elif question.screening_field is not None:
+            value = "NO"
+            if question.screening_field == "moneyRequested":
+                value = "YES"
+            elif question.screening_field == "amount":
+                value, literal = {"amountKopecks": 500000, "currency": "RUB"}, "5000 рублей"
+        else:
+            value = values[question.target_field]
+        additions.append(candidate(question, sources[-1], value, literal))
+    assert len(additions) > 12
+    interpreted = AnswerInterpretation.model_validate({
+        "status": "PROPOSED", "value": services,
+        "sourceSpans": [{"start": 0, "end": len(answer)}],
+        "factualProposal": {"schemaVersion": "ai-first-factual-proposal.v1",
+                            "candidates": additions},
+    })
+    result = apply_factual_answer(data, current, interpreted, answer, sources, as_of_date=AS_OF)
+    assert result["safetyScreening"]["amount"] == {"amountKopecks": 500000, "currency": "RUB"}
+    assert len(result["analysisClarificationAnswers"]["answers"]) == 10
+    assert result["eventDate"] == {"date": "2026-10-15", "precision": "EXACT"}

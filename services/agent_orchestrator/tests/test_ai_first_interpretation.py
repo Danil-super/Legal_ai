@@ -10,7 +10,7 @@ import pytest
 
 from agent_orchestrator.hermes_client import HermesProtocolError
 from agent_orchestrator.intake_answer_interpretation import AnswerUnderstanding
-from legal_core.intake_answer_contracts import derive_answer_question
+from legal_core.intake_answer_contracts import RetainedSourceSegment, derive_answer_question
 from legal_core.intake_factual_candidates import allowed_factual_questions, retained_answer_sources
 
 DATA = {"intakeVersion": 2, "situationAreas": ["SERVICE"],
@@ -44,6 +44,14 @@ def scenario(fault=None):
         candidate["question"] = current.model_dump(mode="json", by_alias=True)
     elif fault == "authority":
         raw["riskLevel"] = "LOW"
+    elif fault == "typed-uuid":
+        # Legitimate UUID metadata can contain an eleven-digit substring that
+        # resembles a SNILS. It is not user-authored text or a patient identifier.
+        identity = "00000000-0000-5000-8000-f11223344595"
+        sources[0] = RetainedSourceSegment.model_validate({
+            **sources[0].model_dump(by_alias=True), "sourceId": identity,
+        })
+        candidate["anchors"][0]["sourceId"] = identity
     return current, sources, allowed, raw
 
 
@@ -91,3 +99,8 @@ def test_bad_additions_are_rejected_without_exposing_source_or_model_response(fa
 def test_legacy_context_cannot_smuggle_a_multi_fact_proposal():
     with pytest.raises(HermesProtocolError):
         run(retained=False)
+
+
+def test_typed_source_uuid_is_not_misclassified_as_patient_text():
+    result, calls = run("typed-uuid")
+    assert result.factual_proposal is not None and len(calls) == 1

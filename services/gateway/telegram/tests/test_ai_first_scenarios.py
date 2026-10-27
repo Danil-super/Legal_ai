@@ -76,13 +76,29 @@ def test_rich_followup_does_not_reask_a_date_already_in_the_same_answer():
                     "eventSummary": "Вымышленный посетитель недоволен услугой клиники."}
             core.draft.update(wizardState="SERVICES", draftData=data)
             await dispatch(f"case:draft:{DRAFT}")
-            answer = ("Установка коронки. Обращение было 15.10.2026. "
+            answer = ("Установка коронки выполнена 10.10.2026, платно. "
+                      "Обращение было 15.10.2026. "
                       "Требует 5000 рублей. Пригласили на осмотр.")
             await dispatch("text:" + answer)
             operation = core.starts[-1]
             sources = retained_answer_sources(operation, core.draft["revision"], data, answer)
             event = derive_answer_question(data, "EVENT_DATE")
             start = answer.index("15.10.2026")
+            service_facts = []
+            current = derive_answer_question(data, "SERVICES")
+            service_text = "Установка коронки выполнена 10.10.2026, платно."
+            for question in allowed_factual_questions(data, current):
+                if (question.scope_basis == "PROPOSED_SERVICES"
+                        and question.clarification_request.service_slot == 0):
+                    value = {"date": "2026-10-10", "precision": "EXACT"} if (
+                        question.clarification_request.question_id == "SERVICE_PROVIDED_DATE"
+                    ) else "PAID"
+                    service_facts.append({
+                        "question": question.model_dump(mode="json", by_alias=True),
+                        "value": value, "anchors": [{"sourceId": str(sources[-1].source_id),
+                            "sourceSha256": sources[-1].source_sha256,
+                            "start": 0, "end": len(service_text),
+                        }]})
             proposal = await interpret_at_http_boundary(answer, data, {
                 "status": "PROPOSED", "value": ["Установка коронки"],
                 "sourceSpans": [{"start": 0, "end": len("Установка коронки")}],
@@ -92,7 +108,7 @@ def test_rich_followup_does_not_reask_a_date_already_in_the_same_answer():
                             "sourceId": str(sources[-1].source_id),
                             "sourceSha256": sources[-1].source_sha256,
                             "start": start, "end": start + len("15.10.2026"),
-                        }]}]},
+                        }]}, *service_facts]},
             }, [], retained=sources)
             before = len(sent)
             # Publish exactly the validated current model response. StagingCore
@@ -108,6 +124,11 @@ def test_rich_followup_does_not_reask_a_date_already_in_the_same_answer():
             assert core.draft["draftData"]["eventDate"] == {
                 "date": "2026-10-15", "precision": "EXACT",
             }
+            assert core.draft["draftData"]["analysisClarificationAnswers"] == {"answers": [
+                {"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 0,
+                 "value": {"date": "2026-10-10", "precision": "EXACT"}},
+                {"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 0, "value": "PAID"},
+            ]}
             new_text = "\n".join(item.get("text", "") for item in sent[before:])
             assert app.user_data[ACTOR][bot.WIZARD_DATA_KEY][bot.DRAFT_STATE_KEY] != "EVENT_DATE", (
                 "the real dialogue asks again for the date supplied in the rich reply: "

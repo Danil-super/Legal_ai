@@ -1,6 +1,7 @@
 """New inactive contracts preserve source provenance, not model authority."""
 
 import hashlib
+import json
 from datetime import date
 from uuid import UUID
 
@@ -172,3 +173,23 @@ def test_nested_mutation_is_revalidated_before_work_product_hashing():
     parsed.actions.append("private@example.invalid")
     with pytest.raises(ValidationError):
         _ = parsed.content_sha256
+
+
+def test_legacy_question_serialization_and_identity_omit_proposed_service_metadata():
+    parsed = question("CLINIC_ACTIONS")
+    previous_wire = {
+        "schemaVersion": "intake-answer-question.v1", "wizardState": "CLINIC_ACTIONS",
+        "targetField": "clinicActions", "screeningField": None,
+        "clarificationRequest": None, "serviceScopeSha256": None,
+    }
+    assert parsed.model_dump(mode="json", by_alias=True) == previous_wire
+    assert parsed.question_sha256 == hashlib.sha256(json.dumps(
+        previous_wire, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+
+
+def test_larger_candidate_capacity_still_enforces_the_same_serialized_payload_budget():
+    wire = proposal()
+    wire["candidates"][0]["value"] = "x" * 16001
+    with pytest.raises(ValidationError):
+        FactualContextProposal.model_validate(wire)

@@ -99,6 +99,16 @@ or any future historical date. Preserve approximate precision and explicit unkno
 For example with asOfDate 2026-10-27: 'установили 10 сентября этого года, 15 октября
 пациент пожаловался' has service date 2026-09-10 and complaint date 2026-10-15.
 All values remain provisional until the final factual-summary confirmation.
+Consider every independently supported allowed field in this same call; do not retain only
+the first few easy facts. Up to 24 distinct candidates fit the bounded response; absent,
+ambiguous or conflicting information must still be omitted, never guessed to fill a quota.
+For a SERVICES primary answer, scopeBasis=PROPOSED_SERVICES templates refer to positions in
+your literal proposed service list. Copy their supplied scope digest; do not compute a new
+digest. Core binds each valid slot after checking those service names. Only actual positions
+in the proposed list are permitted. Each date/payment anchor must also include that slot's
+literal service name together with its own date/payment wording. Never copy another service's
+date or payment basis. If the service list is unchanged, preserve all existing scoped answers,
+including UNKNOWN; do not propose their replacement through these templates.
 """ + _VALUE_GUIDANCE
 
 
@@ -171,7 +181,7 @@ class AnswerUnderstanding:
                         or sum(len(item.text) for item in retained_sources) > 12000):
                     raise ValueError("retained factual context exceeds its budget")
                 requests = [item.clarification_request for item in [question, *allowed_questions]
-                            if item.clarification_request is not None]
+                            if item.clarification_request is not None and item.scope_basis is None]
                 if requests:
                     validation_data["analysisClarificationRequests"] = [
                         item.model_dump(mode="json", by_alias=True) for item in requests]
@@ -237,8 +247,11 @@ class AnswerUnderstanding:
                     if proposed.factual_proposal is not None:
                         apply_factual_answer(validation_data, question, proposed, source,
                                              retained_sources or [], as_of_date=as_of_date)
-                if pseudonymize_text(json.dumps(proposed.model_dump(mode="json", by_alias=True),
-                                                ensure_ascii=False)).changed:
+                factual_values = [proposed.value, *(item.value for item in (
+                    proposed.factual_proposal.candidates if proposed.factual_proposal else []))]
+                # Source IDs/digests and question enums are closed typed metadata,
+                # not patient text. Scan factual values, not UUID digit substrings.
+                if pseudonymize_text(json.dumps(factual_values, ensure_ascii=False)).changed:
                     raise ValueError("identifying interpretation")
                 return proposed
             except (ValueError, TypeError):

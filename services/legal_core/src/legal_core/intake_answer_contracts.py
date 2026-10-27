@@ -74,6 +74,9 @@ class AnswerQuestion(PreparationModel):
         default=None, alias="clarificationRequest",
     )
     service_scope_sha256: Sha256 | None = Field(default=None, alias="serviceScopeSha256")
+    scope_basis: Literal["PROPOSED_SERVICES"] | None = Field(
+        default=None, alias="scopeBasis", exclude_if=lambda value: value is None,
+    )
 
     @field_validator("clarification_request", mode="before")
     @classmethod
@@ -98,6 +101,12 @@ class AnswerQuestion(PreparationModel):
         )
         if scoped != (self.service_scope_sha256 is not None):
             raise ValueError("service questions require the current service scope digest")
+        if self.scope_basis is not None and not (
+            self.wizard_state == "ANALYSIS_CLARIFICATION"
+            and self.clarification_request is not None
+            and self.clarification_request.service_slot is not None
+        ):
+            raise ValueError("only additional scoped service facts may use proposed service slots")
         return self
 
     @property
@@ -243,7 +252,7 @@ class FactualContextProposal(PreparationModel):
 
     model_config = ConfigDict(hide_input_in_errors=True)
     schema_version: Literal["ai-first-factual-proposal.v1"] = Field(alias="schemaVersion")
-    candidates: list[FactualCandidate] = Field(min_length=1, max_length=12)
+    candidates: list[FactualCandidate] = Field(min_length=1, max_length=24)
 
     @model_validator(mode="after")
     def unique_targets(self) -> Self:

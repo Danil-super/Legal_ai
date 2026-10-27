@@ -48,6 +48,27 @@ reject missing dependencies and prohibit importing ORM/API modules into Gateway.
 The clinical Compose baseline is refreshed only for the owner-approved opt-in
 flag; personal-preview isolation and its closed default entry point remain frozen.
 
+For a SERVICES primary reply, Core supplies extraction templates for up to five
+proposed service slots (date/payment). They carry scopeBasis=PROPOSED_SERVICES and
+the primary input-scope digest. The model copies that server metadata; it never
+computes a new scope hash. Core validates literal primary service names first,
+then binds each supported candidate slot to that proposed list and a quote that
+also contains its own service label. Out-of-range slots, old scope identities and
+replacement of existing scoped attempts (including UNKNOWN) fail atomically.
+Other current-scope questions keep their previous identity; absent scopeBasis is
+omitted so legacy question hashes do not change. These are extraction permissions,
+not an instruction to ask ten questions or assume those services exist.
+The candidate count rises from twelve to twenty-four because five service date/payment
+pairs plus other explicit facts can exceed twelve. The same 16000-character payload
+budget, source limits, unique identities and Core-owned target list remain enforced.
+A complete five-service reply with twenty-three explicit fields is regression-tested
+as one atomic batch; increasing the count does not waive ambiguity or evidence gates.
+
+A typed source UUID may contain a digit substring resembling a patient identifier.
+The Agent scans factual values for direct identifiers, not validated UUID/hash/enum
+metadata. Raw sources and context are still independently checked before model I/O.
+A deterministic UUID/SNILS false-positive regression covers this distinction.
+
 An unresolved current answer currently remains the existing recovery flow; it may
 not hide additional candidates in a successful-looking result. No new normative
 approval, risk/escalation rule, model/provider/profile or patient-send path is added.
