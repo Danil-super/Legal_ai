@@ -69,3 +69,8 @@ after retrieval, actual blocking of both withdrawals until the caller commits,
 source withdrawal and membership/lease loss across real provenance lock waits,
 and changed exact traces. These changes do not alter approval rules or grant
 new database permissions. Audit remains IDs and hashes only.
+
+The same final guard holds SHARE on the actual approved risk-policy row and
+revalidates its current repository value after that wait. Retirement/activation
+updates cannot cross source acceptance. A real blocking regression proves that
+policy retirement waits for transaction completion; no rule or threshold changes.

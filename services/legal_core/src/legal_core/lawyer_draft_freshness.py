@@ -15,7 +15,8 @@ from legal_core.clinic_document_retrieval import (
 )
 from legal_core.legal_retrieval import _FRAGMENT_COLUMNS as _LEGAL_COLUMNS
 from legal_core.legal_retrieval import ApprovedLegalFragment
-from legal_core.models import LegalDocument, LegalSource, LegalVersion, User
+from legal_core.models import LegalDocument, LegalSource, LegalVersion, RiskPolicyVersion, User
+from legal_core.risk_policy_repository import ApprovedRiskPolicyRepository
 
 
 def _stale() -> ApiError:
@@ -38,6 +39,19 @@ async def require_lawyer_draft_sources_current(
     legal_ids = [item.fragment_id for item in state.evidence]
     clinic_ids = [item.fragment_id for item in state.clinic_document_context]
     if len(set(legal_ids)) != len(legal_ids) or len(set(clinic_ids)) != len(clinic_ids):
+        raise _stale()
+
+    # Policy activation/retirement must not cross the final source acceptance.
+    # The writer changes status in this same row; SHARE conflicts with that
+    # UPDATE without changing any risk rule or approval authority.
+    locked_policy = await session.scalar(select(RiskPolicyVersion.id).where(
+        RiskPolicyVersion.id == state.risk_policy.id,
+    ).with_for_update(read=True))
+    try:
+        current_policy = await ApprovedRiskPolicyRepository(session).get()
+    except (LookupError, ValueError):
+        raise _stale() from None
+    if locked_policy is None or current_policy != state.risk_policy:
         raise _stale()
 
     # Match the legal approval writer's version-first order. Approved content

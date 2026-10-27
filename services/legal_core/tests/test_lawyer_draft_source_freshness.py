@@ -111,7 +111,7 @@ def wait_for_block(owner, blocker_pid):
     pytest.fail('the operation must actually wait on the held provenance lock')
 
 
-@pytest.mark.parametrize('source', ['clinic', 'legal'])
+@pytest.mark.parametrize('source', ['clinic', 'legal', 'policy'])
 def test_guard_holds_selected_provenance_until_callers_transaction_ends(
     routed_case, monkeypatch, source,
 ):
@@ -134,10 +134,20 @@ def test_guard_holds_selected_provenance_until_callers_transaction_ends(
                 'decision': 'RETIRED', 'reasonCode': 'SYNTHETIC_WITHDRAWAL',
             })
             assert response.status_code == 201, response.text
-        else:
+        elif source == 'legal':
             with routed_case[9].begin() as connection:
                 connection.execute(text("UPDATE users SET system_role=NULL "
                                         "WHERE system_role='LEGAL_EDITOR'"))
+        else:
+            with routed_case[9].begin() as connection:
+                connection.execute(text(
+                    "INSERT INTO risk_policy_events(risk_policy_id,actor_user_id,decision,"
+                    "expected_content_sha256,reason_code) SELECT id,approved_by_user_id,'RETIRED',"
+                    "content_sha256,'SYNTHETIC_POLICY_REVIEW' FROM risk_policy_versions "
+                    "WHERE status='APPROVED'"
+                ))
+                connection.execute(text("UPDATE risk_policy_versions SET status='RETIRED' "
+                                        "WHERE status='APPROVED'"))
 
     monkeypatch.setattr(context_api, 'require_lawyer_draft_sources_current', pause)
     with ThreadPoolExecutor(max_workers=2) as pool:
