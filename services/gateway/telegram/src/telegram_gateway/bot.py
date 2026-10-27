@@ -968,6 +968,8 @@ async def _prompt_v2_draft(
             for index, page in enumerate(pages):
                 rows = [
                     [("✅ Всё верно", "case:v2:summary:confirm")],
+                    [("✏️ Действия клиники", "case:v2:context:actions"),
+                     ("✏️ Ход обращения", "case:v2:context:history")],
                     [("📎 Добавить файл", "case:v2:material:attach")],
                 ] if index == len(pages) - 1 else []
                 await reply(page, reply_markup=_v2_keyboard(rows))
@@ -1193,6 +1195,16 @@ async def v2_material_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return WizardState.MATERIALS
     return await _advance_v2_draft(update, data)
+
+
+async def edit_v2_optional_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    callback = await _answer_callback(update)
+    selected = {"case:v2:context:actions": WizardState.CLINIC_ACTIONS,
+                "case:v2:context:history": WizardState.CHRONOLOGY}.get(callback or "")
+    if selected is None:
+        return WizardState.SUMMARY
+    await _prompt_v2_draft(update, selected, _wizard_data(context))
+    return selected
 
 
 async def confirm_v2_summary(
@@ -3232,6 +3244,10 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
                     MessageHandler(~filters.TEXT & ~filters.Document.ALL, reject_v2_material_media),
                 ],
                 WizardState.SUMMARY: [
+                    CallbackQueryHandler(
+                        _persisted(edit_v2_optional_context),
+                        pattern=r"^case:v2:context:(actions|history)$",
+                    ),
                     CallbackQueryHandler(
                         _persisted(v2_material_action), pattern=r"^case:v2:material:attach$",
                     ),

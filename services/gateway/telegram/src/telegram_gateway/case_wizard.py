@@ -287,8 +287,6 @@ def facts_from_v2_data(data: dict[str, Any]) -> list[dict[str, Any]]:
         "situationAreas",
         "eventSummary",
         "eventDate",
-        "conflictStage",
-        "clinicActions",
         "healthSignals",
     )
     if any(key not in data for key in required):
@@ -300,8 +298,6 @@ def facts_from_v2_data(data: dict[str, Any]) -> list[dict[str, Any]]:
         _fact("SITUATION_AREAS", "ENUM_SET", {"values": data["situationAreas"]}),
         _fact("EVENT_SUMMARY", "TEXT", {"text": data["eventSummary"]}),
         _fact("EVENT_DATE", "DATE", data["eventDate"]),
-        _fact("CONFLICT_STAGE", "ENUM", {"value": data["conflictStage"]}),
-        _fact("CLINIC_ACTIONS", "ENUM_SET", {"values": data["clinicActions"]}),
         _fact(
             "HEALTH_CONSEQUENCE_SIGNALS",
             "ENUM_SET",
@@ -313,6 +309,11 @@ def facts_from_v2_data(data: dict[str, Any]) -> list[dict[str, Any]]:
             "value": data.get("caseMaterialsStatus", "NOT_ATTACHED"),
         }),
     ]
+    # These facts are optional context, never defaults inferred from silence.
+    if "conflictStage" in data:
+        facts.append(_fact("CONFLICT_STAGE", "ENUM", {"value": data["conflictStage"]}))
+    if "clinicActions" in data:
+        facts.append(_fact("CLINIC_ACTIONS", "ENUM_SET", {"values": data["clinicActions"]}))
     if "TREATMENT" in data["situationAreas"]:
         affected_services = data.get("affectedServices")
         if not isinstance(affected_services, list):

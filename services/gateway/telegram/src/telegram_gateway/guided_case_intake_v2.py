@@ -476,9 +476,10 @@ def _input_complete(data: dict[str, Any], state: str) -> bool:
         # The confirmation and Legal Core analysis boundaries retain the date gate.
         return _valid_date(data.get("eventDate"), exact_required=False)
     if state == V2_CHRONOLOGY:
-        return _valid_enum(data.get("conflictStage"), "conflictStage")
+        # Optional context stays absent; invalid supplied values still need repair.
+        return "conflictStage" not in data or _valid_enum(data["conflictStage"], "conflictStage")
     if state == V2_CLINIC_ACTIONS:
-        return _valid_multi(data.get("clinicActions"), "clinicActions")
+        return "clinicActions" not in data or _valid_multi(data["clinicActions"], "clinicActions")
     if state == V2_HEALTH:
         return _valid_multi(data.get("healthSignals"), "healthSignals")
     if state == V2_MATERIALS:
