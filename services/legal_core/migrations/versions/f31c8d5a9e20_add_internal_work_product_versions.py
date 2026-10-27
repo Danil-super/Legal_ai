@@ -125,8 +125,9 @@ CREATE FUNCTION public.guard_case_work_product_insert() RETURNS trigger
 LANGUAGE plpgsql SET search_path=pg_catalog, public AS $$
 DECLARE parent_case record;
 BEGIN
-    -- Same Case→version lock order as retention and future application writers.
-    -- Recheck after a wait with wall-clock time, not the transaction start time.
+    -- Application writers must lock Case BEFORE issuing INSERT (table locks
+    -- precede this trigger). This only rechecks content after any row-lock wait.
+    -- Use wall-clock time, not the transaction start time.
     SELECT status, content_purged_at, retention_due_at INTO parent_case
       FROM public.cases WHERE clinic_id=NEW.clinic_id AND id=NEW.case_id FOR UPDATE;
     IF NOT FOUND OR parent_case.status='CONTENT_PURGED'
@@ -184,6 +185,10 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Fence writers before checking whether rollback would erase retained history.
     op.execute("LOCK TABLE public.case_work_product_versions IN ACCESS EXCLUSIVE MODE")
+    # FORCE RLS can hide retained rows even from a non-BYPASSRLS table owner.
+    # Alembic's PostgreSQL transaction restores FORCE on refusal; on success the
+    # empty table is dropped. Runtime roles cannot perform this owner-only DDL.
+    op.execute("ALTER TABLE public.case_work_product_versions NO FORCE ROW LEVEL SECURITY")
     op.execute("""
         DO $$ BEGIN
             IF EXISTS (SELECT 1 FROM public.case_work_product_versions) THEN

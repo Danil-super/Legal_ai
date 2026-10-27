@@ -212,6 +212,9 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
         migration_owner = create_engine(owner_database_url())
         try:
             with migration_owner.connect() as connection:
+                # Never interpret an RLS-filtered owner read as absence of
+                # history. A non-bypass test identity must fail closed here.
+                connection.execute(text("SET LOCAL row_security = off"))
                 guarded_history_exists = bool(
                     connection.scalar(
                         text(

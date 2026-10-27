@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import time
+from importlib.util import module_from_spec, spec_from_file_location
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
@@ -14,6 +15,8 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
 from sqlalchemy.orm import Session
@@ -394,6 +397,49 @@ def test_nonempty_downgrade_refuses_to_erase_version_history(storage):
     with Session(engine) as session, session.begin():
         tenant(session, clinic)
         assert session.get(CaseWorkProductVersion, identity) is not None
+
+
+def test_downgrade_cannot_mistake_rls_hidden_history_for_empty_table(storage, monkeypatch):
+    engine, owner, clinic, actor, _, case_id, *_ = storage
+    row = version(clinic, actor, case_id)
+    with Session(engine) as session, session.begin():
+        tenant(session, clinic)
+        session.add(row)
+    path = Path(__file__).parents[1] / "migrations/versions/" \
+        "f31c8d5a9e20_add_internal_work_product_versions.py"
+    spec = spec_from_file_location("_aif_non_bypass_downgrade_probe", path)
+    migration = module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    role = "aif_owner_" + uuid4().hex
+    quoted = owner.dialect.identifier_preparer.quote(role)
+    with owner.connect() as connection:
+        transaction = connection.begin()
+        try:
+            connection.exec_driver_sql(f"CREATE ROLE {quoted} NOSUPERUSER NOBYPASSRLS NOLOGIN")
+            connection.exec_driver_sql(f"GRANT USAGE, CREATE ON SCHEMA public TO {quoted}")
+            connection.exec_driver_sql(
+                f"ALTER TABLE public.case_work_product_versions OWNER TO {quoted}"
+            )
+            for name in ("purge_expired_case_content", "guard_case_work_product_insert"):
+                connection.exec_driver_sql(f"ALTER FUNCTION public.{name}() OWNER TO {quoted}")
+            connection.exec_driver_sql(f"SET LOCAL ROLE {quoted}")
+            connection.execute(text("SELECT set_config('app.current_clinic_id', '', true)"))
+            assert not connection.scalar(text(
+                "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user"
+            ))
+            assert connection.scalar(text("SELECT count(*) FROM case_work_product_versions")) == 0
+            monkeypatch.setattr(migration, "op", Operations(MigrationContext.configure(connection)))
+            with (pytest.raises(ProgrammingError, match="cannot downgrade"),
+                  connection.begin_nested()):
+                migration.downgrade()
+            assert connection.scalar(text("SELECT relforcerowsecurity FROM pg_class "
+                                          "WHERE relname='case_work_product_versions'"))
+            connection.exec_driver_sql("RESET ROLE")
+            assert connection.scalar(text("SELECT count(*) FROM case_work_product_versions")) >= 1
+        finally:
+            # Restore ownership, function text, FORCE RLS and the temporary role
+            # even if a faulty downgrade actually drops the table in the probe.
+            transaction.rollback()
 
 
 def test_empty_additive_migration_round_trip_restores_previous_retention(monkeypatch):

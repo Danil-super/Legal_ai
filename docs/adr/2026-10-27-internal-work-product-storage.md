@@ -21,9 +21,13 @@ already human-reviewed version. The table alone does not provide those guarantee
 
 RLS is forced by clinic. Runtime UPDATE/DELETE are revoked even after provisioning,
 and an immutable trigger also protects against accidental privileged mutation.
-A BEFORE INSERT guard locks Case before the version and rejects expired/purged
-content after a wait, preventing a late insert from escaping case retention.
-Application authorization and source/evidence verification remain mandatory.
+A BEFORE INSERT guard rechecks Case availability after any row-lock wait and
+rejects expired/purged content, preventing a late insert from escaping retention.
+It cannot reorder the table lock that INSERT already acquired: application writers
+must lock Case BEFORE issuing INSERT. Direct SQL insertion without that ordering
+can deadlock with retention's trigger DDL (40P01); the actual AIF08 writer must have
+a concurrency regression before enablement. Application authorization and current
+source/evidence verification remain mandatory.
 
 The existing retention function is extended from its installed definition with
 checked anchors, retaining its material/job/workflow cleanup. It removes all work
@@ -34,6 +38,12 @@ Migration `f31c8d5a9e20` adds the table to `e21b7c4d8a90`. Downgrade locks the t
 before checking emptiness and refuses to erase retained history. An empty-table
 downgrade restores the previous retention function exactly. Old application readers
 remain compatible throughout; no producer is activated by this migration.
+The guard temporarily removes FORCE RLS under its exclusive owner lock so even a
+non-BYPASSRLS migration owner sees retained rows. On refusal PostgreSQL/Alembic's
+transaction restores FORCE RLS; on success the proven empty table is removed.
+The migration test's history probe also refuses RLS-filtered reads. A real temporary
+non-bypass table/function owner regression proves that hidden history cannot pass
+as an empty table and that failed downgrade restores both data and forced RLS.
 
 Tests use real PostgreSQL and a NOSUPERUSER/NOBYPASSRLS runtime role: tenant reads and
 writes, composite FKs/parent/global version uniqueness, payload/hash/NULL binding,
