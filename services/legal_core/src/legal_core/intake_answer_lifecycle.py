@@ -21,6 +21,7 @@ from legal_core.intake_answer_operations import (
 )
 from legal_core.intake_answer_values import validate_answer_value
 from legal_core.intake_answer_wire import CONTEXT_FIELDS, AnswerContext
+from legal_core.intake_factual_candidates import apply_factual_answer
 from legal_core.intake_preparation import RESOURCE_TYPE, _locked_owned_operation
 from legal_core.intake_preparation_contracts import DraftSuggestions
 from legal_core.models import IdempotencyRecord, TelegramIntakeDraft
@@ -99,6 +100,7 @@ async def read_answer_context(
             inputSha256=stored.intent.input_sha256, answerSha256=stored.intent.answer_sha256,
             questionSha256=stored.intent.question_sha256, asOfDate=stored.intent.as_of_date,
             question=stored.question, answer=stored.answer, confirmedContext=_context(draft),
+            retainedSources=stored.retained_sources, allowedQuestions=stored.allowed_questions,
         )
         session.add(_audit(actor=actor, action="INTAKE_ANSWER_CONTEXT_READ",
                            resource_type=RESOURCE_TYPE, resource_id=record.id,
@@ -135,6 +137,12 @@ async def complete_answer(
                 proposal = AnswerInterpretation.model_validate({
                     **proposal.model_dump(by_alias=True), "value": value,
                 })
+                if proposal.factual_proposal is not None:
+                    if stored.retained_sources is None:
+                        raise ValueError("retained sources were not reserved for this operation")
+                    apply_factual_answer(draft.draft_json, stored.question, proposal, stored.answer,
+                                         stored.retained_sources,
+                                         as_of_date=stored.intent.as_of_date)
             checked = proposal
         except (ValueError, TypeError, AttributeError):
             pass

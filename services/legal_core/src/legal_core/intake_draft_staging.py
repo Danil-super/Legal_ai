@@ -19,7 +19,7 @@ from legal_core.case_api import (
 )
 from legal_core.case_preparation_contracts import PreparationModel
 from legal_core.intake_answer_operations import checked_proposal, input_hash, stored_answer
-from legal_core.intake_answer_values import apply_answer_value
+from legal_core.intake_factual_candidates import apply_factual_answer
 from legal_core.intake_preparation import (
     RESOURCE_TYPE,
     _checked_result,
@@ -161,8 +161,9 @@ async def stage(
             candidate = None
             try:
                 if bound.interpretation is not None:
-                    candidate = apply_answer_value(
-                        draft.draft_json, bound.question, bound.interpretation.value, bound.answer,
+                    candidate = apply_factual_answer(
+                        draft.draft_json, bound.question, bound.interpretation, bound.answer,
+                        bound.retained_sources or [],
                         as_of_date=bound.intent.as_of_date,
                     )
             except (ValueError, TypeError):

@@ -320,10 +320,17 @@ def create_app(
                         "answer context response contract mismatch",
                     ) from None
                 async with asyncio.timeout(answer_stage_timeout):
-                    interpretation = await dependencies.answer_understanding.interpret(
-                        context.answer, context.question, dict(context.confirmed_context),
-                        context.as_of_date,
-                    )
+                    if context.retained_sources is None:
+                        interpretation = await dependencies.answer_understanding.interpret(
+                            context.answer, context.question, dict(context.confirmed_context),
+                            context.as_of_date,
+                        )
+                    else:
+                        interpretation = await dependencies.answer_understanding.interpret(
+                            context.answer, context.question, dict(context.confirmed_context),
+                            context.as_of_date, retained_sources=context.retained_sources,
+                            allowed_questions=context.allowed_questions,
+                        )
                 return AnswerProposal(
                     operationId=operation_id, draftId=context.draft_id,
                     draftRevision=context.draft_revision, inputSha256=context.input_sha256,

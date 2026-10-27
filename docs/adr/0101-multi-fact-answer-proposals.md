@@ -24,6 +24,18 @@ provisional until the final factual-summary confirmation. These structural and
 literal checks are not proof of semantic truth; ambiguous or conflicting input
 still requires a targeted clarification, never an inferred safe answer.
 
+Core captures the source bundle and allowed target identities in the existing
+owned answer-operation record only when `AI_FIRST_FACTUAL_INTAKE_ENABLED=true`.
+It defaults to false for compatible-reader rollout. Fresh context reads and
+completions compare that snapshot to the current draft; historical staging replay
+still checks the existing proposal hash and immutable audit receipt. The private
+context gains optional retainedSources/allowedQuestions fields, omitted for old
+operations; public answer receipts never contain retained raw text or lease keys.
+Agent dispatch uses the rich path only for a paired source/target bundle. Core
+refuses additional candidates on an operation reserved without that bundle.
+Both provisional staging and the legacy explicit-acceptance operation apply the
+same atomic batch. Neither creates Case/CaseFact/Report records before final consent.
+
 An unresolved current answer currently remains the existing recovery flow; it may
 not hide additional candidates in a successful-looking result. No new normative
 approval, risk/escalation rule, model/provider/profile or patient-send path is added.

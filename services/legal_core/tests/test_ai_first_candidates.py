@@ -94,6 +94,12 @@ def test_allowed_additions_preserve_existing_attempts_and_do_not_offer_narrative
     assert all(item.question_sha256 != current.question_sha256 for item in allowed)
 
 
+def test_proposal_validator_independently_rejects_targets_not_in_the_server_list():
+    data, _, sources, _, proposal, _ = rich()
+    with pytest.raises(ValueError):
+        validate_factual_proposal(proposal, sources, [], data, as_of_date=AS_OF)
+
+
 @pytest.mark.parametrize("fault", ["known-target", "primary-target", "false-value",
                                    "future-date", "foreign-source", "scope"])
 def test_overreaching_or_ungrounded_additions_do_not_partially_apply(fault):
@@ -180,3 +186,53 @@ def test_number_in_original_text_cannot_become_an_amount_without_currency():
     })
     with pytest.raises(ValueError):
         apply_factual_answer(data, current, interpretation, ANSWER, sources, as_of_date=AS_OF)
+
+
+def test_one_service_reply_retains_payment_and_its_own_service_date():
+    data = {**DATA, "situationAreas": ["TREATMENT"], "affectedServices": ["Установка коронки"],
+            "analysisClarificationRequests": [
+                {"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 0},
+                {"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 0},
+            ]}
+    current = derive_answer_question(data, "ANALYSIS_CLARIFICATION")
+    allowed = allowed_factual_questions(data, current)
+    extra = next(item for item in allowed if item.clarification_request is not None)
+    answer = "Услуга платная, проведена 15.10.2026."
+    sources = retained_answer_sources(uuid4(), 3, data, answer)
+    interpreted = AnswerInterpretation.model_validate({
+        "status": "PROPOSED", "value": "PAID", "sourceSpans": [{"start": 0, "end": 14}],
+        "factualProposal": {"schemaVersion": "ai-first-factual-proposal.v1", "candidates": [
+            candidate(extra, sources[-1], {"date": "2026-10-15", "precision": "EXACT"},
+                      "15.10.2026"),
+        ]},
+    })
+    result = apply_factual_answer(data, current, interpreted, answer, sources, as_of_date=AS_OF)
+    assert result["analysisClarificationAnswers"] == {"answers": [
+        {"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 0, "value": "PAID"},
+        {"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 0,
+         "value": {"date": "2026-10-15", "precision": "EXACT"}},
+    ]}
+
+
+def test_replacing_services_cannot_apply_an_additional_date_bound_to_old_slots():
+    data = {**DATA, "situationAreas": ["TREATMENT"], "affectedServices": ["Прежняя услуга"],
+            "analysisClarificationRequests": [
+                {"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 0},
+            ]}
+    current = derive_answer_question(data, "SERVICES")
+    extra = next(item for item in allowed_factual_questions(data, current)
+                 if item.clarification_request is not None)
+    answer = "Новая услуга, проведена 15.10.2026."
+    sources = retained_answer_sources(uuid4(), 3, data, answer)
+    interpreted = AnswerInterpretation.model_validate({
+        "status": "PROPOSED", "value": ["Новая услуга"],
+        "sourceSpans": [{"start": 0, "end": 12}],
+        "factualProposal": {"schemaVersion": "ai-first-factual-proposal.v1", "candidates": [
+            candidate(extra, sources[-1], {"date": "2026-10-15", "precision": "EXACT"},
+                      "15.10.2026"),
+        ]},
+    })
+    before = deepcopy(data)
+    with pytest.raises(ValueError):
+        apply_factual_answer(data, current, interpreted, answer, sources, as_of_date=AS_OF)
+    assert data == before

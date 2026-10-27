@@ -14,6 +14,7 @@ from agent_orchestrator.hermes_client import HermesClient, HermesEndpoint
 from agent_orchestrator.intake_answer_interpretation import AnswerUnderstanding
 from legal_core.factual_safety_intake import SCREENING_FIELDS, SCREENING_VERSION
 from legal_core.intake_answer_contracts import derive_answer_question
+from legal_core.intake_factual_candidates import allowed_factual_questions, retained_answer_sources
 from telegram_gateway import bot
 from telegram_gateway.understanding_client import canonical_hash
 from test_answer_runtime import AnswerCore
@@ -28,7 +29,7 @@ NARRATIVE = (
 )
 
 
-async def interpret_at_http_boundary(source, data, response, calls):
+async def interpret_at_http_boundary(source, data, response, calls, *, retained=None):
     question = derive_answer_question(data, "SERVICES")
     assert question is not None
 
@@ -41,7 +42,10 @@ async def interpret_at_http_boundary(source, data, response, calls):
         researcher = HermesClient(HermesEndpoint("http://synthetic-researcher:8642", "test-only",
                                   model="existing-researcher", timeout_seconds=65), client=http)
         return await AnswerUnderstanding(researcher=researcher).interpret(
-            source, question, data, AS_OF,
+            source, question, data, AS_OF, **({
+                "retained_sources": retained,
+                "allowed_questions": allowed_factual_questions(data, question),
+            } if retained is not None else {}),
         )
 
 
@@ -76,13 +80,23 @@ def test_rich_followup_does_not_reask_a_date_already_in_the_same_answer():
                       "Требует 5000 рублей. Пригласили на осмотр.")
             await dispatch("text:" + answer)
             operation = core.starts[-1]
+            sources = retained_answer_sources(operation, core.draft["revision"], data, answer)
+            event = derive_answer_question(data, "EVENT_DATE")
+            start = answer.index("15.10.2026")
             proposal = await interpret_at_http_boundary(answer, data, {
                 "status": "PROPOSED", "value": ["Установка коронки"],
                 "sourceSpans": [{"start": 0, "end": len("Установка коронки")}],
-            }, [])
+                "factualProposal": {"schemaVersion": "ai-first-factual-proposal.v1",
+                    "candidates": [{"question": event.model_dump(mode="json", by_alias=True),
+                        "value": {"date": "2026-10-15", "precision": "EXACT"}, "anchors": [{
+                            "sourceId": str(sources[-1].source_id),
+                            "sourceSha256": sources[-1].source_sha256,
+                            "start": start, "end": start + len("15.10.2026"),
+                        }]}]},
+            }, [], retained=sources)
             before = len(sent)
             # Publish exactly the validated current model response. StagingCore
-            # calls the real Core apply_answer_value; the PTB watcher chooses and
+            # calls the real Core batch applicator; the PTB watcher chooses and
             # displays the next state. No test code sets a next state or adds facts.
             AnswerCore.propose(core, proposal.value)
             status = core.operations[operation]["status"]
@@ -91,6 +105,9 @@ def test_rich_followup_does_not_reask_a_date_already_in_the_same_answer():
             await delivery_finished(app)
             assert list(core.stages) == [operation]
             assert core.draft["draftData"]["affectedServices"] == ["Установка коронки"]
+            assert core.draft["draftData"]["eventDate"] == {
+                "date": "2026-10-15", "precision": "EXACT",
+            }
             new_text = "\n".join(item.get("text", "") for item in sent[before:])
             assert app.user_data[ACTOR][bot.WIZARD_DATA_KEY][bot.DRAFT_STATE_KEY] != "EVENT_DATE", (
                 "the real dialogue asks again for the date supplied in the rich reply: "
