@@ -28,8 +28,8 @@ _V2_ALWAYS_REQUIRED: tuple[tuple[FactKey, str], ...] = (
     (FactKey.SITUATION_AREAS, "situation_areas"),
     (FactKey.EVENT_SUMMARY, "event_summary"),
     (FactKey.EVENT_DATE, "event_date"),
-    (FactKey.CONFLICT_STAGE, "conflict_stage"),
-    (FactKey.CLINIC_ACTIONS, "clinic_actions"),
+    # Case history and prior clinic actions are optional context. Missing values
+    # stay absent; claims depending on them still fail the verifier fact gate.
     (FactKey.HEALTH_CONSEQUENCE_SIGNALS, "health_consequence_signals"),
     (FactKey.CASE_MATERIALS_STATUS, "case_materials_status"),
 )
