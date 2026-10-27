@@ -290,7 +290,6 @@ def facts_from_v2_data(data: dict[str, Any]) -> list[dict[str, Any]]:
         "conflictStage",
         "clinicActions",
         "healthSignals",
-        "caseMaterialsStatus",
     )
     if any(key not in data for key in required):
         raise ValueError("v2 draft is incomplete")
@@ -308,7 +307,11 @@ def facts_from_v2_data(data: dict[str, Any]) -> list[dict[str, Any]]:
             "ENUM_SET",
             {"values": data["healthSignals"]},
         ),
-        _fact("CASE_MATERIALS_STATUS", "ENUM", {"value": data["caseMaterialsStatus"]}),
+        # Upload/delete receipts set this field. Its absence means no confirmed
+        # attachment, not an inferred fact about the patient's situation.
+        _fact("CASE_MATERIALS_STATUS", "ENUM", {
+            "value": data.get("caseMaterialsStatus", "NOT_ATTACHED"),
+        }),
     ]
     if "TREATMENT" in data["situationAreas"]:
         affected_services = data.get("affectedServices")
