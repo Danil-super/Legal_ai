@@ -59,7 +59,9 @@ def test_unknown_date_allows_collecting_a_later_hospitalization_signal():
             core.draft.update(draftData=data, wizardState="EVENT_DATE")
             await dispatch(f"case:draft:{DRAFT}")
             await dispatch("text:неизвестно")
-            assert core.draft["wizardState"] == "CHRONOLOGY"
+            assert core.draft["wizardState"] == "HEALTH"
+            assert "conflictStage" not in core.draft["draftData"]
+            assert "clinicActions" not in core.draft["draftData"]
             for callback in (
                 "case:v2:single:conflictStage:ONGOING",
                 "case:v2:multi:clinicActions:INVITED_FOR_EXAMINATION",
