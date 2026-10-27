@@ -236,3 +236,35 @@ def test_replacing_services_cannot_apply_an_additional_date_bound_to_old_slots()
     with pytest.raises(ValueError):
         apply_factual_answer(data, current, interpreted, answer, sources, as_of_date=AS_OF)
     assert data == before
+
+
+@pytest.mark.parametrize("state,field,source,value", [
+    ("INCOMING", "incomingKind", "Это устное обращение", "MESSAGE_OR_REQUEST"),
+    ("HEALTH", "healthSignals", "Сведений о последствиях нет", ["NO_KNOWN_INFORMATION"]),
+])
+def test_first_fill_does_not_erase_previously_extracted_independent_safety_answers(
+    state, field, source, value,
+):
+    from legal_core.factual_safety_intake import SCREENING_FIELDS, SCREENING_VERSION
+
+    screening = {"schemaVersion": SCREENING_VERSION, **dict.fromkeys(SCREENING_FIELDS, "NO"),
+                 "moneyRequested": "YES", "amount": {"amountKopecks": 500000, "currency": "RUB"}}
+    data = {**DATA, "safetyScreening": screening}
+    current = derive_answer_question(data, state)
+    interpreted = AnswerInterpretation(status="PROPOSED", value=value,
+        sourceSpans=[{"start": 0, "end": len(source)}])
+    result = apply_factual_answer(data, current, interpreted, source, [], as_of_date=AS_OF)
+    assert result[field] == value
+    assert result["safetyScreening"] == screening
+
+
+def test_actual_replacement_keeps_existing_dependency_invalidation():
+    data = {**DATA, "incomingKind": "MESSAGE_OR_REQUEST", "safetyScreening": {
+        "schemaVersion": "factual-safety-intake.v1", "writtenRequirementsReceived": "NO",
+    }}
+    source = "Теперь это письменная претензия"
+    current = derive_answer_question(data, "INCOMING")
+    interpreted = AnswerInterpretation(status="PROPOSED", value="FORMAL_DOCUMENT",
+        sourceSpans=[{"start": 0, "end": len(source)}])
+    result = apply_factual_answer(data, current, interpreted, source, [], as_of_date=AS_OF)
+    assert "safetyScreening" not in result

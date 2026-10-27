@@ -116,3 +116,11 @@ def test_packaging_check_detects_missing_answer_value_contracts(tmp_path: Path) 
     result = _import_runtime(tmp_path)
     assert result.returncode != 0
     assert "No module named 'legal_core.intake_answer_values'" in result.stderr
+
+
+def test_packaging_check_detects_missing_rich_factual_contracts(tmp_path: Path) -> None:
+    _copy_runtime(tmp_path)
+    (tmp_path / "services/legal_core/src/legal_core/intake_factual_candidates.py").unlink()
+    result = _import_runtime(tmp_path)
+    assert result.returncode != 0
+    assert "No module named 'legal_core.intake_factual_candidates'" in result.stderr

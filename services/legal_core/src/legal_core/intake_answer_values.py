@@ -237,7 +237,8 @@ def _apply_normalized(
             # Transport metadata is derived here, never supplied by the model.
             # Existing uploaded text/file provenance remains authoritative.
             result.setdefault("incomingSourceStatus", "NOT_ATTACHED")
-        if result.get(field) != normalized and field in {"incomingKind", "healthSignals"}:
+        if (field in result and result[field] != normalized
+                and field in {"incomingKind", "healthSignals"}):
             result.pop("safetyScreening", None)
         if field == "affectedServices":
             result = invalidate_service_clarification_answers(result, cast(list[str], normalized))

@@ -16,6 +16,7 @@ COPY services/gateway/telegram/src ./services/gateway/telegram/src
 COPY services/legal_core/src/legal_core/__init__.py ./services/legal_core/src/legal_core/__init__.py
 COPY services/legal_core/src/legal_core/pseudonymization.py ./services/legal_core/src/legal_core/pseudonymization.py
 COPY services/legal_core/src/legal_core/contracts.py ./services/legal_core/src/legal_core/contracts.py
+COPY services/legal_core/src/legal_core/case_material_contracts.py ./services/legal_core/src/legal_core/case_material_contracts.py
 COPY services/legal_core/src/legal_core/analysis_clarifications.py ./services/legal_core/src/legal_core/analysis_clarifications.py
 COPY services/legal_core/src/legal_core/report_presentation.py ./services/legal_core/src/legal_core/report_presentation.py
 COPY services/legal_core/src/legal_core/upload_filename.py ./services/legal_core/src/legal_core/upload_filename.py
@@ -26,6 +27,7 @@ COPY services/legal_core/src/legal_core/intake_answer_contracts.py ./services/le
 COPY services/legal_core/src/legal_core/intake_answer_intent.py ./services/legal_core/src/legal_core/intake_answer_intent.py
 COPY services/legal_core/src/legal_core/intake_answer_wire.py ./services/legal_core/src/legal_core/intake_answer_wire.py
 COPY services/legal_core/src/legal_core/intake_answer_values.py ./services/legal_core/src/legal_core/intake_answer_values.py
+COPY services/legal_core/src/legal_core/intake_factual_candidates.py ./services/legal_core/src/legal_core/intake_factual_candidates.py
 COPY services/legal_core/src/legal_core/intake_service_scope.py ./services/legal_core/src/legal_core/intake_service_scope.py
 COPY services/legal_core/src/legal_core/analysis_contracts.py ./services/legal_core/src/legal_core/analysis_contracts.py
 COPY services/legal_core/src/legal_core/risk_engine.py ./services/legal_core/src/legal_core/risk_engine.py

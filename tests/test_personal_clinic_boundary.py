@@ -28,7 +28,9 @@ CLINIC_BASELINE = {
         "a37582ab864227bdcccae17b6a21acb99b385c14",
     # Separately reviewed clinical automation pause; no personal surface change (ADR 0064).
     # Reviewed Gateway-only intake flag pass-through; defaults off (ADR 0091).
-    "docker-compose.yml": "9ace2c7b92db76cf03cb4f158d29ed9309e1ffa9",
+    # Owner-approved clinical multi-fact intake flag; defaults off (ADR0101).
+    # Personal entry points, permissions and isolation checks remain frozen.
+    "docker-compose.yml": "5624726f574fd1c2566f30e3b324fd294b3a55db",
     "ops/deploy/docker-compose.production.yml": "9d07d50c67787a0da7a13fcfc49907d550298b83",
 }
 

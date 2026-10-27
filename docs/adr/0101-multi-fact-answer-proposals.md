@@ -36,6 +36,18 @@ refuses additional candidates on an operation reserved without that bundle.
 Both provisional staging and the legacy explicit-acceptance operation apply the
 same atomic batch. Neither creates Case/CaseFact/Report records before final consent.
 
+Independent review reproduced an older dependency bug: filling previously absent
+incomingKind/healthSignals erased an already extracted safetyScreening object.
+First fills now preserve these independent attempts. Replacing an existing value
+retains the previous dependency invalidation; Core contradiction/risk gates are
+unchanged. Regression tests cover both first fill and actual replacement.
+
+The minimal Gateway image copies the two newly imported pure shared modules,
+case_material_contracts and intake_factual_candidates. Its packaging canaries still
+reject missing dependencies and prohibit importing ORM/API modules into Gateway.
+The clinical Compose baseline is refreshed only for the owner-approved opt-in
+flag; personal-preview isolation and its closed default entry point remain frozen.
+
 An unresolved current answer currently remains the existing recovery flow; it may
 not hide additional candidates in a successful-looking result. No new normative
 approval, risk/escalation rule, model/provider/profile or patient-send path is added.
