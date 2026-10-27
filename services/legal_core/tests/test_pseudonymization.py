@@ -88,3 +88,24 @@ def test_direct_identifier_guard_detects_unredacted_contact() -> None:
 def test_direct_identifier_guard_detects_spaced_initials_name() -> None:
     assert contains_obvious_direct_identifier("Пациент Иванов И. И. сообщил о сколе") is True
     assert contains_obvious_direct_identifier("Врач П. П. Петров осмотрел пациента") is True
+
+
+@pytest.mark.parametrize("punctuation", [".", ". ", ",", ";", ":", "!", "?", ")", "]", "…"])
+def test_email_before_sentence_punctuation_is_detected_and_redacted(punctuation):
+    source = "Синтетический адрес patient@example.invalid" + punctuation
+    assert contains_obvious_direct_identifier(source)
+    result = pseudonymize_text(source)
+    assert result.text == "Синтетический адрес [EMAIL]" + punctuation
+    assert result.replacement_counts["email"] == 1
+    assert not contains_obvious_direct_identifier(result.text)
+
+
+@pytest.mark.parametrize("email", ["first.last@example.invalid", "user@example.invalid.subdomain",
+                                    "user+tag@sub.example.invalid", "почта@пример.рф"])
+def test_email_domain_boundaries_redact_the_complete_address(email):
+    assert pseudonymize_text(email + ".").text == "[EMAIL]."
+
+
+@pytest.mark.parametrize("text", ["schema@version", "Пункт 1.2.3.", "https://example.invalid."])
+def test_email_punctuation_guard_does_not_redact_non_email_metadata(text):
+    assert pseudonymize_text(text).text == text

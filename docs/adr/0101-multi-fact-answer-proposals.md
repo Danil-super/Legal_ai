@@ -70,6 +70,12 @@ A typed source UUID may contain a digit substring resembling a patient identifie
 The Agent scans factual values for direct identifiers, not validated UUID/hash/enum
 metadata. Raw sources and context are still independently checked before model I/O.
 A deterministic UUID/SNILS false-positive regression covers this distinction.
+An independent model-boundary test also found that a sentence-final dot prevented
+the existing email matcher from detecting/redacting an address. The shared matcher
+now distinguishes terminal punctuation from a continued domain. Punctuation and
+complete-domain regressions cover both detection and redaction; non-email metadata
+is retained. This strengthens existing context minimization without claiming full
+anonymization or introducing another provider/data category.
 
 An unresolved current answer currently remains the existing recovery flow; it may
 not hide additional candidates in a successful-looking result. No new normative

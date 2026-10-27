@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from typing import Final
 
 
-_EMAIL: Final = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-zА-Яа-я]{2,}(?![\w.-])")
+_EMAIL: Final = re.compile(
+    r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-zА-Яа-я]{2,}(?![\w-]|\.[\w-])"
+)
 _PHONE: Final = re.compile(
     r"(?<!\d)(?:\+7|7|8)[\s\-()]*(?:\d[\s\-()]*){10}(?!\d)"
 )
