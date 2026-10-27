@@ -349,3 +349,78 @@ def test_long_edit_preview_has_save_control_only_after_all_pages():
             assert any(button.callback_data.startswith("lawplan:save:")
                        for row in preview[-1]["reply_markup"].inline_keyboard for button in row)
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("state,label", [
+    ("UNAPPROVED", "Проект плана уже подготовлен"),
+    ("HUMAN_REVISED", "План сохранён"),
+])
+def test_workspace_leads_to_ready_plan_review_instead_of_asking_for_a_new_answer(state, label):
+    async def scenario():
+        async with plan_harness() as (_app, core, sent, dispatch):
+            core.wire = plan_wire(state=state)
+            await dispatch(f"case:escalation:{ESCALATION}")
+            text = "\n".join(item.get("text", "") for item in sent)
+            assert label in text
+            assert "проверит проект" in text and "исправит действия" in text
+            assert "утвердит план" in text and "Дополнительно" in text
+            assert "подготовит рекомендации" not in text
+            assert "Отчёт ещё не сформирован" not in text
+            assert "Напишите обезличенный вопрос или ответ" not in text
+            assert action(sent, "open")
+            assert len(core.reads) == 1  # The already authorized view supplies this copy.
+    asyncio.run(scenario())
+
+
+def test_approved_plan_workspace_offers_actions_without_asking_for_approval_again():
+    async def scenario():
+        async with plan_harness() as (_app, core, sent, dispatch):
+            core.role = "CLINIC_ADMIN"
+            core.wire = plan_wire(state="HUMAN_APPROVED")
+            await dispatch(f"case:escalation:{ESCALATION}")
+            text = "\n".join(item.get("text", "") for item in sent)
+            assert "План решения утверждён юристом" in text
+            assert "утвердит план" not in text and "подготовит рекомендации" not in text
+            assert "действия и нормативные основания" in text
+            assert action(sent, "open")
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_stale_or_unavailable_plan_does_not_promise_ready_recommendations(unavailable):
+    async def scenario():
+        async with plan_harness() as (_app, core, sent, dispatch):
+            core.unavailable = unavailable
+            core.wire = plan_wire(current=False)
+            await dispatch(f"case:escalation:{ESCALATION}")
+            text = "\n".join(item.get("text", "") for item in sent)
+            assert ("План решения сейчас недоступен" if unavailable else
+                    "Сохранённый план требует обновления") in text
+            assert "подготовит рекомендации" not in text and "план уже подготовлен" not in text
+            assert "утвердит план" not in text and "synthetic private" not in text
+            assert ("lawplan:open:" in " ".join(callbacks(sent))) is not unavailable
+    asyncio.run(scenario())
+
+
+def test_flag_off_keeps_the_original_workspace_copy_without_any_plan_read():
+    async def scenario():
+        async with plan_harness(enabled=False) as (_app, core, sent, dispatch):
+            await dispatch(f"case:escalation:{ESCALATION}")
+            text = "\n".join(item.get("text", "") for item in sent)
+            assert "Отчёт ещё не сформирован" in text
+            assert "Напишите обезличенный вопрос или ответ" in text
+            assert not core.reads
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_downloaded_full_card_uses_the_same_actual_plan_status(enabled):
+    async def scenario():
+        async with plan_harness(enabled=enabled) as (_app, core, sent, dispatch):
+            await dispatch(f"esc:card:{ESCALATION}")
+            document = next(item["document"] for item in sent if item.get("document") is not None)
+            text = document.input_file_content.decode()
+            assert ("Проект плана уже подготовлен" in text) is enabled
+            assert ("подготовит рекомендации" in text) is not enabled
+            assert len(core.reads) == int(enabled)
+    asyncio.run(scenario())

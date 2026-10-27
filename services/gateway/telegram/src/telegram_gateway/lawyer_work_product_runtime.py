@@ -134,18 +134,47 @@ def _bound_view(wire: object, detail: dict[str, Any]) -> LawyerWorkProductView:
     return view
 
 
-async def available(
+async def available_view(
     context: ContextTypes.DEFAULT_TYPE, escalation: UUID, detail: dict[str, Any],
     actor: int,
-) -> bool:
+) -> LawyerWorkProductView | None:
     """Core authorizes the optional read; failures never disable the existing workspace."""
     try:
-        _bound_view(await bot._legal_core(context)._json_request(
+        return _bound_view(await bot._legal_core(context)._json_request(
             "GET", f"/v1/case-escalations/{escalation}/work-product", telegram_user_id=actor,
         ), detail)
-        return True
     except (LegalCoreApiError, ValueError, TypeError):
-        return False
+        return None
+
+
+def workspace_guidance(view: LawyerWorkProductView | None) -> tuple[str, str]:
+    """Describe only the authorized retained version, never an assumed report."""
+    if view is None:
+        return (
+            "План решения сейчас недоступен.",
+            "Можно уточнить обстоятельства в дополнительном обсуждении или обновить "
+            "карточку позже.",
+        )
+    if not view.is_current:
+        return (
+            "Сохранённый план требует обновления: обстоятельства или основания изменились.",
+            "В «План решения» доступна прежняя версия для чтения. Утверждать её нельзя. "
+            "Уточнения можно обсудить дополнительно.",
+        )
+    if view.review_state == "HUMAN_APPROVED":
+        return (
+            "План решения утверждён юристом и доступен в отдельной карточке.",
+            "Откройте «План решения»: там действия и нормативные основания. "
+            "Дополнительно можно задать уточняющий вопрос в обсуждении.",
+        )
+    return (
+        "План сохранён с правками юриста и ожидает утверждения."
+        if view.review_state == "HUMAN_REVISED" else
+        "Проект плана уже подготовлен: действия и основания доступны в «План решения».",
+        "Откройте «План решения». Ответственный юрист проверит проект, при необходимости "
+        "исправит действия и утвердит план. Дополнительно можно задать уточняющий вопрос "
+        "в обсуждении.",
+    )
 
 
 def _can_edit(

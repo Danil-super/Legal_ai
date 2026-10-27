@@ -55,3 +55,11 @@ packaging and personal-boundary canary. Ruff passes; gateway mypy covers 54 sour
 files. Removing the assignment predicate makes the read-only regression fail;
 restoring it passes. Both exact-worktree code graphs are updated. No live Telegram,
 Core/Agent service, production migration or real-lawyer acceptance run is claimed.
+
+Workspace guidance follows the authorized view already fetched for the plan
+button. A current draft leads to checking, correcting and approving the prepared
+plan; discussion is an additional option. Approved, outdated and unavailable
+versions have distinct honest copy. The downloaded full case card uses the same
+status. An unavailable view never promises a ready report or asks the lawyer to
+compose recommendations from scratch. Default-off workspace copy and requests
+are preserved. No additional Core endpoint or permission is introduced.
