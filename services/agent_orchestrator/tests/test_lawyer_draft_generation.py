@@ -245,3 +245,33 @@ def test_timeout_keeps_structured_failure_without_transport_or_input_context(sta
     assert caught.value.__context__ is None and caught.value.__cause__ is None
     assert "SYNTHETIC_PRIVATE_TRANSPORT" not in str(caught.value)
     assert len(calls) == (1 if stage == "researcher.test" else 2)
+
+
+@pytest.mark.parametrize("email", [
+    "synthetic@example.xn--p1ai", "SYNTHETIC@EXAMPLE.XN--P1AI",
+    "synthetic@xn--e1afmkfd.xn--p1ai",
+])
+def test_punycode_email_in_facts_never_reaches_either_hermes_request(email):
+    supplied = context()
+    supplied.context.facts["EVENT_SUMMARY"] = "Синтетический адрес " + email + "."
+    invoke, calls = run(supplied=supplied)
+    invoke()
+    assert [host for host, _ in calls] == ["researcher.test", "reviewer.test"]
+    for _, request in calls:
+        encoded = json.dumps(request, ensure_ascii=False)
+        assert email not in encoded
+        assert "[EMAIL]." in encoded
+
+
+@pytest.mark.parametrize("email", [
+    "synthetic@example.xn--p1ai", "SYNTHETIC@EXAMPLE.XN--P1AI",
+    "synthetic@xn--e1afmkfd.xn--p1ai",
+])
+def test_punycode_email_in_model_action_is_rejected_before_reviewer_request(email):
+    research = proposal([claim(text="Проверить синтетический адрес " + email + ".")])
+    invoke, calls = run(research)
+    with pytest.raises(HermesProtocolError) as caught:
+        invoke()
+    assert len(calls) == 1
+    assert email not in str(caught.value)
+    assert caught.value.__context__ is None and caught.value.__cause__ is None

@@ -13,7 +13,10 @@ from typing import Final
 
 
 _EMAIL: Final = re.compile(
-    r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-zА-Яа-я]{2,}(?![\w-]|\.[\w-])"
+    # An IDN's ASCII A-label can contain hyphens and end in a digit. Redact the
+    # whole label while keeping terminal sentence punctuation outside the match.
+    r"(?<![\w.+-])[\w.+-]+@[\w.-]+\."
+    r"(?:[A-Za-zА-Яа-я]{2,}|[xX][nN]--[A-Za-z0-9-]+)(?![\w-]|\.[\w-])"
 )
 _PHONE: Final = re.compile(
     r"(?<!\d)(?:\+7|7|8)[\s\-()]*(?:\d[\s\-()]*){10}(?!\d)"

@@ -109,3 +109,28 @@ def test_email_domain_boundaries_redact_the_complete_address(email):
 @pytest.mark.parametrize("text", ["schema@version", "Пункт 1.2.3.", "https://example.invalid."])
 def test_email_punctuation_guard_does_not_redact_non_email_metadata(text):
     assert pseudonymize_text(text).text == text
+
+
+@pytest.mark.parametrize("email", [
+    "synthetic@example.xn--p1ai",
+    "SYNTHETIC@EXAMPLE.XN--P1AI",
+    "synthetic@xn--e1afmkfd.xn--p1ai",
+    "synthetic+tag@sub.xn--e1afmkfd.xn--80asehdb",
+    "synthetic@example.xn--fiqs8s",
+])
+@pytest.mark.parametrize("punctuation", ["", ".", ". ", ";", ")"])
+def test_punycode_email_is_fully_redacted_with_sentence_punctuation_preserved(email, punctuation):
+    source = "Синтетический адрес " + email + punctuation
+    assert contains_obvious_direct_identifier(source)
+    redacted = pseudonymize_text(source)
+    assert redacted.text == "Синтетический адрес [EMAIL]" + punctuation
+    assert redacted.replacement_counts["email"] == 1
+    assert not contains_obvious_direct_identifier(redacted.text)
+
+
+@pytest.mark.parametrize("text", [
+    "https://xn--e1afmkfd.xn--p1ai.", "xn--p1ai", "Адрес без почты example.xn--p1ai.",
+])
+def test_punycode_domain_without_an_email_is_preserved(text):
+    assert not contains_obvious_direct_identifier(text)
+    assert pseudonymize_text(text).text == text
