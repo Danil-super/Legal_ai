@@ -223,6 +223,19 @@ async def _load_analysis_state(session: AsyncSession, actor: Any, case_id: UUID)
             raise ApiError(status_code=422, code=reason,
                            message="A factual clarification is required before analysis")
 
+    return await _retrieve_analysis_state(session, actor=actor, case=case, facts=facts,
+                                          as_of_date=as_of_date, policy=policy)
+
+
+async def _retrieve_analysis_state(
+    session: AsyncSession, *, actor: ActorContext, case: Case, facts: dict[FactKey, object],
+    as_of_date: date, policy: ApprovedRiskPolicy,
+) -> AnalysisState:
+    """Assemble approved evidence only; callers own their distinct authorization/gates.
+
+    Canonical analysis still enters through _load_analysis_state. The separate
+    lawyer-draft context first proves an active audited HUMAN_REVIEW and job lease.
+    """
     evidence_repository = ApprovedLegalCorpusRepository(session)
     queries = plan_legal_queries(facts)
     evidence = tuple(
