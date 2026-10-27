@@ -372,3 +372,29 @@ def test_rich_five_service_reply_can_retain_all_explicit_supported_fields_in_one
     assert result["safetyScreening"]["amount"] == {"amountKopecks": 500000, "currency": "RUB"}
     assert len(result["analysisClarificationAnswers"]["answers"]) == 10
     assert result["eventDate"] == {"date": "2026-10-15", "precision": "EXACT"}
+
+
+@pytest.mark.parametrize("split", ["sources", "anchors"])
+def test_proposed_service_fact_cannot_stitch_a_date_and_service_from_separate_quotes(split):
+    data = {**DATA, "situationAreas": ["TREATMENT"],
+            "eventSummary": "15.10.2026 пациент пожаловался на другую услугу."}
+    current = derive_answer_question(data, "SERVICES")
+    date_question = next(item for item in allowed_factual_questions(data, current)
+                         if item.scope_basis == "PROPOSED_SERVICES"
+                         and item.clarification_request.question_id == "SERVICE_PROVIDED_DATE"
+                         and item.clarification_request.service_slot == 0)
+    answer = "Установка коронки" if split == "sources" else (
+        "15.10.2026 пациент пожаловался на другую услугу. Установка коронки."
+    )
+    sources = retained_answer_sources(uuid4(), 3, data, answer)
+    date_source = sources[0] if split == "sources" else sources[-1]
+    first = candidate(date_question, date_source,
+                      {"date": "2026-10-15", "precision": "EXACT"}, "15.10.2026")
+    first["anchors"] += candidate(date_question, sources[-1], {}, "Установка коронки")["anchors"]
+    primary = AnswerInterpretation.model_validate({
+        "status": "PROPOSED", "value": ["Установка коронки"],
+        "sourceSpans": [{"start": answer.index("Установка коронки"), "end": len(answer)}],
+        "factualProposal": {"schemaVersion": "ai-first-factual-proposal.v1", "candidates": [first]},
+    })
+    with pytest.raises(ValueError):
+        apply_factual_answer(data, current, primary, answer, sources, as_of_date=AS_OF)

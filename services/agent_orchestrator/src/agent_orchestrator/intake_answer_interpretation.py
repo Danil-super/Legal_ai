@@ -105,8 +105,9 @@ ambiguous or conflicting information must still be omitted, never guessed to fil
 For a SERVICES primary answer, scopeBasis=PROPOSED_SERVICES templates refer to positions in
 your literal proposed service list. Copy their supplied scope digest; do not compute a new
 digest. Core binds each valid slot after checking those service names. Only actual positions
-in the proposed list are permitted. Each date/payment anchor must also include that slot's
-literal service name together with its own date/payment wording. Never copy another service's
+in the proposed list are permitted. Use exactly ONE complete source anchor per proposed service
+date/payment candidate, containing that slot's literal name and its own date/payment wording.
+Do not stitch separate quotes or sources. Never copy another service's
 date or payment basis. If the service list is unchanged, preserve all existing scoped answers,
 including UNKNOWN; do not propose their replacement through these templates.
 """ + _VALUE_GUIDANCE

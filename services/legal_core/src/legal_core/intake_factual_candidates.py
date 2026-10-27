@@ -166,10 +166,11 @@ def apply_factual_answer(
                     or request.service_slot >= len(services)):
                 raise ValueError("proposed service slot has no validated primary service")
             label = services[request.service_slot]
-            if not isinstance(label, str) or not any(
-                label in sources_by_id[anchor.source_id].text[anchor.start:anchor.end]
-                for anchor in candidate.anchors
-            ):
+            if len(candidate.anchors) != 1:
+                raise ValueError("proposed service fact requires one complete source quote")
+            anchor = candidate.anchors[0]
+            if (not isinstance(label, str)
+                    or label not in sources_by_id[anchor.source_id].text[anchor.start:anchor.end]):
                 raise ValueError("additional service fact must anchor its own literal service")
             # Re-derive against the validated proposed list. An old attempt (even
             # UNKNOWN) makes this None and cannot be silently overwritten.

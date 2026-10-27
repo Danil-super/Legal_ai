@@ -52,8 +52,10 @@ For a SERVICES primary reply, Core supplies extraction templates for up to five
 proposed service slots (date/payment). They carry scopeBasis=PROPOSED_SERVICES and
 the primary input-scope digest. The model copies that server metadata; it never
 computes a new scope hash. Core validates literal primary service names first,
-then binds each supported candidate slot to that proposed list and a quote that
-also contains its own service label. Out-of-range slots, old scope identities and
+then binds each supported candidate slot to that proposed list and exactly one
+complete source quote that also contains its own service label. Separate date/name
+anchors or separate sources cannot be stitched into a conditional service fact.
+Out-of-range slots, old scope identities and
 replacement of existing scoped attempts (including UNKNOWN) fail atomically.
 Other current-scope questions keep their previous identity; absent scopeBasis is
 omitted so legacy question hashes do not change. These are extraction permissions,
