@@ -91,6 +91,9 @@ def test_actual_ptb_optional_context_edits_return_to_summary_then_single_consent
             assert "Что сделала клиника: не указано" in sent[-1]["text"]
             await dispatch("case:v2:context:actions")
             assert core.draft["wizardState"] == "CLINIC_ACTIONS"
+            await dispatch("/menu")
+            await dispatch("case:draft:" + core.draft["id"])
+            assert core.draft["wizardState"] == "CLINIC_ACTIONS"
             await dispatch("case:v2:multi:clinicActions:OFFERED_REFUND")
             assert core.draft["wizardState"] == "CLINIC_ACTIONS"
             await dispatch("case:v2:multi:clinicActions:DONE")

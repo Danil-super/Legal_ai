@@ -2182,7 +2182,11 @@ async def resume_intake_draft(
     data = dict(draft_data)
     pending_materials = (state is WizardState.MATERIALS
                          and data.get("caseMaterialsStatus") != "NOT_ATTACHED")
-    if data.get("intakeVersion") == 2 and not pending_materials and (
+    pending_context = (
+        state is WizardState.CLINIC_ACTIONS and not data.get("clinicActions")
+        or state is WizardState.CHRONOLOGY and not data.get("conflictStage")
+    )
+    if data.get("intakeVersion") == 2 and not pending_materials and not pending_context and (
         preparation or state in {
             WizardState.SUMMARY, WizardState.V2_CONFIRM, WizardState.ANALYSIS_CLARIFICATION,
         }
