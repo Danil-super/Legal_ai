@@ -82,6 +82,23 @@ def test_explicit_material_step_survives_resume_in_simplified_dialogue():
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("status", ["NOT_ATTACHED", "ATTACHED"])
+def test_summary_add_file_choice_survives_menu_and_resume_without_losing_attachments(status):
+    async def scenario():
+        async with simplified_harness() as (app, core, _sent, dispatch):
+            data = completed_data() | {"caseMaterialsStatus": status}
+            core.draft.update(wizardState="SUMMARY", draftData=data)
+            await dispatch(f"case:draft:{DRAFT}")
+            await dispatch("case:v2:material:attach")
+            assert core.draft["wizardState"] == "MATERIALS"
+            await dispatch("/menu")
+            await dispatch(f"case:draft:{DRAFT}")
+            assert app.user_data[ACTOR][bot.WIZARD_DATA_KEY][bot.DRAFT_STATE_KEY] == "MATERIALS"
+            if status == "ATTACHED":
+                assert core.draft["draftData"]["caseMaterialsStatus"] == "ATTACHED"
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("fault", ["empty", "invalid", "unavailable", "forbidden"])
 def test_attached_flag_without_confirmed_live_metadata_never_submits_case(fault):
     update, context, core, message, _ = _context()

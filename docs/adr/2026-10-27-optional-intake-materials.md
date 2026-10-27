@@ -15,8 +15,10 @@ answers, risk routing and Core missing-fact checks remain enforced.
 The final summary has one optional «Добавить файл» control before explicit summary
 consent. It opens the existing durable MATERIALS step with the existing privacy,
 file-size/type, receipt, optimistic-revision and transient-message protections.
-An existing draft explicitly saved at MATERIALS resumes that step; generic resume
-does not silently leave a selected upload workflow.
+A draft saved at MATERIALS without a completed NOT_ATTACHED choice resumes that
+step. Generic resume skips an already completed NOT_ATTACHED checkpoint. Choosing
+«Добавить файл» explicitly reopens that choice by removing only NOT_ATTACHED, so
+the selected upload workflow survives restart; ATTACHED is never removed this way.
 
 Before submission, ATTACHED requires a live metadata-only list from the existing
 owned draft-material endpoint. Empty metadata yields a clear upload/skip choice;

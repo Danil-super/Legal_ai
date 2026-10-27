@@ -1174,7 +1174,11 @@ async def record_factual_amount(update: Update, context: ContextTypes.DEFAULT_TY
 async def v2_material_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     callback = await _answer_callback(update)
     if callback == "case:v2:material:attach":
-        await _prompt_v2_draft(update, WizardState.MATERIALS, _wizard_data(context))
+        data = _wizard_data(context)
+        if data.get("caseMaterialsStatus") == "NOT_ATTACHED":
+            # Reopen an explicitly skipped upload step without dropping real files.
+            data.pop("caseMaterialsStatus")
+        await _prompt_v2_draft(update, WizardState.MATERIALS, data)
         return WizardState.MATERIALS
     if callback not in {"case:v2:material:skip", "case:v2:material:done"}:
         return WizardState.MATERIALS
@@ -2164,7 +2168,9 @@ async def resume_intake_draft(
     _clear_wizard(context)
     _clear_pending_inputs(context)
     data = dict(draft_data)
-    if data.get("intakeVersion") == 2 and state is not WizardState.MATERIALS and (
+    pending_materials = (state is WizardState.MATERIALS
+                         and data.get("caseMaterialsStatus") != "NOT_ATTACHED")
+    if data.get("intakeVersion") == 2 and not pending_materials and (
         preparation or state in {
             WizardState.SUMMARY, WizardState.V2_CONFIRM, WizardState.ANALYSIS_CLARIFICATION,
         }
