@@ -13,6 +13,11 @@ atomic commit. Commands below use the current worktree's source PYTHONPATH and
 
 ### AIF01: Reproduce the lawyer's actual workflow gaps
 
+- [x] Independent tests-only commit `fdbcf642f9ae06e3a1e4b119006f3763defde1cb`
+  in branch `test/aif01-reproductions-20261026`: two actual Telegram scenarios
+  reproduce repeated date / optional-file gating (RED); five protective tests pass.
+  Root reran them against foundation `45f9519`: the same 2 RED / 5 PASS.
+  These are future acceptance failures, not fixed behavior or a green release gate.
 - [ ] Acceptance: a complete narrative needs no repeated factual questions; a rich
   later answer retains every explicit relevant fact; HIGH routing has a prepared
   work-product requirement rather than a manual-write instruction as its only result.
@@ -23,7 +28,17 @@ atomic commit. Commands below use the current worktree's source PYTHONPATH and
 
 ### AIF02: Prove the exact contract and versioned storage boundary
 
-- [ ] Acceptance: define typed source segments/factual candidates, material-question
+- [x] Inactive source/candidate/material-question and draft-only work-product types,
+  with ADR0100 and source/hash/privacy/version tests (`45f9519`). No API producer.
+- [x] Fresh disposable PostgreSQL migrated to existing head `e21b7c4d8a90`, runtime
+  role NOSUPERUSER/NOBYPASSRLS: payload round-trip, tenant RLS, actor-local dedupe,
+  mutable-cache/cross-actor version limitation, lease scope, real retention and
+  metadata-only audit demonstrated. No new schema or production database write.
+- [x] Combined focused contracts/storage regressions: 276 passed, zero skips.
+  Ruff passes; mypy passes all 180 source files. Compose validates with the example
+  environment and an unused synthetic bot-token placeholder. Source-hash mutation
+  is caught by its test and was restored. Both exact-root graphs updated.
+- [x] Acceptance: define typed source segments/factual candidates, material-question
   reasons and a separate internal work product; prove version/audit/retention and
   compatibility feasibility before selecting storage. Unknowns are not safe defaults.
 - Verify: Core tests/test_ai_first_contracts.py and tests/test_ai_first_storage_feasibility.py
@@ -31,11 +46,21 @@ atomic commit. Commands below use the current worktree's source PYTHONPATH and
 - Files(5): Core intake_answer_contracts.py, case_preparation_contracts.py;
   those2new tests; docs/adr/<next-ai-first-contract>.md (new).
   Dependencies:AIF01. Scope:M. No new table/API producer activated.
+- [x] Independent review of `45f9519` completed in separate branch
+  `review/aif02-20261027`: no Critical/Required findings for this inactive foundation;
+  reviewer independently ran 252 contract/regression tests and Ruff. Runtime
+  multi-fact staging, material questions and a populated plan remain unimplemented.
 
 ### Checkpoint A: Contract/storage approval
 
+- Concrete proposal and alternatives: `docs/adr/0100-ai-first-source-and-work-product-contracts.md`.
+  Prefer one additive immutable tenant-scoped `case_work_product_versions` table;
+  keep the existing background queue and current permissions. Existing caches can
+  hold JSON but do not themselves enforce a case-wide immutable version ledger.
 - [ ] Review the concrete contract and feasibility proof; request explicit approval
   for any migration, new table or permission expansion before implementing it.
+- [x] Concrete proposal is prepared and independently reviewed. Await owner decision
+  on the one-table/Alembic proposal before implementing AIF03 or a storage producer.
 - [ ] Keep canonical reports, old readers, risk policy and existing source gates intact.
 
 ### AIF03: Interpret the retained narrative and rich follow-up together
