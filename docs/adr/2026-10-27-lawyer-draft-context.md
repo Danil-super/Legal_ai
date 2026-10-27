@@ -74,3 +74,21 @@ The same final guard holds SHARE on the actual approved risk-policy row and
 revalidates its current repository value after that wait. Retirement/activation
 updates cannot cross source acceptance. A real blocking regression proves that
 policy retirement waits for transaction completion; no rule or threshold changes.
+
+The durable worker's ordinary retained-result fast path remains model-free.
+One opt-in exception is the typed V2 `HUMAN_REVIEW` receipt: after a worker crash
+or reclaimed expired lease it re-enters Agent with the current live job headers
+so optional draft generation/replay can complete. Agent owns its private
+retained-draft lookup before model work; the worker does not infer draft presence
+from the urgent routing receipt. Flag and result version are checked again after
+the lease lock wait. Legacy answers, READY, LIMITED and NEEDS_FACTS continue to
+return immediately, and the default-off behavior is unchanged.
+
+Optional Agent errors/timeouts leave the already committed HUMAN_REVIEW receipt
+and its lawyer notifications intact. Existing `finish_job` semantics remain
+unchanged: an actual retained receipt completes the job successfully regardless
+of optional assistance failure. Tests cover real PostgreSQL reclaim with a new
+lease token, worker HTTP headers accepted by Core context, optional success and
+failure, invalid lease, flag off and other retained result variants. These tests
+use a synthetic Agent HTTP response; they do not assert live-model performance
+or the later writer/lookup implementation.
