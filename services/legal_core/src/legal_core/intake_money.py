@@ -74,6 +74,9 @@ def initial_money_kopecks(source: str, spans: Sequence[tuple[int, int]]) -> int:
     anchored = False
     breaks = list(_SENTENCE_BREAK.finditer(source))
     for mention in mentions:
+        prefix = source[:mention.start()].rstrip()
+        if prefix and prefix[-1].isdigit():
+            raise ValueError("initial monetary token follows a malformed numeric group")
         left = max((item.end() for item in breaks if item.end() <= mention.start()), default=0)
         right = min((item.start() for item in breaks if item.start() >= mention.end()),
                     default=len(source))

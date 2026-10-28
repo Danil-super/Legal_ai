@@ -91,3 +91,11 @@ def test_initial_unit_normalization_preserves_the_unchanged_v4_risk_boundary(rub
     risk = evaluate_risk(confirmed, policy=v4_policy(), evidence_verified=True)
     assert risk.level.value == expected
     assert risk.external_draft_allowed is False
+
+
+@pytest.mark.parametrize('separator', [' ', '\u00a0', '\u202f'])
+def test_malformed_spaced_numeric_group_leaves_the_amount_question_unanswered(separator):
+    source = f'Пациент просит 1{separator}5000 рублей.'
+    result = run_model(source, payload(source, 5000, '5000 рублей'), [])
+    assert 'amount' not in result.safety_screening
+    assert result.clinic_actions == ['INVITED_FOR_EXAMINATION']

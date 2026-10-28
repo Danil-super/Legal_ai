@@ -35,6 +35,7 @@ def test_initial_model_cannot_store_rubles_as_kopecks(rubles):
 @pytest.mark.parametrize('source,amount', [
     ('Просит вернуть 5000 рублей', 500000),
     ('Просит вернуть 10 000 ₽', 1000000),
+    ('Просит вернуть 15 000 рублей', 1500000),
     ('Просит 12\u202f000,50 руб.', 1200050),
     ('Просит вернуть 10 тысяч рублей', 1000000),
 ])
@@ -82,3 +83,10 @@ def test_model_selected_anchor_cannot_hide_larger_tokens_negation_or_other_amoun
 ):
     with pytest.raises(ValueError):
         proposal(source, amount, [anchor]).validate_source(source)
+
+
+@pytest.mark.parametrize('separator', [' ', '\u00a0', '\u202f'])
+def test_malformed_numeric_group_cannot_be_shortened_to_a_smaller_amount(separator):
+    source = f'Пациент просит 1{separator}5000 рублей.'
+    with pytest.raises(ValueError):
+        proposal(source, 500000, ['5000 рублей']).validate_source(source)
