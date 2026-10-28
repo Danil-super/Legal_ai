@@ -20,11 +20,14 @@ before cross-service imports. Replace the selector process with pytest exactly
 as before, preserving pytest failures and the outer timeout.
 
 `ops/ci/integration_file_weights.json` is a required, versioned scheduling hint.
-Its initial 345 file estimates sum setup/call/teardown testcase durations from
-the six complete local R2 JUnit reports at source revision
-`f45b8e3` (4,897 cases). That calibration run had three failing assertions later
-addressed separately; its timings are measurements, not evidence of a passing
-release gate. Positive estimates have a 0.05-second floor, and files without
+Estimates sum setup/call/teardown testcase durations from complete local JUnit
+reports. Initial calibration used R2 at `f45b8e3` (345 files, 4,897 cases).
+The 2026-10-28 refresh uses all six R4 reports at `3ab0829` (346 files,
+4,951 cases), with the migration module measured again after moving its
+destructive roundtrip into its own disposable database. R4 had one migration
+assertion failure and one worker exceeded the outer deadline after reporting
+all cases; neither the timings nor that run constitute a passing release gate.
+Positive estimates have a 0.05-second floor, and files without
 history receive a positive one-second default. Stale entries never select tests
 or exclude files. Missing manifests, duplicate JSON keys, unsupported fields or
 versions, unsafe paths and nonpositive/nonfinite durations fail selection.
@@ -40,8 +43,8 @@ distribution, new-file inclusion, canonical ordering, complete unique coverage,
 fail-closed manifest handling and real pytest exit propagation. Existing
 independent tests retain the aggregate CI success-only gate.
 
-At implementation time the current checkout's estimated loads are
-133.45–133.50 seconds across six workers. Collection, machine load and future
+After the R4 refresh the checkout's estimated loads are
+133.46–133.47 seconds across six workers. Collection, machine load and future
 changes affect actual runtime; these estimates do not demonstrate that the
 full suite passes within 180 seconds. A fresh complete PostgreSQL/MinIO run and
 GitHub CI remain required before release. No workflow gate, deadline, fixture,
