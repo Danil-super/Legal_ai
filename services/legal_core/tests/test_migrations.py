@@ -224,7 +224,15 @@ def test_upgrade_security_subscription_and_risk_migration_roundtrip() -> None:
                             "UNION ALL "
                             "SELECT 1 FROM legal_approval_events "
                             "WHERE policy_version = 'dental-legal-approval.v2' "
-                            "UNION ALL SELECT 1 FROM case_work_product_versions"
+                            "UNION ALL SELECT 1 FROM case_work_product_versions "
+                            # Existing V2 guard must be tested as a refusal when
+                            # earlier integration cases have retained V2 receipts.
+                            # Do not erase their history just to force a downgrade.
+                            "UNION ALL SELECT 1 FROM telegram_case_workflows "
+                            "WHERE receipt_version = 2 "
+                            "UNION ALL SELECT 1 FROM analysis_jobs WHERE result_version = 2 "
+                            "UNION ALL SELECT 1 FROM idempotency_records "
+                            "WHERE resource_type = 'INTAKE_PREPARATION'"
                             ")"
                         )
                     )
