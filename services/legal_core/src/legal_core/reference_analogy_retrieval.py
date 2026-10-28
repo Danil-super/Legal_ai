@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Mapping
+from uuid import UUID
 
 from pydantic import ValidationError
 from sqlalchemy import and_, func, or_, select
@@ -47,6 +48,17 @@ async def select_reference_analogies(
     an empty context, never invented source authority or a weaker legal gate.
     Callers must reauthorize and fence this trace before accepting model output.
     """
+    return await _select_reference_analogies_for_membership(
+        session, clinic_id=actor.clinic_id, membership_id=actor.membership_id,
+        user_id=actor.user_id, facts=facts,
+    )
+
+
+async def _select_reference_analogies_for_membership(
+    session: AsyncSession, *, clinic_id: UUID, membership_id: UUID,
+    facts: Mapping[FactKey, object], user_id: UUID | None = None,
+) -> ReferenceAnalogyContext:
+    """Internal source check may use a Case's actual producer; never a client-selected identity."""
     empty = build_reference_analogy_context([])
     permission_query = select(ReferenceEvaluationAccessGrant.id).join(
         ClinicUser, and_(ClinicUser.id == ReferenceEvaluationAccessGrant.membership_id,
@@ -55,14 +67,16 @@ async def select_reference_analogies(
         SubscriptionEntitlement.user_id == User.id,
         SubscriptionEntitlement.clinic_id == ReferenceEvaluationAccessGrant.clinic_id,
     )).where(
-        ReferenceEvaluationAccessGrant.clinic_id == actor.clinic_id,
-        ReferenceEvaluationAccessGrant.membership_id == actor.membership_id,
+        ReferenceEvaluationAccessGrant.clinic_id == clinic_id,
+        ReferenceEvaluationAccessGrant.membership_id == membership_id,
         ReferenceEvaluationAccessGrant.permission.in_(("CONTRIBUTOR", "REVIEWER")),
-        ClinicUser.user_id == actor.user_id, ClinicUser.status == "ACTIVE", User.status == "ACTIVE",
+        ClinicUser.status == "ACTIVE", User.status == "ACTIVE",
         SubscriptionEntitlement.status == "ACTIVE", SubscriptionEntitlement.starts_at <= func.now(),
         or_(SubscriptionEntitlement.ends_at.is_(None),
             SubscriptionEntitlement.ends_at > func.now()),
     )
+    if user_id is not None:
+        permission_query = permission_query.where(ClinicUser.user_id == user_id)
     permission = await session.scalar(permission_query.limit(1))
     if permission is None:
         return empty
@@ -91,7 +105,7 @@ async def select_reference_analogies(
         review.reviewer_membership_id != version.created_by_membership_id,
     )).where(
         permission_query.exists(),
-        case.clinic_id == actor.clinic_id, case.status == "APPROVED_FOR_EVALUATION",
+        case.clinic_id == clinic_id, case.status == "APPROVED_FOR_EVALUATION",
         version.content_purged_at.is_(None), version.scenario_text.is_not(None),
         or_(version.content_expires_at.is_(None), version.content_expires_at > func.now()),
         func.char_length(func.coalesce(version.scenario_text, "")) <= MAX_REFERENCE_CHARACTERS,

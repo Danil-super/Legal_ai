@@ -60,3 +60,14 @@ optional `expectedReferenceExampleTraceSha256`; the private draft source must ma
 its actual selected context. Field-level Pydantic `exclude_if` preserves omission
 even for explicit None. Pair/trace/tamper tests run against the same canonical
 serialization used by existing hashes. Producer wiring remains a separate increment.
+
+Source freshness is an internal boolean validation of the Case's server-owned
+original creator, not the viewer and not the latest human revision's author. It
+does not return historical text or construct a fake actor. Selected case/version
+and producer membership/user/entitlement/grant rows are held through final commit;
+all predicates and exact selection repeat after lock waits. Retirement, changed
+version/content or withdrawn producer access invalidates the trace. An assigned
+lawyer without workspace access can still review a valid new-case plan; the
+separate historical workspace remains denied. No model/network call belongs
+inside the final fenced transaction. Old plans without an analogy trace retain
+their prior path, and disabling the producer flag does not erase review access.
