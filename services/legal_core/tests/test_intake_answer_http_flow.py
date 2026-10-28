@@ -103,7 +103,8 @@ def counts(clinic):
         engine.dispose()
 
 
-async def run_flow(*, actor, clinic, state, data, answer, value, unresolved=False, cancel=False):
+async def run_flow(*, actor, clinic, state, data, answer, value, unresolved=False, cancel=False,
+                   extra_facts=None, staging=False):
     engine = create_async_engine(database_url())
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     core = core_app(
@@ -136,6 +137,27 @@ async def run_flow(*, actor, clinic, state, data, answer, value, unresolved=Fals
             "sourceSpans": [] if unresolved else [{"start": 0, "end": len(answer)}],
             "reasonCode": "AMBIGUOUS" if unresolved else None,
         }
+        if extra_facts:
+            supplied = json.loads(model_calls[-1]["messages"][1]["content"])
+            additions = []
+            for field, (extra_value, literal) in extra_facts.items():
+                field_name = field[0] if isinstance(field, tuple) else field
+                target = next(item for item in supplied["allowedQuestions"]
+                              if item["targetField"] == field_name and (
+                                  not isinstance(field, tuple)
+                                  or (item["clarificationRequest"]["questionId"] == field[1]
+                                      and item["clarificationRequest"]["serviceSlot"] == field[2])
+                              ))
+                segment = next(item for item in supplied["retainedSources"]
+                               if literal in item["text"])
+                start = segment["text"].index(literal)
+                additions.append({"question": target, "value": extra_value, "anchors": [{
+                    "sourceId": segment["sourceId"], "sourceSha256": segment["sourceSha256"],
+                    "start": start, "end": start + len(literal),
+                }]})
+            interpretation["factualProposal"] = {
+                "schemaVersion": "ai-first-factual-proposal.v1", "candidates": additions,
+            }
         return httpx.Response(
             200,
             json={
@@ -305,12 +327,14 @@ async def run_flow(*, actor, clinic, state, data, answer, value, unresolved=Fals
                         return
                     assert status["question"] == question.model_dump(mode="json", by_alias=True)
                     assert status["interpretation"]["value"] == value
-                    accepted = await core_http.post(
-                        operation + "/acceptance", headers=actor_headers(actor), json=consent
-                    )
+                    suffix = "/draft-staging" if staging else "/acceptance"
+                    accepted = await core_http.post(operation + suffix,
+                                                    headers=actor_headers(actor), json=consent)
                     assert accepted.status_code == 200, accepted.text
                     receipt = accepted.json()
-                    assert receipt["acceptedRevision"] == draft["revision"] + 1
+                    assert receipt["stagedRevision" if staging else "acceptedRevision"] == (
+                        draft["revision"] + 1
+                    )
                     result = receipt["draft"]["draftData"]
                     if state == "ANALYSIS_CLARIFICATION":
                         assert (
@@ -320,9 +344,15 @@ async def run_flow(*, actor, clinic, state, data, answer, value, unresolved=Fals
                         assert result["safetyScreening"][question.screening_field] == value
                     else:
                         assert result[question.target_field] == value
-                    replayed = await core_http.post(
-                        operation + "/acceptance", headers=actor_headers(actor), json=consent
-                    )
+                    for field, (extra_value, _) in (extra_facts or {}).items():
+                        if isinstance(field, tuple):
+                            assert next(item["value"] for item in result[field[0]]["answers"]
+                                        if item["questionId"] == field[1]
+                                        and item["serviceSlot"] == field[2]) == extra_value
+                        else:
+                            assert result[field] == extra_value
+                    replayed = await core_http.post(operation + suffix,
+                                                    headers=actor_headers(actor), json=consent)
                     assert replayed.status_code == 200 and replayed.json() == receipt
                     assert len(model_calls) == len(agent_requests) == 1
                     assert counts(clinic) == (0, 0, 0, 0)
@@ -368,3 +398,26 @@ def test_ambiguous_and_cancelled_answers_never_mutate_confirmed_data_or_create_c
             cancel=outcome == "cancel",
         )
     )
+
+
+def test_rich_reply_uses_real_core_agent_http_and_stages_all_facts_with_one_model_call(monkeypatch):
+    monkeypatch.setenv("AGENT_INTERNAL_KEY", KEY)
+    monkeypatch.setenv("AI_FIRST_FACTUAL_INTAKE_ENABLED", "true")
+    actor = 40_800_000_000 + uuid4().int % 100_000_000
+    clinic, _ = seed_admin(actor)
+    asyncio.run(run_flow(
+        actor=actor, clinic=clinic, state="SERVICES", data={"situationAreas": ["TREATMENT"]},
+        answer="Установка коронки выполнена 10.10.2026, платно. "
+               "Обращение 15.10.2026. Пригласили на осмотр.",
+        value=["Установка коронки"], staging=True, extra_facts={
+            "eventDate": ({"date": "2026-10-15", "precision": "EXACT"}, "15.10.2026"),
+            "clinicActions": (["INVITED_FOR_EXAMINATION"], "Пригласили на осмотр"),
+            ("analysisClarificationAnswers", "SERVICE_PROVIDED_DATE", 0): (
+                {"date": "2026-10-10", "precision": "EXACT"},
+                "Установка коронки выполнена 10.10.2026, платно.",
+            ),
+            ("analysisClarificationAnswers", "SERVICE_PAYMENT_BASIS", 0): (
+                "PAID", "Установка коронки выполнена 10.10.2026, платно.",
+            ),
+        },
+    ))

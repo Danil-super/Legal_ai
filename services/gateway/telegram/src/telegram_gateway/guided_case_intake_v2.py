@@ -476,13 +476,18 @@ def _input_complete(data: dict[str, Any], state: str) -> bool:
         # The confirmation and Legal Core analysis boundaries retain the date gate.
         return _valid_date(data.get("eventDate"), exact_required=False)
     if state == V2_CHRONOLOGY:
-        return _valid_enum(data.get("conflictStage"), "conflictStage")
+        # Optional context stays absent; invalid supplied values still need repair.
+        return "conflictStage" not in data or _valid_enum(data["conflictStage"], "conflictStage")
     if state == V2_CLINIC_ACTIONS:
-        return _valid_multi(data.get("clinicActions"), "clinicActions")
+        return "clinicActions" not in data or _valid_multi(data["clinicActions"], "clinicActions")
     if state == V2_HEALTH:
         return _valid_multi(data.get("healthSignals"), "healthSignals")
     if state == V2_MATERIALS:
-        return _valid_enum(data.get("caseMaterialsStatus"), "caseMaterialsStatus")
+        # This is upload transport state, not a missing fact about the incident.
+        # A successful upload writes ATTACHED; absence does not require a question.
+        return "caseMaterialsStatus" not in data or _valid_enum(
+            data["caseMaterialsStatus"], "caseMaterialsStatus",
+        )
     if state == V2_SAFETY:
         return screening_complete(data)
     if state == V2_ANALYSIS_CLARIFICATION:
@@ -555,7 +560,7 @@ def review_blocks(data: dict[str, Any], *, final: bool = False) -> list[str]:
     )
     blocks.append(
         "Материалы клиники: "
-        + _label(data.get("caseMaterialsStatus"), "caseMaterialsStatus")
+        + _label(data.get("caseMaterialsStatus", "NOT_ATTACHED"), "caseMaterialsStatus")
     )
     blocks.extend(screening_summary(data))
     blocks.extend(clarification_review_blocks(data))

@@ -160,8 +160,8 @@ async def start_path(app, core, dispatch, path):
 
 
 async def collect_until_safety(core, dispatch, *, area, event_date, health):
-    # Both entry paths use the same factual V2 questions. The quick description
-    # may already supply EVENT, but all other facts below are explicitly answered.
+    # Both entries collect required V2 facts without asking optional context.
+    # The quick description may already supply EVENT.
     answers = {
         "INCOMING": "case:v2:single:incomingKind:COMPLAINT",
         "SITUATION": f"case:v2:multi:situationAreas:{area}",
@@ -189,7 +189,8 @@ async def collect_until_safety(core, dispatch, *, area, event_date, health):
     assert ("SERVICES" in observed) == (area == "TREATMENT")
     data = core.draft["draftData"]
     assert data["eventSummary"] == DESCRIPTION
-    assert data["conflictStage"] == "UNKNOWN"
+    assert "CHRONOLOGY" not in observed and "CLINIC_ACTIONS" not in observed
+    assert "conflictStage" not in data and "clinicActions" not in data
     assert data["healthSignals"] == [health]
     assert not set(data) & {"formal_claim", "harm_claimed", "lawyer_contact", "regulator_or_court"}
 

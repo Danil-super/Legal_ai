@@ -54,6 +54,9 @@ class PreparationContext(PreparationModel):
     evidence_trace_sha256: Sha256 = Field(alias="evidenceTraceSha256")
     clinic_document_context_trace_sha256: Sha256 = Field(alias="clinicDocumentContextTraceSha256")
     risk_policy_version: str = Field(alias="riskPolicyVersion", min_length=1, max_length=80)
+    reference_example_trace_sha256: Sha256 | None = Field(
+        default=None, alias="referenceExampleTraceSha256", exclude_if=lambda value: value is None,
+    )
 
     @field_validator("risk_policy_version")
     @classmethod
@@ -150,3 +153,71 @@ class HumanReviewResult(PreparationResultBase):
         ):
             raise ValueError("escalation policy must match the bound context")
         return self
+
+
+class InternalWorkProduct(PreparationModel):
+    """Inactive Core-built draft contract, never a canonical report or approval command.
+
+    A context/fragment link is not proof of legal validity. Core must verify the
+    full generated text and current authorization before any producer stores it.
+    """
+
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
+    schema_version: Literal["ai-first-work-product.v1"] = Field(alias="schemaVersion")
+    kind: Literal["LAWYER_REVIEW_DRAFT"]
+    work_product_id: UUID = Field(alias="workProductId")
+    version: int = Field(strict=True, ge=1)
+    parent_version: int | None = Field(alias="parentVersion", strict=True, ge=1)
+    clinic_id: UUID = Field(alias="clinicId")
+    source: PreparationSource
+    as_of_date: date = Field(alias="asOfDate")
+    risk_policy_version: str = Field(alias="riskPolicyVersion", strict=True,
+                                    min_length=1, max_length=80)
+    status: Literal["UNAPPROVED"]
+    summary: str = Field(strict=True, min_length=1, max_length=1500)
+    actions: list[Annotated[str, Field(strict=True, min_length=1, max_length=600)]] = Field(
+        min_length=1, max_length=8,
+    )
+    uncertainties: list[Annotated[str, Field(strict=True, min_length=1, max_length=600)]] = Field(
+        max_length=5,
+    )
+    legal_fragment_ids: list[UUID] = Field(alias="legalFragmentIds", max_length=30)
+
+    @field_validator("as_of_date", mode="before")
+    @classmethod
+    def calendar_date_only(cls, value: object) -> object:
+        if type(value) is date:
+            return value
+        if isinstance(value, str) and len(value) == 10:
+            parsed = date.fromisoformat(value)
+            if parsed.isoformat() == value:
+                return parsed
+        raise ValueError("work-product reference must be an ISO calendar date")
+
+    @model_validator(mode="after")
+    def coherent_draft(self) -> InternalWorkProduct:
+        from legal_core.pseudonymization import pseudonymize_text
+
+        if self.parent_version != (self.version - 1 if self.version > 1 else None):
+            raise ValueError("work-product version must retain its immediate parent")
+        texts = [self.summary, self.risk_policy_version, *self.actions, *self.uncertainties]
+        if any(not item.strip() for item in texts) or pseudonymize_text(
+            json.dumps(texts, ensure_ascii=False),
+        ).changed:
+            raise ValueError("work-product text must be bounded and de-identified")
+        if len(set(self.legal_fragment_ids)) != len(self.legal_fragment_ids):
+            raise ValueError("legal fragment references must be unique")
+        context = self.source.context
+        if self.legal_fragment_ids and context is None:
+            raise ValueError("legal fragment references require the actual evidence context")
+        if context is not None and (context.as_of_date != self.as_of_date
+                                   or context.risk_policy_version != self.risk_policy_version):
+            raise ValueError("work-product source context differs from its snapshot")
+        return self
+
+    @property
+    def content_sha256(self) -> str:
+        checked = InternalWorkProduct.model_validate(self.model_dump(by_alias=True))
+        payload = json.dumps(checked.model_dump(mode="json", by_alias=True),
+                             ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode()).hexdigest()

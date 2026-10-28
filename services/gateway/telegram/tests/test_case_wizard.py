@@ -1141,12 +1141,14 @@ def test_unknown_v2_date_keeps_the_draft_and_collects_remaining_events() -> None
 
     result = asyncio.run(record_v2_text(update, context))
 
-    assert result == WizardState.CHRONOLOGY
+    assert result == WizardState.HEALTH
     assert context.user_data["case_wizard"]["eventDate"] == {
         "date": None,
         "precision": "UNKNOWN",
     }
-    assert any("конфликт" in text for text in message.text_replies)
+    assert any("здоров" in text for text in message.text_replies)
+    assert "conflictStage" not in context.user_data["case_wizard"]
+    assert "clinicActions" not in context.user_data["case_wizard"]
 
 
 def test_lawyer_unknown_is_preserved_and_does_not_become_a_negative_answer() -> None:

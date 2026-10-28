@@ -3,11 +3,12 @@
 import asyncio
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from datetime import date
 from unittest.mock import patch
 from uuid import UUID
 
-from legal_core.intake_answer_contracts import AnswerQuestion
-from legal_core.intake_answer_values import apply_answer_value
+from legal_core.intake_answer_contracts import AnswerInterpretation, AnswerQuestion
+from legal_core.intake_factual_candidates import apply_factual_answer, retained_answer_sources
 from telegram_gateway import bot
 from test_answer_runtime import AnswerCore
 from test_case_experience import harness
@@ -46,9 +47,12 @@ class StagingCore(UnderstandingCore, AnswerCore):
             "expectedProposalSha256": source["proposalSha256"],
         }
         if "/intake-answer-preparations/" in path:
-            self.draft["draftData"] = apply_answer_value(
+            self.draft["draftData"] = apply_factual_answer(
                 self.draft["draftData"], AnswerQuestion.model_validate(status["question"]),
-                status["interpretation"]["value"], record["answer"],
+                AnswerInterpretation.model_validate(status["interpretation"]), record["answer"],
+                retained_answer_sources(operation, record["revision"],
+                                        record["input"]["draftData"], record["answer"]),
+                as_of_date=date.today(),
             )
         else:
             self.draft["draftData"].update({key: value

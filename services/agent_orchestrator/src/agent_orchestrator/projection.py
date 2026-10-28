@@ -12,6 +12,7 @@ from agent_orchestrator.contracts import (
     ClinicDocumentContextItem,
     ClinicDocumentReadinessItem,
     EvidenceItem,
+    ReferenceAnalogyItem,
 )
 from legal_core.analysis_contracts import AnalysisContextResponse
 from legal_core.clinic_document_conflicts import detect_potential_clinic_document_conflicts
@@ -130,6 +131,24 @@ def build_case_projection(
     )
 
 
+def _reference_items(context: AnalysisContextResponse) -> list[ReferenceAnalogyItem]:
+    if context.reference_examples is None and context.reference_example_trace_sha256 is None:
+        return []
+    try:
+        # Serialization alone cannot revalidate mutated models or source hashes.
+        checked = AnalysisContextResponse.model_validate(context.model_dump(
+            by_alias=True, warnings="error",
+        ))
+        return [ReferenceAnalogyItem(
+            analogyId=f"example-{index}", purpose=example.purpose,
+            dateBasis=example.date_basis, groupKey=example.source.group_key,
+            evaluationAsOfDate=example.source.evaluation_as_of_date,
+            scenarioText=example.scenario_text,
+        ) for index, example in enumerate(checked.reference_examples or [], 1)]
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError("reference analogy source context is invalid") from None
+
+
 def build_projection_from_context(
     context: AnalysisContextResponse,
     *,
@@ -137,6 +156,7 @@ def build_projection_from_context(
 ) -> CaseProjection:
     """Redact a typed Legal Core response before the first external model call."""
 
+    reference_examples = _reference_items(context)
     identifiers = known_identifiers or {}
     projected_facts = {
         key: _pseudonymize_value(value, known_identifiers=identifiers)
@@ -197,4 +217,5 @@ def build_projection_from_context(
         evidence=projected_evidence,
         clinicDocumentContext=projected_clinic_context,
         clinicDocumentReadiness=readiness,
+        referenceExamples=reference_examples,
     )

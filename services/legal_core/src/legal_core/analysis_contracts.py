@@ -21,6 +21,10 @@ from legal_core.contracts import (
     CanonicalReport, ContractModel, FactKey, LegalFragmentResponse, ReportResponse,
 )
 from legal_core.risk_engine import fact_snapshot_sha256
+from legal_core.reference_analogy_contracts import (
+    ReferenceAnalogyExample,
+    build_reference_analogy_context,
+)
 
 
 class ClinicDocumentContextResponse(ContractModel):
@@ -78,6 +82,24 @@ class AnalysisContextResponse(ContractModel):
     )
     risk_policy_version: str = Field(alias="riskPolicyVersion", min_length=1, max_length=80)
     high_demand_threshold_kopecks: int = Field(alias="highDemandThresholdKopecks", ge=1)
+    reference_examples: list[ReferenceAnalogyExample] | None = Field(
+        default=None, alias="referenceExamples", min_length=1, max_length=3,
+        exclude_if=lambda value: value is None,
+    )
+    reference_example_trace_sha256: str | None = Field(
+        default=None, alias="referenceExampleTraceSha256", pattern=r"^[0-9a-f]{64}$",
+        exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def exact_optional_reference_context(self) -> AnalysisContextResponse:
+        if (self.reference_examples is None) != (self.reference_example_trace_sha256 is None):
+            raise ValueError("reference examples require their exact selection trace")
+        if self.reference_examples is not None and build_reference_analogy_context(
+            self.reference_examples,
+        ).trace_sha256 != self.reference_example_trace_sha256:
+            raise ValueError("reference examples differ from their selection trace")
+        return self
 
 
 class AnalysisClaimInput(ContractModel):
@@ -134,6 +156,10 @@ class AnalysisSubmissionRequest(ContractModel):
     )
     expected_risk_policy_version: str = Field(
         alias="expectedRiskPolicyVersion", min_length=1, max_length=80
+    )
+    expected_reference_example_trace_sha256: str | None = Field(
+        default=None, alias="expectedReferenceExampleTraceSha256", pattern=r"^[0-9a-f]{64}$",
+        exclude_if=lambda value: value is None,
     )
     claims: list[AnalysisClaimInput] = Field(max_length=30)
     semantic_reviews: list[SemanticReviewInput] = Field(

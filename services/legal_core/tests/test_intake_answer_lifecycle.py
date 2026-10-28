@@ -374,3 +374,62 @@ def test_context_rejects_wrong_revision_input_hash_and_strict_boolean_revision(o
         with pytest.raises(ApiError) as caught:
             context(owner, lease, **change)
         assert caught.value.status_code == 409 and caught.value.code == "ANSWER_INPUT_STALE"
+
+
+@pytest.mark.parametrize("state,reason", [
+    ("INCOMING", "SAFETY_DECISION"), ("EVENT_DATE", "SOURCE_APPLICABILITY"),
+    ("CLINIC_ACTIONS", "ACTION_SELECTION"),
+])
+def test_reserved_reason_is_metadata_only_and_replay_does_not_create_another_question(
+    owner, state, reason,
+):
+    owner = save_data(owner, {}, state=state)
+    lease = reserve(owner)
+    replay = reserve(owner)
+    assert replay.response.operation_id == lease.response.operation_id
+    assert replay.intent is None
+    private = context(owner, lease)
+    assert private.question.question_sha256 == lease.intent.question_sha256
+    engine = create_engine(owner_database_url())
+    try:
+        with engine.connect() as connection:
+            audits = connection.execute(text(
+                "SELECT metadata_json FROM audit_events WHERE resource_id=:id "
+                "AND action='INTAKE_ANSWER_RESERVED'"
+            ), {"id": lease.response.operation_id}).scalars().all()
+            assert audits == [{"revision": owner[3]["revision"],
+                               "questionSha256": private.question.question_sha256,
+                               "materialReasonCode": reason, "wizardState": state}]
+            stored = connection.scalar(text("SELECT response_json FROM idempotency_records "
+                                             "WHERE id=:id"), {"id": lease.response.operation_id})
+            assert "materialReasonCode" not in json.dumps(stored)
+            assert ANSWER not in json.dumps(audits, ensure_ascii=False)
+    finally:
+        engine.dispose()
+    if state == "INCOMING":
+        prepared = complete(owner, lease)
+        assert run(lambda sessions: read_answer(
+            sessions, telegram_user_id=owner[0], operation_id=lease.response.operation_id,
+        )).response == prepared.response
+
+
+def test_legacy_reservation_audit_without_reason_remains_readable(owner, monkeypatch):
+    from legal_core import intake_answer_operations
+
+    original = intake_answer_operations._audit
+
+    def historical_audit(**kwargs):
+        if kwargs["action"] == "INTAKE_ANSWER_RESERVED":
+            kwargs["metadata"] = {key: value for key, value in kwargs["metadata"].items()
+                                  if key in {"revision", "questionSha256"}}
+        return original(**kwargs)
+
+    monkeypatch.setattr(intake_answer_operations, "_audit", historical_audit)
+    lease = reserve(owner)
+    private = context(owner, lease)
+    assert private.question.question_sha256 == lease.intent.question_sha256
+    prepared = complete(owner, lease)
+    assert reserve(owner).response == prepared.response
+    assert run(lambda sessions: read_answer(
+        sessions, telegram_user_id=owner[0], operation_id=lease.response.operation_id,
+    )).response == prepared.response

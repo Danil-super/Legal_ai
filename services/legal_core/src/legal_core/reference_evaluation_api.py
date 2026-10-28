@@ -7,6 +7,7 @@ membership grants and storage-first retention of optional source files.
 
 import asyncio
 import hashlib
+import os
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal, cast
@@ -14,7 +15,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -42,6 +43,7 @@ from legal_core.models import (
     ReferenceEvaluationCase,
     ReferenceEvaluationCaseVersion,
     ReferenceEvaluationReviewEvent,
+    SubscriptionEntitlement,
 )
 from legal_core.pseudonymization import pseudonymize_text
 from legal_core.reference_evaluation_contracts import (
@@ -107,6 +109,29 @@ def _summary(
     )
 
 
+def _review_snapshot_sha256(
+    case: ReferenceEvaluationCase, version: ReferenceEvaluationCaseVersion,
+) -> str:
+    """Bind human consent to source content; approval's status/expiry changes are not content."""
+    return _canonical_hash({
+        "schemaVersion": "reference-review-source.v1",
+        "clinicId": str(case.clinic_id), "caseId": str(case.id),
+        "versionId": str(version.id), "currentVersion": case.current_version,
+        "version": version.version,
+        "caseCreatorMembershipId": str(case.created_by_membership_id),
+        "versionCreatorMembershipId": str(version.created_by_membership_id),
+        "scenarioSha256": version.scenario_sha256,
+        "scenarioContentSha256": hashlib.sha256(
+            (version.scenario_text or "").encode("utf-8"),
+        ).hexdigest(),
+        "rawSha256": version.raw_sha256, "rawSizeBytes": version.raw_size_bytes,
+        "rawMimeType": version.raw_mime_type,
+        "hasMaterial": version.raw_object_key is not None,
+        "asOfDate": version.as_of_date.isoformat(),
+        "expectedRoute": version.expected_route, "groupKey": case.group_key,
+    })
+
+
 def _detail(
     case: ReferenceEvaluationCase,
     version: ReferenceEvaluationCaseVersion,
@@ -115,6 +140,7 @@ def _detail(
 ) -> ReferenceEvaluationDetail:
     return ReferenceEvaluationDetail(
         **_summary(case, version).model_dump(mode="python", by_alias=False),
+        reviewSnapshotSha256=_review_snapshot_sha256(case, version),
         asOfDate=version.as_of_date,
         expectedRoute=cast(ReferenceExpectedRoute, version.expected_route),
         scenarioText=version.scenario_text if _content_available(version) else None,
@@ -150,6 +176,41 @@ async def _require_workspace(
             message="Reference evaluation workspace is not available",
         )
     return permissions
+
+
+async def _recheck_review_access(
+    session: AsyncSession, *, actor: ActorContext, telegram_user_id: int,
+) -> None:
+    if await resolve_actor(session, telegram_user_id) != actor:
+        raise ApiError(status_code=403, code="ACTOR_NOT_AUTHORIZED",
+                       message="Reference reviewer authorization changed")
+    await _require_workspace(session, actor, review=True)
+    # resolve_actor uses transaction-start now(); a late FK wait can outlive that lease.
+    entitlement = await session.scalar(select(SubscriptionEntitlement.id).where(
+        SubscriptionEntitlement.clinic_id == actor.clinic_id,
+        SubscriptionEntitlement.user_id == actor.user_id,
+        SubscriptionEntitlement.status == "ACTIVE",
+        SubscriptionEntitlement.starts_at <= func.clock_timestamp(),
+        (SubscriptionEntitlement.ends_at.is_(None))
+        | (SubscriptionEntitlement.ends_at > func.clock_timestamp()),
+    ))
+    if entitlement is None:
+        raise ApiError(status_code=403, code="SUBSCRIPTION_INACTIVE",
+                       message="Reference reviewer access is inactive")
+
+
+async def _finish_reference_review(
+    session: AsyncSession, *, actor: ActorContext, telegram_user_id: int,
+    original_deadline: datetime | None,
+) -> None:
+    # Finish every review/receipt/audit FK wait before the last authority/time checks.
+    await session.flush()
+    await _recheck_review_access(session, actor=actor, telegram_user_id=telegram_user_id)
+    # Approval clears the ORM expiry, so checking the mutated version would resurrect it.
+    if original_deadline is not None and original_deadline <= datetime.now(UTC):
+        raise ApiError(status_code=410, code="REFERENCE_EVALUATION_CONTENT_EXPIRED",
+                       message="Reference evaluation content has expired")
+    await session.commit()
 
 
 async def _case(
@@ -805,18 +866,40 @@ def create_reference_evaluation_router(
             note = _reject_identifiers(
                 payload.note, code="REFERENCE_EVALUATION_DIRECT_IDENTIFIER_NOT_ALLOWED"
             )
-        request_hash = _canonical_hash(
-            {"caseId": str(case_id), "decision": payload.decision, "note": note}
-        )
+        request_body = {"caseId": str(case_id), "decision": payload.decision, "note": note}
+        expected_snapshot = payload.expected_review_snapshot_sha256
+        if expected_snapshot is not None:
+            request_body["expectedReviewSnapshotSha256"] = expected_snapshot
+        request_hash = _canonical_hash(request_body)
         scope = f"reference-evaluations:review:{case_id}"
+        case = await _case(session, actor, case_id, for_update=True)
+        version = await _current_version(session, case, for_update=True)
+        _require_live_version(version)
+        original_deadline = version.content_expires_at
+        await _recheck_review_access(session, actor=actor, telegram_user_id=telegram_user_id)
+        if version.created_by_membership_id == actor.membership_id:
+            raise ApiError(
+                status_code=status.HTTP_403_FORBIDDEN,
+                code="REFERENCE_EVALUATION_SELF_REVIEW_FORBIDDEN",
+                message="A reviewer cannot review their own reference evaluation version",
+            )
+        current_snapshot = _review_snapshot_sha256(case, version)
+        required = (payload.decision == "APPROVE_FOR_EVALUATION"
+                    or os.getenv("AI_FIRST_REFERENCE_ANALOGIES_ENABLED", "0") == "1")
+        if ((required and expected_snapshot is None)
+                or (expected_snapshot is not None and expected_snapshot != current_snapshot)):
+            raise ApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="REFERENCE_REVIEW_SOURCE_STALE",
+                message="Open the current reference material and confirm the displayed source",
+            )
         replay = await _reference_replay(
             session, actor=actor, scope=scope, key=idempotency_key, request_hash=request_hash
         )
         if replay is not None:
+            await _finish_reference_review(session, actor=actor, telegram_user_id=telegram_user_id,
+                                           original_deadline=original_deadline)
             return ReferenceEvaluationReviewResponse.model_validate(replay)
-        case = await _case(session, actor, case_id, for_update=True)
-        version = await _current_version(session, case, for_update=True)
-        _require_live_version(version)
         is_retire = payload.decision == "RETIRE"
         allowed = (
             case.status == "APPROVED_FOR_EVALUATION"
@@ -828,12 +911,6 @@ def create_reference_evaluation_router(
                 status_code=status.HTTP_409_CONFLICT,
                 code="REFERENCE_EVALUATION_REVIEW_STATE_INVALID",
                 message="Reference evaluation case is not in the required review state",
-            )
-        if version.created_by_membership_id == actor.membership_id:
-            raise ApiError(
-                status_code=status.HTTP_403_FORBIDDEN,
-                code="REFERENCE_EVALUATION_SELF_REVIEW_FORBIDDEN",
-                message="A reviewer cannot review their own reference evaluation version",
             )
         now = datetime.now(UTC)
         new_status = {
@@ -883,11 +960,15 @@ def create_reference_evaluation_router(
                     action="REFERENCE_EVALUATION_REVIEWED",
                     resource_type="REFERENCE_EVALUATION_CASE",
                     resource_id=case.id,
-                    metadata={"decision": payload.decision, "version": version.version},
+                    metadata={"decision": payload.decision, "version": version.version,
+                              **({"reviewSnapshotSha256": current_snapshot,
+                                  "expectedReviewSnapshotSha256": expected_snapshot}
+                                 if expected_snapshot is not None else {})},
                 ),
             ]
         )
-        await session.commit()
+        await _finish_reference_review(session, actor=actor, telegram_user_id=telegram_user_id,
+                                       original_deadline=original_deadline)
         return result
 
     return router

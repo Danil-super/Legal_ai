@@ -39,6 +39,8 @@ from legal_core.draft_retention import purge_expired_intake_drafts
 from legal_core.escalation_notifications import create_escalation_notifications_router
 from legal_core.intake_preparation_api import create_intake_preparation_router
 from legal_core.intake_preparation_runner import IntakePreparationRunner
+from legal_core.lawyer_draft_context import create_lawyer_draft_context_router
+from legal_core.lawyer_work_products import create_lawyer_work_product_router
 from legal_core.legal_api import create_legal_router
 from legal_core.model_admission import ModelAdmission
 from legal_core.reference_evaluation_api import create_reference_evaluation_router
@@ -284,6 +286,8 @@ def create_app(
     )
     app.include_router(create_clinic_document_library_router(sessions))
     app.include_router(create_analysis_router(sessions))
+    app.include_router(create_lawyer_draft_context_router(sessions))
+    app.include_router(create_lawyer_work_product_router(sessions))
     app.include_router(create_analysis_jobs_router(sessions))
     app.include_router(create_intake_preparation_router(sessions))
     app.include_router(create_escalation_notifications_router(sessions))

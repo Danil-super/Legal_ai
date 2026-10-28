@@ -7,7 +7,12 @@ from uuid import UUID
 from pydantic import Field, JsonValue, model_validator
 
 from legal_core.case_preparation_contracts import PreparationModel, Sha256
-from legal_core.intake_answer_contracts import AnswerInterpretation, AnswerQuestion
+from legal_core.intake_answer_contracts import (
+    AnswerInterpretation,
+    AnswerQuestion,
+    RetainedSourceSegment,
+)
+from legal_core.intake_factual_candidates import validate_retained_answer_sources
 from legal_core.intake_preparation_contracts import UnderstandingAcceptance, UnderstandingSource
 
 CONTEXT_FIELDS = frozenset({
@@ -60,6 +65,14 @@ class AnswerContext(PreparationModel):
     question: AnswerQuestion
     answer: str = Field(strict=True, min_length=1, max_length=1500)
     confirmed_context: dict[str, JsonValue] = Field(alias="confirmedContext", max_length=14)
+    retained_sources: list[RetainedSourceSegment] | None = Field(
+        default=None, alias="retainedSources", min_length=1, max_length=2,
+        exclude_if=lambda value: value is None,
+    )
+    allowed_questions: list[AnswerQuestion] | None = Field(
+        default=None, alias="allowedQuestions", max_length=32,
+        exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def context_allowlist(self) -> "AnswerContext":
@@ -69,6 +82,17 @@ class AnswerContext(PreparationModel):
             raise ValueError("answer context requires guided-v2 facts")
         if self.question.question_sha256 != self.question_sha256:
             raise ValueError("question binding does not match its identity")
+        if (self.retained_sources is None) != (self.allowed_questions is None):
+            raise ValueError("retained sources require an allowed target list")
+        if self.retained_sources is not None:
+            validate_retained_answer_sources(self.confirmed_context, self.answer,
+                                             self.retained_sources)
+            if any(item.revision != self.draft_revision for item in self.retained_sources):
+                raise ValueError("retained source revision is not current")
+            identities = [item.question_sha256 for item in self.allowed_questions or []]
+            if (len(set(identities)) != len(identities)
+                    or self.question_sha256 in identities):
+                raise ValueError("additional target identities must be unique and distinct")
         return self
 
 

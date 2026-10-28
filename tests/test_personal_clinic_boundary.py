@@ -20,15 +20,19 @@ CLINIC_BASELINE = {
         # Reviewed owner-requested single clinical case entry; personal stays hidden (ADR 0099).
         "c9adedf6e5711e244be6f7a569e1b721c6e5068d",
     "services/gateway/telegram/src/telegram_gateway/case_experience_runtime.py":
-        # Independently reviewed owner-requested single-summary clinical dialogue;
-        # the existing validated flag stays off by default, personal remains inert.
-        "a129dc9d49206572020b549418fa55dd3916f417",
+        # Owner-approved opt-in clinical plan review (2026-10-27 lawyer-work-product UI ADR);
+        # both clinical flags default off, personal entry points remain inert.
+        "aa615e00250d8d0ab3159a911e7ce13514424616",
     "services/legal_core/src/legal_core/main.py":
-        # Reviewed owner-approved clinic preparation wiring; personal remains inert (ADR 0091).
-        "a37582ab864227bdcccae17b6a21acb99b385c14",
+        # Owner-approved clinical work-product routes; personal remains inert (AIF08 ADR).
+        "0a37aed06336cfc12c4016df8ff10eb8858addef",
     # Separately reviewed clinical automation pause; no personal surface change (ADR 0064).
     # Reviewed Gateway-only intake flag pass-through; defaults off (ADR 0091).
-    "docker-compose.yml": "9ace2c7b92db76cf03cb4f158d29ed9309e1ffa9",
+    # Owner-approved clinical multi-fact intake flag; defaults off (ADR0101).
+    # Personal entry points, permissions and isolation checks remain frozen.
+    # Reviewed default-off clinical draft flag is shared by Core/Agent/Gateway.
+    # Reviewed Core-only analogy flag defaults off (2026-10-28 granted-reference ADR).
+    "docker-compose.yml": "41e391156d05622211b0bfadeb789d6982f404ee",
     "ops/deploy/docker-compose.production.yml": "9d07d50c67787a0da7a13fcfc49907d550298b83",
 }
 
@@ -81,6 +85,11 @@ def _assert_clinical_understanding_routes(app):
         "/v1/telegram-intake-drafts/{draft_id}/understanding",
         "/v1/intake-preparations/{operation_id}",
         "/v1/intake-preparations/{operation_id}/context",
+        "/v1/cases/{case_id}/lawyer-draft-context",
+        "/v1/cases/{case_id}/lawyer-work-products",
+        "/v1/cases/{case_id}/lawyer-work-products/lookup",
+        "/v1/case-escalations/{escalation_id}/work-product",
+        "/v1/case-escalations/{escalation_id}/work-product/reviews",
     } <= paths
 
 

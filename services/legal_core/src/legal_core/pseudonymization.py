@@ -12,7 +12,12 @@ from dataclasses import dataclass
 from typing import Final
 
 
-_EMAIL: Final = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-zА-Яа-я]{2,}(?![\w.-])")
+_EMAIL: Final = re.compile(
+    # An IDN's ASCII A-label can contain hyphens and end in a digit. Redact the
+    # whole label while keeping terminal sentence punctuation outside the match.
+    r"(?<![\w.+-])[\w.+-]+@[\w.-]+\."
+    r"(?:[A-Za-zА-Яа-я]{2,}|[xX][nN]--[A-Za-z0-9-]+)(?![\w-]|\.[\w-])"
+)
 _PHONE: Final = re.compile(
     r"(?<!\d)(?:\+7|7|8)[\s\-()]*(?:\d[\s\-()]*){10}(?!\d)"
 )
@@ -32,9 +37,8 @@ _INITIALS_NAME: Final = re.compile(
     rf")(?![А-ЯЁа-яё])"
 )
 _IDENTIFIED_FULL_NAME: Final = re.compile(
-    rf"(?<![А-ЯЁа-яё])(?:Пациент(?:а|у|ом|е)?|пациент(?:а|у|ом|е)?|ФИО|фио|"
-    rf"Ф\.?\s*И\.?\s*О\.?|ф\.?\s*и\.?\s*о\.?|"
-    rf"Фамилия\s+имя(?:\s+отчество)?|фамилия\s+имя(?:\s+отчество)?)\s*[:—-]?\s*"
+    rf"(?<![А-ЯЁа-яё])(?i:Пациент(?:а|у|ом|е)?|ФИО|"
+    rf"Ф\.?\s*И\.?\s*О\.?|Фамилия\s+имя(?:\s+отчество)?)\s*[:—-]?\s*"
     rf"{_RUSSIAN_NAME_WORD}(?:\s+{_RUSSIAN_NAME_WORD}){{1,2}}"
     rf"(?![А-ЯЁа-яё])"
 )
@@ -42,6 +46,27 @@ _UNLABELLED_FULL_NAME: Final = re.compile(
     rf"(?<![А-ЯЁа-яё]){_RUSSIAN_NAME_WORD}(?:\s+{_RUSSIAN_NAME_WORD}){{2}}"
     rf"(?![А-ЯЁа-яё])"
 )
+_SCOPED_PUBLIC_INSTITUTION: Final = re.compile(
+    r"(?<!\w)(?:Постановление\s+)?Пленум(?:а)?\s+Верховного\s+Суда\s+"
+    r"(?:РФ|Российской\s+Федерации)(?!\w)"
+)
+
+
+def _unlabelled_full_names(text: str) -> tuple[re.Match[str], ...]:
+    """Recognize only whole scoped institution spans, never exempt adjacent words."""
+    institutions = iter(_SCOPED_PUBLIC_INSTITUTION.finditer(text))
+    institution = next(institutions, None)
+    names = []
+    for name in _UNLABELLED_FULL_NAME.finditer(text):
+        # Both regex iterators are ordered and non-overlapping. Advance once past
+        # earlier institutions instead of rescanning them for every name (XML can
+        # contain many repeated public-law titles before normalization limits).
+        while institution is not None and institution.end() <= name.start():
+            institution = next(institutions, None)
+        if (institution is None or name.start() < institution.start()
+                or name.end() > institution.end()):
+            names.append(name)
+    return tuple(names)
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,11 +125,15 @@ def pseudonymize_text(
         result,
         "[PERSON_NAME]",
     )
-    result, counts["unlabelled_full_name"] = _replace(
-        _UNLABELLED_FULL_NAME,
-        result,
-        "[PERSON_NAME]",
-    )
+    names = _unlabelled_full_names(result)
+    parts: list[str] = []
+    previous = 0
+    for name in names:
+        parts.extend((result[previous:name.start()], "[PERSON_NAME]"))
+        previous = name.end()
+    parts.append(result[previous:])
+    result = "".join(parts)
+    counts["unlabelled_full_name"] = len(names)
 
     return PseudonymizedText(text=result, replacement_counts=counts)
 
@@ -121,6 +150,5 @@ def contains_obvious_direct_identifier(text: str) -> bool:
             _SNILS,
             _INITIALS_NAME,
             _IDENTIFIED_FULL_NAME,
-            _UNLABELLED_FULL_NAME,
         )
-    )
+    ) or bool(_unlabelled_full_names(text))

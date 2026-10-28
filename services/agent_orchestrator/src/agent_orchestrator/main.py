@@ -27,6 +27,7 @@ from agent_orchestrator.hermes_client import (
 from agent_orchestrator.intake_answer_interpretation import AnswerUnderstanding
 from agent_orchestrator.intake_understanding import IntakeUnderstanding
 from agent_orchestrator.intake_understanding_api import create_understanding_router
+from agent_orchestrator.lawyer_draft_orchestration import maybe_generate_lawyer_draft
 from agent_orchestrator.legal_core_client import (
     LegalCoreClient,
     LegalCoreEndpoint,
@@ -204,8 +205,9 @@ def create_app(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={"code": "ANALYSIS_JOB_LEASE_EXPIRED"},
             )
+        retained_result: PreparationResult | None = None
         try:
-            async with asyncio.timeout(ANALYSIS_WALL_TIMEOUT_SECONDS):
+            async with asyncio.timeout(ANALYSIS_WALL_TIMEOUT_SECONDS) as deadline:
                 job_headers: JobLeaseHeaders = (
                     {"job_id": x_analysis_job_id, "job_token": x_analysis_job_token}
                     if x_analysis_job_id is not None else {}
@@ -218,6 +220,13 @@ def create_app(
                     if isinstance(initial, PreparationResult):
                         if initial.root.source.case_id != case_id:
                             raise LegalCoreProtocolError("preparation result case mismatch")
+                        retained_result = initial
+                        await maybe_generate_lawyer_draft(
+                            initial, core=dependencies.legal_core, reasoning=dependencies.reasoning,
+                            telegram_user_id=telegram_user_id, idempotency_key=idempotency_key,
+                            job_id=x_analysis_job_id, job_token=x_analysis_job_token,
+                            parent_deadline=deadline.when() or asyncio.get_running_loop().time(),
+                        )
                         return initial
                     context = initial
                 else:
@@ -235,6 +244,13 @@ def create_app(
                     )
                     if not isinstance(prepared, PreparationResult):
                         raise LegalCoreProtocolError("preparation result version mismatch")
+                    retained_result = prepared
+                    await maybe_generate_lawyer_draft(
+                        prepared, core=dependencies.legal_core, reasoning=dependencies.reasoning,
+                        telegram_user_id=telegram_user_id, idempotency_key=idempotency_key,
+                        job_id=x_analysis_job_id, job_token=x_analysis_job_token,
+                        parent_deadline=deadline.when() or asyncio.get_running_loop().time(),
+                    )
                     return prepared
                 return await dependencies.legal_core.submit_reasoning(
                     context=context,
@@ -244,6 +260,8 @@ def create_app(
                     **job_headers,
                 )
         except TimeoutError:
+            if retained_result is not None:
+                return retained_result
             logger.warning(json.dumps({
                 "event": "analysis_deadline_exceeded", "entryPoint": "analyze",
                 "requestId": str(idempotency_key),
@@ -320,10 +338,17 @@ def create_app(
                         "answer context response contract mismatch",
                     ) from None
                 async with asyncio.timeout(answer_stage_timeout):
-                    interpretation = await dependencies.answer_understanding.interpret(
-                        context.answer, context.question, dict(context.confirmed_context),
-                        context.as_of_date,
-                    )
+                    if context.retained_sources is None:
+                        interpretation = await dependencies.answer_understanding.interpret(
+                            context.answer, context.question, dict(context.confirmed_context),
+                            context.as_of_date,
+                        )
+                    else:
+                        interpretation = await dependencies.answer_understanding.interpret(
+                            context.answer, context.question, dict(context.confirmed_context),
+                            context.as_of_date, retained_sources=context.retained_sources,
+                            allowed_questions=context.allowed_questions,
+                        )
                 return AnswerProposal(
                     operationId=operation_id, draftId=context.draft_id,
                     draftRevision=context.draft_revision, inputSha256=context.input_sha256,

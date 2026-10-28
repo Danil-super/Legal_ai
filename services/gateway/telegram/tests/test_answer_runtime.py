@@ -307,7 +307,9 @@ def test_explicit_unknown_date_is_saved_only_after_consent_and_not_reasked():
             await dispatch(bound_callback("accept", operation, DRAFT))
             assert core.draft["draftData"]["eventDate"] == {
                 "date": None, "precision": "UNKNOWN"}
-            assert core.draft["wizardState"] == "CHRONOLOGY"
+            assert core.draft["wizardState"] == "HEALTH"
+            assert "conflictStage" not in core.draft["draftData"]
+            assert "clinicActions" not in core.draft["draftData"]
             assert len(core.starts) == 1
     asyncio.run(scenario())
 

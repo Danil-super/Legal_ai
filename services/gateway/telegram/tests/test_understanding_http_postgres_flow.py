@@ -159,14 +159,13 @@ def test_active_both_entries_reach_one_report_free_case_through_real_http_and_po
             if entry == "guided":
                 await send("text:" + SOURCE)
                 await send("text:неизвестно")
-            assert data[bot.DRAFT_STATE_KEY] == "CHRONOLOGY"
+            assert data[bot.DRAFT_STATE_KEY] == "HEALTH"
+            # These descriptions did not supply optional clinic context. The
+            # normal route must not force or manufacture either statement.
+            assert "conflictStage" not in data and "clinicActions" not in data
             for value in (
-                "case:v2:single:conflictStage:FIRST",
-                "case:v2:multi:clinicActions:NOTHING_YET",
-                "case:v2:multi:clinicActions:DONE",
                 "case:v2:multi:healthSignals:UNKNOWN",
                 "case:v2:multi:healthSignals:DONE",
-                "case:v2:material:skip",
             ):
                 await send(value)
             for _ in range(8):
@@ -208,6 +207,7 @@ def test_active_both_entries_reach_one_report_free_case_through_real_http_and_po
                 assert facts["EVENT_DATE"] == UNKNOWN_DATE
                 assert facts["FACTUAL_SAFETY_SCREENING"] == confirmed["safetyScreening"]
                 assert facts["HEALTH_CONSEQUENCE_SIGNALS"] == {"values": ["UNKNOWN"]}
+                assert "CONFLICT_STAGE" not in facts and "CLINIC_ACTIONS" not in facts
                 assert (
                     connection.scalar(text("SELECT receipt_version FROM telegram_case_workflows"))
                     == 2

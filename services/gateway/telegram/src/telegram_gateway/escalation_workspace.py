@@ -88,7 +88,9 @@ def discussion_messages(payload: dict[str, Any]) -> tuple[str, ...]:
     return _chunks(blocks)
 
 
-def render_case_card(detail: dict[str, Any], *, compact: bool = True) -> str:
+def render_case_card(
+    detail: dict[str, Any], *, compact: bool = True, plan_status: str | None = None,
+) -> str:
     states = {"REQUIRED": "Ожидает юриста", "IN_PROGRESS": "В работе", "RESOLVED": "Завершён"}
     assigned = (
         "вы"
@@ -118,13 +120,18 @@ def render_case_card(detail: dict[str, Any], *, compact: bool = True) -> str:
                 lines.append("… остальные обстоятельства — в полной карточке.")
                 break
             lines.append(block[:400] if compact else block)
+    report_note = plan_status
+    if report_note is None:
+        report_note = (
+            "Подготовленный отчёт доступен в полной карточке."
+            if detail.get("report") else
+            "Отчёт ещё не сформирован. Передано юристу: он проверит ситуацию "
+            "и подготовит рекомендации."
+        )
     lines.extend(
         [
             "",
-            "Подготовленный отчёт доступен в полной карточке."
-            if detail.get("report")
-            else "Отчёт ещё не сформирован. Передано юристу: он проверит ситуацию "
-            "и подготовит рекомендации.",
+            report_note,
             "Внутреннее обсуждение клиники. Автоотправка пациенту отключена.",
         ]
     )
@@ -132,8 +139,8 @@ def render_case_card(detail: dict[str, Any], *, compact: bool = True) -> str:
     return text[:3900] if compact else text
 
 
-def full_case_text(detail: dict[str, Any]) -> str:
-    text = render_case_card(detail, compact=False)
+def full_case_text(detail: dict[str, Any], *, plan_status: str | None = None) -> str:
+    text = render_case_card(detail, compact=False, plan_status=plan_status)
     report = detail.get("report")
     if isinstance(report, dict):
         presentation = present_report(report)
@@ -213,7 +220,14 @@ async def show_workspace(
     data.pop("quick_intake_candidate", None)
     if detail.get("status") != "RESOLVED":
         data[DISCUSSION_KEY] = str(escalation_id)
-    await gateway_bot._reply(update, render_case_card(detail))
+    plan_view = None
+    plan_status = plan_instruction = None
+    if context.bot_data.get("ai_first_lawyer_draft_enabled") is True:
+        from telegram_gateway.lawyer_work_product_runtime import available_view, workspace_guidance
+
+        plan_view = await available_view(context, escalation_id, detail, actor)
+        plan_status, plan_instruction = workspace_guidance(plan_view)
+    await gateway_bot._reply(update, render_case_card(detail, plan_status=plan_status))
     for text in discussion_messages(history):
         await gateway_bot._reply(update, text)
     keyboard = workspace_keyboard(
@@ -223,6 +237,10 @@ async def show_workspace(
         can_assign=membership.get("role") == "CLINIC_OWNER",
     )
     rows = list(keyboard.inline_keyboard)
+    if plan_view is not None:
+        rows.insert(0, (InlineKeyboardButton(
+            "📋 План решения", callback_data=f"lawplan:open:{escalation_id}",
+        ),))
     if history.get("nextBefore"):
         rows.insert(
             0,
@@ -239,6 +257,9 @@ async def show_workspace(
         else "Напишите обезличенный вопрос или ответ. Он будет сохранён именно в этом кейсе. "
         "Не указывайте ФИО, контакты и данные медицинских документов."
     )
+    if detail.get("status") != "RESOLVED" and plan_instruction is not None:
+        instruction = (plan_instruction + " Сообщения сохраняются именно в этом кейсе. "
+                       "Не указывайте ФИО, контакты и данные медицинских документов.")
     await gateway_bot._reply(update, instruction, reply_markup=InlineKeyboardMarkup(rows))
 
 
@@ -345,7 +366,16 @@ async def workspace_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     )
             elif action == "card":
                 detail = await client.get_escalation(escalation_id, actor)
-                text = full_case_text(detail)
+                plan_status = None
+                if context.bot_data.get("ai_first_lawyer_draft_enabled") is True:
+                    from telegram_gateway.lawyer_work_product_runtime import (
+                        available_view,
+                        workspace_guidance,
+                    )
+
+                    view = await available_view(context, escalation_id, detail, actor)
+                    plan_status, _ = workspace_guidance(view)
+                text = full_case_text(detail, plan_status=plan_status)
                 message = update.effective_message
                 if message is not None:
                     await message.reply_document(

@@ -8,6 +8,7 @@ from legal_core.analysis_jobs import AnalysisJob  # noqa: F401
 from legal_core.database import owner_database_url
 from legal_core.escalation_notifications import EscalationNotification  # noqa: F401
 from legal_core.models import Base
+from legal_core.work_product_storage import CaseWorkProductVersion  # noqa: F401
 from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 

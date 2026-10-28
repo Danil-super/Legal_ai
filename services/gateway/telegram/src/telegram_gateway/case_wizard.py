@@ -287,10 +287,7 @@ def facts_from_v2_data(data: dict[str, Any]) -> list[dict[str, Any]]:
         "situationAreas",
         "eventSummary",
         "eventDate",
-        "conflictStage",
-        "clinicActions",
         "healthSignals",
-        "caseMaterialsStatus",
     )
     if any(key not in data for key in required):
         raise ValueError("v2 draft is incomplete")
@@ -301,15 +298,25 @@ def facts_from_v2_data(data: dict[str, Any]) -> list[dict[str, Any]]:
         _fact("SITUATION_AREAS", "ENUM_SET", {"values": data["situationAreas"]}),
         _fact("EVENT_SUMMARY", "TEXT", {"text": data["eventSummary"]}),
         _fact("EVENT_DATE", "DATE", data["eventDate"]),
-        _fact("CONFLICT_STAGE", "ENUM", {"value": data["conflictStage"]}),
-        _fact("CLINIC_ACTIONS", "ENUM_SET", {"values": data["clinicActions"]}),
+    ]
+    # These facts are optional context, never defaults inferred from silence.
+    # Retain the old order for existing workflow payload/hash replay.
+    if "conflictStage" in data:
+        facts.append(_fact("CONFLICT_STAGE", "ENUM", {"value": data["conflictStage"]}))
+    if "clinicActions" in data:
+        facts.append(_fact("CLINIC_ACTIONS", "ENUM_SET", {"values": data["clinicActions"]}))
+    facts.extend([
         _fact(
             "HEALTH_CONSEQUENCE_SIGNALS",
             "ENUM_SET",
             {"values": data["healthSignals"]},
         ),
-        _fact("CASE_MATERIALS_STATUS", "ENUM", {"value": data["caseMaterialsStatus"]}),
-    ]
+        # Upload/delete receipts set this field. Its absence means no confirmed
+        # attachment, not an inferred fact about the patient's situation.
+        _fact("CASE_MATERIALS_STATUS", "ENUM", {
+            "value": data.get("caseMaterialsStatus", "NOT_ATTACHED"),
+        }),
+    ])
     if "TREATMENT" in data["situationAreas"]:
         affected_services = data.get("affectedServices")
         if not isinstance(affected_services, list):
@@ -636,8 +643,11 @@ class LegalCoreClient:
         decision: str,
         note: str | None,
         idempotency_key: UUID,
+        expected_review_snapshot_sha256: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {"decision": decision}
+        if expected_review_snapshot_sha256 is not None:
+            payload["expectedReviewSnapshotSha256"] = expected_review_snapshot_sha256
         if note is not None:
             payload["note"] = note
         return await self._json_request(

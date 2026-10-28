@@ -88,3 +88,155 @@ def test_direct_identifier_guard_detects_unredacted_contact() -> None:
 def test_direct_identifier_guard_detects_spaced_initials_name() -> None:
     assert contains_obvious_direct_identifier("Пациент Иванов И. И. сообщил о сколе") is True
     assert contains_obvious_direct_identifier("Врач П. П. Петров осмотрел пациента") is True
+
+
+@pytest.mark.parametrize("punctuation", [".", ". ", ",", ";", ":", "!", "?", ")", "]", "…"])
+def test_email_before_sentence_punctuation_is_detected_and_redacted(punctuation):
+    source = "Синтетический адрес patient@example.invalid" + punctuation
+    assert contains_obvious_direct_identifier(source)
+    result = pseudonymize_text(source)
+    assert result.text == "Синтетический адрес [EMAIL]" + punctuation
+    assert result.replacement_counts["email"] == 1
+    assert not contains_obvious_direct_identifier(result.text)
+
+
+@pytest.mark.parametrize("email", ["first.last@example.invalid", "user@example.invalid.subdomain",
+                                    "user+tag@sub.example.invalid", "почта@пример.рф"])
+def test_email_domain_boundaries_redact_the_complete_address(email):
+    assert pseudonymize_text(email + ".").text == "[EMAIL]."
+
+
+@pytest.mark.parametrize("text", ["schema@version", "Пункт 1.2.3.", "https://example.invalid."])
+def test_email_punctuation_guard_does_not_redact_non_email_metadata(text):
+    assert pseudonymize_text(text).text == text
+
+
+@pytest.mark.parametrize("email", [
+    "synthetic@example.xn--p1ai",
+    "SYNTHETIC@EXAMPLE.XN--P1AI",
+    "synthetic@xn--e1afmkfd.xn--p1ai",
+    "synthetic+tag@sub.xn--e1afmkfd.xn--80asehdb",
+    "synthetic@example.xn--fiqs8s",
+])
+@pytest.mark.parametrize("punctuation", ["", ".", ". ", ";", ")"])
+def test_punycode_email_is_fully_redacted_with_sentence_punctuation_preserved(email, punctuation):
+    source = "Синтетический адрес " + email + punctuation
+    assert contains_obvious_direct_identifier(source)
+    redacted = pseudonymize_text(source)
+    assert redacted.text == "Синтетический адрес [EMAIL]" + punctuation
+    assert redacted.replacement_counts["email"] == 1
+    assert not contains_obvious_direct_identifier(redacted.text)
+
+
+@pytest.mark.parametrize("text", [
+    "https://xn--e1afmkfd.xn--p1ai.", "xn--p1ai", "Адрес без почты example.xn--p1ai.",
+])
+def test_punycode_domain_without_an_email_is_preserved(text):
+    assert not contains_obvious_direct_identifier(text)
+    assert pseudonymize_text(text).text == text
+
+
+@pytest.mark.parametrize("authority", [
+    "Постановление Пленума Верховного Суда РФ",
+    "Пленума Верховного Суда РФ",
+    "Пленум Верховного Суда РФ",
+    "Постановление Пленума Верховного Суда Российской Федерации",
+    "Пленума Верховного Суда Российской Федерации",
+])
+def test_exact_scoped_supreme_court_institution_preserves_privacy_of_adjacent_names(authority):
+    assert not contains_obvious_direct_identifier(authority)
+    unchanged = pseudonymize_text(authority)
+    assert unchanged.text == authority and not unchanged.changed
+    text = f"Иванов Иван Иванович; {authority}; Петров Петр Петрович, "
+    text += "+7 999 123-45-67, synthetic@example.invalid."
+    assert contains_obvious_direct_identifier(text)
+    result = pseudonymize_text(text)
+    assert authority in result.text
+    assert "Иванов" not in result.text and "Петров" not in result.text
+    assert "999" not in result.text and "example.invalid" not in result.text
+    assert result.replacement_counts["unlabelled_full_name"] == 2
+    assert not contains_obvious_direct_identifier(result.text)
+
+
+@pytest.mark.parametrize("value", [
+    "Постановление Пленума Верховного Суда",
+    "Пленума Верховного Суда",
+    "Пленума Верховного Суда РФИванов",
+    "Пленума Верховного Суда РФ_Иванов",
+    "Пленума Верховного Суда РФ2",
+    "Пациент: Пленума Верховного Суда РФ",
+    "ФИО: Постановление Пленума Верховного Суда РФ",
+    "ПАЦИЕНТ: Пленума Верховного Суда РФ",
+    "ПаЦиЕнТ: Пленума Верховного Суда РФ",
+    "ПАЦИЕНТА: Пленума Верховного Суда РФ",
+    "фИо: Пленума Верховного Суда РФ",
+    "Ф.И.О.: Постановление Пленума Верховного Суда РФ",
+])
+def test_unscoped_or_patient_labelled_words_are_not_public_institution_exemptions(value):
+    assert contains_obvious_direct_identifier(value)
+    result = pseudonymize_text(value)
+    assert result.changed and "[PERSON_NAME]" in result.text
+
+
+def test_explicit_known_identifier_still_takes_precedence_over_public_institution_spelling():
+    text = "Пленума Верховного Суда РФ"
+    result = pseudonymize_text(text, known_identifiers={text: "[PATIENT_1]"})
+    assert result.text == "[PATIENT_1]" and result.replacement_counts["known_identifier"] == 1
+
+
+@pytest.mark.parametrize("operation", ["guard", "redact"])
+def test_repeated_institutions_keep_linear_containment_work_and_private_name_detection(
+    monkeypatch, operation,
+):
+    from legal_core import pseudonymization as scanner
+
+    comparisons = [0]
+    original = scanner._SCOPED_PUBLIC_INSTITUTION
+
+    class CountedOffset(int):
+        def __lt__(self, other):
+            comparisons[0] += 1
+            return int(self) < int(other)
+
+        def __le__(self, other):
+            comparisons[0] += 1
+            return int(self) <= int(other)
+
+        def __ge__(self, other):
+            comparisons[0] += 1
+            return int(self) >= int(other)
+
+        def __gt__(self, other):
+            comparisons[0] += 1
+            return int(self) > int(other)
+
+    class CountedMatch:
+        def __init__(self, match):
+            self.match = match
+
+        def start(self):
+            return CountedOffset(self.match.start())
+
+        def end(self):
+            return CountedOffset(self.match.end())
+
+        def span(self):
+            return self.start(), self.end()
+
+    class CountedPattern:
+        def finditer(self, source):
+            return (CountedMatch(match) for match in original.finditer(source))
+
+    monkeypatch.setattr(scanner, "_SCOPED_PUBLIC_INSTITUTION", CountedPattern())
+    count = 500
+    authority = "Пленума Верховного Суда РФ"
+    source = (authority + "; Иванов Иван Иванович. ") * count
+    if operation == "guard":
+        assert scanner.contains_obvious_direct_identifier(source)
+    else:
+        result = scanner.pseudonymize_text(source)
+        assert result.text == (authority + "; [PERSON_NAME]. ") * count
+        assert result.replacement_counts["unlabelled_full_name"] == count
+    # Count comparisons rather than time: repeating bounded XML/text must not
+    # compare every candidate name with every earlier public institution.
+    assert comparisons[0] <= 10 * count

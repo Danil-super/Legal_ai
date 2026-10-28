@@ -161,18 +161,20 @@ def _current_question(
     return validated
 
 
-def validate_answer_value(
-    question: AnswerQuestion, value: object, source: str, draft_data: Mapping[str, object],
-    *, as_of_date: date | None = None,
+def validate_grounded_answer_value(
+    question: AnswerQuestion, value: object, source: str,
+    *, as_of_date: date | None = None, require_explicit_currency: bool = False,
 ) -> JsonValue:
-    """Only the actual answer supplies anchors, never another draft field or model memory."""
+    """Check shape/literal grounding, not permission to target a field or source."""
     try:
-        validated = _current_question(draft_data, question)
+        validated = _question(question)
         if (not isinstance(source, str) or not 1 <= len(source) <= 1500
                 or not source.strip() or pseudonymize_text(source).changed):
             raise ValueError("answer source must be bounded and de-identified")
         normalized = _shape(validated, value, as_of_date)
         if validated.screening_field == "amount" and isinstance(normalized, dict):
+            if require_explicit_currency and not _RUB.search(source):
+                raise ValueError("additional monetary facts require an explicit ruble source")
             _ground_money(normalized, source)
         if validated.target_field == "eventSummary" and normalized != source:
             raise ValueError("event narrative must be the verbatim user answer")
@@ -183,6 +185,19 @@ def validate_answer_value(
         ):
             raise ValueError("service labels must be literal parts of the actual answer")
         return normalized
+    except (ValueError, TypeError, AttributeError):
+        pass
+    raise ValueError("answer does not match the current factual question and source")
+
+
+def validate_answer_value(
+    question: AnswerQuestion, value: object, source: str, draft_data: Mapping[str, object],
+    *, as_of_date: date | None = None,
+) -> JsonValue:
+    """Only the bound current question may replace an existing factual attempt."""
+    try:
+        validated = _current_question(draft_data, question)
+        return validate_grounded_answer_value(validated, value, source, as_of_date=as_of_date)
     except (ValueError, TypeError, AttributeError):
         pass
     raise ValueError("answer does not match the current factual question and source")
@@ -222,7 +237,8 @@ def _apply_normalized(
             # Transport metadata is derived here, never supplied by the model.
             # Existing uploaded text/file provenance remains authoritative.
             result.setdefault("incomingSourceStatus", "NOT_ATTACHED")
-        if result.get(field) != normalized and field in {"incomingKind", "healthSignals"}:
+        if (field in result and result[field] != normalized
+                and field in {"incomingKind", "healthSignals"}):
             result.pop("safetyScreening", None)
         if field == "affectedServices":
             result = invalidate_service_clarification_answers(result, cast(list[str], normalized))

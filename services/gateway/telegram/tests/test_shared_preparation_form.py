@@ -45,12 +45,17 @@ def test_generic_resume_skips_completed_checkpoints_in_a_confirmed_v2_draft(chec
     context.user_data.clear()  # New process has no conversation or local preparation handles.
     update.callback_query = FakeQuery(f"case:draft:{draft_id}")
     result = asyncio.run(bot.resume_intake_draft(update, context, preparation=True))
-    assert result == bot.WizardState.SUMMARY
+    expected = (bot.WizardState[checkpoint]
+                if checkpoint in {"CLINIC_ACTIONS", "CHRONOLOGY"} else bot.WizardState.SUMMARY)
+    # An explicitly open optional edit can contain valid/prepopulated values.
+    # Its accepted DONE/answer would already have persisted the SUMMARY state.
+    assert result == expected
     saved = context.user_data[bot.WIZARD_DATA_KEY]
     assert bot._draft_payload(saved) == original
-    assert saved[bot.DRAFT_STATE_KEY] == "SUMMARY"
-    assert any("фабула" in text.lower() or "понята ситуация" in text.lower()
-               for text in message.text_replies)
+    assert saved[bot.DRAFT_STATE_KEY] == expected.name
+    if expected is bot.WizardState.SUMMARY:
+        assert any("фабула" in text.lower() or "понята ситуация" in text.lower()
+                   for text in message.text_replies)
 
 
 def test_installed_shared_form_routes_actual_summary_to_preparation_not_legacy_pdf():

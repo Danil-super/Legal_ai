@@ -17,6 +17,8 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx2
+from legal_core.case_material_contracts import CaseMaterialListResponse
+from legal_core.contracts import TelegramPreparationReceipt, TelegramWorkflowResponse
 from legal_core.pseudonymization import pseudonymize_text
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Message, Update
 from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
@@ -860,7 +862,7 @@ async def _prompt_v2_draft(
     update: Update,
     state: WizardState,
     data: dict[str, Any],
-    *, preparation: bool = False,
+    *, preparation: bool = False, missing_material: bool = False,
 ) -> None:
     message = update.effective_message
     data.pop("_v2_prompt_message_id", None)
@@ -927,7 +929,7 @@ async def _prompt_v2_draft(
                 ),
             )
     elif state is WizardState.MATERIALS:
-        attached = data.get("caseMaterialsStatus") == "ATTACHED"
+        attached = data.get("caseMaterialsStatus") == "ATTACHED" and not missing_material
         prompt = (
             "6/7. Если есть, приложите обезличенную претензию, переписку или договор — "
             "юрист сможет их посмотреть. Можно продолжить без файла. "
@@ -964,9 +966,12 @@ async def _prompt_v2_draft(
         if message is not None:
             pages = v2_review_pages(data)
             for index, page in enumerate(pages):
-                rows = [[("✅ Всё верно", "case:v2:summary:confirm")]] if (
-                    index == len(pages) - 1
-                ) else []
+                rows = [
+                    [("✅ Всё верно", "case:v2:summary:confirm")],
+                    [("✏️ Действия клиники", "case:v2:context:actions"),
+                     ("✏️ Ход обращения", "case:v2:context:history")],
+                    [("📎 Добавить файл", "case:v2:material:attach")],
+                ] if index == len(pages) - 1 else []
                 await reply(page, reply_markup=_v2_keyboard(rows))
     elif state is WizardState.ANALYSIS_CLARIFICATION:
         request = next_clarification_request(data)
@@ -1170,6 +1175,13 @@ async def record_factual_amount(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def v2_material_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     callback = await _answer_callback(update)
+    if callback == "case:v2:material:attach":
+        data = _wizard_data(context)
+        if data.get("caseMaterialsStatus") == "NOT_ATTACHED":
+            # Reopen an explicitly skipped upload step without dropping real files.
+            data.pop("caseMaterialsStatus")
+        await _prompt_v2_draft(update, WizardState.MATERIALS, data)
+        return WizardState.MATERIALS
     if callback not in {"case:v2:material:skip", "case:v2:material:done"}:
         return WizardState.MATERIALS
     data = _wizard_data(context)
@@ -1183,6 +1195,16 @@ async def v2_material_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return WizardState.MATERIALS
     return await _advance_v2_draft(update, data)
+
+
+async def edit_v2_optional_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    callback = await _answer_callback(update)
+    selected = {"case:v2:context:actions": WizardState.CLINIC_ACTIONS,
+                "case:v2:context:history": WizardState.CHRONOLOGY}.get(callback or "")
+    if selected is None:
+        return WizardState.SUMMARY
+    await _prompt_v2_draft(update, selected, _wizard_data(context))
+    return selected
 
 
 async def confirm_v2_summary(
@@ -1210,6 +1232,18 @@ async def back_v2_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return WizardState.INCOMING
     data = _wizard_data(context)
     current_name = str(data.get(DRAFT_STATE_KEY, V2_INCOMING))
+    if current_name in {"CLINIC_ACTIONS", "CHRONOLOGY"}:
+        # Checklist changes are provisional, durably staged input. Back exits the
+        # optional editor to the one factual recap; it neither confirms a case nor
+        # promises to undo a prior saved selection. Empty context means absence.
+        review_data = dict(data)
+        if review_data.get("clinicActions") == []:
+            review_data.pop("clinicActions")
+        if v2_next_missing_state(review_data) == WizardState.SUMMARY.name:
+            data.clear()
+            data.update(review_data)
+            await _prompt_v2_draft(update, WizardState.SUMMARY, data)
+            return WizardState.SUMMARY
     if current_name == "SAFETY" and previous_screening_question(data):
         await _prompt_v2_draft(update, WizardState.SAFETY, data)
         return WizardState.SAFETY
@@ -2158,9 +2192,17 @@ async def resume_intake_draft(
     _clear_wizard(context)
     _clear_pending_inputs(context)
     data = dict(draft_data)
-    if data.get("intakeVersion") == 2 and (preparation or state in {
-        WizardState.SUMMARY, WizardState.V2_CONFIRM, WizardState.ANALYSIS_CLARIFICATION,
-    }):
+    pending_materials = (state is WizardState.MATERIALS
+                         and data.get("caseMaterialsStatus") != "NOT_ATTACHED")
+    # A valid value may be an unfinished checklist selection or a prefilled edit.
+    # DONE/accepted single answers persist the next state, so the persisted open
+    # optional checkpoint remains authoritative regardless of value completeness.
+    pending_context = state in {WizardState.CLINIC_ACTIONS, WizardState.CHRONOLOGY}
+    if data.get("intakeVersion") == 2 and not pending_materials and not pending_context and (
+        preparation or state in {
+            WizardState.SUMMARY, WizardState.V2_CONFIRM, WizardState.ANALYSIS_CLARIFICATION,
+        }
+    ):
         # Navigation checkpoints are not missing facts. Explicit back/edit still
         # opens its selected field; generic resume asks only what is absent.
         state = _v2_state(v2_next_missing_state(data))
@@ -2769,6 +2811,20 @@ async def choose_case_date_to_clarify(
     return state
 
 
+async def _has_confirmed_workflow(
+    client: LegalCoreClient, workflow_id: UUID, actor_id: int, *, preparation: bool,
+) -> bool:
+    """A promoted attachment belongs to a case; only its existing workflow may replay."""
+    try:
+        wire = await client.get_workflow(workflow_id, actor_id)
+        receipt = (TelegramPreparationReceipt if preparation else TelegramWorkflowResponse
+                   ).model_validate(wire)
+        return (receipt.workflow_id == workflow_id
+                and receipt.case.intake_schema_version == V2_INTAKE_SCHEMA_VERSION)
+    except (LegalCoreApiError, TypeError, ValueError):
+        return False
+
+
 async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     callback = await _answer_callback(update)
     if callback == "case:v2:summary:confirm" and context.bot_data.get(
@@ -2831,6 +2887,32 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                 return WizardState.SAFETY
         client = _legal_core(context)
         if _is_v2_draft(data):
+            if data.get("caseMaterialsStatus") == "ATTACHED":
+                try:
+                    materials = CaseMaterialListResponse.model_validate(await client._json_request(
+                        "GET", f"/v1/telegram-intake-drafts/{workflow_id}/case-materials",
+                        telegram_user_id=actor_id,
+                    ))
+                except (LegalCoreApiError, TypeError, ValueError) as error:
+                    # After a lost successful submit, files have moved to the case
+                    # and the source draft is closed. Reuse only a real owned receipt;
+                    # the idempotent submit below still validates the exact payload.
+                    replay = (isinstance(error, LegalCoreApiError) and error.status_code == 404
+                              and await _has_confirmed_workflow(
+                                  client, workflow_id, actor_id, preparation=preparation,
+                              ))
+                    if not replay:
+                        await _reply(update, "Не удалось проверить приложенные файлы. "
+                                     "Повторите подтверждение или откройте «Добавить файл».")
+                        await _prompt_v2_draft(update, WizardState.SUMMARY, data)
+                        return WizardState.SUMMARY
+                    materials = None
+                if materials is not None and not materials.items:
+                    await _reply(update, "Приложенный файл не найден или срок его хранения истёк. "
+                                 "Прикрепите его ещё раз либо продолжите без файла.")
+                    await _prompt_v2_draft(update, WizardState.MATERIALS, data,
+                                           missing_material=True)
+                    return WizardState.MATERIALS
             facts = facts_from_v2_data(_draft_payload(data))
             if preparation:
                 workflow = await client.submit_workflow(
@@ -3178,6 +3260,13 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
                     MessageHandler(~filters.TEXT & ~filters.Document.ALL, reject_v2_material_media),
                 ],
                 WizardState.SUMMARY: [
+                    CallbackQueryHandler(
+                        _persisted(edit_v2_optional_context),
+                        pattern=r"^case:v2:context:(actions|history)$",
+                    ),
+                    CallbackQueryHandler(
+                        _persisted(v2_material_action), pattern=r"^case:v2:material:attach$",
+                    ),
                     CallbackQueryHandler(
                         _persisted(confirm_v2_summary),
                         pattern=r"^case:v2:summary:confirm$",

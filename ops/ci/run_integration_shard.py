@@ -4,12 +4,54 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import json
+import math
 import os
 import sys
 import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate duration manifest key")
+        result[key] = value
+    return result
+
+
+def _positive_seconds(value: object) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError("test duration estimates must be positive finite numbers")
+    try:
+        seconds = float(value)
+    except OverflowError as error:
+        raise ValueError("test duration estimate is out of range") from error
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError("test duration estimates must be positive finite numbers")
+    return seconds
+
+
+def _file_weights(root: Path) -> tuple[dict[str, float], float]:
+    manifest = json.loads((root / "ops/ci/integration_file_weights.json").read_text(),
+                          object_pairs_hook=_unique_object)
+    if (not isinstance(manifest, dict)
+            or set(manifest) != {"version", "defaultSeconds", "files"}
+            or type(manifest["version"]) is not int or manifest["version"] != 1
+            or not isinstance(manifest["files"], dict)):
+        raise ValueError("unsupported test duration manifest")
+    default = _positive_seconds(manifest["defaultSeconds"])
+    weights = {}
+    for name, seconds in manifest["files"].items():
+        path = Path(name)
+        if (not name or path.is_absolute() or ".." in path.parts
+                or path.as_posix() != name or "\\" in name or path.suffix != ".py"):
+            raise ValueError("duration manifest paths must stay inside the checkout")
+        weights[name] = _positive_seconds(seconds)
+    return weights, default
 
 
 def select_files(root: Path, index: int, count: int) -> list[str]:
@@ -36,8 +78,19 @@ def select_files(root: Path, index: int, count: int) -> list[str]:
             files.append(path.relative_to(root).as_posix())
     if len(set(files)) != len(files):
         raise ValueError("overlapping pytest roots would repeat tests")
+    weights, default = _file_weights(root)
+    # History affects assignment only, never discovery: new files use a positive default.
+    # Largest-first greedy assignment separates slow modules; canonical position breaks ties.
+    assignments: list[set[str]] = [set() for _ in range(count)]
+    loads = [0.0] * count
+    for _, name in sorted(enumerate(files), key=lambda item: (
+            -weights.get(item[1], default), item[0])):
+        target = min(range(count), key=lambda worker: (
+            loads[worker], len(assignments[worker]), worker))
+        assignments[target].add(name)
+        loads[target] += weights.get(name, default)
     # Preserve canonical root order: cross-service fixture imports need Core collected first.
-    shard = files[index::count]
+    shard = [name for name in files if name in assignments[index]]
     if not shard:
         raise ValueError("an empty integration shard cannot pass")
     return shard

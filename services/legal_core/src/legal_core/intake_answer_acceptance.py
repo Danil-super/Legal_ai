@@ -12,7 +12,7 @@ from legal_core.intake_answer_operations import (
     input_hash,
     stored_answer,
 )
-from legal_core.intake_answer_values import apply_answer_value
+from legal_core.intake_factual_candidates import apply_factual_answer
 from legal_core.intake_preparation import RESOURCE_TYPE, _locked_owned_operation
 from legal_core.intake_preparation_acceptance import AcceptUnderstandingResponse
 from legal_core.intake_preparation_contracts import AcceptUnderstandingRequest
@@ -51,8 +51,9 @@ async def accept_answer(
                            message="The displayed answer has changed")
         candidate = None
         try:
-            candidate = apply_answer_value(
-                draft.draft_json, bound.question, interpretation.value, bound.answer,
+            candidate = apply_factual_answer(
+                draft.draft_json, bound.question, interpretation, bound.answer,
+                bound.retained_sources or [],
                 as_of_date=bound.intent.as_of_date,
             )
         except (ValueError, TypeError):

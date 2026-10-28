@@ -15,6 +15,7 @@ from typing import Final
 from uuid import UUID
 
 from legal_core.contracts import FactKey
+from legal_core.factual_safety_risk import confirmed_screening
 from legal_core.legal_retrieval import ApprovedLegalCorpusRepository, ApprovedLegalFragment
 
 
@@ -27,6 +28,11 @@ _REWORK_QUERIES: Final = (
     "безвозмездное устранение недостатков",
     "повторное выполнение работы",
 )
+_CONSUMER_REMEDY_QUERIES: Final = (
+    "права потребителя недостатки оказанной услуги",
+    "возврат уплаченной суммы",
+    *_REWORK_QUERIES,
+)
 _INCIDENT_QUERIES: Final = {
     "QUALITY_COMPLAINT": ("недостатки оказанной услуги", "гарантийный срок"),
     "INFORMED_CONSENT": ("информированное добровольное согласие",),
@@ -37,6 +43,7 @@ _SEMANTIC_SAFE_QUERIES: Final = frozenset(
     (
         *_BASE_QUERIES,
         *_REWORK_QUERIES,
+        *_CONSUMER_REMEDY_QUERIES,
         *(query for queries in _INCIDENT_QUERIES.values() for query in queries),
         "требования потребителя претензия медицинские услуги",
         "возмещение вреда здоровью медицинские услуги",
@@ -76,6 +83,15 @@ def plan_legal_queries(facts: Mapping[FactKey, object]) -> tuple[str, ...]:
             queries.append("возврат денежных средств медицинские услуги")
         if "OFFERED_CORRECTION" in actions:
             queries.extend(_REWORK_QUERIES)
+
+        screening = confirmed_screening(facts)
+        if (areas & {"TREATMENT", "SERVICE"} and screening is not None
+                and screening.money_requested == "YES"):
+            # A reported monetary request selects possible remedies before the
+            # clinic has offered one. It does not establish a defect/refund right.
+            # Generic consumer provisions need not contain a medical lexeme, so
+            # keep these fixed lexical queries independent of the base phrases.
+            queries.extend(_CONSUMER_REMEDY_QUERIES)
 
         health_signals = _tokens(facts.get(FactKey.HEALTH_CONSEQUENCE_SIGNALS))
         if health_signals & {"COMPLICATION_OR_WORSENING", "HOSPITALIZATION"}:

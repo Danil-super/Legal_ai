@@ -27,6 +27,11 @@ from legal_core.intake_preparation_contracts import (
     IntakeUnderstandingContext,
     UnderstandingContextRequest,
 )
+from legal_core.lawyer_draft_contracts import LawyerDraftContextRequest, LawyerDraftContextResponse
+from legal_core.lawyer_work_product_contracts import (
+    LawyerWorkProductSubmission,
+    LawyerWorkProductView,
+)
 
 
 class LegalCoreError(RuntimeError):
@@ -38,6 +43,16 @@ class LegalCoreError(RuntimeError):
 
 class LegalCoreProtocolError(RuntimeError):
     pass
+
+
+def _checked_draft_binding(binding: LawyerDraftContextRequest) -> LawyerDraftContextRequest:
+    try:
+        return LawyerDraftContextRequest.model_validate(binding.model_dump(
+            by_alias=True, warnings="error",
+        ))
+    except (ValueError, TypeError, AttributeError):
+        pass
+    raise LegalCoreProtocolError("private draft request binding mismatch")
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +88,24 @@ class LegalCoreClient:
         self.endpoint = endpoint
         self._client = client
 
+    @overload
+    async def _request_json(
+        self, method: str, path: str, *, telegram_user_id: int,
+        idempotency_key: UUID | None = None, json_body: dict[str, Any] | None = None,
+        job_id: UUID | None = None, job_token: UUID | None = None,
+        allow_null: Literal[False] = False,
+        accepted_statuses: frozenset[int] | None = None,
+    ) -> dict[str, Any]: ...
+
+    @overload
+    async def _request_json(
+        self, method: str, path: str, *, telegram_user_id: int,
+        idempotency_key: UUID | None = None, json_body: dict[str, Any] | None = None,
+        job_id: UUID | None = None, job_token: UUID | None = None,
+        allow_null: Literal[True],
+        accepted_statuses: frozenset[int] | None = None,
+    ) -> dict[str, Any] | None: ...
+
     async def _request_json(
         self,
         method: str,
@@ -83,7 +116,9 @@ class LegalCoreClient:
         json_body: dict[str, Any] | None = None,
         job_id: UUID | None = None,
         job_token: UUID | None = None,
-    ) -> dict[str, Any]:
+        allow_null: bool = False,
+        accepted_statuses: frozenset[int] | None = None,
+    ) -> dict[str, Any] | None:
         if (job_id is None) != (job_token is None):
             raise ValueError("analysis job id and lease token must be provided together")
         headers = {
@@ -120,11 +155,16 @@ class LegalCoreClient:
             expected = urlparse(self.endpoint.base_url)
             if response.url.scheme != expected.scheme or response.url.host != expected.hostname:
                 raise LegalCoreProtocolError("Legal Core response came from an unexpected origin")
+            if (accepted_statuses is not None and not response.is_error
+                    and response.status_code not in accepted_statuses):
+                raise LegalCoreProtocolError("Legal Core returned an unexpected status")
 
             try:
                 payload = response.json()
             except ValueError as exc:
                 raise LegalCoreProtocolError("Legal Core returned non-JSON data") from exc
+            if payload is None and allow_null and not response.is_error:
+                return None
             if not isinstance(payload, dict):
                 raise LegalCoreProtocolError("Legal Core JSON response must be an object")
             if response.is_error:
@@ -140,6 +180,118 @@ class LegalCoreClient:
         finally:
             if owns_client:
                 await client.aclose()
+
+    async def _lawyer_request(
+        self, *, case_id: UUID, telegram_user_id: int, idempotency_key: UUID,
+        job_id: UUID, job_token: UUID, suffix: str, body: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        failure_status = None
+        try:
+            if job_id != idempotency_key or job_id is None or job_token is None:
+                raise ValueError("a paired running job lease is required")
+            return await self._request_json(
+                "POST", f"/v1/cases/{case_id}/{suffix}", telegram_user_id=telegram_user_id,
+                idempotency_key=idempotency_key, job_id=job_id, job_token=job_token,
+                json_body=body, allow_null=True,
+                accepted_statuses=(frozenset({200, 201}) if suffix == "lawyer-work-products"
+                                   else frozenset({200})),
+            )
+        except LegalCoreError as error:
+            failure_status = error.status_code
+        except (LegalCoreProtocolError, ValueError, TypeError, AttributeError):
+            pass
+        if failure_status is not None:
+            raise LegalCoreError("LAWYER_DRAFT_REFUSED", "Private draft request refused",
+                                 status_code=failure_status)
+        raise LegalCoreProtocolError("private draft request contract mismatch")
+
+    async def get_lawyer_draft_context(
+        self, *, case_id: UUID, telegram_user_id: int, idempotency_key: UUID,
+        job_id: UUID, job_token: UUID, binding: LawyerDraftContextRequest,
+    ) -> LawyerDraftContextResponse:
+        binding = _checked_draft_binding(binding)
+        payload = await self._lawyer_request(
+            case_id=case_id, telegram_user_id=telegram_user_id, idempotency_key=idempotency_key,
+            job_id=job_id, job_token=job_token, suffix="lawyer-draft-context",
+            body=binding.model_dump(mode="json", by_alias=True),
+        )
+        try:
+            context = LawyerDraftContextResponse.model_validate(payload)
+            if (context.source.case_id == case_id
+                    and context.source.operation_id == binding.expected_preparation_operation_id
+                    and context.source.fact_snapshot_sha256 == binding.expected_fact_snapshot_sha256
+                    and context.context.risk_policy_version
+                    == binding.expected_risk_policy_version):
+                return context
+        except (ValueError, TypeError, AttributeError):
+            pass
+        raise LegalCoreProtocolError("lawyer draft context response binding mismatch")
+
+    async def lookup_lawyer_work_product(
+        self, *, case_id: UUID, telegram_user_id: int, idempotency_key: UUID,
+        job_id: UUID, job_token: UUID, binding: LawyerDraftContextRequest,
+    ) -> LawyerWorkProductView | None:
+        binding = _checked_draft_binding(binding)
+        payload = await self._lawyer_request(
+            case_id=case_id, telegram_user_id=telegram_user_id, idempotency_key=idempotency_key,
+            job_id=job_id, job_token=job_token, suffix="lawyer-work-products/lookup",
+            body=binding.model_dump(mode="json", by_alias=True),
+        )
+        if payload is None:
+            return None
+        try:
+            view = LawyerWorkProductView.model_validate(payload)
+            source = view.content.source
+            if (source.case_id == case_id
+                    and source.operation_id == binding.expected_preparation_operation_id
+                    and source.fact_snapshot_sha256 == binding.expected_fact_snapshot_sha256
+                    and view.content.risk_policy_version == binding.expected_risk_policy_version):
+                return view
+        except (ValueError, TypeError, AttributeError):
+            pass
+        raise LegalCoreProtocolError("retained lawyer draft response binding mismatch")
+
+    async def submit_lawyer_work_product(
+        self, *, context: LawyerDraftContextResponse, reasoning: ReasoningResult,
+        telegram_user_id: int, idempotency_key: UUID, job_id: UUID, job_token: UUID,
+    ) -> LawyerWorkProductView:
+        # Only evidence-grounded proposals and reviews cross this boundary. Core
+        # owns the draft identity, status, content, verification and approval.
+        request = None
+        try:
+            context = LawyerDraftContextResponse.model_validate(context.model_dump(
+                by_alias=True, warnings="error",
+            ))
+            if reasoning.patient_draft is not None or reasoning.internal_recommendations:
+                raise ValueError("a draft cannot contain unverified prose")
+            request = LawyerWorkProductSubmission(
+                expectedSource=context.source,
+                claims=[AnalysisClaimInput(
+                    claimId=claim.claim_id, kind=claim.kind.value, text=claim.text,
+                    evidenceFragmentIds=list(claim.evidence_fragment_ids),
+                    requiredFactKeys=list(claim.required_fact_keys),
+                ) for claim in reasoning.claims],
+                semanticReviews=[SemanticReviewInput(
+                    claimId=review.claim_id, verdict=review.verdict.value,
+                    reviewedFragmentIds=list(review.reviewed_fragment_ids),
+                ) for review in reasoning.semantic_reviews],
+            )
+        except (ValueError, TypeError, AttributeError):
+            pass
+        if request is None:
+            raise LegalCoreProtocolError("lawyer draft submission contract mismatch")
+        payload = await self._lawyer_request(
+            case_id=context.source.case_id, telegram_user_id=telegram_user_id,
+            idempotency_key=idempotency_key, job_id=job_id, job_token=job_token,
+            suffix="lawyer-work-products", body=request.model_dump(mode="json", by_alias=True),
+        )
+        try:
+            view = LawyerWorkProductView.model_validate(payload)
+            if view.content.source == context.source:
+                return view
+        except (ValueError, TypeError, AttributeError):
+            pass
+        raise LegalCoreProtocolError("stored lawyer draft response binding mismatch")
 
     async def get_understanding_context(
         self, *, operation_id: UUID, draft_id: UUID, telegram_user_id: int,
@@ -316,6 +468,7 @@ class LegalCoreClient:
                 context.clinic_document_context_trace_sha256
             ),
             expectedRiskPolicyVersion=context.risk_policy_version,
+            expectedReferenceExampleTraceSha256=context.reference_example_trace_sha256,
             claims=claims,
             semanticReviews=semantic_reviews,
             clarificationRequests=list(reasoning.clarification_requests),

@@ -16,6 +16,7 @@ import httpx
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from legal_core.analysis_contracts import AnalysisSubmissionResponse, PreparationResult
 from legal_core.analysis_jobs import (
     AnalysisJob,
     ClaimedJob,
@@ -25,9 +26,20 @@ from legal_core.analysis_jobs import (
 )
 from legal_core.analysis_safe_stop import analysis_safe_stop_active, require_analysis_running
 from legal_core.case_api import ApiError, _tenant_case, resolve_actor
+from legal_core.case_preparation_contracts import HumanReviewResult
 from legal_core.model_admission import ModelAdmission
 
 logger = logging.getLogger(__name__)
+
+
+def _resume_optional_lawyer_draft(
+    result_version: int, result: AnalysisSubmissionResponse | PreparationResult,
+) -> bool:
+    return (
+        result_version == 2 and isinstance(result, PreparationResult)
+        and isinstance(result.root, HumanReviewResult)
+        and os.getenv("AI_FIRST_LAWYER_DRAFT_ENABLED", "0").strip().lower() in {"true", "1"}
+    )
 
 
 @dataclass(frozen=True)
@@ -70,10 +82,17 @@ async def execute_job(
         if case.retention_due_at is not None and case.retention_due_at <= datetime.now(UTC):
             raise ApiError(status_code=410, code="CASE_CONTENT_EXPIRED", message="Case expired")
         stored = await session.get(AnalysisJob, job.id)
-        if stored is not None and await job_result(session, stored) is not None:
-            return  # Submission committed before a crash/HTTP timeout; never run the models again.
+        retained = None
+        if stored is not None:
+            retained = await job_result(session, stored)
+            if retained is not None and not _resume_optional_lawyer_draft(
+                stored.result_version, retained,
+            ):
+                return  # Keep completed reports/clarifications and the default path model-free.
         current = await require_job_lease(session, actor, job.case_id, job.id, job.lease_token)
         result_version = current.result_version
+        if retained is not None and not _resume_optional_lawyer_draft(result_version, retained):
+            return  # Recheck opt-in/version after the actual lease lock wait.
     require_analysis_running()
     headers = {
         "X-Agent-Internal-Key": settings.internal_key,

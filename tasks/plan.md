@@ -1,5 +1,81 @@
 # Implementation Plan: Dental Legal AI MVP
 
+## AI-first resolution — approved specification, proposed plan26October2026
+
+Module: `ai-first-resolution`; contract: SPEC-ai-first-resolution.md; map:
+CAPABILITY_MAP-ai-first.md. The owner approved the behavioral contract and said
+to proceed and approved AIF01–AIF11 ("да, работай"). This section extends the same
+clinical intake/report work; it neither
+overwrites nor closes the earlier incomplete sections. No new risk-policy version,
+model/profile change, storage expansion or production release is authorized here.
+Baseline: deployed main2eec73b; separate worktree/branch preserves the dirty desktop
+copy. Detailed executable checklist is the approved AIF01–AIF11 in tasks/todo.md.
+
+### Verified seams and implementation decisions
+
+- Follow-up interpretation currently has a single-field output and anchors only in
+  the latest answer. The original eventSummary is already added separately by
+  _context after its allowlist projection; do not incorrectly treat its absence
+  from _CONTEXT_FIELDS as missing narrative transport. Rich
+  replies must become explicitly source-bound factual candidates, not an unchecked
+  prompt expansion or automatic overwrite of confirmed facts.
+- Core prepare_analysis_context can return HUMAN_REVIEW before reasoning is called.
+  Preserve that immediate routing. Add a distinct internal work-product path, never
+  set analysisAllowed=true just to make an unapproved lawyer draft look final.
+- Current workspace work notes ask the lawyer to write a plan/review/conclusion.
+  Replace that empty starting point with an AI proposal to review; retain original,
+  corrected and approved versions, assigned-lawyer/owner controls and audit.
+- Reuse existing actors, privacy guards, jobs/leases, evidence verification,
+  reference-case applicability and report presentation where proven compatible.
+  No generic new workflow engine or second questionnaire. Do not assume that an
+  idempotency cache or canonical CaseReport can safely store this new work product.
+
+### Dependency and delivery order
+
+AIF01 reproductions → AIF02 exact contract/storage proof → checkpoint;
+AIF03 full-context model proposal → AIF04 authorized factual staging → AIF05 material
+questions → checkpoint; AIF06 internal draft context → AIF07 grounded generation →
+AIF08 durable draft result → checkpoint; AIF09 readable delivery → AIF10 human review
+→ AIF11 integrated quality/performance/release readiness → checkpoint.
+
+Read-compatible contracts precede their producers. Keep new behavior disabled until
+all participating readers and writers are verified. No partial rollout that leaves
+lawyers seeing empty drafts while claiming the new workflow is ready.
+
+### Safety and scope checkpoints
+
+After AIF02 review the exact API/data contract and storage feasibility with the owner.
+If a new table, migration or access expansion is needed, stop for explicit agreement
+before implementing it; split that work into <=5-file increments. Later checkpoints
+verify behavior and regressions, not reopen already approved product requirements.
+Before implementation every task must remain <=5files; split, do not silently widen.
+Independent review precedes merge; external model CLI needs separately agreed command.
+
+Current v4 and10,000RUB boundary stay unchanged in this module. The separately
+specified `escalation-policy` module addresses automatic HIGH for ordinary written
+requests or insufficiently differentiated health signals only after this useful AI
+work product exists. No unreviewed downgrading of urgent risk to meet speed goals.
+
+### Verification, risks and release
+
+First prove no repeats and a prepared solution on synthetic scenarios, then source/
+tenant/staleness/retention protections. A missing fact may justify a precise question,
+not an invented answer; missing legal evidence permits only a labelled limited plan.
+An AI outage must not delay urgent notification or trap navigation.
+
+Measure acknowledgement, first useful question and final-plan times separately;
+targets2/45/90seconds remain provisional performance goals under a healthy provider.
+Track repeated/irrelevant-question counts without raw text in telemetry. Preserve
+high reasoning and independent evidence verification; no new external observability
+service or dependency. Actual live-model probes are synthetic and reported honestly.
+
+Use the existing pytest/Ruff/mypy/Compose commands and complete disposable PostgreSQL/
+MinIO partition. Packaging and production-image checks cover shared-contract changes.
+Legal quality review must assess usefulness of the proposed solution and source
+support, not just successful HTTP/PDF output. CI and separate owner release approval
+remain gates; deploy SHA/health, ledger, real Telegram behavior and model smoke are
+verified afterward. This proposed plan does not change the running bot.
+
 ## Simple intake incident correction — 23 October 2026
 
 Implement the owner's explicit simplicity contract in three bounded slices:
@@ -756,3 +832,32 @@ reference-content guards → combined regression/CI/review → separately approv
 Root owns CI and upload wire; isolated gateway and Core agents own their narrow
 reproductions/fixes. Reference package independence requires an explicit owner
 auth-contract choice; no roles or legal approvals are changed implicitly.
+
+## AI-first local implementation checkpoint — 28 October 2026
+
+The approved AIF01–AIF11 work is implemented through source-bound factual staging,
+optional-context collection, audited question reasons, separately authorized AI
+lawyer drafts, immutable storage and human review UI. Detailed acceptance gaps
+remain in tasks/todo.md; these are local changes, not a production readiness claim.
+
+PR111 separately deployed the pinned Hermes input-boundary correction and
+msgpack1.2.3 at2940af1 after successful main CI and deployment. Both live profiles
+preserved the ends of a77,088-character synthetic input; an ordinary read-only
+5000RUB probe returned two verified claims in46.73seconds without clarifications.
+This is not acceptance of a complete useful plan or Telegram case workflow.
+
+Reference provenance, late-write expiry and producer lock ordering now pass
+independent real PostgreSQL probes. Full CI623d157/run40721837785 passed5073
+integration cases with zero skips; all six parts fit the180second limit.
+Two ordinary live trials produced four verified actions each in67.23/75.53seconds;
+the HIGH draft produced five in72.04seconds. The45second target remains open.
+Production still has67 DRAFT examples and no AIF producer enabled.
+
+Imported-reference submission UI and source-bound human confirmation are now
+implemented. Independent review covers stale content/files, lost replies,
+revoked rights, original expiry and preserved pending work. Run fresh full CI
+for these follow-ups → human legal-quality evaluation/current reference review
+→ separately reviewed AIF release/enablement.
+Preserve current provider/high profiles, v4,
+10,000RUB threshold and approved-only evidence. Restore service by flags-off on a
+compatible reader; no destructive database downgrade of retained work products.

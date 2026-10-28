@@ -1,12 +1,13 @@
 """Durable unconfirmed answers; transactions finish before optional model I/O."""
 
+import os
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -17,11 +18,19 @@ from legal_core.case_preparation_contracts import PreparationModel
 from legal_core.intake_answer_contracts import (
     AnswerInterpretation,
     AnswerQuestion,
+    RetainedSourceSegment,
     derive_answer_question,
+    material_question,
 )
 from legal_core.intake_answer_intent import AnswerPreparationIntent
 from legal_core.intake_answer_values import validate_answer_shape, validate_answer_value
 from legal_core.intake_answer_wire import AnswerStatusResponse
+from legal_core.intake_factual_candidates import (
+    allowed_factual_questions,
+    apply_factual_answer,
+    retained_answer_sources,
+    validate_factual_proposal,
+)
 from legal_core.intake_preparation import (
     LEASE_DURATION,
     RESOURCE_TYPE,
@@ -55,6 +64,20 @@ class StoredAnswer(PreparationModel):
     answer: str = Field(strict=True, min_length=1, max_length=1500)
     interpretation: AnswerInterpretation | None = None
     acceptance: dict[str, Any] | None = Field(default=None, max_length=6)
+    retained_sources: list[RetainedSourceSegment] | None = Field(
+        default=None, alias="retainedSources", min_length=1, max_length=2,
+        exclude_if=lambda value: value is None,
+    )
+    allowed_questions: list[AnswerQuestion] | None = Field(
+        default=None, alias="allowedQuestions", max_length=32,
+        exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def paired_context(self) -> "StoredAnswer":
+        if (self.retained_sources is None) != (self.allowed_questions is None):
+            raise ValueError("retained sources require the captured target list")
+        return self
 
 
 def proposal_metadata(stored: StoredAnswer) -> dict[str, Any]:
@@ -110,6 +133,19 @@ async def checked_proposal(
                     )
                 ):
                     raise ValueError("service is not grounded in an answer anchor")
+                if interpretation.factual_proposal is not None:
+                    if stored.retained_sources is None or stored.allowed_questions is None:
+                        raise ValueError("additional facts lack the reserved source context")
+                    if draft is None:
+                        validate_factual_proposal(
+                            interpretation.factual_proposal, stored.retained_sources,
+                            stored.allowed_questions, {"intakeVersion": 2},
+                            as_of_date=stored.intent.as_of_date,
+                        )
+                    else:
+                        apply_factual_answer(draft.draft_json, stored.question, interpretation,
+                                             stored.answer, stored.retained_sources,
+                                             as_of_date=stored.intent.as_of_date)
             valid = (record.state == "SUCCEEDED" and record.lease_token is None
                      and record.lease_until is None)
     except (ValueError, TypeError):
@@ -238,6 +274,19 @@ def stored_answer(
                   or checked.question != current_question(draft)):
         raise ApiError(status_code=409, code="ANSWER_INPUT_STALE",
                        message="The factual question or saved draft has changed")
+    if checked.retained_sources is not None:
+        original = next((item.text for item in checked.retained_sources
+                         if item.kind == "INITIAL_DESCRIPTION"), None)
+        expected = retained_answer_sources(record.id, intent.draft_revision,
+            {"eventSummary": original} if original is not None else {}, checked.answer)
+        if checked.retained_sources != expected or (fresh and (
+            checked.retained_sources != retained_answer_sources(
+                record.id, draft.revision, draft.draft_json, checked.answer)
+            or checked.allowed_questions != allowed_factual_questions(draft.draft_json,
+                                                                      checked.question)
+        )):
+            raise ApiError(status_code=409, code="ANSWER_INPUT_STALE",
+                           message="Retained factual context no longer matches the reserved input")
     return checked
 
 
@@ -319,13 +368,20 @@ async def reserve_answer(
             raise ApiError(status_code=409, code="ANSWER_OPERATION_PENDING",
                            message="Cancel the current answer before replacing it")
         record_id, token = uuid4(), uuid4()
+        rich = os.getenv("AI_FIRST_FACTUAL_INTAKE_ENABLED", "false").strip().lower() == "true"
         inserted = await session.scalar(insert(IdempotencyRecord).values(
             id=record_id, clinic_id=actor.clinic_id, actor_membership_id=actor.membership_id,
             scope=intent.scope, key=str(intent.idempotency_key),
             request_sha256=intent.request_sha256,
             resource_type=RESOURCE_TYPE, resource_id=draft.id, state="IN_PROGRESS",
             lease_token=token, lease_until=datetime.now(UTC) + LEASE_DURATION,
-            response_json=StoredAnswer(intent=intent, question=question, answer=answer).model_dump(
+            response_json=StoredAnswer(
+                intent=intent, question=question, answer=answer,
+                retainedSources=retained_answer_sources(record_id, draft.revision,
+                    draft.draft_json, answer) if rich else None,
+                allowedQuestions=allowed_factual_questions(draft.draft_json, question)
+                    if rich else None,
+            ).model_dump(
                 mode="json", by_alias=True,
             ),
         ).on_conflict_do_nothing(index_elements=[
@@ -348,7 +404,11 @@ async def reserve_answer(
             session.add(_audit(actor=actor, action="INTAKE_ANSWER_RESERVED",
                                resource_type=RESOURCE_TYPE, resource_id=record.id,
                                metadata={"revision": draft.revision,
-                                         "questionSha256": question.question_sha256}))
+                                         "questionSha256": question.question_sha256,
+                                         "materialReasonCode": (
+                                             material_question(question).reason_code
+                                         ),
+                                         "wizardState": question.wizard_state}))
         await session.commit()
         return result
 

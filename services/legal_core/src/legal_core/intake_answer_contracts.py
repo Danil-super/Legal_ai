@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Literal, Self
+from uuid import UUID
 
-from pydantic import Field, JsonValue, field_validator, model_validator
+from pydantic import ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from legal_core.analysis_clarifications import (
     ClarificationRequest,
@@ -73,6 +74,9 @@ class AnswerQuestion(PreparationModel):
         default=None, alias="clarificationRequest",
     )
     service_scope_sha256: Sha256 | None = Field(default=None, alias="serviceScopeSha256")
+    scope_basis: Literal["PROPOSED_SERVICES"] | None = Field(
+        default=None, alias="scopeBasis", exclude_if=lambda value: value is None,
+    )
 
     @field_validator("clarification_request", mode="before")
     @classmethod
@@ -97,6 +101,12 @@ class AnswerQuestion(PreparationModel):
         )
         if scoped != (self.service_scope_sha256 is not None):
             raise ValueError("service questions require the current service scope digest")
+        if self.scope_basis is not None and not (
+            self.wizard_state == "ANALYSIS_CLARIFICATION"
+            and self.clarification_request is not None
+            and self.clarification_request.service_slot is not None
+        ):
+            raise ValueError("only additional scoped service facts may use proposed service slots")
         return self
 
     @property
@@ -111,6 +121,9 @@ class AnswerInterpretation(PreparationModel):
     reason_code: Literal["AMBIGUOUS", "CONTRADICTS_CONFIRMED", "OFF_QUESTION"] | None = Field(
         default=None, alias="reasonCode",
     )
+    factual_proposal: FactualContextProposal | None = Field(
+        default=None, alias="factualProposal", exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def coherent_interpretation(self) -> Self:
@@ -119,6 +132,8 @@ class AnswerInterpretation(PreparationModel):
                 raise ValueError("proposed answers require a value and literal source anchors")
         elif self.value is not None or self.reason_code is None:
             raise ValueError("unresolved answers require only a bounded reason, never a value")
+        if self.status != "PROPOSED" and self.factual_proposal is not None:
+            raise ValueError("additional facts require a resolved current answer")
         return self
 
     def validate_source(self, source: str) -> None:
@@ -187,3 +202,126 @@ def derive_answer_question(
         if request.service_slot is not None:
             payload["serviceScopeSha256"] = _service_scope(draft_data)
     return AnswerQuestion.model_validate(payload)
+
+
+class RetainedSourceSegment(PreparationModel):
+    """Private server-selected source; its identifier is not authorization evidence."""
+
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
+    source_id: UUID = Field(alias="sourceId")
+    kind: Literal["INITIAL_DESCRIPTION", "FOLLOWUP_ANSWER"]
+    revision: int = Field(strict=True, ge=1)
+    text: str = Field(strict=True, min_length=1, max_length=1500)
+    source_sha256: Sha256 = Field(alias="sourceSha256")
+
+    @model_validator(mode="after")
+    def bounded_source(self) -> Self:
+        if (not self.text.strip() or pseudonymize_text(self.text).changed
+                or hashlib.sha256(self.text.encode()).hexdigest() != self.source_sha256
+                or (self.kind == "INITIAL_DESCRIPTION" and len(self.text) < 10)):
+            raise ValueError("retained source must match bounded de-identified text")
+        return self
+
+
+class RetainedSourceAnchor(SourceSpan):
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
+    source_id: UUID = Field(alias="sourceId")
+    source_sha256: Sha256 = Field(alias="sourceSha256")
+
+
+class FactualCandidate(PreparationModel):
+    """Unconfirmed value; semantic/allowed-target validation still belongs to Core."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+    question: AnswerQuestion
+    value: JsonValue
+    anchors: list[RetainedSourceAnchor] = Field(min_length=1, max_length=3)
+
+    @field_validator("value")
+    @classmethod
+    def factual_json_only(cls, value: JsonValue) -> JsonValue:
+        if value is None or pseudonymize_text(json.dumps(
+            value, ensure_ascii=False, allow_nan=False,
+        )).changed:
+            raise ValueError("candidate requires bounded de-identified factual JSON")
+        return value
+
+
+class FactualContextProposal(PreparationModel):
+    """Inactive multi-fact schema; no consumer may treat this as consent or routing."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+    schema_version: Literal["ai-first-factual-proposal.v1"] = Field(alias="schemaVersion")
+    candidates: list[FactualCandidate] = Field(min_length=1, max_length=24)
+
+    @model_validator(mode="after")
+    def unique_targets(self) -> Self:
+        targets = [item.question.question_sha256 for item in self.candidates]
+        if len(targets) != len(set(targets)):
+            raise ValueError("a factual proposal cannot repeat the same question target")
+        if len(json.dumps(self.model_dump(mode="json", by_alias=True),
+                          ensure_ascii=False, allow_nan=False)) > 16000:
+            raise ValueError("factual proposal exceeds its private payload budget")
+        return self
+
+    def validate_sources(self, sources: Sequence[RetainedSourceSegment]) -> None:
+        """Check exact anchors, not authorization, factual truth or legal validity."""
+        try:
+            proposal = FactualContextProposal.model_validate(
+                self.model_dump(by_alias=True, warnings="error"))
+            if not 1 <= len(sources) <= 16:
+                raise ValueError("bounded retained sources required")
+            parsed = [RetainedSourceSegment.model_validate(item.model_dump(
+                by_alias=True, warnings="error")) for item in sources]
+            identities = {item.source_id: item for item in parsed}
+            if len(identities) != len(parsed) or sum(len(item.text) for item in parsed) > 12000:
+                raise ValueError("retained source identity or budget mismatch")
+            for candidate in proposal.candidates:
+                for anchor in candidate.anchors:
+                    source = identities.get(anchor.source_id)
+                    if (source is None or source.source_sha256 != anchor.source_sha256
+                            or anchor.end > len(source.text)
+                            or not source.text[anchor.start:anchor.end].strip()):
+                        raise ValueError("anchor does not match an allowed retained source")
+            return
+        except (ValueError, TypeError, AttributeError):
+            pass
+        raise ValueError("invalid factual proposal or retained source anchors")
+
+
+class MaterialQuestion(PreparationModel):
+    """Core-produced decision reason, not a model permission to ask another question."""
+
+    question: AnswerQuestion
+    reason_code: Literal["SAFETY_DECISION", "SOURCE_APPLICABILITY", "ACTION_SELECTION"] = Field(
+        alias="reasonCode",
+    )
+
+
+def material_question(supplied: AnswerQuestion) -> MaterialQuestion:
+    """Explain a selected factual question; never select/reopen it or infer an answer.
+
+    Optional context can change conditional next actions, but this explanation does
+    not make it mandatory. The caller still owns current draft/scope/attempt checks.
+    Proposed service slots are extraction targets, not questions for a user.
+    """
+    question = AnswerQuestion.model_validate(supplied.model_dump(by_alias=True))
+    if question.scope_basis is not None:
+        raise ValueError("extraction targets do not authorize additional user questions")
+    reason: Literal["SAFETY_DECISION", "SOURCE_APPLICABILITY", "ACTION_SELECTION"]
+    if question.wizard_state in {"INCOMING", "HEALTH", "SAFETY"}:
+        # These reported events/amounts can change the deterministic escalation.
+        reason = "SAFETY_DECISION"
+    elif question.wizard_state in {"SITUATION", "SERVICES", "EVENT_DATE"}:
+        # Domain, service and date determine which approved sources can apply.
+        reason = "SOURCE_APPLICABILITY"
+    elif question.clarification_request is not None:
+        reason = ("ACTION_SELECTION" if question.clarification_request.question_id
+                  == "RESPONSE_PURPOSE" else "SOURCE_APPLICABILITY")
+    else:
+        # Narrative, chronology and actions already taken guide conditional steps.
+        reason = "ACTION_SELECTION"
+    return MaterialQuestion(question=question, reasonCode=reason)
+
+
+AnswerInterpretation.model_rebuild()
