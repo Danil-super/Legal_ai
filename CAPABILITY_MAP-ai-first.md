@@ -36,7 +36,10 @@ Local reference evaluation scenarios now have a bounded nonauthoritative model
 projection, existing-workspace-grant checks and immutable provenance traces
 separate from normative evidence. Lawyer-write expiry checks, default-off wiring
 and reference-positive worker/human-review verification are implemented locally.
-Final review still requires a producer lock-order correction. The live HIGH draft
-produced five verified actions; ordinary-plan usefulness, repeated timings and
-complete CI remain acceptance gates. No production analogy usage, automatic
-source approval or permission expansion is claimed.
+Final source-expiry/lock-order review and CI623d157 passed, including5073 actual
+PostgreSQL/MinIO cases with zero skips. The live HIGH draft produced five verified
+actions; two ordinary trials produced four each in67.23/75.53seconds. These are
+synthetic technical samples; the45second target and human quality review remain
+open. Production has67 DRAFT examples. Imported-reference submission UI is a final
+follow-up requiring fresh CI; source review and separate release/enablement remain.
+No production analogy usage, automatic approval or permission expansion is claimed.

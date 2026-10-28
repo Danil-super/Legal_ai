@@ -48,16 +48,33 @@ worker scenarios pass on real PostgreSQL, including source traces through both
 model projections and assigned-human approval; external model replies in this
 integration test are synthetic. Independent late-wait probes pass, but final
 review found a producer User/membership lock-order conflict with subscription
-management; that real PostgreSQL deadlock is being corrected before acceptance.
+management; User-before-membership locking now resolves that real PostgreSQL
+deadlock and preserves withdrawal checks after waits.
 
 A live20-fragment HIGH10000RUB draft produced five evidence-verified actions in
 72.04seconds without clarifications. The corresponding ordinary MEDIUM5000RUB
 path returned three verified claims in53.07seconds, with just one action. Both
 were read-only synthetic probes using the unchanged profiles, not Telegram or
-case-write E2E. The ordinary plan's usefulness and the45second target remain
-open quality findings; a successful claim verifier is not a complete plan.
-Remaining: the lock-order fix, repeatable live-model usefulness/timings, final
-full CI, lawyer quality review and separate AIF release/enablement. Reference approval is
+case-write E2E. Clarifying the common research goal subsequently produced four
+verified actions in each of two ordinary trials,67.23/75.53seconds, without
+clarifications. The45second target and human legal-quality evaluation remain
+open; a successful verifier is not a legal certification.
+
+Final source-expiry and producer/admin lock-order corrections passed independent
+real PostgreSQL probes. Full PR112 CI at623d157, run40721837785, passed:5073
+integration tests, zero skips, all six parts96.61–153.38seconds under the unchanged
+180second deadline. Quality4030passed with1043 integration-disabled skips;
+CodeQL, Bandit, Gitleaks, dependency audit and four image checks passed. The
+refused-downgrade test now asserts the actual starting revision is preserved.
+Scheduling hints use measured GitHub costs, retaining incomplete-file history.
+
+Read-only production inspection found67 reference cases, all DRAFT, with an
+active reviewer grant and the owner's contributor grant. No reference approvals
+or producer flags were changed. Imported DRAFT detail lacks an existing submit
+entry point; its Telegram button and obsolete evaluation-only copy are being
+corrected after the623d157 checkpoint and require a fresh CI run.
+Remaining: final UI correction/CI, human legal-quality evaluation, production
+reference review and separate AIF release/enablement. Reference approval is
 evaluation approval, not legal authority or an implicit grant to every employee.
 
 Retained intake sources are the original narrative plus latest reply, with prior

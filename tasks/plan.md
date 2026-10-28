@@ -846,9 +846,15 @@ preserved the ends of a77,088-character synthetic input; an ordinary read-only
 5000RUB probe returned two verified claims in46.73seconds without clarifications.
 This is not acceptance of a complete useful plan or Telegram case workflow.
 
-Finish the local reference-example provenance/authorization and late-write
-expiry checks → fresh full PostgreSQL/MinIO verification and representative
-live-model/ legal-quality evaluation → GitHub CI and separately reviewed AIF
-release. Preserve current provider/high profiles, v4,
+Reference provenance, late-write expiry and producer lock ordering now pass
+independent real PostgreSQL probes. Full CI623d157/run40721837785 passed5073
+integration cases with zero skips; all six parts fit the180second limit.
+Two ordinary live trials produced four verified actions each in67.23/75.53seconds;
+the HIGH draft produced five in72.04seconds. The45second target remains open.
+Production still has67 DRAFT examples and no AIF producer enabled.
+
+Finish imported-reference submission UI and its fresh CI → human legal-quality
+evaluation/current reference review → separately reviewed AIF release/enablement.
+Preserve current provider/high profiles, v4,
 10,000RUB threshold and approved-only evidence. Restore service by flags-off on a
 compatible reader; no destructive database downgrade of retained work products.
