@@ -46,3 +46,14 @@ forged nested models, pseudonymization, exact citations, both profile calls, unk
 dependencies, service clarification scope, action budgets, abstention and timeouts.
 Core writer verification, durable delivery, legal quality evaluation and release
 approval remain separate tasks.
+
+28 October quality follow-up: the common research prompt also explicitly asks
+for ordered internal steps, options and their evidence-supported conditions.
+The live ordinary5000RUB probe returned three verified claims but only one action;
+the analogous lawyer draft returned five actions. This observation motivates a
+small goal clarification, not a causal claim or a promise of more actions. No
+minimum action count is imposed: unsupported conclusions and honest abstention
+remain unchanged. Ordinary schemas, patient-draft behavior and limits are retained;
+the lawyer-only status and stricter8ACTION/600character limits remain separate.
+Existing contract/scope/abstention tests must pass and live ordinary behavior must
+be checked again; text matching alone cannot establish the plan's usefulness.
