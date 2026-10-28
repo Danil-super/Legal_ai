@@ -10,7 +10,7 @@ from uuid import UUID, uuid5
 
 from pydantic import JsonValue
 
-from legal_core.analysis_clarifications import ClarificationRequestBatch, confirmed_answers
+from legal_core.analysis_clarifications import confirmed_answers, intake_clarification_requests
 from legal_core.contracts import validate_intake_draft_data
 from legal_core.factual_safety_intake import (
     SCREENING_FIELDS,
@@ -68,9 +68,7 @@ def allowed_factual_questions(
         "schemaVersion": "intake-answer-question.v1", "wizardState": "SAFETY",
         "targetField": "safetyScreening", "screeningField": field,
     }) for field in fields if field not in screening)
-    requests = ClarificationRequestBatch.model_validate({
-        "requests": data.get("analysisClarificationRequests", []),
-    }).requests
+    requests = intake_clarification_requests(data)
     if current.wizard_state == "SERVICES":
         # These are extraction slots within the primary service proposal, not
         # current service identities. Core binds them after validating its names.

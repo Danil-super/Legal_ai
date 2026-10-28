@@ -22,6 +22,7 @@ from legal_core.analysis_clarifications import (
     ClarificationRequest,
     ClarificationRequestBatch,
     ServiceProvidedDate,
+    intake_clarification_requests,
 )
 from legal_core.intake_service_scope import (
     invalidate_service_clarification_answers as invalidate_service_scope,
@@ -201,9 +202,12 @@ def _stored_clarification_requests(data: dict[str, Any]) -> list[ClarificationRe
 
 
 def clarification_requests(data: dict[str, Any]) -> list[ClarificationRequest]:
-    """Only a strict persisted list can activate the optional question step."""
-    requests = _stored_clarification_requests(data)
+    """Collect material facts before consent, or preserve a retained recovery batch."""
+    if ("analysisClarificationRequests" in data and not _stored_clarification_requests(data)
+            and data["analysisClarificationRequests"] != []):
+        return []
     try:
+        requests = intake_clarification_requests(data)
         for request in requests:
             if request.service_slot is not None and not _needs_services(data):
                 return []

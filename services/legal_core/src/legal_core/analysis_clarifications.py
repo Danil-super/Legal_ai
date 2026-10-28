@@ -152,6 +152,47 @@ def confirmed_answers(facts: Mapping[str, object]) -> AnalysisClarificationAnswe
     return answers
 
 
+def intake_clarification_requests(data: Mapping[str, object]) -> list[ClarificationRequest]:
+    """Plan existing material factual targets before consent, without deciding answers.
+
+    A retained recovery batch keeps its explicit order and scope. New guided input
+    collects service applicability and requested action together in the same intake.
+    This is a collection plan, not a new report prerequisite or a model request
+    batch: the latter retains its three-request limit. UNKNOWN and approximate
+    dates are attempts and are never reopened automatically.
+    """
+    if type(data.get("intakeVersion")) is not int or data["intakeVersion"] != 2:
+        return []
+    raw = data.get("analysisClarificationRequests", [])
+    requests = ClarificationRequestBatch.model_validate({"requests": raw}).requests
+    facts = {
+        "INTAKE_VERSION": "GUIDED_V2", "SITUATION_AREAS": data.get("situationAreas"),
+        "AFFECTED_SERVICES": data.get("affectedServices"),
+        "ANALYSIS_CLARIFICATION_ANSWERS": data.get("analysisClarificationAnswers", {"answers": []}),
+    }
+    confirmed_answers(facts)
+    if not requests:
+        services, areas = data.get("affectedServices"), data.get("situationAreas")
+        if (isinstance(areas, list) and "TREATMENT" in areas
+                and isinstance(services, list) and 1 <= len(services) <= 5
+                and all(isinstance(item, str) and 2 <= len(item.strip()) <= 120
+                        for item in services) and len(set(services)) == len(services)):
+            requests.extend(ClarificationRequest(questionId=question, serviceSlot=slot)
+                            for slot in range(len(services)) for question in (
+                                ClarificationQuestionId.SERVICE_PAYMENT_BASIS,
+                                ClarificationQuestionId.SERVICE_PROVIDED_DATE,
+                            ))
+        # Purpose describes the action requested by a real incoming case. It is
+        # not inferred from the patient's wishes or a legal qualification.
+        if data.get("incomingKind") is not None:
+            requests.append(ClarificationRequest(
+                questionId=ClarificationQuestionId.RESPONSE_PURPOSE,
+            ))
+    # Keep attempted identities available for explicit Back editing. Both
+    # question derivation and automatic navigation filter attempted answers.
+    return requests
+
+
 def clarification_answers_are_known(facts: Mapping[str, object]) -> bool:
     try:
         answers = confirmed_answers(facts)

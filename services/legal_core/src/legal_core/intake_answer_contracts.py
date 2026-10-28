@@ -12,8 +12,8 @@ from pydantic import ConfigDict, Field, JsonValue, field_validator, model_valida
 
 from legal_core.analysis_clarifications import (
     ClarificationRequest,
-    ClarificationRequestBatch,
     confirmed_answers,
+    intake_clarification_requests,
 )
 from legal_core.case_preparation_contracts import PreparationModel, Sha256
 from legal_core.factual_safety_intake import (
@@ -185,9 +185,7 @@ def derive_answer_question(
             return None
         payload["screeningField"] = field
     elif wizard_state == "ANALYSIS_CLARIFICATION":
-        requests = ClarificationRequestBatch.model_validate({
-            "requests": draft_data.get("analysisClarificationRequests", []),
-        }).requests
+        requests = intake_clarification_requests(draft_data)
         answers = confirmed_answers(_facts(draft_data))
         identities = {(item.question_id, item.service_slot) for item in answers.answers}
         request = next((item for item in requests
