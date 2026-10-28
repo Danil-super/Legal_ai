@@ -204,15 +204,20 @@ def test_unresolved_is_a_bound_result_not_unknown_or_confirmation():
     assert [item[0] for item in calls] == ["context", "model"]
 
 
-def test_dependency_composition_reuses_one_configured_researcher_without_new_profile_or_budget():
+def test_dependency_composition_keeps_one_intake_researcher_and_the_existing_profile():
+    from dataclasses import replace
+
     settings = ServiceSettings(KEY, "http://core:8000", "http://researcher:8642", "r", "researcher",
                                "http://reviewer:8642", "v", "reviewer")
     dependencies = build_dependencies(settings)
     researcher = dependencies.reasoning._researcher
-    assert dependencies.understanding._researcher is researcher
-    assert dependencies.answer_understanding._researcher is researcher
+    intake_researcher = dependencies.understanding._researcher
+    assert dependencies.answer_understanding._researcher is intake_researcher
+    assert intake_researcher is not researcher
+    assert intake_researcher.endpoint == replace(researcher.endpoint, timeout_seconds=65)
     assert researcher.endpoint.model == "researcher"
-    assert researcher.endpoint.timeout_seconds == 65 and researcher.endpoint.stream_response is True
+    assert researcher.endpoint.timeout_seconds == 115 and researcher.endpoint.stream_response is True
+    assert intake_researcher.endpoint.stream_response is True
 
 
 @pytest.mark.parametrize("path_kind", ["answer", "understanding", "analyze"])
