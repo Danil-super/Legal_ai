@@ -127,3 +127,11 @@ identity mapping. Source Case → Version locking remains unchanged. A concurren
 administration transaction can complete its membership update while selection
 waits for the User; final predicates reject revocation after the wait. Real PG
 regressions exercise both successful unchanged access and revoked membership.
+
+Imported DRAFT cards expose the existing submit operation to contributors in the
+Telegram detail view. The case-specific callback refreshes workspace capability,
+current version and draft status; its retained action key is per case/version.
+Reviewer-only and ungranted actors get no submit control and forged callbacks do
+not dispatch the operation. Core authorization, review independence and request
+schemas stay unchanged. This adds no bulk submission or approval. Workspace copy
+explains reviewed examples as optional analogies with separately verified norms.

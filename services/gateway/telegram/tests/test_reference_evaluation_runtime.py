@@ -239,3 +239,121 @@ def test_reference_evaluation_gateway_client_uses_only_telegram_identity() -> No
     assert requests[0].headers["idempotency-key"] == str(CASE_ID)
     assert "x-clinic-id" not in requests[0].headers
     assert "clinicId" not in requests[0].content.decode()
+
+
+@pytest.mark.parametrize("contribute,review,state,can_submit", [
+    (True, False, "DRAFT", True), (False, True, "DRAFT", False),
+    (False, False, "DRAFT", False), (True, True, "READY_FOR_REVIEW", False),
+    (True, True, "APPROVED_FOR_EVALUATION", False),
+])
+def test_imported_draft_submission_uses_real_ptb_dispatch_and_existing_core_transport(
+    monkeypatch, contribute, review, state, can_submit,
+):
+    from telegram import Update
+    from telegram.ext import Application, ExtBot
+
+    calls, sent, errors = [], [], []
+
+    async def telegram_post(self, endpoint, data=None, **kwargs):
+        data = dict(data or {})
+        if endpoint == "getMe":
+            return {"id": 123456, "is_bot": True, "first_name": "Synthetic",
+                    "username": "synthetic_bot"}
+        if endpoint == "answerCallbackQuery":
+            return True
+        sent.append(data)
+        return {"message_id": 100 + len(sent), "date": 1,
+                "chat": {"id": ACTOR, "type": "private"}, "text": data.get("text", "")}
+
+    def core_request(request):
+        calls.append(request)
+        if request.url.path.endswith("/access"):
+            return httpx2.Response(200, json={"canContribute": contribute, "canReview": review})
+        if request.method == "GET":
+            return httpx2.Response(200, json={
+                "id": str(CASE_ID), "status": state, "currentVersion": 2,
+                "createdBySelf": False, "displayName": "Вымышленный импортированный пример",
+                "scenarioText": "Пломба выпала, клиника пригласила на осмотр.",
+                "groupKey": "healthcare", "asOfDate": "2026-10-08",
+                "expectedRoute": "INTERNAL_DRAFT", "hasMaterial": True,
+            })
+        assert request.url.path == f"/v1/reference-evaluations/{CASE_ID}/submit"
+        return httpx2.Response(200, json={"id": str(CASE_ID), "status": "READY_FOR_REVIEW",
+                                         "currentVersion": 2})
+
+    monkeypatch.setattr(ExtBot, "_post", telegram_post)
+
+    async def scenario():
+        async with httpx2.AsyncClient(base_url="http://core.test",
+                                      transport=httpx2.MockTransport(core_request)) as http:
+            app = Application.builder().token(TOKEN).build()
+            app.bot_data[bot.LEGAL_CORE_CLIENT_KEY] = LegalCoreClient(http)
+            install_reference_evaluations(app)
+
+            async def error_handler(update, context):
+                errors.append(context.error)
+
+            app.add_error_handler(error_handler)
+            await app.initialize()
+
+            async def dispatch(action, number):
+                user = {"id": ACTOR, "is_bot": False, "first_name": "Synthetic"}
+                update = Update.de_json({"update_id": number, "callback_query": {
+                    "id": str(number), "chat_instance": "synthetic", "from": user,
+                    "message": {"message_id": number, "date": 1, "from": user,
+                                "chat": {"id": ACTOR, "type": "private"}},
+                    "data": action,
+                }}, app.bot)
+                await app.process_update(update)
+                assert not errors, errors
+
+            try:
+                await dispatch(f"refeval:view:{CASE_ID}", 1)
+                shown = sent[-1]
+                markup = shown["reply_markup"]
+                callbacks = {button.callback_data for row in markup.inline_keyboard
+                             for button in row}
+                assert (f"refeval:submit:{CASE_ID}" in callbacks) is can_submit
+                assert (f"refeval:approve:{CASE_ID}" in callbacks) is (
+                    state == "READY_FOR_REVIEW" and review)
+                # An old attachment session cannot redirect this case-specific callback.
+                app.user_data[ACTOR][PENDING_KEY] = {
+                    "stage": "attachment", "caseId": str(UUID(int=1)),
+                }
+                # A stale/deliberately crafted callback cannot bypass refreshed capability/state.
+                await dispatch(f"refeval:submit:{CASE_ID}", 2)
+                await dispatch(f"refeval:submit:{CASE_ID}", 3)
+            finally:
+                await app.shutdown()
+
+    asyncio.run(scenario())
+    submitted = [request for request in calls if request.method == "POST"]
+    assert len(submitted) == (2 if can_submit else 0)
+    if submitted:
+        assert submitted[0].headers["idempotency-key"] == submitted[1].headers["idempotency-key"]
+        assert submitted[0].headers["x-telegram-user-id"] == str(ACTOR)
+        assert "x-clinic-id" not in submitted[0].headers
+        assert submitted[0].content == b"{}"
+    body = "\n".join(str(item.get("text", "")) for item in sent)
+    assert "не включает" not in body
+    assert "аналог" in body.casefold() and "норм" in body.casefold()
+
+
+def test_saved_draft_submit_failure_keeps_a_working_case_specific_recovery_control():
+    from telegram_gateway.case_wizard import LegalCoreApiError
+
+    core = FakeCore()
+    core.get_reference_evaluation = AsyncMock(return_value={
+        "status": "DRAFT", "currentVersion": 2,
+    })
+    core.submit_reference_evaluation = AsyncMock(side_effect=LegalCoreApiError(
+        503, "SERVICE_UNAVAILABLE", "Synthetic unavailable service",
+    ))
+    context = _context(core)
+    update = _update(callback=f"refeval:submit:{CASE_ID}")
+    asyncio.run(_callback(update, context))
+    markup = update.effective_message.reply_text.await_args.kwargs["reply_markup"]
+    callbacks = {button.callback_data for row in markup.inline_keyboard for button in row}
+    assert f"refeval:view:{CASE_ID}" in callbacks
+    assert "refeval:attachment:submit" not in callbacks
+    core.submit_reference_evaluation.assert_awaited_once()

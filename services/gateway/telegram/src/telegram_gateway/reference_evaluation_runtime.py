@@ -2,9 +2,9 @@
 """Private Telegram workspace for reviewed, de-identified reference cases.
 
 This is deliberately separate from the ordinary patient-case wizard and legal
-library.  The workspace only collects de-identified historical examples for a
-future evaluation runner; it never changes legal sources, prompts, risk policy,
-or sends an answer to a patient.
+library. Independently reviewed historical examples may inform reasoning as
+analogies; normative sources remain the separate basis for legal verification.
+The workspace never changes risk policy or sends an answer to a patient.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ _STATUS = {
     "DRAFT": "Черновик",
     "READY_FOR_REVIEW": "Ожидает проверки",
     "CHANGES_REQUIRED": "Нужны доработки",
-    "APPROVED_FOR_EVALUATION": "Одобрен для будущей оценки",
+    "APPROVED_FOR_EVALUATION": "Одобрен юристом",
     "REJECTED": "Не принят для оценки",
     "RETIRED": "Снят с оценки",
 }
@@ -71,7 +71,7 @@ _CALLBACK_RE = re.compile(
     r"^refeval:(?:open|new|confirm|attachment:(?:skip|submit)|"
     r"group:(?:clinical|labour|courts|privacy|licensing|healthcare|general)|"
     r"route:(?:ABSTAIN|HUMAN_ESCALATION|INTERNAL_DRAFT)|"
-    r"list:[0-9a-f-]{36}|view:[0-9a-f-]{36}|download:[0-9a-f-]{36}|"
+    r"list:[0-9a-f-]{36}|view:[0-9a-f-]{36}|download:[0-9a-f-]{36}|submit:[0-9a-f-]{36}|"
     r"approve:[0-9a-f-]{36}|reject:[0-9a-f-]{36}|changes:[0-9a-f-]{36}|"
     r"revise:[0-9a-f-]{36})$"
 )
@@ -225,6 +225,7 @@ def _review_keyboard(
     created_by_self: bool,
     status: str,
     has_material: bool,
+    can_contribute: bool,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if has_material:
@@ -236,6 +237,10 @@ def _review_keyboard(
                 )
             ]
         )
+    if status == "DRAFT" and can_contribute:
+        rows.append([InlineKeyboardButton(
+            "➡️ Отправить на проверку", callback_data=_case_callback("submit", case_id),
+        )])
     if status == "READY_FOR_REVIEW" and can_review and not created_by_self:
         rows.append(
             [
@@ -362,7 +367,8 @@ async def _show_list(
         "🗂 ЭТАЛОННЫЕ КЕЙСЫ\n\n"
         "Обезличенные примеры для проверки бота. Откройте кейс для просмотра "
         "фабулы, кандидата ответа и полного материала.\n\n"
-        "Черновики не являются проверенными ответами или источниками права."
+        "Одобренные примеры могут учитываться как аналогии. "
+        "Правовые выводы проверяются отдельно по утверждённым нормам."
     )
     if not items:
         body += "\n\nСписок пока пуст."
@@ -461,7 +467,8 @@ async def _show_detail(
         f"Дата оценки: {detail.get('asOfDate', '—')}\n"
         f"Ожидаемая обработка: {route}\n\n"
         f"Фабула:\n{scenario_label}\n\n"
-        "Статус кейса не одобряет правовую норму и не включает его в ответы пользователям."
+        "Одобренный пример может учитываться как аналогия. "
+        "Правовые выводы проверяются отдельно по утверждённым нормам."
     )
     await gateway_bot._reply(
         update,
@@ -469,6 +476,7 @@ async def _show_detail(
         reply_markup=_review_keyboard(
             case_id,
             can_review=access["canReview"],
+            can_contribute=access["canContribute"],
             created_by_self=detail.get("createdBySelf") is True,
             status=str(detail.get("status")),
             has_material=detail.get("hasMaterial") is True,
@@ -679,22 +687,46 @@ async def _save_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
-async def _submit_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _submit_case(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, case_id: UUID | None = None,
+) -> None:
     pending = _pending(context)
     actor_id = _actor_id(update)
-    if pending is None or pending.get("stage") != "attachment" or actor_id is None:
+    from_detail = case_id is not None
+    if actor_id is None:
         return
     try:
-        case_id = UUID(str(pending["caseId"]))
-        result = await _core(context).submit_reference_evaluation(
-            case_id,
-            actor_id,
-            idempotency_key=UUID(str(pending.setdefault("submitIdempotencyKey", uuid4()))),
+        client = _core(context)
+        if case_id is None:
+            if pending is None or pending.get("stage") != "attachment":
+                return
+            case_id = UUID(str(pending["caseId"]))
+            operation_key = UUID(str(pending.setdefault("submitIdempotencyKey", uuid4())))
+        else:
+            access = await _access(client, actor_id)
+            if not access["canContribute"]:
+                await gateway_bot._reply(update, "🔒 Отправка примеров на проверку недоступна.")
+                return
+            detail = await client.get_reference_evaluation(case_id, actor_id)
+            current_version = detail.get("currentVersion")
+            if not isinstance(current_version, int) or current_version < 1:
+                raise ValueError("reference evaluation version is invalid")
+            if detail.get("status") != "DRAFT":
+                await _show_detail(update, context, case_id)
+                return
+            operation_key = _stable_action_key(
+                context, case_id=case_id, current_version=current_version, action="SUBMIT",
+            )
+        result = await client.submit_reference_evaluation(
+            case_id, actor_id, idempotency_key=operation_key,
         )
     except (KeyError, ValueError, LegalCoreApiError) as exc:
         if isinstance(exc, LegalCoreApiError):
             await gateway_bot._reply(
-                update, _friendly_error(exc), reply_markup=_attachment_keyboard()
+                update, _friendly_error(exc),
+                reply_markup=(_keyboards([[InlineKeyboardButton(
+                    "Открыть пример", callback_data=_case_callback("view", case_id),
+                )]]) if from_detail and case_id is not None else _attachment_keyboard()),
             )
         else:
             await gateway_bot._reply(update, "⚠️ Не удалось направить кейс на проверку.")
@@ -747,11 +779,12 @@ async def _review(
         return
     case = result.get("case")
     state = case.get("status") if isinstance(case, dict) else None
-    action = "одобрен для будущей оценки" if decision == "APPROVE_FOR_EVALUATION" else "не принят"
+    action = "одобрен юристом" if decision == "APPROVE_FOR_EVALUATION" else "не принят"
     await gateway_bot._reply(
         update,
         f"✅ Кейс {action}. Статус: {_STATUS.get(str(state), 'обновлён')}.\n\n"
-        "Это не меняет юридическую базу, политику рисков или текущие ответы бота.",
+        "Одобренный пример может учитываться как аналогия. "
+        "Правовые выводы проверяются отдельно по утверждённым нормам.",
     )
 
 
@@ -821,6 +854,8 @@ async def reference_evaluation_callback(
         await _download_material(update, context, UUID(callback.rsplit(":", 1)[1]))
     elif callback.startswith("refeval:revise:"):
         await _begin_revision(update, context, UUID(callback.rsplit(":", 1)[1]))
+    elif callback.startswith("refeval:submit:"):
+        await _submit_case(update, context, UUID(callback.rsplit(":", 1)[1]))
     elif callback.startswith("refeval:approve:"):
         await _review(update, context, UUID(callback.rsplit(":", 1)[1]), "APPROVE_FOR_EVALUATION")
     elif callback.startswith("refeval:reject:"):
