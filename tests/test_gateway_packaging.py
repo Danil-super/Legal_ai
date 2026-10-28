@@ -133,3 +133,11 @@ def test_packaging_check_detects_missing_lawyer_work_product_contracts(tmp_path:
     result = _import_runtime(tmp_path)
     assert result.returncode != 0
     assert "No module named 'legal_core.lawyer_work_product_contracts'" in result.stderr
+
+
+def test_packaging_check_detects_missing_reference_analogy_contracts(tmp_path: Path) -> None:
+    _copy_runtime(tmp_path)
+    (tmp_path / "services/legal_core/src/legal_core/reference_analogy_contracts.py").unlink()
+    result = _import_runtime(tmp_path)
+    assert result.returncode != 0
+    assert "No module named 'legal_core.reference_analogy_contracts'" in result.stderr

@@ -30,6 +30,7 @@ COPY services/legal_core/src/legal_core/intake_answer_values.py ./services/legal
 COPY services/legal_core/src/legal_core/intake_factual_candidates.py ./services/legal_core/src/legal_core/intake_factual_candidates.py
 COPY services/legal_core/src/legal_core/intake_service_scope.py ./services/legal_core/src/legal_core/intake_service_scope.py
 COPY services/legal_core/src/legal_core/analysis_contracts.py ./services/legal_core/src/legal_core/analysis_contracts.py
+COPY services/legal_core/src/legal_core/reference_analogy_contracts.py ./services/legal_core/src/legal_core/reference_analogy_contracts.py
 COPY services/legal_core/src/legal_core/lawyer_work_product_contracts.py ./services/legal_core/src/legal_core/lawyer_work_product_contracts.py
 COPY services/legal_core/src/legal_core/risk_engine.py ./services/legal_core/src/legal_core/risk_engine.py
 COPY services/legal_core/src/legal_core/factual_safety_risk.py ./services/legal_core/src/legal_core/factual_safety_risk.py
