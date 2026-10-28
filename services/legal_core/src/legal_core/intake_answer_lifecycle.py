@@ -137,12 +137,12 @@ async def complete_answer(
                 proposal = AnswerInterpretation.model_validate({
                     **proposal.model_dump(by_alias=True), "value": value,
                 })
-                if proposal.factual_proposal is not None:
-                    if stored.retained_sources is None:
-                        raise ValueError("retained sources were not reserved for this operation")
-                    apply_factual_answer(draft.draft_json, stored.question, proposal, stored.answer,
-                                         stored.retained_sources,
-                                         as_of_date=stored.intent.as_of_date)
+            if proposal.factual_proposal is not None:
+                if stored.retained_sources is None:
+                    raise ValueError("retained sources were not reserved for this operation")
+                apply_factual_answer(draft.draft_json, stored.question, proposal, stored.answer,
+                                     stored.retained_sources,
+                                     as_of_date=stored.intent.as_of_date)
             checked = proposal
         except (ValueError, TypeError, AttributeError):
             pass

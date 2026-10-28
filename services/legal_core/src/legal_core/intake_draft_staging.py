@@ -58,7 +58,7 @@ async def historical_metadata(
         raise conflict()
     if kind == "INTERPRET_ANSWER":
         bound = stored_answer(actor, draft, record, fresh=False)
-        if bound.interpretation is None or bound.interpretation.status != "PROPOSED":
+        if bound.interpretation is None or not bound.interpretation.has_provisional_facts:
             raise conflict()
         return await checked_proposal(session, actor, record, bound)
     intent = _stored_intent(actor, draft, record)

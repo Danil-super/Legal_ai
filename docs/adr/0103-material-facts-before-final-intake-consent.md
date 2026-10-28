@@ -47,3 +47,20 @@ anchor; the proposal changes no draft or confirmed fact, contains no added facts
 and still requires the existing final factual-summary consent. The previous exact
 amount path, including its UNKNOWN behavior, is unchanged. This shortcut does not
 change authorization, operation leases/revisions, models/high or call budgets.
+
+A batched clarification prompt also permits partial or out-of-order replies. When
+only a secondary target is answered, the primary remains UNRESOLVED with null value,
+empty primary spans and its bounded reason; a nonempty factualProposal can retain
+independently source-bound additions. The simplified flow stages those additions
+provisionally and asks the still-unanswered primary. Ordinary acceptance of an
+UNRESOLVED primary remains forbidden. No UNKNOWN answer is manufactured.
+
+Core revalidates each candidate against the reserved source IDs/hashes, current
+allowed targets, actual service scope and fill-only rules at model completion,
+proposal reads and staging. Existing actor ownership, lease, revision, proposal
+audit and idempotent staging receipts remain authoritative. Empty proposals cannot
+stage anything. The two-source bundle still contains only the initial narrative
+and current reply; staged structured values preserve earlier facts without adding
+raw reply history. Final factual-summary confirmation remains the single consent.
+Real PostgreSQL and PTB tests cover a secondary date followed by payment, including
+an explicit unknown date, replay and forged/stale/foreign proposals.

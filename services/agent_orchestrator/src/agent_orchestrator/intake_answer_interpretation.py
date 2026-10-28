@@ -77,7 +77,9 @@ confirm facts, approve norms or produce a report. Return only the JSON Schema ob
 The primary value answers only question, with sourceSpans anchored ONLY in the current answer.
 PROPOSED requires a value and 1-3 literal nonblank spans; UNRESOLVED requires null value and
 reasonCode AMBIGUOUS, CONTRADICTS_CONFIRMED or OFF_QUESTION. Changing the current target is a
-permitted correction. An unresolved current answer must omit factualProposal.
+permitted correction. UNRESOLVED keeps sourceSpans empty. If only other allowed targets are
+answered, preserve them in factualProposal while leaving the primary unresolved; never invent
+a primary value or UNKNOWN to retain independently supported secondary facts.
 Optionally include factualProposal (schemaVersion ai-first-factual-proposal.v1). Each candidate
 must copy one exact identity from allowedQuestions and use anchors with sourceId/sourceSha256
 from retainedSources and zero-based Unicode offsets [start,end). Never invent another source,
@@ -286,9 +288,9 @@ class AnswerUnderstanding:
                     proposed = AnswerInterpretation.model_validate({
                         **proposed.model_dump(by_alias=True), "value": value,
                     })
-                    if proposed.factual_proposal is not None:
-                        apply_factual_answer(validation_data, question, proposed, source,
-                                             retained_sources or [], as_of_date=as_of_date)
+                if proposed.factual_proposal is not None:
+                    apply_factual_answer(validation_data, question, proposed, source,
+                                         retained_sources or [], as_of_date=as_of_date)
                 factual_values = [proposed.value, *(item.value for item in (
                     proposed.factual_proposal.candidates if proposed.factual_proposal else []))]
                 # Source IDs/digests and question enums are closed typed metadata,

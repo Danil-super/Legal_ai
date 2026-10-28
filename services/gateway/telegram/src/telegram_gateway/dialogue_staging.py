@@ -18,7 +18,10 @@ async def stage(client: Any, status: Any, draft: dict[str, Any], *, answer: bool
     """
     await client.proposal_draft(status, draft)
     source = status.source
-    if status.state != "PROPOSED" or source is None:
+    stageable = (status.interpretation is not None
+                 and status.interpretation.has_provisional_facts) if answer else (
+                     status.state == "PROPOSED")
+    if not stageable or source is None:
         raise ValueError("no stageable proposal")
     prefix = "intake-answer-preparations" if answer else "intake-preparations"
     payload = {"expectedRevision": source.draft_revision,

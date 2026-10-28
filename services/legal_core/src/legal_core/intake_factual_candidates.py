@@ -140,9 +140,10 @@ def apply_factual_answer(
     """All-or-nothing provisional merge. Only the current target may be corrected."""
     parsed = AnswerInterpretation.model_validate(interpretation.model_dump(by_alias=True))
     parsed.validate_source(answer)
-    if parsed.status != "PROPOSED":
-        raise ValueError("current answer has not been resolved")
-    result = apply_answer_value(data, current, parsed.value, answer, as_of_date=as_of_date)
+    if not parsed.has_provisional_facts:
+        raise ValueError("answer has no provisional facts")
+    result = (apply_answer_value(data, current, parsed.value, answer, as_of_date=as_of_date)
+              if parsed.status == "PROPOSED" else deepcopy(dict(data)))
     proposal = parsed.factual_proposal
     if proposal is None:
         return result
