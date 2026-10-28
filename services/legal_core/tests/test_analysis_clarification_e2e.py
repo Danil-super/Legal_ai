@@ -33,7 +33,10 @@ from telegram_gateway import bot
 from telegram_gateway.analysis_jobs_runtime import (
     AnalysisJobsClient, JOBS_CLIENT_KEY, JobSnapshot, job_message,
 )
-from telegram_gateway.case_wizard import LegalCoreClient as GatewayCoreClient
+from telegram_gateway.case_wizard import (
+    LegalCoreClient as GatewayCoreClient,
+    facts_from_v2_data,
+)
 from test_case_api import actor_headers, seed_admin
 from test_case_experience import harness
 from test_clarification_recovery import _source_rows
@@ -107,7 +110,14 @@ async def _approve_evidence(core_http, version_id, editor):
     return version
 
 
-async def _enter_intake(app, client, dispatch, entry, core_http):
+async def _enter_historical_intake(app, client, dispatch, entry, core_http):
+    """Retain an older-client source while checking current intake cannot skip preflight.
+
+    Newly collected cases now answer these questions before final confirmation.
+    Recovery must still work for immutable cases saved before that collection plan.
+    Use the existing Core submission contract to represent that retained source;
+    neither the current question planner nor any production fence is patched.
+    """
     if entry == "quick":
         await dispatch("quick:start")
         await dispatch("text:" + NARRATIVE)
@@ -145,8 +155,24 @@ async def _enter_intake(app, client, dispatch, entry, core_http):
         await dispatch(callback)
     for field in SCREENING_SIGNALS:
         await dispatch(f"case:safety:{field}:NO")
+    retained = await client.get_intake_draft(UUID(draft_id), ACTOR)
+    assert retained["wizardState"] == "ANALYSIS_CLARIFICATION"
+    assert "analysisClarificationAnswers" not in retained["draftData"]
     await dispatch("case:v2:summary:confirm")
     await dispatch(f"case:confirm:{draft_id}")
+    unavailable = await core_http.get(
+        f"/v1/telegram-case-workflows/{draft_id}", headers=actor_headers(ACTOR),
+    )
+    assert unavailable.status_code == 404
+    assert await client.get_intake_draft(UUID(draft_id), ACTOR) == retained
+    await dispatch("/cancel")
+    await client.submit_workflow(
+        UUID(draft_id), facts_from_v2_data(retained["draftData"]), ACTOR,
+        intake_schema_version="dental-case-intake.v2",
+    )
+    await client.archive_intake_draft(
+        UUID(draft_id), ACTOR, expected_revision=retained["revision"],
+    )
     return await client.get_workflow(UUID(draft_id), ACTOR)
 
 
@@ -275,7 +301,7 @@ def test_factual_clarification_round_trip_preserves_history_and_core_evidence_ga
                 async with harness() as (app, _fake_core, sent, dispatch):
                     app.bot_data[bot.LEGAL_CORE_CLIENT_KEY] = gateway
                     app.bot_data[JOBS_CLIENT_KEY] = jobs
-                    source = await _enter_intake(app, gateway, dispatch, entry, http)
+                    source = await _enter_historical_intake(app, gateway, dispatch, entry, http)
                     case_id = source["case"]["id"]
                     blocked = await analyze(case_id)
                     report = blocked["result"]["report"]["reportJson"]
