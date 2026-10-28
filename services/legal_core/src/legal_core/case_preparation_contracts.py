@@ -54,6 +54,9 @@ class PreparationContext(PreparationModel):
     evidence_trace_sha256: Sha256 = Field(alias="evidenceTraceSha256")
     clinic_document_context_trace_sha256: Sha256 = Field(alias="clinicDocumentContextTraceSha256")
     risk_policy_version: str = Field(alias="riskPolicyVersion", min_length=1, max_length=80)
+    reference_example_trace_sha256: Sha256 | None = Field(
+        default=None, alias="referenceExampleTraceSha256", exclude_if=lambda value: value is None,
+    )
 
     @field_validator("risk_policy_version")
     @classmethod

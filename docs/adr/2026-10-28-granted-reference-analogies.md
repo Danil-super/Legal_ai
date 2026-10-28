@@ -51,3 +51,12 @@ Case on its own, certify historical answers or make absent examples an error.
 Real disposable PostgreSQL tests exercise current grants, other clinic and same
 clinic ungranted users, revocation between actor resolution and selection, exact
 approval/version/live-content/hash/privacy checks and complete deterministic budgets.
+
+R3 adds optional `referenceExamples` and paired `referenceExampleTraceSha256` to
+AnalysisContextResponse. They are omitted when absent; an empty eligible selection
+uses absence, preserving exact old serialized source bytes/hashes. PreparationContext
+retains only the optional trace, never historical text. Ordinary submissions add
+optional `expectedReferenceExampleTraceSha256`; the private draft source must match
+its actual selected context. Field-level Pydantic `exclude_if` preserves omission
+even for explicit None. Pair/trace/tamper tests run against the same canonical
+serialization used by existing hashes. Producer wiring remains a separate increment.
