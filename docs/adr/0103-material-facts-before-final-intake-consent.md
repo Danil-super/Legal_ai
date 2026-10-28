@@ -64,3 +64,16 @@ and current reply; staged structured values preserve earlier facts without addin
 raw reply history. Final factual-summary confirmation remains the single consent.
 Real PostgreSQL and PTB tests cover a secondary date followed by payment, including
 an explicit unknown date, replay and forged/stale/foreign proposals.
+
+The new literal shortcuts yield to the rich interpreter when the retained initial
+description can still supply other planned material targets. A short payment reply
+must not prevent reuse of a date or response purpose already in that description.
+Only the final remaining target, or a reply without such retained work, takes the
+shortcut. Ordinary legacy UNRESOLVED receipts may retain bounded primary anchors;
+only the new secondary-only proposal requires empty primary spans. Such ordinary
+receipts remain readable and cannot be staged or accepted as facts.
+
+Deploy compatible Core, Agent and Gateway readers together. To pause production,
+disable the existing producer flags on a compatible reader; do not roll back to a
+reader that rejects the retained secondary-only receipts. No database downgrade or
+automatic source approval is part of this change.

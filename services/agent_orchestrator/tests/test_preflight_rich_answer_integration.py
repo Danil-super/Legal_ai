@@ -33,7 +33,7 @@ def test_actual_agent_accepts_rich_preflight_targets_without_using_report_reques
     question = derive_answer_question(data, state)
     allowed = allowed_factual_questions(data, question)
     source = ("Сведений по последствиям нет" if state == "HEALTH"
-              else "Эта услуга была оказана платно")
+              else "платно")
     value = ["NO_KNOWN_INFORMATION"] if state == "HEALTH" else "PAID"
     sources = retained_answer_sources(uuid4(), 3, data, source)
     response = {
@@ -83,7 +83,7 @@ def test_actual_agent_accepts_rich_preflight_targets_without_using_report_reques
 
     result = asyncio.run(run())
     assert result.status == "PROPOSED" and result.value == value
-    assert len(calls) <= 1
+    assert len(calls) == 1
     if additional_facts:
         assert len(result.factual_proposal.candidates) == 2 * service_count + (
             1 if state == "HEALTH" else 0

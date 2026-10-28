@@ -238,7 +238,12 @@ class AnswerUnderstanding:
                         return AnswerInterpretation(status="PROPOSED", value=value,
                             sourceSpans=[SourceSpan(start=0, end=len(source))])
             literal = _literal_factual_value(source, question)
-            if literal is not None:
+            retained_material_targets = (
+                any(item.kind == "INITIAL_DESCRIPTION" for item in retained_sources or [])
+                and any(item.clarification_request is not None
+                        for item in allowed_questions or [])
+            )
+            if literal is not None and not retained_material_targets:
                 try:
                     value = validate_answer_value(question, literal, source, validation_data,
                                                   as_of_date=as_of_date)

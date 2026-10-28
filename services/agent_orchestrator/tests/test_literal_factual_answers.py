@@ -118,7 +118,14 @@ def test_retained_source_validation_precedes_even_a_literal_reply(corrupt):
         retained_answer_sources,
     )
 
-    data = _screening("hospitalizationReported")
+    data = _screening("hospitalizationReported") | {"analysisClarificationAnswers": {
+        "answers": [
+            {"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 0, "value": "UNKNOWN"},
+            {"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 0,
+             "value": {"date": None, "precision": "UNKNOWN"}},
+            {"questionId": "RESPONSE_PURPOSE", "serviceSlot": None, "value": "UNKNOWN"},
+        ],
+    }}
     question = derive_answer_question(data, "SAFETY")
     source = "Нет"
     retained = retained_answer_sources(uuid4(), 3, data, source)

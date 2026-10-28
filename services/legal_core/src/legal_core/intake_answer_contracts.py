@@ -130,7 +130,9 @@ class AnswerInterpretation(PreparationModel):
         if self.status == "PROPOSED":
             if self.value is None or not self.source_spans or self.reason_code is not None:
                 raise ValueError("proposed answers require a value and literal source anchors")
-        elif self.value is not None or self.reason_code is None or self.source_spans:
+        elif self.value is not None or self.reason_code is None or (
+            self.factual_proposal is not None and self.source_spans
+        ):
             raise ValueError("unresolved answers require only a bounded reason, never a value")
         return self
 

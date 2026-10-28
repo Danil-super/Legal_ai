@@ -101,3 +101,14 @@ def test_empty_secondary_proposal_is_not_a_stageable_unresolved_answer():
     raw["factualProposal"]["candidates"] = []
     with pytest.raises(ValueError):
         AnswerInterpretation.model_validate(raw)
+
+
+def test_retained_unresolved_receipt_with_an_anchor_remains_readable_but_not_stageable():
+    from legal_core.intake_answer_contracts import AnswerInterpretation
+
+    old_wire = {"status": "UNRESOLVED", "value": None,
+                "sourceSpans": [{"start": 0, "end": 8}], "reasonCode": "AMBIGUOUS"}
+    restored = AnswerInterpretation.model_validate(old_wire)
+    restored.validate_source("Не знаю.")
+    assert restored.has_provisional_facts is False
+    assert restored.model_dump(mode="json", by_alias=True) == old_wire
