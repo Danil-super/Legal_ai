@@ -71,3 +71,23 @@ def test_clipped_or_ambiguous_model_anchor_never_rewrites_the_whole_source(
     result = run_model(source, payload(source, amount, anchor), [])
     assert 'amount' not in result.safety_screening
     assert result.clinic_actions == ['INVITED_FOR_EXAMINATION']
+
+
+@pytest.mark.parametrize('rubles,expected', [(5000, 'MEDIUM'), (10000, 'HIGH')])
+def test_initial_unit_normalization_preserves_the_unchanged_v4_risk_boundary(rubles, expected):
+    from legal_core.contracts import FactKey
+    from legal_core.intake_preparation_merge import merge_preparation_suggestions
+    from legal_core.risk_engine import evaluate_risk
+    from test_factual_safety_risk import facts
+    from test_risk_policy_v4 import v4_policy
+
+    anchor = f'попросил возврат {rubles} рублей'
+    source = f'Пациент {anchor}. Клиника пригласила на осмотр.'
+    result = run_model(source, payload(source, rubles, anchor), [])
+    merged = merge_preparation_suggestions({'intakeVersion': 2, 'eventSummary': source},
+                                          result, source)
+    confirmed = facts(moneyRequested='YES', amount=merged['safetyScreening']['amount'])
+    confirmed[FactKey.EVENT_SUMMARY] = source
+    risk = evaluate_risk(confirmed, policy=v4_policy(), evidence_verified=True)
+    assert risk.level.value == expected
+    assert risk.external_draft_allowed is False
