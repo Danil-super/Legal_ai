@@ -131,6 +131,17 @@ class AnalysisState:
         return self.reference_analogies.trace_sha256 if self.reference_analogies else None
 
 
+async def _commit_analysis_result(session: AsyncSession, state: AnalysisState) -> None:
+    # Flush risk/report/receipt writes (including their actual FK waits) before
+    # the last wall-clock/source check. No new writes or waits may follow it.
+    await session.flush()
+    await require_reference_analogy_trace_current(
+        session, case=state.case, facts=state.facts,
+        expected_trace=state.reference_example_trace_sha256,
+    )
+    await session.commit()
+
+
 def _require_agent_internal_key(key: AgentInternalKeyHeader = None) -> None:
     """Require the service credential before exposing any analysis boundary."""
 
@@ -753,7 +764,7 @@ def create_analysis_router(
                     session, actor=actor, case=state.case, scope=scope,
                     idempotency_key=idempotency_key, request_hash=request_hash, result=preparation,
                 )
-                await session.commit()
+                await _commit_analysis_result(session, state)
                 return preparation
 
         current_version = await session.scalar(
@@ -832,7 +843,7 @@ def create_analysis_router(
                 session, actor=actor, case=state.case, scope=scope,
                 idempotency_key=idempotency_key, request_hash=request_hash, result=ready,
             )
-            await session.commit()
+            await _commit_analysis_result(session, state)
             return ready
         idempotency = _new_idempotency_record(
             actor=actor,
@@ -887,7 +898,7 @@ def create_analysis_router(
                 },
             )
         )
-        await session.commit()
+        await _commit_analysis_result(session, state)
         return response_payload
 
     @router.post(

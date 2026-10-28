@@ -96,3 +96,11 @@ rows hidden by FORCE RLS from a NOSUPERUSER/NOBYPASSRLS table owner. The tempora
 owner-only NO FORCE check is transactional; refusal restores FORCE, and an empty
 successful check restores FORCE before removing the constraint. Rollback means
 disabling producers on a compatible reader, not erasing or relabelling history.
+
+Independent review reproduced natural example expiry during a later risk-policy
+foreign-key wait, after initial source fencing. All three ordinary submission
+commit branches now explicitly flush every risk/run/report/receipt write, repeat
+the producer/source wall-clock fence, then commit with no intervening write or
+network operation. A stale source rolls the entire transaction back. Real PG
+regressions observe the actual FK lock wait for legacy report, V2 limitation and
+V2 ready branches under the unchanged 5000 RUB/current-v4 scenario.
