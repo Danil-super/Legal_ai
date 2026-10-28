@@ -20,6 +20,7 @@ from legal_core.intake_answer_contracts import (
     AnswerQuestion,
     RetainedSourceSegment,
     derive_answer_question,
+    material_question,
 )
 from legal_core.intake_answer_intent import AnswerPreparationIntent
 from legal_core.intake_answer_values import validate_answer_shape, validate_answer_value
@@ -403,7 +404,11 @@ async def reserve_answer(
             session.add(_audit(actor=actor, action="INTAKE_ANSWER_RESERVED",
                                resource_type=RESOURCE_TYPE, resource_id=record.id,
                                metadata={"revision": draft.revision,
-                                         "questionSha256": question.question_sha256}))
+                                         "questionSha256": question.question_sha256,
+                                         "materialReasonCode": (
+                                             material_question(question).reason_code
+                                         ),
+                                         "wizardState": question.wizard_state}))
         await session.commit()
         return result
 

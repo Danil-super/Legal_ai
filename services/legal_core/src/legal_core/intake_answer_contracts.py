@@ -298,4 +298,30 @@ class MaterialQuestion(PreparationModel):
     )
 
 
+def material_question(supplied: AnswerQuestion) -> MaterialQuestion:
+    """Explain a selected factual question; never select/reopen it or infer an answer.
+
+    Optional context can change conditional next actions, but this explanation does
+    not make it mandatory. The caller still owns current draft/scope/attempt checks.
+    Proposed service slots are extraction targets, not questions for a user.
+    """
+    question = AnswerQuestion.model_validate(supplied.model_dump(by_alias=True))
+    if question.scope_basis is not None:
+        raise ValueError("extraction targets do not authorize additional user questions")
+    reason: Literal["SAFETY_DECISION", "SOURCE_APPLICABILITY", "ACTION_SELECTION"]
+    if question.wizard_state in {"INCOMING", "HEALTH", "SAFETY"}:
+        # These reported events/amounts can change the deterministic escalation.
+        reason = "SAFETY_DECISION"
+    elif question.wizard_state in {"SITUATION", "SERVICES", "EVENT_DATE"}:
+        # Domain, service and date determine which approved sources can apply.
+        reason = "SOURCE_APPLICABILITY"
+    elif question.clarification_request is not None:
+        reason = ("ACTION_SELECTION" if question.clarification_request.question_id
+                  == "RESPONSE_PURPOSE" else "SOURCE_APPLICABILITY")
+    else:
+        # Narrative, chronology and actions already taken guide conditional steps.
+        reason = "ACTION_SELECTION"
+    return MaterialQuestion(question=question, reasonCode=reason)
+
+
 AnswerInterpretation.model_rebuild()
