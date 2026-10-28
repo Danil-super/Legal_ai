@@ -6,10 +6,11 @@ from datetime import date
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from legal_core.analysis_clarifications import ClarificationRequest, validate_unique_requests
 from legal_core.contracts import FactKey
+from legal_core.pseudonymization import pseudonymize_text
 
 
 class StrictModel(BaseModel):
@@ -71,6 +72,28 @@ class ClinicDocumentReadinessItem(StrictModel):
     analysis_blocking: Literal[False] = Field(default=False, alias="analysisBlocking")
 
 
+class ReferenceAnalogyItem(StrictModel):
+    """Model-visible comparison only; excludes private database provenance."""
+
+    model_config = ConfigDict(frozen=True, revalidate_instances="always", hide_input_in_errors=True)
+    analogy_id: str = Field(alias="analogyId", pattern=r"^example-[1-3]$")
+    purpose: Literal["NON_AUTHORITATIVE_ANALOGY"] = "NON_AUTHORITATIVE_ANALOGY"
+    date_basis: Literal["EVALUATION_DATE_NOT_EVENT_DATE"] = Field(
+        default="EVALUATION_DATE_NOT_EVENT_DATE", alias="dateBasis",
+    )
+    group_key: Literal["clinical", "labour", "courts", "privacy", "licensing",
+                       "healthcare", "general"] = Field(alias="groupKey")
+    evaluation_as_of_date: date = Field(alias="evaluationAsOfDate")
+    scenario_text: str = Field(alias="scenarioText", min_length=10, max_length=12_000)
+
+    @field_validator("scenario_text")
+    @classmethod
+    def deidentified_text(cls, value: str) -> str:
+        if not value.strip() or pseudonymize_text(value).changed:
+            raise ValueError("analogy text must be de-identified")
+        return value
+
+
 class CaseProjection(StrictModel):
     """Minimal pseudonymous input that may be sent to a reasoning provider."""
 
@@ -86,6 +109,20 @@ class CaseProjection(StrictModel):
         alias="clinicDocumentReadiness",
         max_length=20,
     )
+
+
+    reference_examples: list[ReferenceAnalogyItem] = Field(
+        default_factory=list, alias="referenceExamples", max_length=3,
+        exclude_if=lambda value: not value,
+    )
+
+    @model_validator(mode="after")
+    def bounded_analogies(self) -> CaseProjection:
+        if (len({item.analogy_id for item in self.reference_examples})
+                != len(self.reference_examples)
+                or sum(len(item.scenario_text) for item in self.reference_examples) > 12_000):
+            raise ValueError("analogy selection exceeds its complete-example budget")
+        return self
 
 
 class ClaimProposal(StrictModel):
