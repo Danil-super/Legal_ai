@@ -59,6 +59,7 @@ def fake_update(*, text: str = "", callback: str | None = None) -> SimpleNamespa
         callback_query=(
             None if callback is None else SimpleNamespace(
                 data=callback, answer=AsyncMock(), message=SimpleNamespace(message_id=3),
+                edit_message_reply_markup=AsyncMock(),
             )
         ),
     )

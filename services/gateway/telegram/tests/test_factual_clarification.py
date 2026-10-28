@@ -24,17 +24,17 @@ from test_guided_case_intake_v2 import _base_data
 
 
 @pytest.mark.parametrize("field", ["representativeContact", "authorityReferralMentioned"])
-def test_unknown_safety_fact_is_reasked_before_freezing_case(field):
+def test_explicit_unknown_safety_fact_is_preserved_at_summary_confirmation(field):
     screening = {"schemaVersion": SCREENING_VERSION,
                  **dict.fromkeys(SCREENING_FIELDS, "NO"), "amount": "NOT_REQUESTED"}
     screening[field] = "UNKNOWN"
     data = _base_data() | {"safetyScreening": screening}
     update, context, _client, message = runtime_context(data, "case:v2:summary:confirm")
     result = asyncio.run(bot.confirm_v2_summary(update, context))
-    assert result == bot.WizardState.SAFETY
-    assert field not in data["safetyScreening"]
+    assert result == bot.WizardState.V2_CONFIRM
+    assert data["safetyScreening"][field] == "UNKNOWN"
     assert all(data["safetyScreening"][f] == "NO" for f in SCREENING_FIELDS if f != field)
-    assert any("уточн" in text.lower() for text in message.text_replies)
+    assert any("подтверждена" in text.lower() for text in message.text_replies)
 
 
 def test_stored_unknown_error_explains_the_actual_question():

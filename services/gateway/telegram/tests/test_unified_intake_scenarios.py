@@ -242,10 +242,10 @@ def test_shared_v2_services_dates_safety_summary_and_confirmation(path, area, ca
                 assert screening["representativeContact"] == "UNKNOWN"
             await dispatch("case:v2:summary:confirm")
             if case == "unknown_safety":
-                assert core.draft["wizardState"] == "SAFETY"
-                assert screening_question(core.draft["draftData"])[0] == "representativeContact"
+                screening = core.draft["draftData"]["safetyScreening"]
+                assert screening["representativeContact"] == "UNKNOWN"
+                assert screening_question(core.draft["draftData"]) is None
                 assert core.submissions == []
-                return
             assert core.draft["wizardState"] == "V2_CONFIRM"
             await dispatch(f"case:confirm:{DRAFT}")
             if case == "unknown_date":
@@ -257,6 +257,10 @@ def test_shared_v2_services_dates_safety_summary_and_confirmation(path, area, ca
                 summary_fact = next(item for item in core.submissions[0][1]
                                     if item["factKey"] == "EVENT_SUMMARY")
                 assert summary_fact["value"] == {"text": DESCRIPTION}
+                if case == "unknown_safety":
+                    screening_fact = next(item for item in core.submissions[0][1]
+                                          if item["factKey"] == "FACTUAL_SAFETY_SCREENING")
+                    assert screening_fact["value"]["representativeContact"] == "UNKNOWN"
     asyncio.run(scenario())
 
 
