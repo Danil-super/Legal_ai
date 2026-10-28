@@ -51,6 +51,25 @@ passed without skips in9.74seconds; its8.938seconds of testcase durations
 replace the older four-case estimate. Only these measured modules are refreshed;
 the remaining estimates retain the R4 calibration.
 
+The first GitHub run at `fa4596f` (run40718956883) exposed a mismatch between
+local estimates and actual isolated runner costs. Shards0,1,4 completed in
+158.32,117.32,140.38seconds; shards3,5 completed in112.51,126.48seconds with
+assertion failures, and shard2 reached the unchanged180-second timeout at64%.
+These failures are not passing integration evidence. The slow shard continued
+completing tests, with no single observed inter-test gap over4.344seconds.
+
+Refresh scheduling hints from these six job logs: timestamps between completed
+test-result lines approximate setup/call/teardown costs per file. Start after
+pytest collection, excluding runner/MinIO setup. Fixture teardown at a file
+boundary can be attributed to the next file; these remain scheduling hints,
+not profiler measurements. All338 fully observed files receive measured hints.
+The partially observed `test_answer_http_postgres_flow.py` keeps the maximum of
+its old18.371seconds and its4.344-second observed prefix; twenty unobserved
+files retain their earlier positive estimates. Do not extrapolate a completed
+run from the timed-out prefix. The corresponding metadata-only timing artifact
+records source run/job IDs, case counts, zero observed skips and completion
+status; it contains no test input or credentials.
+
 ## Verification and limits
 
 Behavioral tests reproduce heavy-module collisions and verify deterministic
@@ -58,8 +77,8 @@ distribution, new-file inclusion, canonical ordering, complete unique coverage,
 fail-closed manifest handling and real pytest exit propagation. Existing
 independent tests retain the aggregate CI success-only gate.
 
-After the reference refresh the checkout's estimated loads are
-149.196–149.244 seconds across six workers (359 files). Collection, machine load and future
+After the GitHub refresh the checkout's estimated loads are
+138.926–138.976 seconds across six workers (359 files). Collection, machine load and future
 changes affect actual runtime; these estimates do not demonstrate that the
 full suite passes within 180 seconds. A fresh complete PostgreSQL/MinIO run and
 GitHub CI remain required before release. No workflow gate, deadline, fixture,
