@@ -1232,6 +1232,18 @@ async def back_v2_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return WizardState.INCOMING
     data = _wizard_data(context)
     current_name = str(data.get(DRAFT_STATE_KEY, V2_INCOMING))
+    if current_name in {"CLINIC_ACTIONS", "CHRONOLOGY"}:
+        # Checklist changes are provisional, durably staged input. Back exits the
+        # optional editor to the one factual recap; it neither confirms a case nor
+        # promises to undo a prior saved selection. Empty context means absence.
+        review_data = dict(data)
+        if review_data.get("clinicActions") == []:
+            review_data.pop("clinicActions")
+        if v2_next_missing_state(review_data) == WizardState.SUMMARY.name:
+            data.clear()
+            data.update(review_data)
+            await _prompt_v2_draft(update, WizardState.SUMMARY, data)
+            return WizardState.SUMMARY
     if current_name == "SAFETY" and previous_screening_question(data):
         await _prompt_v2_draft(update, WizardState.SAFETY, data)
         return WizardState.SAFETY
@@ -2182,10 +2194,10 @@ async def resume_intake_draft(
     data = dict(draft_data)
     pending_materials = (state is WizardState.MATERIALS
                          and data.get("caseMaterialsStatus") != "NOT_ATTACHED")
-    pending_context = (
-        state is WizardState.CLINIC_ACTIONS and not data.get("clinicActions")
-        or state is WizardState.CHRONOLOGY and not data.get("conflictStage")
-    )
+    # A valid value may be an unfinished checklist selection or a prefilled edit.
+    # DONE/accepted single answers persist the next state, so the persisted open
+    # optional checkpoint remains authoritative regardless of value completeness.
+    pending_context = state in {WizardState.CLINIC_ACTIONS, WizardState.CHRONOLOGY}
     if data.get("intakeVersion") == 2 and not pending_materials and not pending_context and (
         preparation or state in {
             WizardState.SUMMARY, WizardState.V2_CONFIRM, WizardState.ANALYSIS_CLARIFICATION,

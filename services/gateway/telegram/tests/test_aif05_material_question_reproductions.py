@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from legal_core.api_contracts import FactInput, TelegramWorkflowSubmissionRequest
-from legal_core.case_api import _input_value
+from legal_core.case_api import _canonical_hash, _input_value
 from legal_core.contracts import FactKey
 from legal_core.intake import missing_facts_for
 from legal_core.intake_preparation_contracts import DraftSuggestions
@@ -73,6 +73,18 @@ def test_mapper_and_core_accept_absent_context_without_manufacturing_statement()
     assert FactKey.CONFLICT_STAGE not in domain and FactKey.CLINIC_ACTIONS not in domain
 
 
+def test_complete_draft_keeps_historical_submission_hash_for_lost_response_replay():
+    # Captured from the pre-change mapper on this exact synthetic draft. Core
+    # binds retries to the whole canonical wire payload, including fact-list order.
+    payload = TelegramWorkflowSubmissionRequest(
+        intakeSchemaVersion="dental-case-intake.v2", receiptVersion=2,
+        facts=facts_from_v2_data(known_data()),
+    )
+    assert _canonical_hash(payload.model_dump(mode="json", by_alias=True)) == (
+        "628dd1c5318e7d846759073694846c9cf5b27f62618d9ba9fb5cedb7c1c77f81"
+    )
+
+
 def test_actual_ptb_optional_context_edits_return_to_summary_then_single_consent_submits():
     async def scenario():
         async with simplified_harness() as (app, core, sent, dispatch):
@@ -98,6 +110,10 @@ def test_actual_ptb_optional_context_edits_return_to_summary_then_single_consent
             assert core.draft["wizardState"] == "CLINIC_ACTIONS"
             await dispatch("case:v2:multi:clinicActions:DONE")
             assert core.draft["wizardState"] == "SUMMARY"
+            await dispatch("/menu")
+            await dispatch("case:draft:" + core.draft["id"])
+            assert core.draft["wizardState"] == "SUMMARY"
+            assert app.user_data[ACTOR][bot.WIZARD_DATA_KEY][bot.DRAFT_STATE_KEY] == "SUMMARY"
             await dispatch("case:v2:context:history")
             assert core.draft["wizardState"] == "CHRONOLOGY"
             await dispatch("case:v2:single:conflictStage:ONGOING")
@@ -132,3 +148,36 @@ def test_unknown_is_not_a_general_absent_field_or_inference_transport_escape_hat
     wire = facts_from_v2_data(known_data())[0] | {"sourceType": "INFERENCE"}
     with pytest.raises(ValidationError):
         FactInput.model_validate(wire)
+
+
+@pytest.mark.parametrize("editor", ["actions", "history", "actions-selected", "actions-cleared"])
+def test_optional_summary_editor_back_returns_to_summary_without_another_form_step(editor):
+    async def scenario():
+        async with simplified_harness() as (app, core, _sent, dispatch):
+            await dispatch("quick:start")
+            await dispatch("text:Учебная ситуация: пациент просит вернуть 5000 рублей.")
+            proposed = known_data()
+            for field in ("intakeVersion", "eventSummary", "incomingSourceStatus",
+                          "caseMaterialsStatus", "conflictStage", "clinicActions"):
+                proposed.pop(field)
+            core.propose(**proposed)
+            await delivery_finished(app)
+            assert core.draft["wizardState"] == "SUMMARY"
+            target = "actions" if editor.startswith("actions") else "history"
+            await dispatch("case:v2:context:" + target)
+            expected = "CLINIC_ACTIONS" if target == "actions" else "CHRONOLOGY"
+            assert core.draft["wizardState"] == expected
+            if editor in {"actions-selected", "actions-cleared"}:
+                await dispatch("case:v2:multi:clinicActions:OFFERED_REFUND")
+                assert core.draft["wizardState"] == "CLINIC_ACTIONS"
+                if editor == "actions-cleared":
+                    await dispatch("case:v2:multi:clinicActions:OFFERED_REFUND")
+            await dispatch("case:v2:back")
+            assert core.draft["wizardState"] == "SUMMARY"
+            assert app.user_data[ACTOR][bot.WIZARD_DATA_KEY][bot.DRAFT_STATE_KEY] == "SUMMARY"
+            if editor == "actions-selected":
+                assert core.draft["draftData"]["clinicActions"] == ["OFFERED_REFUND"]
+            else:
+                assert "clinicActions" not in core.draft["draftData"]
+            assert not core.accepts and not core.jobs
+    asyncio.run(scenario())
