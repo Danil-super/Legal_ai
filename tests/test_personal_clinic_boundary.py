@@ -31,7 +31,8 @@ CLINIC_BASELINE = {
     # Owner-approved clinical multi-fact intake flag; defaults off (ADR0101).
     # Personal entry points, permissions and isolation checks remain frozen.
     # Reviewed default-off clinical draft flag is shared by Core/Agent/Gateway.
-    "docker-compose.yml": "b29356a7ea52991d244588989f6ed311815d505e",
+    # Reviewed Core-only analogy flag defaults off (2026-10-28 granted-reference ADR).
+    "docker-compose.yml": "41e391156d05622211b0bfadeb789d6982f404ee",
     "ops/deploy/docker-compose.production.yml": "9d07d50c67787a0da7a13fcfc49907d550298b83",
 }
 

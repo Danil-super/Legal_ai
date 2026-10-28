@@ -2,6 +2,12 @@
 
 Status: owner-authorized AIF06 implementation, initially inactive, 28 October 2026.
 
+The separately reviewed clinical Compose baseline includes the Core-only
+`AI_FIRST_REFERENCE_ANALOGIES_ENABLED` pass-through, default0. Its exact blob
+changes from b29356a to41e3911 for this one line; the personal-surface hash guard
+remains enforced. Deployment tests inspect the resolved default, explicit enable
+and production overlays; personal route/handler isolation checks stay intact.
+
 The owner explicitly requested that reference cases inform new-case reasoning and
 approved AIF06's allowed-reference-example scope. A reviewed historical example is
 an analogy candidate, never legal evidence, a confirmed fact of a new patient,
