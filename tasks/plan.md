@@ -840,9 +840,15 @@ optional-context collection, audited question reasons, separately authorized AI
 lawyer drafts, immutable storage and human review UI. Detailed acceptance gaps
 remain in tasks/todo.md; these are local changes, not a production readiness claim.
 
-Finish the pinned Hermes input-boundary correction → fresh full PostgreSQL/MinIO
-verification and complete-context model probes → allowed reference-example
-provenance/authorization → representative legal-quality evaluation → GitHub CI
-and separately reviewed release. Preserve current provider/high profiles, v4,
+PR111 separately deployed the pinned Hermes input-boundary correction and
+msgpack1.2.3 at2940af1 after successful main CI and deployment. Both live profiles
+preserved the ends of a77,088-character synthetic input; an ordinary read-only
+5000RUB probe returned two verified claims in46.73seconds without clarifications.
+This is not acceptance of a complete useful plan or Telegram case workflow.
+
+Finish the local reference-example provenance/authorization and late-write
+expiry checks → fresh full PostgreSQL/MinIO verification and representative
+live-model/ legal-quality evaluation → GitHub CI and separately reviewed AIF
+release. Preserve current provider/high profiles, v4,
 10,000RUB threshold and approved-only evidence. Restore service by flags-off on a
 compatible reader; no destructive database downgrade of retained work products.

@@ -20,12 +20,17 @@ work-product versions; recovery worker; readable lawyer plan and explicit
 human revise/approve versions. Current v4 and10,000RUB threshold are unchanged.
 Focused actual PTB/Core/PostgreSQL and independent reviews cover these paths.
 
-The live-model gate is **open**: expanded approved retrieval exposed pinned
-Hermes'65,536-character message truncation below our existing120,000-character
-client bound. Reordering fields alone is not a fix because it loses a different
-part of the input. A guarded adapter correction and a complete-context live
-probe are required before claiming useful analysis. Diagnostic alternative
-prompts remain outside the repository and are not production configuration.
+The input-truncation hotfix is deployed separately in PR111, production commit
+`2940af18025fc63187f30b1d7fcadaa4f0eb6d0a`; main CI/deployment run40710391346
+passed. Both live Hermes profiles preserved unpredictable tokens at both ends
+of a77,088-character synthetic input. All eight active services were healthy;
+both Hermes processes carry the updated launcher digest and app images use
+msgpack1.2.3. A read-only ordinary5000RUB probe produced two Core-verified claims
+without clarifications in46.73seconds. This did not create a case, exercise
+Telegram delivery or demonstrate a complete useful plan. The broader AIF live
+quality gate remains **open**, especially expanded retrieval and lawyer drafts.
+Diagnostic alternative prompts remain outside the repository and are not
+production configuration.
 
 The full R4 run selected every file once with PostgreSQL/MinIO: five parts passed
 without skips; part4 exposed a destructive migration test using shared retained
@@ -33,10 +38,15 @@ assignment history. Runtime correctly refused that downgrade. The test now owns
 a fresh disposable database and always tests the real roundtrip; a new full run
 is required. No deadline, migration guard or retained history was relaxed.
 
-Remaining: AIF06 allowed reference analogies (currently absent from model context),
-repeatable live-model usefulness/timings, final full CI, lawyer quality review and
-separate release/enablement. Existing reference approval is evaluation approval,
-not a legal authority or an implicit grant to every clinic employee.
+Allowed reference analogies now have local Core/Agent contracts, current-source
+selection, private metadata stripping, immutable trace binding and ordinary
+submission fencing after late database writes. They require existing explicit
+workspace grants and independent current evaluation approval. No production
+reference feature is enabled. Final lawyer-write expiry fencing, opt-in wiring
+and the reference-positive worker integration test are still being completed.
+Remaining: repeatable live-model usefulness/timings, final full CI, lawyer quality
+review and separate AIF release/enablement. Existing reference approval is
+evaluation approval, not legal authority or an implicit grant to every employee.
 
 Retained intake sources are the original narrative plus latest reply, with prior
 typed confirmed facts; do not claim all historical raw replies are included.

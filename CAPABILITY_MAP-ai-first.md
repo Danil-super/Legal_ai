@@ -29,8 +29,11 @@ not silently increase it, reapprove legislation or remove mandatory urgent routi
 
 Factual staging, optional context, draft-context authorization, immutable lawyer
 plans and human review are implemented behind default-off flags. Production is
-still PR110. Final integration/live quality gates and release remain open.
-Reference evaluation scenarios are not yet in the model projection; no analogy
-usage is claimed. Their bounded nonauthoritative use must preserve existing
-workspace grants and bind current approved scenario provenance separately from
-normative evidence. No automatic source approval or permission expansion follows.
+PR111 (`2940af1`): the separately approved Hermes input-boundary/security hotfix
+passed CI, deployed and passed live health/context-integrity probes. The AIF
+feature itself remains local; final integration/live quality gates remain open.
+Local reference evaluation scenarios now have a bounded nonauthoritative model
+projection, existing-workspace-grant checks and immutable provenance traces
+separate from normative evidence. Final lawyer-write expiry checks, opt-in wiring
+and reference-positive worker verification remain in progress. No production
+analogy usage, automatic source approval or permission expansion is claimed.
