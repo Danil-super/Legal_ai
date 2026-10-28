@@ -643,8 +643,11 @@ class LegalCoreClient:
         decision: str,
         note: str | None,
         idempotency_key: UUID,
+        expected_review_snapshot_sha256: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {"decision": decision}
+        if expected_review_snapshot_sha256 is not None:
+            payload["expectedReviewSnapshotSha256"] = expected_review_snapshot_sha256
         if note is not None:
             payload["note"] = note
         return await self._json_request(

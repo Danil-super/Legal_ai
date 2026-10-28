@@ -64,7 +64,8 @@ class FakeCore:
     async def get_reference_evaluation(self, case_id: UUID, actor: int) -> dict[str, object]:
         assert case_id == CASE_ID
         assert actor == ACTOR
-        return {"status": "CHANGES_REQUIRED", "createdBySelf": True, "currentVersion": 1}
+        return {"status": "READY_FOR_REVIEW", "createdBySelf": False, "currentVersion": 1,
+                "reviewSnapshotSha256": "a" * 64}
 
 
 def _context(core: FakeCore | None = None) -> SimpleNamespace:
@@ -155,7 +156,12 @@ def test_reviewer_note_is_deidentified_and_sets_changes_requested() -> None:
     async def scenario() -> None:
         core = FakeCore()
         context = _context(core)
-        await _callback(_update(callback=f"refeval:changes:{CASE_ID}"), context)
+        shown = _update(callback=f"refeval:view:{CASE_ID}")
+        await _callback(shown, context)
+        markup = shown.effective_message.reply_text.await_args.kwargs["reply_markup"]
+        action = next(button.callback_data for row in markup.inline_keyboard for button in row
+                      if str(button.callback_data).startswith(f"refeval:changes:{CASE_ID}:"))
+        await _callback(_update(callback=action), context)
         assert context.user_data[PENDING_KEY]["stage"] == "review_note"
         await _text(_update(text="Уточните последовательность действий клиники."), context)
         assert PENDING_KEY not in context.user_data
@@ -171,8 +177,13 @@ def test_repeated_reviewer_callback_reuses_the_same_idempotency_key() -> None:
         core = FakeCore()
         context = _context(core)
 
-        await _callback(_update(callback=f"refeval:approve:{CASE_ID}"), context)
-        await _callback(_update(callback=f"refeval:approve:{CASE_ID}"), context)
+        shown = _update(callback=f"refeval:view:{CASE_ID}")
+        await _callback(shown, context)
+        markup = shown.effective_message.reply_text.await_args.kwargs["reply_markup"]
+        action = next(button.callback_data for row in markup.inline_keyboard for button in row
+                      if str(button.callback_data).startswith(f"refeval:approve:{CASE_ID}:"))
+        await _callback(_update(callback=action), context)
+        await _callback(_update(callback=action), context)
 
         assert [review["decision"] for review in core.reviews] == [
             "APPROVE_FOR_EVALUATION",
@@ -272,6 +283,7 @@ def test_imported_draft_submission_uses_real_ptb_dispatch_and_existing_core_tran
         if request.method == "GET":
             return httpx2.Response(200, json={
                 "id": str(CASE_ID), "status": state, "currentVersion": 2,
+                "reviewSnapshotSha256": "a" * 64,
                 "createdBySelf": False, "displayName": "Вымышленный импортированный пример",
                 "scenarioText": "Пломба выпала, клиника пригласила на осмотр.",
                 "groupKey": "healthcare", "asOfDate": "2026-10-08",
@@ -314,8 +326,8 @@ def test_imported_draft_submission_uses_real_ptb_dispatch_and_existing_core_tran
                 callbacks = {button.callback_data for row in markup.inline_keyboard
                              for button in row}
                 assert (f"refeval:submit:{CASE_ID}" in callbacks) is can_submit
-                assert (f"refeval:approve:{CASE_ID}" in callbacks) is (
-                    state == "READY_FOR_REVIEW" and review)
+                assert any(str(value).startswith(f"refeval:approve:{CASE_ID}:")
+                           for value in callbacks) is (state == "READY_FOR_REVIEW" and review)
                 # An old attachment session cannot redirect this case-specific callback.
                 app.user_data[ACTOR][PENDING_KEY] = {
                     "stage": "attachment", "caseId": str(UUID(int=1)),

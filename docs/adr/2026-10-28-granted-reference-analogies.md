@@ -135,3 +135,20 @@ Reviewer-only and ungranted actors get no submit control and forged callbacks do
 not dispatch the operation. Core authorization, review independence and request
 schemas stay unchanged. This adds no bulk submission or approval. Workspace copy
 explains reviewed examples as optional analogies with separately verified norms.
+
+Telegram review controls bind the displayed source snapshot, not a new GET at
+click time. Each render gets an independent short nonce in a per-user cache of
+at most 32 immutable case/version/snapshot records. Review callback payloads fit
+Telegram's 64-byte limit. Missing, legacy, other-user or evicted nonces only reopen
+the card, never post a decision. Source-bound idempotency keys are retained in a
+separate bounded cache. Same-source retries retain their key/token; replacing a
+scenario or raw attachment requires reviewing a newly displayed snapshot.
+
+APPROVE, REJECT and the deferred CHANGES_REQUIRED comment all send the displayed
+expectedReviewSnapshotSha256. A stale-source response reopens the current card;
+comment intent retains its original source through text entry. The client omits
+an absent optional snapshot for legacy wire/hash compatibility, while all new
+Gateway decisions supply it. Core remains the authority for source CAS, current
+access, independent review and legal-evidence verification. This creates no
+approvals, roles, tables or bulk operations and never upgrades an old click to a
+newer unseen source. Unrelated draft attachment sessions survive saved-card submit.
