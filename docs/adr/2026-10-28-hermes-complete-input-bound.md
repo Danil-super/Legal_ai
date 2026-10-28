@@ -44,5 +44,12 @@ passes. No upstream image/source upgrade or automatic production restart is part
 this local change. Roll back via a compatible application reader and coordinated
 profile recreation; do not claim the earlier65,536 behavior is safe for large inputs.
 
+Both Hermes services record the guarded launcher's SHA256 as a Compose label.
+CI compares both labels with the actual launcher bytes, so a future launcher edit
+requires updating both fingerprints. This makes the normal reviewed `compose up`
+detect a service-configuration change and replace both Python processes while
+preserving their volumes. It does not force database or whole-stack recreation,
+add environment requirements, or change the upstream image or model profiles.
+
 Source: exact pinned upstream `gateway/platforms/api_server.py`, normalization functions
 and `MAX_NORMALIZED_TEXT_LENGTH`; no main-branch behavior assumed.

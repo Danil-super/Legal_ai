@@ -60,6 +60,12 @@ input-bound startup guard and a complete synthetic context exceeding 65,536 char
 claiming live acceptance. The pinned image, tool-free preflight, high reasoning and call deadlines
 remain unchanged.
 
+Each Hermes service has a Compose label containing the SHA256 of
+`run_guarded_gateway.py`. Update both fingerprints whenever that launcher changes;
+CI verifies them against its actual bytes. The changed service configuration makes
+normal `compose up` recreate both profiles, preserving their volumes and applying
+the startup guards without forcing a database or whole-stack restart.
+
 ## Build the exact upstream commit
 
 Do not use `nousresearch/hermes-agent:latest` or another floating tag.
