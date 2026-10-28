@@ -29,3 +29,10 @@ assert that current facts are unchanged, reject non-normative citations before t
 reviewer call, and exercise mutation/privacy/budget/private-metadata failures.
 These synthetic boundary tests do not certify model legal quality or resistance
 to every prompt injection.
+
+The typed Core context is revalidated before projection, including its exact
+scenario/source trace. Projection strips all private provenance. Normal analysis
+submission returns only expectedReferenceExampleTraceSha256; no historical text
+is duplicated in the submission or substituted for current patient facts. The
+absent-field path retains the legacy request shape. Dedicated tests cover forged
+body/hash/empty selections and exact trace forwarding through the HTTP client.

@@ -468,6 +468,7 @@ class LegalCoreClient:
                 context.clinic_document_context_trace_sha256
             ),
             expectedRiskPolicyVersion=context.risk_policy_version,
+            expectedReferenceExampleTraceSha256=context.reference_example_trace_sha256,
             claims=claims,
             semanticReviews=semantic_reviews,
             clarificationRequests=list(reasoning.clarification_requests),
