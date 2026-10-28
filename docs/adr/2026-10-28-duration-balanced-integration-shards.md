@@ -70,6 +70,17 @@ run from the timed-out prefix. The corresponding metadata-only timing artifact
 records source run/job IDs, case counts, zero observed skips and completion
 status; it contains no test input or credentials.
 
+The next complete run at `623d157` (40721837785) passed all5073 PostgreSQL/MinIO
+tests without skips; the six pytest processes took96.61–153.38seconds. This is
+the verified baseline before the subsequent source-bound reference-review fix.
+That fix adds a measured39.749-second Core scheduling hint: its complete
+35-case PostgreSQL JUnit run passed without skips in40.59seconds, followed by
+one additional zero-I/O legacy-receipt compatibility test. Nine new Gateway
+snapshot tests passed in the complete unit run and sum0.080seconds of JUnit
+testcase durations. Four modified approval-fixture modules were measured together
+without skips (30 cases,28.72seconds); their hints are refreshed from that full
+JUnit report. These added measurements do not reuse partial/failed runs as success.
+
 ## Verification and limits
 
 Behavioral tests reproduce heavy-module collisions and verify deterministic
@@ -77,8 +88,9 @@ distribution, new-file inclusion, canonical ordering, complete unique coverage,
 fail-closed manifest handling and real pytest exit propagation. Existing
 independent tests retain the aggregate CI success-only gate.
 
-After the GitHub refresh the checkout's estimated loads are
-138.926–138.976 seconds across six workers (359 files). Collection, machine load and future
+With both new Core/Gateway snapshot modules the combined checkout's estimated
+loads are145.585–145.633seconds across six workers (361 files).
+Collection, machine load and future
 changes affect actual runtime; these estimates do not demonstrate that the
 full suite passes within 180 seconds. A fresh complete PostgreSQL/MinIO run and
 GitHub CI remain required before release. No workflow gate, deadline, fixture,
