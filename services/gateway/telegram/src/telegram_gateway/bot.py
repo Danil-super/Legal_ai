@@ -41,6 +41,7 @@ from telegram_gateway.case_wizard import (
     LegalCoreApiError,
     LegalCoreClient,
     SignalAnswer,
+    confirmed_clarification_answers,
     facts_from_draft,
     facts_from_v2_data,
     parse_date_answer,
@@ -63,6 +64,7 @@ from telegram_gateway.guided_case_intake_v2 import (
     apply_clarification_answer,
     clarification_choices,
     clarification_question,
+    clarification_requests,
     invalidate_service_clarification_answers,
     next_clarification_request,
     previous_clarification_question,
@@ -977,8 +979,21 @@ async def _prompt_v2_draft(
             return
         slot = "global" if request.service_slot is None else str(request.service_slot)
         prefix = f"case:v2:clarify:{request.question_id}:{slot}:"
+        answered = {
+            (answer.question_id, answer.service_slot)
+            for answer in confirmed_clarification_answers(data).answers
+        }
+        pending = [item for item in clarification_requests(data)
+                   if (item.question_id, item.service_slot) not in answered]
+        questions = "\n\n".join(
+            f"{index}. {clarification_question(item, data)}"
+            for index, item in enumerate(pending, start=1)
+        )
         await reply(
-            clarification_question(request, data),
+            "Уточните недостающие факты:\n\n" + questions
+            + "\n\nМожно ответить на все вопросы одним сообщением. "
+            "Если сведений нет, напишите, что именно неизвестно. "
+            "Кнопки ниже относятся к первому вопросу.",
             reply_markup=_v2_keyboard([
                 [(label, prefix + value)] for value, label in clarification_choices(request)
             ]),
@@ -2200,14 +2215,19 @@ async def _prompt_resumed_draft(update: Update, state: WizardState, data: dict[s
 
 async def resume_intake_draft(
     update: Update, context: ContextTypes.DEFAULT_TYPE, *, preparation: bool = False,
+    draft_id: UUID | None = None,
 ) -> int:
+    direct_resume = draft_id is not None
     callback = await _answer_callback(update)
     _clear_pending_admin_grant(context)
     actor_id = _actor_id(update)
     if callback is None or actor_id is None:
         return ConversationHandler.END
     try:
-        draft_id = UUID(callback.removeprefix("case:draft:"))
+        if draft_id is None:
+            draft_id = UUID(callback.removeprefix("case:draft:"))
+        elif not isinstance(draft_id, UUID):
+            raise ValueError("direct resume requires a validated draft identity")
         draft = await _legal_core(context).get_intake_draft(draft_id, actor_id)
         state_name = draft.get("wizardState")
         revision = draft.get("revision")
@@ -2220,6 +2240,8 @@ async def resume_intake_draft(
         ):
             raise ValueError("draft response is invalid")
         state = WizardState[state_name]
+        if direct_resume:
+            _saved_draft_selection(draft_id, draft, is_v2=draft_data.get("intakeVersion") == 2)
     except (KeyError, ValueError, LegalCoreApiError) as exc:
         logger.warning("intake draft resume failed: %s", type(exc).__name__)
         _clear_wizard(context)
@@ -2251,7 +2273,8 @@ async def resume_intake_draft(
         }
     )
     _user_data(context)[WIZARD_DATA_KEY] = data
-    await _reply(update, "✅ Черновик открыт. Продолжаем с сохранённого шага.")
+    if not (direct_resume and context.bot_data.get("intake_simplified_dialogue") is True):
+        await _reply(update, "✅ Черновик открыт. Продолжаем с сохранённого шага.")
     await _prompt_resumed_draft(update, state, data)
     return state
 
