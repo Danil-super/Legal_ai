@@ -12,6 +12,13 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "ops/ci/run_integration_shard.py"
 
 
+def write_duration_manifest(root):
+    (root / "ops/ci").mkdir(parents=True)
+    (root / "ops/ci/integration_file_weights.json").write_text(
+        '{"version":1,"defaultSeconds":1,"files":{}}',
+    )
+
+
 @pytest.mark.parametrize("case,expected", [("pass", 0), ("failure", 1), ("collection", 2)])
 def test_independent_selector_exec_preserves_real_pytest_exit_status(tmp_path, case, expected):
     (tmp_path / "pyproject.toml").write_text(
@@ -24,6 +31,7 @@ def test_independent_selector_exec_preserves_real_pytest_exit_status(tmp_path, c
         "collection": "raise RuntimeError('synthetic collection refusal')\n",
     }[case]
     (tmp_path / "cases/test_synthetic.py").write_text(source)
+    write_duration_manifest(tmp_path)
     bootstrap = (
         "import importlib.util; from pathlib import Path; "
         f"spec=importlib.util.spec_from_file_location('ci_selector', {str(SCRIPT)!r}); "
@@ -42,6 +50,12 @@ def test_independent_required_aggregate_shell_gate_accepts_only_success(outcome)
     shard = workflow["jobs"]["postgres-integration-shard"]
     aggregate = workflow["jobs"]["postgres-integration"]
     assert shard["strategy"]["fail-fast"] is False
+    assert shard["strategy"]["matrix"]["shard"] == [0, 1, 2, 3, 4, 5]
+    integration_step = next(step for step in shard["steps"]
+                            if step.get("name") == "PostgreSQL and MinIO integration tests")
+    assert integration_step["run"] == (
+        'timeout 180s python ops/ci/run_integration_shard.py --index "$SHARD_INDEX" --count 6'
+    )
     assert not shard.get("continue-on-error", False)
     assert shard["runs-on"] == "ubuntu-latest"
     assert "postgres" in shard["services"]
@@ -71,6 +85,7 @@ def test_independent_pattern_overlap_does_not_repeat_files_and_cli_refuses_empty
         'python_files = ["test_*.py", "*_test.py", "test_both_test.py"]\n',
     )
     (tmp_path / "cases").mkdir()
+    write_duration_manifest(tmp_path)
     for name in ("test_alpha.py", "omega_test.py", "test_both_test.py"):
         (tmp_path / "cases" / name).write_text("def test_synthetic(): pass\n")
     files = [name for index in range(3) for name in module.select_files(tmp_path, index, 3)]
