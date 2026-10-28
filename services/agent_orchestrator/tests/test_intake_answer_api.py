@@ -216,7 +216,8 @@ def test_dependency_composition_keeps_one_intake_researcher_and_the_existing_pro
     assert intake_researcher is not researcher
     assert intake_researcher.endpoint == replace(researcher.endpoint, timeout_seconds=65)
     assert researcher.endpoint.model == "researcher"
-    assert researcher.endpoint.timeout_seconds == 115 and researcher.endpoint.stream_response is True
+    assert researcher.endpoint.timeout_seconds == 115
+    assert researcher.endpoint.stream_response is True
     assert intake_researcher.endpoint.stream_response is True
 
 
