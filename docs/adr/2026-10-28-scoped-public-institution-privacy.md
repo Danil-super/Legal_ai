@@ -24,3 +24,18 @@ text through LawyerDraftGenerator and real HermesClient MockTransport. After the
 fix both profile calls receive the intact title; an adjacent synthetic person name
 still prevents the first call. This is transport/privacy proof, not semantic legal
 quality or proof that a synthetic model claim is supported by that public fragment.
+
+Independent review found quadratic containment when many public titles recur in
+raw DOCX XML before its normalized-text limit. Containment now merges the ordered,
+non-overlapping name/institution matches with a monotonic institution iterator.
+Each institution is visited at most once; full-span semantics are unchanged.
+Regression tests count actual offset comparisons for repeated institutions mixed
+with private names, covering both the guard and redaction without a wall-clock
+threshold. The original nested scan fails these tests; the linear scan still
+detects/redacts every adjacent synthetic private name.
+
+The existing patient-label alternatives use inline case-insensitivity restricted
+to the label itself. Thus ПАЦИЕНТ/ПаЦиЕнТ and mixed-case ФИО retain precedence over
+the public institution exemption. Capitalization rules for name words and the
+exact institution whitelist remain unchanged. Real generator regressions reject
+these identifiers in model actions before the semantic-reviewer request.

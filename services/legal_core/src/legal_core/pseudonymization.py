@@ -37,9 +37,8 @@ _INITIALS_NAME: Final = re.compile(
     rf")(?![А-ЯЁа-яё])"
 )
 _IDENTIFIED_FULL_NAME: Final = re.compile(
-    rf"(?<![А-ЯЁа-яё])(?:Пациент(?:а|у|ом|е)?|пациент(?:а|у|ом|е)?|ФИО|фио|"
-    rf"Ф\.?\s*И\.?\s*О\.?|ф\.?\s*и\.?\s*о\.?|"
-    rf"Фамилия\s+имя(?:\s+отчество)?|фамилия\s+имя(?:\s+отчество)?)\s*[:—-]?\s*"
+    rf"(?<![А-ЯЁа-яё])(?i:Пациент(?:а|у|ом|е)?|ФИО|"
+    rf"Ф\.?\s*И\.?\s*О\.?|Фамилия\s+имя(?:\s+отчество)?)\s*[:—-]?\s*"
     rf"{_RUSSIAN_NAME_WORD}(?:\s+{_RUSSIAN_NAME_WORD}){{1,2}}"
     rf"(?![А-ЯЁа-яё])"
 )
@@ -55,10 +54,19 @@ _SCOPED_PUBLIC_INSTITUTION: Final = re.compile(
 
 def _unlabelled_full_names(text: str) -> tuple[re.Match[str], ...]:
     """Recognize only whole scoped institution spans, never exempt adjacent words."""
-    institutions = tuple(match.span() for match in _SCOPED_PUBLIC_INSTITUTION.finditer(text))
-    return tuple(match for match in _UNLABELLED_FULL_NAME.finditer(text) if not any(
-        start <= match.start() and match.end() <= end for start, end in institutions
-    ))
+    institutions = iter(_SCOPED_PUBLIC_INSTITUTION.finditer(text))
+    institution = next(institutions, None)
+    names = []
+    for name in _UNLABELLED_FULL_NAME.finditer(text):
+        # Both regex iterators are ordered and non-overlapping. Advance once past
+        # earlier institutions instead of rescanning them for every name (XML can
+        # contain many repeated public-law titles before normalization limits).
+        while institution is not None and institution.end() <= name.start():
+            institution = next(institutions, None)
+        if (institution is None or name.start() < institution.start()
+                or name.end() > institution.end()):
+            names.append(name)
+    return tuple(names)
 
 
 @dataclass(frozen=True, slots=True)

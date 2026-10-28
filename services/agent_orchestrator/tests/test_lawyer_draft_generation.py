@@ -147,6 +147,9 @@ def test_actual_public_plenum_title_reaches_both_profiles_without_skipping_priva
 @pytest.mark.parametrize("text", [
     "Пленума Верховного Суда РФ; Иванов Иван Иванович",
     "Пациент: Пленума Верховного Суда РФ",
+    "ПАЦИЕНТ: Пленума Верховного Суда РФ",
+    "ПаЦиЕнТ: Пленума Верховного Суда РФ",
+    "фИо: Пленума Верховного Суда РФ",
 ])
 def test_public_institution_never_exempts_identifiers_in_model_actions(text):
     invoke, calls = run(proposal([claim(text=text)]))

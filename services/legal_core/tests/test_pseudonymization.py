@@ -166,6 +166,11 @@ def test_exact_scoped_supreme_court_institution_preserves_privacy_of_adjacent_na
     "Пленума Верховного Суда РФ2",
     "Пациент: Пленума Верховного Суда РФ",
     "ФИО: Постановление Пленума Верховного Суда РФ",
+    "ПАЦИЕНТ: Пленума Верховного Суда РФ",
+    "ПаЦиЕнТ: Пленума Верховного Суда РФ",
+    "ПАЦИЕНТА: Пленума Верховного Суда РФ",
+    "фИо: Пленума Верховного Суда РФ",
+    "Ф.И.О.: Постановление Пленума Верховного Суда РФ",
 ])
 def test_unscoped_or_patient_labelled_words_are_not_public_institution_exemptions(value):
     assert contains_obvious_direct_identifier(value)
@@ -177,3 +182,61 @@ def test_explicit_known_identifier_still_takes_precedence_over_public_institutio
     text = "Пленума Верховного Суда РФ"
     result = pseudonymize_text(text, known_identifiers={text: "[PATIENT_1]"})
     assert result.text == "[PATIENT_1]" and result.replacement_counts["known_identifier"] == 1
+
+
+@pytest.mark.parametrize("operation", ["guard", "redact"])
+def test_repeated_institutions_keep_linear_containment_work_and_private_name_detection(
+    monkeypatch, operation,
+):
+    from legal_core import pseudonymization as scanner
+
+    comparisons = [0]
+    original = scanner._SCOPED_PUBLIC_INSTITUTION
+
+    class CountedOffset(int):
+        def __lt__(self, other):
+            comparisons[0] += 1
+            return int(self) < int(other)
+
+        def __le__(self, other):
+            comparisons[0] += 1
+            return int(self) <= int(other)
+
+        def __ge__(self, other):
+            comparisons[0] += 1
+            return int(self) >= int(other)
+
+        def __gt__(self, other):
+            comparisons[0] += 1
+            return int(self) > int(other)
+
+    class CountedMatch:
+        def __init__(self, match):
+            self.match = match
+
+        def start(self):
+            return CountedOffset(self.match.start())
+
+        def end(self):
+            return CountedOffset(self.match.end())
+
+        def span(self):
+            return self.start(), self.end()
+
+    class CountedPattern:
+        def finditer(self, source):
+            return (CountedMatch(match) for match in original.finditer(source))
+
+    monkeypatch.setattr(scanner, "_SCOPED_PUBLIC_INSTITUTION", CountedPattern())
+    count = 500
+    authority = "Пленума Верховного Суда РФ"
+    source = (authority + "; Иванов Иван Иванович. ") * count
+    if operation == "guard":
+        assert scanner.contains_obvious_direct_identifier(source)
+    else:
+        result = scanner.pseudonymize_text(source)
+        assert result.text == (authority + "; [PERSON_NAME]. ") * count
+        assert result.replacement_counts["unlabelled_full_name"] == count
+    # Count comparisons rather than time: repeating bounded XML/text must not
+    # compare every candidate name with every earlier public institution.
+    assert comparisons[0] <= 10 * count
