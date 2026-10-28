@@ -6,7 +6,7 @@ from datetime import date, timedelta
 import pytest
 
 from legal_core.case_api import ApiError
-from legal_core.intake_preparation_contracts import DraftSuggestions
+from legal_core.intake_preparation_contracts import DraftSuggestions, SourceSpan
 from legal_core.intake_preparation_merge import merge_preparation_suggestions
 
 SOURCE = "Пациент сообщил о сколе коронки. Клиника пригласила на осмотр."
@@ -235,11 +235,18 @@ def test_legacy_global_answer_without_null_slot_is_preserved_on_equal_duplicate(
 
 
 def test_screening_can_complete_existing_money_attempt_without_overwriting_it():
-    current = draft(safetyScreening={"schemaVersion": VERSION, "moneyRequested": "YES"})
+    source = SOURCE + " Пациент просит 10000 рублей."
+    current = draft(eventSummary=source, safetyScreening={
+        "schemaVersion": VERSION, "moneyRequested": "YES",
+    })
     money = {"amountKopecks": 1000000, "currency": "RUB"}
-    result = merge_preparation_suggestions(current, proposal(safetyScreening={
+    suggested = proposal(safetyScreening={
         "schemaVersion": VERSION, "moneyRequested": "YES", "amount": money,
-    }), SOURCE)
+    })
+    suggested.source_spans["safetyScreening"] = [
+        SourceSpan(start=len(SOURCE) + 1, end=len(source)),
+    ]
+    result = merge_preparation_suggestions(current, suggested, source)
     assert result["safetyScreening"] == {
         "schemaVersion": VERSION, "moneyRequested": "YES", "amount": money,
     }

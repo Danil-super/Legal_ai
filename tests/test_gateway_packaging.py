@@ -141,3 +141,11 @@ def test_packaging_check_detects_missing_reference_analogy_contracts(tmp_path: P
     result = _import_runtime(tmp_path)
     assert result.returncode != 0
     assert "No module named 'legal_core.reference_analogy_contracts'" in result.stderr
+
+
+def test_packaging_check_detects_missing_shared_money_grounding(tmp_path: Path) -> None:
+    _copy_runtime(tmp_path)
+    (tmp_path / "services/legal_core/src/legal_core/intake_money.py").unlink()
+    result = _import_runtime(tmp_path)
+    assert result.returncode != 0
+    assert "legal_core.intake_money" in result.stderr

@@ -11,6 +11,7 @@ from pydantic import Field, JsonValue, field_validator, model_validator
 from legal_core.analysis_clarifications import AnalysisClarificationAnswers, ServiceProvidedDate
 from legal_core.case_preparation_contracts import PreparationModel, Sha256
 from legal_core.factual_safety_intake import validate_partial_screening
+from legal_core.intake_money import initial_money_kopecks
 from legal_core.pseudonymization import contains_obvious_direct_identifier
 
 ServiceName = Annotated[str, Field(strict=True, min_length=2, max_length=120)]
@@ -139,6 +140,14 @@ class DraftSuggestions(PreparationModel):
             raise ValueError("understanding source must be bounded and de-identified")
         if any(span.end > len(source) for spans in self.source_spans.values() for span in spans):
             raise ValueError("source span is outside the actual understanding input")
+        amount = (self.safety_screening or {}).get("amount")
+        if isinstance(amount, dict):
+            actual = initial_money_kopecks(
+                source, [(span.start, span.end)
+                         for span in self.source_spans["safetyScreening"]],
+            )
+            if actual != amount["amountKopecks"]:
+                raise ValueError("initial numeric amount differs from its literal ruble source")
 
 
 class UnderstandingProposal(PreparationModel):
