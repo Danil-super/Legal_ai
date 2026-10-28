@@ -13,6 +13,7 @@ from legal_core.contracts import FactKey
 from legal_core.intake import missing_facts_for
 from legal_core.intake_preparation_contracts import DraftSuggestions
 from pydantic import ValidationError
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram_gateway import bot
 from telegram_gateway.case_wizard import facts_from_v2_data
 from test_dialog_isolation import ACTOR
@@ -28,6 +29,16 @@ def known_data():
     data["situationAreas"] = ["SERVICE"]
     data.pop("affectedServices")
     return data
+
+
+def legacy_context_controls(sent):
+    """Simulate a recap delivered before optional editors left the ordinary UI."""
+    markup = sent[-1]["reply_markup"]
+    sent[-1]["reply_markup"] = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Действия клиники", callback_data="case:v2:context:actions"),
+         InlineKeyboardButton("Ход обращения", callback_data="case:v2:context:history")],
+        *markup.inline_keyboard,
+    ])
 
 
 @pytest.mark.parametrize("omitted", ["conflictStage", "clinicActions"])
@@ -99,8 +110,9 @@ def test_actual_ptb_optional_context_edits_return_to_summary_then_single_consent
             assert core.draft["wizardState"] == "SUMMARY"
             callbacks = {button.callback_data for row in sent[-1]["reply_markup"].inline_keyboard
                          for button in row}
-            assert {"case:v2:context:actions", "case:v2:context:history"} <= callbacks
+            assert not {"case:v2:context:actions", "case:v2:context:history"} & callbacks
             assert "Что сделала клиника: не указано" in sent[-1]["text"]
+            legacy_context_controls(sent)
             await dispatch("case:v2:context:actions")
             assert core.draft["wizardState"] == "CLINIC_ACTIONS"
             await dispatch("/menu")
@@ -114,6 +126,7 @@ def test_actual_ptb_optional_context_edits_return_to_summary_then_single_consent
             await dispatch("case:draft:" + core.draft["id"])
             assert core.draft["wizardState"] == "SUMMARY"
             assert app.user_data[ACTOR][bot.WIZARD_DATA_KEY][bot.DRAFT_STATE_KEY] == "SUMMARY"
+            legacy_context_controls(sent)
             await dispatch("case:v2:context:history")
             assert core.draft["wizardState"] == "CHRONOLOGY"
             await dispatch("case:v2:single:conflictStage:ONGOING")
@@ -153,7 +166,7 @@ def test_unknown_is_not_a_general_absent_field_or_inference_transport_escape_hat
 @pytest.mark.parametrize("editor", ["actions", "history", "actions-selected", "actions-cleared"])
 def test_optional_summary_editor_back_returns_to_summary_without_another_form_step(editor):
     async def scenario():
-        async with simplified_harness() as (app, core, _sent, dispatch):
+        async with simplified_harness() as (app, core, sent, dispatch):
             await dispatch("quick:start")
             await dispatch("text:Учебная ситуация: пациент просит вернуть 5000 рублей.")
             proposed = known_data()
@@ -164,6 +177,7 @@ def test_optional_summary_editor_back_returns_to_summary_without_another_form_st
             await delivery_finished(app)
             assert core.draft["wizardState"] == "SUMMARY"
             target = "actions" if editor.startswith("actions") else "history"
+            legacy_context_controls(sent)
             await dispatch("case:v2:context:" + target)
             expected = "CLINIC_ACTIONS" if target == "actions" else "CHRONOLOGY"
             assert core.draft["wizardState"] == expected

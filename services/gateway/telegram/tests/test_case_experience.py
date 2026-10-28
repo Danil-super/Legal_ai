@@ -189,11 +189,12 @@ async def harness():
         data = dict(data or {})
         if endpoint == "editMessageReplyMarkup":
             index = data["message_id"] - 101
-            sent[index]["reply_markup"] = data["reply_markup"]
+            sent[index]["reply_markup"] = data.get("reply_markup")
             return {"message_id": data["message_id"], "date": 1,
                     "chat": {"id": data.get("chat_id", ACTOR), "type": "private"},
                     "text": sent[index].get("text", ""),
-                    "reply_markup": data["reply_markup"].to_dict()}
+                    "reply_markup": (data["reply_markup"].to_dict()
+                                     if data.get("reply_markup") else None)}
         sent.append(data)
         return {"message_id": len(sent) + 100, "date": 1,
                 "chat": {"id": data.get("chat_id", ACTOR), "type": "private"},
