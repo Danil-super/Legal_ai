@@ -158,6 +158,8 @@ def test_complete_factual_description_does_not_require_an_optional_clinic_file_b
                              "amount": {"amountKopecks": 500_000, "currency": "RUB"},
                          })
             await delivery_finished(app)
+            assert core.draft["wizardState"] == "ANALYSIS_CLARIFICATION"
+            await dispatch("case:v2:clarify:RESPONSE_PURPOSE:global:UNKNOWN")
             assert app.user_data[ACTOR][bot.WIZARD_DATA_KEY][bot.DRAFT_STATE_KEY] == "SUMMARY", (
                 "a missing optional caseMaterialsStatus still blocks an otherwise complete "
                 "factual summary with a file-upload question"

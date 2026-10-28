@@ -7,6 +7,7 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from complete_intake_fixture import with_unknown_clarification_attempts
 from legal_core.api_contracts import FactInput, TelegramWorkflowSubmissionRequest
 from legal_core.case_api import _canonical_hash, _input_value
 from legal_core.contracts import FactKey
@@ -28,7 +29,7 @@ def known_data():
                                                        "currency": "RUB"})
     data["situationAreas"] = ["SERVICE"]
     data.pop("affectedServices")
-    return data
+    return with_unknown_clarification_attempts(data)
 
 
 def legacy_context_controls(sent):
@@ -87,9 +88,11 @@ def test_mapper_and_core_accept_absent_context_without_manufacturing_statement()
 def test_complete_draft_keeps_historical_submission_hash_for_lost_response_replay():
     # Captured from the pre-change mapper on this exact synthetic draft. Core
     # binds retries to the whole canonical wire payload, including fact-list order.
+    historical = known_data()
+    historical.pop("analysisClarificationAnswers", None)
     payload = TelegramWorkflowSubmissionRequest(
         intakeSchemaVersion="dental-case-intake.v2", receiptVersion=2,
-        facts=facts_from_v2_data(known_data()),
+        facts=facts_from_v2_data(historical),
     )
     assert _canonical_hash(payload.model_dump(mode="json", by_alias=True)) == (
         "628dd1c5318e7d846759073694846c9cf5b27f62618d9ba9fb5cedb7c1c77f81"

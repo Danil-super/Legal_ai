@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
+from complete_intake_fixture import with_unknown_clarification_attempts
 from telegram_gateway import bot
 from telegram_gateway.guided_case_intake_v2 import active_states
 from test_case_experience import harness
@@ -13,24 +14,6 @@ from test_case_wizard import FakeQuery
 from test_dialog_isolation import DRAFT
 from test_factual_safety_gateway import completed_data as _completed_data
 from test_factual_safety_gateway import runtime_context
-
-
-def with_unknown_clarification_attempts(data):
-    """A completed-summary fixture includes authored attempts, without invented facts."""
-    result = deepcopy(data)
-    answers = result.setdefault("analysisClarificationAnswers", {"answers": []})["answers"]
-    attempted = {(item["questionId"], item.get("serviceSlot")) for item in answers}
-    requests = [("RESPONSE_PURPOSE", None)]
-    if "TREATMENT" in result.get("situationAreas", []):
-        requests.extend((question, slot)
-                        for slot in range(len(result.get("affectedServices", [])))
-                        for question in ("SERVICE_PAYMENT_BASIS", "SERVICE_PROVIDED_DATE"))
-    for question, slot in requests:
-        if (question, slot) not in attempted:
-            answers.append({"questionId": question, "serviceSlot": slot,
-                            "value": {"date": None, "precision": "UNKNOWN"}
-                            if question == "SERVICE_PROVIDED_DATE" else "UNKNOWN"})
-    return result
 
 
 def completed_data(**overrides):

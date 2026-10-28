@@ -9,6 +9,7 @@ from uuid import UUID
 
 import httpx2
 import pytest
+from complete_intake_fixture import with_unknown_clarification_attempts
 from legal_core.factual_safety_intake import SCREENING_FIELDS, SCREENING_VERSION
 from telegram.ext import ApplicationHandlerStop
 from telegram_gateway import bot
@@ -28,7 +29,9 @@ def test_explicit_unknown_safety_fact_is_preserved_at_summary_confirmation(field
     screening = {"schemaVersion": SCREENING_VERSION,
                  **dict.fromkeys(SCREENING_FIELDS, "NO"), "amount": "NOT_REQUESTED"}
     screening[field] = "UNKNOWN"
-    data = _base_data() | {"safetyScreening": screening}
+    data = with_unknown_clarification_attempts(
+        _base_data() | {"safetyScreening": screening},
+    )
     update, context, _client, message = runtime_context(data, "case:v2:summary:confirm")
     result = asyncio.run(bot.confirm_v2_summary(update, context))
     assert result == bot.WizardState.V2_CONFIRM

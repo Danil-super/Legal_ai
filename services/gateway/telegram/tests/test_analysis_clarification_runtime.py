@@ -54,10 +54,10 @@ async def callback_on_current_message(app, callback, actor=ACTOR):
     await app.process_update(Update.de_json(body, app.bot))
 
 
-def test_only_valid_requested_questions_extend_the_existing_sequence():
+def test_preflight_questions_precede_summary_and_valid_recovery_keeps_its_sequence():
     ordinary = completed_data()
-    assert "ANALYSIS_CLARIFICATION" not in active_states(ordinary)
-    assert next_missing_state(ordinary) == "SUMMARY"
+    assert "ANALYSIS_CLARIFICATION" in active_states(ordinary)
+    assert next_missing_state(ordinary) == "ANALYSIS_CLARIFICATION"
     requested = requested_data()
     assert active_states(requested)[-3:] == ["ANALYSIS_CLARIFICATION", "SUMMARY", "V2_CONFIRM"]
     assert next_missing_state(requested) == "ANALYSIS_CLARIFICATION"
@@ -226,7 +226,7 @@ def test_known_urgent_confirmation_bypasses_optional_questions_without_inventing
 
 
 @pytest.mark.parametrize("entry", ["quick", "guided"])
-def test_actual_quick_and_manual_entry_ask_same_optional_question_only_when_requested(entry):
+def test_actual_quick_and_manual_entry_collect_same_material_questions_before_summary(entry):
     async def scenario():
         async with harness() as (app, core, sent, dispatch):
             narrative = completed_data()["eventSummary"]
@@ -256,19 +256,17 @@ def test_actual_quick_and_manual_entry_ask_same_optional_question_only_when_requ
                 await dispatch(callback)
             for field in SCREENING_SIGNALS:
                 await dispatch(f"case:safety:{field}:NO")
-            assert core.draft["wizardState"] == "SUMMARY"
+            assert core.draft["wizardState"] == "ANALYSIS_CLARIFICATION"
             assert "analysisClarificationRequests" not in core.draft["draftData"]
-            assert not any("Как оплачивалась услуга" in item.get("text", "") for item in sent)
-            # Core recovery supplies only validated identities; runtime is shared for both entries.
-            core.draft["draftData"]["analysisClarificationRequests"] = [PAYMENT_0, PURPOSE]
-            core.draft["wizardState"] = "ANALYSIS_CLARIFICATION"
-            core.draft["revision"] += 1
-            await dispatch(f"case:draft:{DRAFT}")
             assert "Как оплачивалась услуга «Терапевтическое лечение»?" in sent[-1]["text"]
             await dispatch(answer_callback(PAYMENT_0, "OTHER"))
+            await dispatch("text:01.09.2026")
             await dispatch(answer_callback(PURPOSE, "RECEIVE_AND_EXPLAIN"))
             assert core.draft["draftData"]["analysisClarificationAnswers"]["answers"] == [
-                PAYMENT_0 | {"value": "OTHER"}, PURPOSE | {"value": "RECEIVE_AND_EXPLAIN"},
+                PAYMENT_0 | {"value": "OTHER"},
+                {"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 0,
+                 "value": {"date": "2026-09-01", "precision": "EXACT"}},
+                PURPOSE | {"value": "RECEIVE_AND_EXPLAIN"},
             ]
             assert core.draft["draftData"]["eventSummary"] == narrative
             await dispatch("case:v2:summary:confirm")

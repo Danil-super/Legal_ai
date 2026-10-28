@@ -138,9 +138,10 @@ def test_actual_handler_persists_each_answer_and_ignores_stale_other_question():
     for field in SCREENING_SIGNALS:
         update.callback_query = FakeQuery(f"case:safety:{field}:NO")
         result = asyncio.run(bot._persist_transition(bot.choose_factual_safety, update, context))
-    assert result == bot.WizardState.SUMMARY
+    assert result == bot.WizardState.ANALYSIS_CLARIFICATION
     assert pipeline.steps == ["save"] * 7
-    assert any("Письменные требования: нет" in text for text in message.text_replies)
+    assert all(data == "NO" for field, data in context.user_data[bot.WIZARD_DATA_KEY][
+        "safetyScreening"].items() if field in SCREENING_SIGNALS)
     assert all(
         "case:v2:back" in {b.callback_data for row in markup.inline_keyboard for b in row}
         for markup in message.text_reply_markups
@@ -157,11 +158,18 @@ def test_stale_summary_and_submit_cannot_bypass_new_independent_questions():
     assert pipeline.steps == []
 
 
-def test_back_from_summary_reopens_money_and_keeps_other_answers():
-    update, context, _, _ = runtime_context(completed_data(), "case:v2:back")
+def test_back_from_summary_reopens_the_last_clarification_and_keeps_safety_answers():
+    from complete_intake_fixture import with_unknown_clarification_attempts
+    from telegram_gateway.guided_case_intake_v2 import next_clarification_request
+
+    data = with_unknown_clarification_attempts(completed_data())
+    before = dict(data["safetyScreening"])
+    update, context, _, _ = runtime_context(data, "case:v2:back")
     context.user_data[bot.WIZARD_DATA_KEY][bot.DRAFT_STATE_KEY] = "SUMMARY"
-    assert asyncio.run(bot.back_v2_draft(update, context)) == bot.WizardState.SAFETY
-    assert screening_question(context.user_data[bot.WIZARD_DATA_KEY])[0] == "moneyRequested"
+    assert asyncio.run(bot.back_v2_draft(update, context)) == bot.WizardState.ANALYSIS_CLARIFICATION
+    restored = context.user_data[bot.WIZARD_DATA_KEY]
+    assert restored["safetyScreening"] == before
+    assert next_clarification_request(restored).question_id == "RESPONSE_PURPOSE"
 
 
 def test_urgent_known_facts_can_be_confirmed_without_answering_every_other_question():
