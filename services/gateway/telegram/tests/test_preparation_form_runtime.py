@@ -47,14 +47,17 @@ def test_factual_preparation_offers_one_explicit_origin_bound_form(reason):
     controls = _buttons(keyboard)
     factual = [button for button in controls if button.callback_data.startswith("case:clarify2:")]
     assert len(factual) == 1
-    assert factual[0].text == ("Уточнить факты" if reason is None else "Изменить сведения")
+    assert factual[0].text == ("Ответить" if reason is None else "Изменить сведения")
     assert decode_preparation_callback(factual[0].callback_data) == (CASE, OPERATION)
     assert len(factual[0].callback_data.encode()) <= 64
     assert not any(button.callback_data.startswith(("analysis:pdf:", "analysis:result:",
                                                      "case:analyze:", "case:clarify:"))
                    for button in controls)
     assert "Hermes" not in message and "operationId" not in message
-    assert "не сформирован" in message.lower() or "не сформированы" in message.lower()
+    if reason is None:
+        assert "уточните" in message.lower() or "Как" in message or "Когда" in message
+    else:
+        assert "не сформированы" in message.lower()
     assert payload == before
 
 
