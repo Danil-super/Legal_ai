@@ -47,6 +47,18 @@ _UNLABELLED_FULL_NAME: Final = re.compile(
     rf"(?<![А-ЯЁа-яё]){_RUSSIAN_NAME_WORD}(?:\s+{_RUSSIAN_NAME_WORD}){{2}}"
     rf"(?![А-ЯЁа-яё])"
 )
+_SCOPED_PUBLIC_INSTITUTION: Final = re.compile(
+    r"(?<!\w)(?:Постановление\s+)?Пленум(?:а)?\s+Верховного\s+Суда\s+"
+    r"(?:РФ|Российской\s+Федерации)(?!\w)"
+)
+
+
+def _unlabelled_full_names(text: str) -> tuple[re.Match[str], ...]:
+    """Recognize only whole scoped institution spans, never exempt adjacent words."""
+    institutions = tuple(match.span() for match in _SCOPED_PUBLIC_INSTITUTION.finditer(text))
+    return tuple(match for match in _UNLABELLED_FULL_NAME.finditer(text) if not any(
+        start <= match.start() and match.end() <= end for start, end in institutions
+    ))
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,11 +117,15 @@ def pseudonymize_text(
         result,
         "[PERSON_NAME]",
     )
-    result, counts["unlabelled_full_name"] = _replace(
-        _UNLABELLED_FULL_NAME,
-        result,
-        "[PERSON_NAME]",
-    )
+    names = _unlabelled_full_names(result)
+    parts: list[str] = []
+    previous = 0
+    for name in names:
+        parts.extend((result[previous:name.start()], "[PERSON_NAME]"))
+        previous = name.end()
+    parts.append(result[previous:])
+    result = "".join(parts)
+    counts["unlabelled_full_name"] = len(names)
 
     return PseudonymizedText(text=result, replacement_counts=counts)
 
@@ -126,6 +142,5 @@ def contains_obvious_direct_identifier(text: str) -> bool:
             _SNILS,
             _INITIALS_NAME,
             _IDENTIFIED_FULL_NAME,
-            _UNLABELLED_FULL_NAME,
         )
-    )
+    ) or bool(_unlabelled_full_names(text))

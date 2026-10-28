@@ -134,3 +134,46 @@ def test_punycode_email_is_fully_redacted_with_sentence_punctuation_preserved(em
 def test_punycode_domain_without_an_email_is_preserved(text):
     assert not contains_obvious_direct_identifier(text)
     assert pseudonymize_text(text).text == text
+
+
+@pytest.mark.parametrize("authority", [
+    "Постановление Пленума Верховного Суда РФ",
+    "Пленума Верховного Суда РФ",
+    "Пленум Верховного Суда РФ",
+    "Постановление Пленума Верховного Суда Российской Федерации",
+    "Пленума Верховного Суда Российской Федерации",
+])
+def test_exact_scoped_supreme_court_institution_preserves_privacy_of_adjacent_names(authority):
+    assert not contains_obvious_direct_identifier(authority)
+    unchanged = pseudonymize_text(authority)
+    assert unchanged.text == authority and not unchanged.changed
+    text = f"Иванов Иван Иванович; {authority}; Петров Петр Петрович, "
+    text += "+7 999 123-45-67, synthetic@example.invalid."
+    assert contains_obvious_direct_identifier(text)
+    result = pseudonymize_text(text)
+    assert authority in result.text
+    assert "Иванов" not in result.text and "Петров" not in result.text
+    assert "999" not in result.text and "example.invalid" not in result.text
+    assert result.replacement_counts["unlabelled_full_name"] == 2
+    assert not contains_obvious_direct_identifier(result.text)
+
+
+@pytest.mark.parametrize("value", [
+    "Постановление Пленума Верховного Суда",
+    "Пленума Верховного Суда",
+    "Пленума Верховного Суда РФИванов",
+    "Пленума Верховного Суда РФ_Иванов",
+    "Пленума Верховного Суда РФ2",
+    "Пациент: Пленума Верховного Суда РФ",
+    "ФИО: Постановление Пленума Верховного Суда РФ",
+])
+def test_unscoped_or_patient_labelled_words_are_not_public_institution_exemptions(value):
+    assert contains_obvious_direct_identifier(value)
+    result = pseudonymize_text(value)
+    assert result.changed and "[PERSON_NAME]" in result.text
+
+
+def test_explicit_known_identifier_still_takes_precedence_over_public_institution_spelling():
+    text = "Пленума Верховного Суда РФ"
+    result = pseudonymize_text(text, known_identifiers={text: "[PATIENT_1]"})
+    assert result.text == "[PATIENT_1]" and result.replacement_counts["known_identifier"] == 1

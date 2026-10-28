@@ -114,6 +114,47 @@ def test_generates_unapproved_claims_and_independent_reviews_using_the_same_two_
     assert not hasattr(result, "report_id") and not hasattr(result, "analysis_allowed")
 
 
+def test_actual_public_plenum_title_reaches_both_profiles_without_skipping_privacy_checks():
+    # Bounded public metadata/text captured from the approved production corpus.
+    # Mock semantic support tests the transport boundary, not legal correctness.
+    supplied = context()
+    title = ('Постановление Пленума Верховного Суда РФ от 28 июня 2012 г. N 17 '
+             '"О рассмотрении судами гражданских дел по спорам о защите прав потребителей"')
+    fragment = supplied.context.evidence[0]
+    fragment.document_title = title
+    fragment.issuer = "Пленума Верховного Суда РФ"
+    fragment.official_number = "17"
+    fragment.point = "52"
+    fragment.fragment_text = (
+        "52. При удовлетворении требования потребителя об обязании произвести определенные "
+        "действия, связанные с исполнением (например, безвозмездное устранение недостатков, "
+        "замену товара), суду в каждом случае следует указывать в резолютивной части решения "
+        "срок, в течение которого после вступления решения в законную силу ответчик обязан "
+        "совершить эти действия (часть 2 статьи 206 ГПК РФ)."
+    )
+    invoke, calls = run(supplied=supplied)
+    invoke()
+    assert [host for host, _ in calls] == ["researcher.test", "reviewer.test"]
+    assert all(json.loads(wire["messages"][1]["content"])["evidence"][0]["documentTitle"] == title
+               for _, wire in calls)
+    supplied.context.evidence[0].document_title += "; Иванов Иван Иванович"
+    refused, calls = run(supplied=supplied)
+    with pytest.raises(HermesProtocolError):
+        refused()
+    assert calls == []
+
+
+@pytest.mark.parametrize("text", [
+    "Пленума Верховного Суда РФ; Иванов Иван Иванович",
+    "Пациент: Пленума Верховного Суда РФ",
+])
+def test_public_institution_never_exempts_identifiers_in_model_actions(text):
+    invoke, calls = run(proposal([claim(text=text)]))
+    with pytest.raises(HermesProtocolError):
+        invoke()
+    assert [host for host, _ in calls] == ["researcher.test"]
+
+
 @pytest.mark.parametrize("fault", ["case", "hash", "empty-evidence", "risk", "forged-nested"])
 def test_forged_or_stale_context_is_revalidated_before_any_model_call(fault):
     supplied = context()
