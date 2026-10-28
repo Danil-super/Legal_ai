@@ -40,6 +40,8 @@ Final source-expiry/lock-order review and CI623d157 passed, including5073 actual
 PostgreSQL/MinIO cases with zero skips. The live HIGH draft produced five verified
 actions; two ordinary trials produced four each in67.23/75.53seconds. These are
 synthetic technical samples; the45second target and human quality review remain
-open. Production has67 DRAFT examples. Imported-reference submission UI is a final
-follow-up requiring fresh CI; source review and separate release/enablement remain.
+open. Production has67 DRAFT examples. Imported-reference submission UI and
+displayed-source approval binding now pass independent tests, including late
+auth/expiry and retry cases. Fresh full CI for these follow-ups, source review
+and separate release/enablement remain.
 No production analogy usage, automatic approval or permission expansion is claimed.

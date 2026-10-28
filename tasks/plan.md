@@ -853,8 +853,11 @@ Two ordinary live trials produced four verified actions each in67.23/75.53second
 the HIGH draft produced five in72.04seconds. The45second target remains open.
 Production still has67 DRAFT examples and no AIF producer enabled.
 
-Finish imported-reference submission UI and its fresh CI → human legal-quality
-evaluation/current reference review → separately reviewed AIF release/enablement.
+Imported-reference submission UI and source-bound human confirmation are now
+implemented. Independent review covers stale content/files, lost replies,
+revoked rights, original expiry and preserved pending work. Run fresh full CI
+for these follow-ups → human legal-quality evaluation/current reference review
+→ separately reviewed AIF release/enablement.
 Preserve current provider/high profiles, v4,
 10,000RUB threshold and approved-only evidence. Restore service by flags-off on a
 compatible reader; no destructive database downgrade of retained work products.

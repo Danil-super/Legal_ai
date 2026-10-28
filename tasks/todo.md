@@ -70,10 +70,20 @@ Scheduling hints use measured GitHub costs, retaining incomplete-file history.
 
 Read-only production inspection found67 reference cases, all DRAFT, with an
 active reviewer grant and the owner's contributor grant. No reference approvals
-or producer flags were changed. Imported DRAFT detail lacks an existing submit
-entry point; its Telegram button and obsolete evaluation-only copy are being
-corrected after the623d157 checkpoint and require a fresh CI run.
-Remaining: final UI correction/CI, human legal-quality evaluation, production
+or producer flags were changed. Imported DRAFT cards now expose the existing
+submit operation to contributors, with neutral review labels and preservation
+of unrelated pending uploads.
+
+Further review reproduced a stale approval of unseen revised content and late
+authorization/expiry failures. Review consent now binds the actual displayed
+source snapshot, including attachment content. Approval always requires that
+snapshot; old Telegram buttons reopen a current card. Core compares source under
+locks before replay/mutation, flushes pending writes, then rechecks current
+actor/grants, wall-clock entitlement and the original source deadline. Ten
+independent real PostgreSQL and22 Gateway tests pass with no skips; the focused
+Core module has35 cases. Old retained receipts remain readable. This follow-up
+requires a fresh full CI; the623d157 success is not claimed for later commits.
+Remaining: final full CI, human legal-quality evaluation, production
 reference review and separate AIF release/enablement. Reference approval is
 evaluation approval, not legal authority or an implicit grant to every employee.
 
