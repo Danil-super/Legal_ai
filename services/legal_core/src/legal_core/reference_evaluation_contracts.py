@@ -77,6 +77,10 @@ class ReferenceEvaluationListResponse(ContractModel):
 
 
 class ReferenceEvaluationDetail(ReferenceEvaluationSummary):
+    review_snapshot_sha256: str | None = Field(
+        default=None, alias="reviewSnapshotSha256", strict=True, pattern="^[0-9a-f]{64}$",
+        exclude_if=lambda value: value is None,
+    )
     as_of_date: date = Field(alias="asOfDate")
     expected_route: ReferenceExpectedRoute = Field(alias="expectedRoute")
     scenario_text: str | None = Field(alias="scenarioText", max_length=20_000)
@@ -97,6 +101,10 @@ class ReferenceEvaluationMaterialResponse(ContractModel):
 class ReferenceEvaluationReviewRequest(ContractModel):
     decision: ReferenceReviewDecision
     note: str | None = Field(default=None, min_length=2, max_length=1_000)
+    expected_review_snapshot_sha256: str | None = Field(
+        default=None, alias="expectedReviewSnapshotSha256", strict=True,
+        pattern="^[0-9a-f]{64}$", exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def require_note_for_changes(self) -> "ReferenceEvaluationReviewRequest":
