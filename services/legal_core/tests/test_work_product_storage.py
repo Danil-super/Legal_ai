@@ -390,10 +390,13 @@ def test_nonempty_downgrade_refuses_to_erase_version_history(storage):
         tenant(session, clinic)
         session.add(row)
     config = Config(str(Path(__file__).parents[3] / "alembic.ini"))
+    with owner.connect() as connection:
+        revision_before = connection.scalar(text("SELECT version_num FROM alembic_version"))
+        assert revision_before is not None
     with pytest.raises(ProgrammingError, match="cannot downgrade"):
         command.downgrade(config, "e21b7c4d8a90")
     with owner.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "f31c8d5a9e20"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == revision_before
     with Session(engine) as session, session.begin():
         tenant(session, clinic)
         assert session.get(CaseWorkProductVersion, identity) is not None
