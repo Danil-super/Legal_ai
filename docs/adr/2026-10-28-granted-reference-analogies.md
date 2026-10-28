@@ -71,3 +71,13 @@ lawyer without workspace access can still review a valid new-case plan; the
 separate historical workspace remains denied. No model/network call belongs
 inside the final fenced transaction. Old plans without an analogy trace retain
 their prior path, and disabling the producer flag does not erase review access.
+
+The shared analysis-state builder now selects optional examples only when
+AI_FIRST_REFERENCE_ANALOGIES_ENABLED=1 and the requesting membership is the actual
+Case creator. Both ordinary and separately authorized lawyer contexts use the same
+closed optional fields. The private context source retains only their trace.
+Ordinary submission requires the exact expected trace and fences its actual
+producer/source rows before writes. Legacy submissions omit the field; V2 source
+receipts bind it through existing canonical hashes. V1 completion audit adds only
+the trace when used. Urgent routing and all normative verifier/risk gates stay
+unchanged. No selected examples produces the exact prior absent-field path.

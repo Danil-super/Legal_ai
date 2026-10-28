@@ -93,6 +93,9 @@ from legal_core.retrieval_plan import plan_legal_queries, retrieve_planned_evide
 from legal_core.risk_engine import RiskLevel, evaluate_early_triage, fact_snapshot_sha256
 from legal_core.risk_persistence import record_case_risk_assessment
 from legal_core.risk_policy_repository import ApprovedRiskPolicy, ApprovedRiskPolicyRepository
+from legal_core.reference_analogy_contracts import ReferenceAnalogyContext
+from legal_core.reference_analogy_freshness import require_reference_analogy_trace_current
+from legal_core.reference_analogy_retrieval import select_reference_analogies
 from legal_core.risk_engine import risk_missing_facts
 from legal_core.verifier import (
     ClaimKind,
@@ -121,6 +124,11 @@ class AnalysisState:
     evidence_trace_sha256: str
     clinic_document_context_trace_sha256: str
     risk_policy: ApprovedRiskPolicy
+    reference_analogies: ReferenceAnalogyContext | None = None
+
+    @property
+    def reference_example_trace_sha256(self) -> str | None:
+        return self.reference_analogies.trace_sha256 if self.reference_analogies else None
 
 
 def _require_agent_internal_key(key: AgentInternalKeyHeader = None) -> None:
@@ -223,8 +231,12 @@ async def _load_analysis_state(session: AsyncSession, actor: Any, case_id: UUID)
             raise ApiError(status_code=422, code=reason,
                            message="A factual clarification is required before analysis")
 
-    return await _retrieve_analysis_state(session, actor=actor, case=case, facts=facts,
-                                          as_of_date=as_of_date, policy=policy)
+    state = await _retrieve_analysis_state(session, actor=actor, case=case, facts=facts,
+                                           as_of_date=as_of_date, policy=policy)
+    await require_reference_analogy_trace_current(
+        session, case=case, facts=facts, expected_trace=state.reference_example_trace_sha256,
+    )
+    return state
 
 
 async def _retrieve_analysis_state(
@@ -270,6 +282,12 @@ async def _retrieve_analysis_state(
         retrieved_fragments=clinic_document_context,
     )
 
+    analogies = None
+    if (os.getenv("AI_FIRST_REFERENCE_ANALOGIES_ENABLED", "0") == "1"
+            and case.created_by_membership_id == actor.membership_id):
+        selected = await select_reference_analogies(session, actor=actor, facts=facts)
+        if selected.examples:
+            analogies = selected
     return AnalysisState(
         case=case,
         facts=facts,
@@ -284,6 +302,7 @@ async def _retrieve_analysis_state(
             as_of_date=as_of_date,
         ),
         risk_policy=policy,
+        reference_analogies=analogies,
     )
 
 
@@ -358,6 +377,8 @@ def _context_response(state: AnalysisState) -> AnalysisContextResponse:
         clinicDocumentReadiness=_readiness_responses(state.clinic_document_readiness),
         riskPolicyVersion=state.risk_policy.domain.version,
         highDemandThresholdKopecks=state.risk_policy.domain.high_demand_threshold_kopecks,
+        referenceExamples=state.reference_analogies.examples if state.reference_analogies else None,
+        referenceExampleTraceSha256=state.reference_example_trace_sha256,
     )
 
 
@@ -628,7 +649,9 @@ def create_analysis_router(
             ),
             risk_policy_version=payload.expected_risk_policy_version,
         )
-        if analysis_context_is_stale(expected_fingerprint, _context_fingerprint(state)):
+        if (analysis_context_is_stale(expected_fingerprint, _context_fingerprint(state))
+                or payload.expected_reference_example_trace_sha256
+                != state.reference_example_trace_sha256):
             raise ApiError(
                 status_code=status.HTTP_409_CONFLICT,
                 code="ANALYSIS_CONTEXT_STALE",
@@ -637,6 +660,11 @@ def create_analysis_router(
                     "during analysis"
                 ),
             )
+
+        await require_reference_analogy_trace_current(
+            session, case=state.case, facts=state.facts,
+            expected_trace=state.reference_example_trace_sha256,
+        )
 
         try:
             clarification_requests = validate_request_scope(
@@ -710,6 +738,7 @@ def create_analysis_router(
                 asOfDate=state.as_of_date, evidenceTraceSha256=state.evidence_trace_sha256,
                 clinicDocumentContextTraceSha256=state.clinic_document_context_trace_sha256,
                 riskPolicyVersion=state.risk_policy.domain.version,
+                referenceExampleTraceSha256=state.reference_example_trace_sha256,
             ),
         ) if result_version == 2 else None
         if source is not None:
@@ -853,6 +882,8 @@ def create_analysis_router(
                     "clarificationQuestionIds": [
                         request.question_id.value for request in clarification_requests
                     ],
+                    **({"referenceExampleTraceSha256": state.reference_example_trace_sha256}
+                       if state.reference_example_trace_sha256 is not None else {}),
                 },
             )
         )

@@ -44,6 +44,7 @@ from legal_core.lawyer_draft_contracts import LawyerDraftContextRequest, LawyerD
 from legal_core.lawyer_draft_freshness import require_lawyer_draft_sources_current
 from legal_core.models import Case, CaseEscalation, CaseRiskAssessment, IdempotencyRecord
 from legal_core.pseudonymization import pseudonymize_text
+from legal_core.reference_analogy_freshness import require_reference_analogy_trace_current
 from legal_core.risk_engine import fact_snapshot_sha256
 from legal_core.risk_policy_repository import ApprovedRiskPolicy, ApprovedRiskPolicyRepository
 
@@ -161,6 +162,9 @@ async def load_lawyer_draft_context(
     state = await _retrieve_analysis_state(session, actor=actor, case=case, facts=facts,
                                            as_of_date=_analysis_date(facts), policy=policy)
     await require_lawyer_draft_sources_current(session, actor=actor, state=state)
+    await require_reference_analogy_trace_current(
+        session, case=case, facts=facts, expected_trace=state.reference_example_trace_sha256,
+    )
     await recheck_submission_access(session, actor=actor, telegram_user_id=telegram_user_id,
                                     case=case)
     await require_job_lease(session, actor, case_id, job_id, job_token)
@@ -179,6 +183,7 @@ async def load_lawyer_draft_context(
                 asOfDate=state.as_of_date, evidenceTraceSha256=state.evidence_trace_sha256,
                 clinicDocumentContextTraceSha256=state.clinic_document_context_trace_sha256,
                 riskPolicyVersion=policy.domain.version,
+                referenceExampleTraceSha256=state.reference_example_trace_sha256,
             ),
         ), escalationId=escalation.id, riskLevel=retained.risk_level, context=context,
     )
