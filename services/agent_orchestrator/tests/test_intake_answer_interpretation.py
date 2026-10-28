@@ -70,7 +70,7 @@ def run_model(source, value, *, state="INCOMING", data=None, calls=None, error=N
     ("SERVICES", "установка коронки", ["установка коронки"]),
     ("EVENT", "Пациент сообщил о сколе коронки после лечения.",
      "Пациент сообщил о сколе коронки после лечения."),
-    ("EVENT_DATE", "15.10.2026", {"date": "2026-10-15", "precision": "EXACT"}),
+    ("EVENT_DATE", "Дата 15.10.2026", {"date": "2026-10-15", "precision": "EXACT"}),
     ("CHRONOLOGY", "Пишет повторно", "ONGOING"),
     ("CLINIC_ACTIONS", "Пригласили на осмотр", ["INVITED_FOR_EXAMINATION"]),
     ("HEALTH", "Сведений об ухудшении нет", ["NO_KNOWN_INFORMATION"]),
@@ -95,7 +95,8 @@ def test_explicit_unknown_and_negative_are_attempts_not_abstention(value, source
 
 
 @pytest.mark.parametrize("field", SCREENING_FIELDS)
-@pytest.mark.parametrize("value,source", [("NO", "Нет"), ("YES", "Да"),
+@pytest.mark.parametrize("value,source", [("NO", "Нет, об этом не сообщали"),
+                                         ("YES", "Да, сообщали об этом"),
                                          ("UNKNOWN", "Не знаю"), (None, "Как писал выше")])
 def test_screening_prompt_requires_one_scalar_not_a_nested_screening_object(field, value, source):
     calls = []
@@ -112,7 +113,8 @@ def test_screening_prompt_requires_one_scalar_not_a_nested_screening_object(fiel
 
 def test_nested_screening_response_is_rejected_not_silently_unwrapped():
     with pytest.raises(HermesProtocolError):
-        run_model("Нет", proposed("Нет", {"healthDeteriorationReported": "NO"}),
+        run_model("Нет, ухудшения не было", proposed("Нет, ухудшения не было",
+                  {"healthDeteriorationReported": "NO"}),
                   state="SAFETY")
 
 
@@ -307,7 +309,7 @@ def test_service_label_must_be_inside_its_actual_nonblank_anchor():
 @pytest.mark.parametrize("state,source,value", [
     ("EVENT_DATE", "Дата 2099-01-01", {"date": "2099-01-01", "precision": "EXACT"}),
     ("EVENT_DATE", "Не знаю дату", {"date": "2026-10-15", "precision": "UNKNOWN"}),
-    ("SAFETY", "Да", True),
+    ("SAFETY", "Да, сообщали об этом", True),
     ("HEALTH", "Не знаю", ["UNKNOWN", "HOSPITALIZATION"]),
     ("CLINIC_ACTIONS", "Ничего", ["NOTHING_YET", "OFFERED_REFUND"]),
 ])

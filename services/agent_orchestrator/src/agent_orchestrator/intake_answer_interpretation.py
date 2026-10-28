@@ -113,6 +113,32 @@ including UNKNOWN; do not propose their replacement through these templates.
 """ + _VALUE_GUIDANCE
 
 
+def _literal_factual_value(source: str, question: AnswerQuestion) -> object | None:
+    """Recognize only a whole exact short answer to the bound current question."""
+    literal = source.strip()
+    if question.target_field == "safetyScreening" and question.screening_field != "amount":
+        return {"да": "YES", "нет": "NO"}.get(literal.casefold())
+    request = question.clarification_request
+    if (question.target_field == "eventDate" or (
+        request is not None and request.question_id == "SERVICE_PROVIDED_DATE"
+    )) and re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{2}\.[0-9]{2}\.[0-9]{4}", literal,
+    ):
+        try:
+            if "." in literal:
+                day, month, year = (int(part) for part in literal.split("."))
+                parsed = date(year, month, day)
+            else:
+                parsed = date.fromisoformat(literal)
+            return {"date": parsed.isoformat(), "precision": "EXACT"}
+        except ValueError:
+            pass
+    if request is not None and request.question_id == "SERVICE_PAYMENT_BASIS":
+        return {"платно": "PAID", "омс": "PUBLICLY_COVERED",
+                "по омс": "PUBLICLY_COVERED"}.get(literal.casefold())
+    return None
+
+
 def _context(data: dict[str, object]) -> dict[str, object]:
     """Revalidate factual values and omit every nonfactual or uploaded field."""
     fields = {key: value for key, value in data.items() if key in _CONTEXT_FIELDS}
@@ -209,6 +235,16 @@ class AnswerUnderstanding:
                     else:
                         return AnswerInterpretation(status="PROPOSED", value=value,
                             sourceSpans=[SourceSpan(start=0, end=len(source))])
+            literal = _literal_factual_value(source, question)
+            if literal is not None:
+                try:
+                    value = validate_answer_value(question, literal, source, validation_data,
+                                                  as_of_date=as_of_date)
+                except ValueError:
+                    pass
+                else:
+                    return AnswerInterpretation(status="PROPOSED", value=value,
+                        sourceSpans=[SourceSpan(start=0, end=len(source))])
             schema = AnswerInterpretation.model_json_schema(by_alias=True)
             if question.target_field == "safetyScreening" and question.screening_field != "amount":
                 # The wire value is generic JSON across question families. Give the model

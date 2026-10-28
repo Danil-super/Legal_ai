@@ -32,7 +32,8 @@ def test_actual_agent_accepts_rich_preflight_targets_without_using_report_reques
     }
     question = derive_answer_question(data, state)
     allowed = allowed_factual_questions(data, question)
-    source = "Сведений по последствиям нет" if state == "HEALTH" else "Платно"
+    source = ("Сведений по последствиям нет" if state == "HEALTH"
+              else "Эта услуга была оказана платно")
     value = ["NO_KNOWN_INFORMATION"] if state == "HEALTH" else "PAID"
     sources = retained_answer_sources(uuid4(), 3, data, source)
     response = {

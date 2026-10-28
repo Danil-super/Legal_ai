@@ -35,3 +35,15 @@ and five services without widening the report batch contract.
 Synthetic regressions reproduce the premature summary, reuse UNKNOWN attempts,
 preserve service/date scope and urgent bypass, and cover five services and explicit
 Back editing. They do not establish live-model latency or legal readiness.
+
+Complete short answers to the current bound question need no semantic model call:
+exact «да/нет» safety signals, an explicit ISO or DD.MM.YYYY event/service date,
+and the fixed payment labels «платно», «ОМС», «по ОМС». Only the whole input is
+recognized; narratives, relative/ambiguous dates, invalid/future dates and replies
+to another question retain the existing model route. Privacy, factual-context and
+retained-source validation run first, then Core's current-question/scope/date value
+validator runs before any literal proposal is returned. The whole source is its
+anchor; the proposal changes no draft or confirmed fact, contains no added facts
+and still requires the existing final factual-summary consent. The previous exact
+amount path, including its UNKNOWN behavior, is unchanged. This shortcut does not
+change authorization, operation leases/revisions, models/high or call budgets.
