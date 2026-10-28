@@ -48,6 +48,10 @@ def build_application_with_case_experience(
             from telegram_gateway.answer_runtime import install_answer_interpretation
 
             install_answer_interpretation(application)
+    if enable_simplified_dialogue:
+        from telegram_gateway.clarification_runtime import install_inline_clarification
+
+        install_inline_clarification(application)
     install_work_notes(application)
     if enable_lawyer_work_products:
         from telegram_gateway.lawyer_work_product_runtime import install

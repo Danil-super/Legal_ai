@@ -6,7 +6,12 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from legal_core.contracts import validate_intake_draft_data
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ApplicationHandlerStop, ContextTypes
+from telegram.ext import (
+    ApplicationHandlerStop,
+    CallbackQueryHandler,
+    ContextTypes,
+    ConversationHandler,
+)
 
 from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError
@@ -31,7 +36,8 @@ async def _reply_opened_draft(update: Update, draft_id: UUID) -> None:
 
 async def _create_preparation_clarification(
     update: Update, context: ContextTypes.DEFAULT_TYPE, actor: int, callback: str,
-) -> None:
+    *, inline: bool = False,
+) -> int:
     try:
         case_id, operation_id = decode_preparation_callback(callback)
         message_id = getattr(getattr(update.callback_query, "message", None), "message_id", None)
@@ -87,9 +93,47 @@ async def _create_preparation_clarification(
             text = ("⚠️ Не удалось открыть уточнение. Исходный кейс не изменён. "
                     "Повторное нажатие безопасно.")
         await gateway_bot._reply(update, text, reply_markup=back_keyboard())
-        raise ApplicationHandlerStop from None
+        raise ApplicationHandlerStop(ConversationHandler.END if inline else None) from None
+    if inline:
+        return await gateway_bot.resume_intake_draft(
+            update, context, draft_id=draft_id, preparation=True,
+        )
     await _reply_opened_draft(update, draft_id)
     raise ApplicationHandlerStop
+
+
+async def resume_preparation_clarification(
+    update: Update, context: ContextTypes.DEFAULT_TYPE,
+) -> int:
+    """Enter the existing intake conversation through its public state protocol."""
+    callback = await gateway_bot._answer_callback(update)
+    actor = gateway_bot._actor_id(update)
+    if actor is None or not isinstance(callback, str):
+        return ConversationHandler.END
+    return await _create_preparation_clarification(
+        update, context, actor, callback, inline=True,
+    )
+
+
+def install_inline_clarification(application: gateway_bot.TelegramApplication) -> None:
+    """Opt in during composition; leave the default legacy handoff unchanged."""
+    conversation = next((
+        handler for handlers in application.handlers.values() for handler in handlers
+        if isinstance(handler, ConversationHandler)
+        and handler.name == "administrator-case-intake-v1"
+    ), None)
+    legacy = next((
+        handler for handler in application.handlers.get(-2, [])
+        if isinstance(handler, CallbackQueryHandler) and handler.callback is create_clarification
+    ), None)
+    if conversation is None or legacy is None or not conversation.allow_reentry:
+        raise RuntimeError("durable clarification conversation is missing")
+    # Only one matching handler runs per group. The early legacy handler must no
+    # longer claim clarify2, so ConversationHandler can establish the real state.
+    legacy.pattern = re.compile(r"^case:clarify:(?:[A-Za-z0-9_-]{43}|[0-9a-f-]{36})$")
+    conversation.entry_points.insert(0, CallbackQueryHandler(
+        resume_preparation_clarification, pattern=r"^case:clarify2:[A-Za-z0-9_-]{43}$",
+    ))
 
 
 async def create_clarification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
