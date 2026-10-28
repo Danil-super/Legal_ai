@@ -97,6 +97,13 @@ class UnderstandingCore(ExperienceCore):
             return
         suggestions = {**fields, "sourceSpans": {
             field: [{"start": 0, "end": 4}] for field in fields}}
+        if isinstance((fields.get("safetyScreening") or {}).get("amount"), dict):
+            # Numeric money fixtures must include their real literal source, not
+            # the unrelated first four characters used for nonmonetary fields.
+            source = record["input"]["draftData"]["eventSummary"]
+            suggestions["sourceSpans"]["safetyScreening"] = [
+                {"start": 0, "end": len(source)},
+            ]
         record["status"].update(
             state="PROPOSED", suggestions=suggestions,
             source={"draftId": str(DRAFT), "draftRevision": record["revision"],

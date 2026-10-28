@@ -22,6 +22,7 @@ COPY services/legal_core/src/legal_core/report_presentation.py ./services/legal_
 COPY services/legal_core/src/legal_core/upload_filename.py ./services/legal_core/src/legal_core/upload_filename.py
 COPY services/legal_core/src/legal_core/factual_safety_intake.py ./services/legal_core/src/legal_core/factual_safety_intake.py
 COPY services/legal_core/src/legal_core/case_preparation_contracts.py ./services/legal_core/src/legal_core/case_preparation_contracts.py
+COPY services/legal_core/src/legal_core/intake_money.py ./services/legal_core/src/legal_core/intake_money.py
 COPY services/legal_core/src/legal_core/intake_preparation_contracts.py ./services/legal_core/src/legal_core/intake_preparation_contracts.py
 COPY services/legal_core/src/legal_core/intake_answer_contracts.py ./services/legal_core/src/legal_core/intake_answer_contracts.py
 COPY services/legal_core/src/legal_core/intake_answer_intent.py ./services/legal_core/src/legal_core/intake_answer_intent.py

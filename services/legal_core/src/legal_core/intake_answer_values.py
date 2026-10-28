@@ -7,7 +7,6 @@ import re
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import date
-from decimal import Decimal
 from typing import cast
 
 from pydantic import JsonValue
@@ -25,54 +24,12 @@ from legal_core.factual_safety_intake import (
     validate_partial_screening,
 )
 from legal_core.intake_answer_contracts import AnswerQuestion, derive_answer_question
+from legal_core.intake_money import literal_ruble_kopecks
 from legal_core.intake_preparation_contracts import DraftSuggestions
 from legal_core.intake_service_scope import invalidate_service_clarification_answers
 from legal_core.pseudonymization import pseudonymize_text
 
 _LINK = re.compile(r"//|[a-z][a-z0-9+.-]*:|www\.|(?:[\w-]+\.)+[^\W\d_]{2,63}\b", re.I)
-_MONEY_NUMBER = re.compile(r"[0-9]+(?:[ \u00a0\u202f][0-9]{3})*(?:[.,][0-9]+)?")
-_THOUSAND = re.compile(r"\s*(?:тыс\.?|тысяч(?:\u0430|и|\u0443|ей)?)(?!\w)", re.I)
-_RUB = re.compile(
-    r"₽|\b(?:rub|rubles?|\u0440\u0443\u0431(?:\.|л[\u0430-\u044f]*)?|\u0440\.)(?!\w)", re.I,
-)
-_FOREIGN_CURRENCY = re.compile(
-    r"[$€£¥₴₸₺₾]|\b(?:usd|eur|gbp|jpy|cny|chf|uah|kzt|byn|rur|"
-    r"доллар[\u0430-\u044f]*|евро|юан[\u0430-\u044f]*|фунт[\u0430-\u044f]*|"
-    r"франк[\u0430-\u044f]*|йен[\u0430-\u044f]*|иен[\u0430-\u044f]*|"
-    r"гривн[\u0430-\u044f]*|тенге|лир[\u0430-\u044f]*|лари|белорус[\u0430-\u044f]*)\b", re.I,
-)
-_UNCERTAIN_MONEY = re.compile(
-    r"[-\u2212\u2013\u2014]\s*[0-9]|[<>≈~]|\b(?:не|нет|ни|без|минус|около|примерно|"
-    r"приблизительно|порядка|от|до|между|или|либо|менее|более|"
-    r"миллион[\u0430-\u044f]*|миллиард[\u0430-\u044f]*|млн|млрд)\b",
-    re.I,
-)
-
-
-def _ground_money(value: dict[str, JsonValue], source: str) -> None:
-    """Compare one literal amount, not an NLP/FX parser; unsupported wording stays manual."""
-    if _FOREIGN_CURRENCY.search(source) or _UNCERTAIN_MONEY.search(source):
-        raise ValueError("monetary source is not an unambiguous ruble amount")
-    matches = list(_MONEY_NUMBER.finditer(source))
-    if len(matches) != 1:
-        raise ValueError("monetary source requires one literal amount")
-    match = matches[0]
-    if match.start() and source[match.start() - 1].isalnum():
-        raise ValueError("identifier is not an amount")
-    number = match.group().replace(" ", "").replace("\u00a0", "").replace("\u202f", "")
-    number = number.replace(",", ".")
-    if "." in number and len(number.rsplit(".", 1)[1]) > 2:
-        raise ValueError("unsupported or ambiguous decimal amount")
-    scale = _THOUSAND.match(source, match.end())
-    end = scale.end() if scale is not None else match.end()
-    remainder = (source[:match.start()] + source[end:]).strip(" \t\r\n.,:;!")
-    # The current question supplies RUB for a bare number. For a sentence, require
-    # the currency literally; do not mistake counts, points or another unit for money.
-    if remainder and not _RUB.search(source):
-        raise ValueError("sentence does not identify rubles")
-    kopecks = Decimal(number) * (100000 if scale is not None else 100)
-    if kopecks != value["amountKopecks"]:
-        raise ValueError("proposed amount differs from its literal source")
 
 
 def _question(question: AnswerQuestion) -> AnswerQuestion:
@@ -172,10 +129,11 @@ def validate_grounded_answer_value(
                 or not source.strip() or pseudonymize_text(source).changed):
             raise ValueError("answer source must be bounded and de-identified")
         normalized = _shape(validated, value, as_of_date)
-        if validated.screening_field == "amount" and isinstance(normalized, dict):
-            if require_explicit_currency and not _RUB.search(source):
-                raise ValueError("additional monetary facts require an explicit ruble source")
-            _ground_money(normalized, source)
+        if (validated.screening_field == "amount" and isinstance(normalized, dict)
+                and literal_ruble_kopecks(
+                    source, require_explicit_currency=require_explicit_currency,
+                ) != normalized["amountKopecks"]):
+            raise ValueError("proposed amount differs from its literal source")
         if validated.target_field == "eventSummary" and normalized != source:
             raise ValueError("event narrative must be the verbatim user answer")
         if validated.target_field == "affectedServices" and (

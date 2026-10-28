@@ -10,6 +10,7 @@ from typing import Any
 from agent_orchestrator.hermes_client import HermesClient, HermesProtocolError
 from legal_core.analysis_clarifications import ServiceProvidedDate, confirmed_answers
 from legal_core.factual_safety_intake import FactualSafetyScreening
+from legal_core.intake_money import initial_money_kopecks
 from legal_core.intake_preparation_contracts import DraftSuggestions
 from legal_core.pseudonymization import pseudonymize_text
 
@@ -83,6 +84,31 @@ def _proposal_schema() -> dict[str, Any]:
     return schema
 
 
+def _normalize_initial_money(proposed: DraftSuggestions, source: str) -> DraftSuggestions:
+    """Repair only a demonstrated factor100 unit slip; omit unsupported amounts."""
+    screening = proposed.safety_screening or {}
+    amount = screening.get("amount")
+    if not isinstance(amount, dict):
+        return proposed
+    wire = proposed.model_dump(mode="json", by_alias=True)
+    keep = False
+    try:
+        actual = initial_money_kopecks(
+            source, [(span.start, span.end)
+                     for span in proposed.source_spans["safetyScreening"]],
+        )
+        supplied = amount["amountKopecks"]
+        if isinstance(supplied, int) and (actual == supplied or actual == supplied * 100):
+            wire["safetyScreening"]["amount"]["amountKopecks"] = actual
+            keep = True
+    except (ValueError, TypeError):
+        pass
+    if not keep:
+        # No UNKNOWN is invented: the ordinary amount question remains unanswered.
+        del wire["safetyScreening"]["amount"]
+    return DraftSuggestions.model_validate(wire)
+
+
 class IntakeUnderstanding:
     def __init__(self, *, researcher: HermesClient) -> None:
         self._researcher = researcher
@@ -102,7 +128,7 @@ class IntakeUnderstanding:
             user=json.dumps(user_context, ensure_ascii=False),
         )
         try:
-            proposed = DraftSuggestions.model_validate(raw)
+            proposed = _normalize_initial_money(DraftSuggestions.model_validate(raw), source)
             proposed.validate_source(source)
             if any(not source[span.start:span.end].strip()
                    for spans in proposed.source_spans.values() for span in spans):

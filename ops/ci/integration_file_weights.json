@@ -31,6 +31,7 @@
     "services/agent_orchestrator/tests/test_reasoning_readiness.py": 0.05,
     "services/agent_orchestrator/tests/test_reference_analogy_boundary.py": 0.05,
     "services/agent_orchestrator/tests/test_reference_analogy_projection.py": 0.05,
+    "services/agent_orchestrator/tests/test_shared_reasoning_budget.py": 3.219,
     "services/agent_orchestrator/tests/test_understanding_context_client.py": 0.05,
     "services/agent_orchestrator/tests/test_understanding_context_privacy_independent_review.py": 0.05,
     "services/agent_orchestrator/tests/test_understanding_fact_coverage.py": 0.141,

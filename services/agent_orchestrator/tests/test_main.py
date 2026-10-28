@@ -272,7 +272,7 @@ def test_incomplete_or_mismatched_lease_is_not_downgraded_to_unfenced_submission
     assert legal_core.context_calls == reasoning.calls == legal_core.submit_calls == 0
 
 
-def test_runtime_uses_distinct_bounded_streaming_stage_budgets():
+def test_runtime_uses_shared_analysis_wall_and_separate_intake_cap():
     from agent_orchestrator import main
     settings = ServiceSettings(
         internal_key=INTERNAL_KEY, legal_core_url="http://legal-core:8000",
@@ -283,12 +283,12 @@ def test_runtime_uses_distinct_bounded_streaming_stage_budgets():
     )
     dependencies = main.build_dependencies(settings)
     assert dependencies.legal_core.endpoint.timeout_seconds == 60
-    assert dependencies.reasoning._researcher.endpoint.timeout_seconds == 65
-    assert dependencies.reasoning._reviewer.endpoint.timeout_seconds == 65
+    assert dependencies.reasoning._researcher.endpoint.timeout_seconds == 115
+    assert dependencies.reasoning._reviewer.endpoint.timeout_seconds == 115
     assert main.ANALYSIS_WALL_TIMEOUT_SECONDS == 115
     research = dependencies.reasoning._researcher.endpoint
     review = dependencies.reasoning._reviewer.endpoint
-    assert (research.timeout_seconds, review.timeout_seconds) == (65, 65)
+    assert (research.timeout_seconds, review.timeout_seconds) == (115, 115)
     assert research.stream_response is review.stream_response is True
     assert (research.model, review.model) == ("researcher", "reviewer")
     assert (research.api_key, review.api_key) == ("research-key", "review-key")
