@@ -88,6 +88,9 @@ class CaseWorkProductVersion(Base):
                         "AND octet_length(payload_json::text) <= 65536",
                         name="ck_work_product_payload_budget"),
         CheckConstraint(_PAYLOAD_BINDING, name="ck_work_product_payload_binding"),
+        CheckConstraint("payload_json#>>'{source,context,referenceExampleTraceSha256}' "
+                        "IS NOT DISTINCT FROM reference_example_trace_sha256",
+                        name="ck_work_product_reference_trace"),
         CheckConstraint("content_sha256 ~ '^[0-9a-f]{64}$' AND content_sha256 = "
                         "encode(public.digest(convert_to("
                         "public.legal_canonical_jsonb(payload_json), "

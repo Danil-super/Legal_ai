@@ -54,6 +54,7 @@ from legal_core.lawyer_work_product_contracts import (
     LawyerWorkProductView,
 )
 from legal_core.models import AuditEvent, Case, CaseEscalation
+from legal_core.reference_analogy_freshness import require_reference_analogy_trace_current
 from legal_core.risk_engine import fact_snapshot_sha256
 from legal_core.verifier import (
     ClaimKind,
@@ -135,7 +136,7 @@ def _new_version(actor: ActorContext, content: InternalWorkProduct, *, origin: s
         fact_snapshot_sha256=content.source.fact_snapshot_sha256,
         evidence_trace_sha256=context.evidence_trace_sha256,
         clinic_document_context_trace_sha256=context.clinic_document_context_trace_sha256,
-        reference_example_trace_sha256=None,
+        reference_example_trace_sha256=context.reference_example_trace_sha256,
         risk_policy_version=content.risk_policy_version, as_of_date=content.as_of_date,
     )
 
@@ -144,7 +145,10 @@ async def _view(session: AsyncSession, *, actor: ActorContext, case: Case,
                 row: CaseWorkProductVersion,
                 loaded_state: AnalysisState | None = None) -> LawyerWorkProductView:
     content = InternalWorkProduct.model_validate(row.payload_json)
-    if content.content_sha256 != row.content_sha256:
+    reference_trace = (content.source.context.reference_example_trace_sha256
+                       if content.source.context else None)
+    if (content.content_sha256 != row.content_sha256
+            or row.reference_example_trace_sha256 != reference_trace):
         raise _stale()
     latest = await _latest(session, actor, case.id)
     current = (latest is not None and latest.id == row.id
@@ -164,13 +168,17 @@ async def _view(session: AsyncSession, *, actor: ActorContext, case: Case,
                     as_of_date=_analysis_date(facts), policy=policy,
                 )
                 await require_lawyer_draft_sources_current(session, actor=actor, state=state)
+                await require_reference_analogy_trace_current(
+                    session, case=case, facts=facts, expected_trace=reference_trace,
+                )
             else:
                 # The private loader already fenced this exact state. Repeating
                 # retrieval here could invoke embeddings while source locks are held.
                 state = loaded_state
                 if (state.case.id != case.id or state.case.clinic_id != actor.clinic_id
                         or state.fact_snapshot_sha256 != content.source.fact_snapshot_sha256
-                        or state.risk_policy.domain.version != content.risk_policy_version):
+                        or state.risk_policy.domain.version != content.risk_policy_version
+                        or state.reference_example_trace_sha256 != reference_trace):
                     raise _stale()
             bound = content.source.context
             if (bound is None or state.as_of_date != bound.as_of_date
@@ -187,7 +195,7 @@ async def _view(session: AsyncSession, *, actor: ActorContext, case: Case,
         except ApiError as error:
             if error.code not in {"LAWYER_WORK_PRODUCT_STALE", "RISK_POLICY_NOT_READY",
                                   "ANALYSIS_DATE_UNCERTAIN", "LEGAL_EVIDENCE_UNAVAILABLE",
-                                  "LAWYER_DRAFT_CONTEXT_STALE"}:
+                                  "LAWYER_DRAFT_CONTEXT_STALE", "REFERENCE_ANALOGY_CONTEXT_STALE"}:
                 raise
             current, citations = False, []
     return LawyerWorkProductView.model_validate({

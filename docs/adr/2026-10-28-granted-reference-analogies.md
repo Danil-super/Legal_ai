@@ -81,3 +81,18 @@ producer/source rows before writes. Legacy submissions omit the field; V2 source
 receipts bind it through existing canonical hashes. V1 completion audit adds only
 the trace when used. Urgent routing and all normative verifier/risk gates stay
 unchanged. No selected examples produces the exact prior absent-field path.
+
+R5 retains the trace in the existing work-product column and the immutable source
+context. Additive migration f42d9e6b0a31 enforces their equality with a CHECK; old
+absent/null pairs remain valid, no history is rewritten. Human revisions preserve
+the same producer/source trace. Public work-product reads validate that source
+using the Case creator's current grants and selected provenance; they never return
+the example bodies or require a workspace grant from an otherwise authorized
+assigned lawyer. Withdrawn producer/source access makes the retained plan stale,
+without erasing it or replacing a human version. Private acceptance reuses its
+already fenced context and does not repeat retrieval under final source locks.
+Downgrade fences writers and refuses retained non-null reference history, including
+rows hidden by FORCE RLS from a NOSUPERUSER/NOBYPASSRLS table owner. The temporary
+owner-only NO FORCE check is transactional; refusal restores FORCE, and an empty
+successful check restores FORCE before removing the constraint. Rollback means
+disabling producers on a compatible reader, not erasing or relabelling history.
