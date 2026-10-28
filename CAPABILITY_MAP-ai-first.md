@@ -34,6 +34,9 @@ passed CI, deployed and passed live health/context-integrity probes. The AIF
 feature itself remains local; final integration/live quality gates remain open.
 Local reference evaluation scenarios now have a bounded nonauthoritative model
 projection, existing-workspace-grant checks and immutable provenance traces
-separate from normative evidence. Final lawyer-write expiry checks, opt-in wiring
-and reference-positive worker verification remain in progress. No production
-analogy usage, automatic source approval or permission expansion is claimed.
+separate from normative evidence. Lawyer-write expiry checks, default-off wiring
+and reference-positive worker/human-review verification are implemented locally.
+Final review still requires a producer lock-order correction. The live HIGH draft
+produced five verified actions; ordinary-plan usefulness, repeated timings and
+complete CI remain acceptance gates. No production analogy usage, automatic
+source approval or permission expansion is claimed.

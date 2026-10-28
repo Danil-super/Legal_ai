@@ -42,10 +42,22 @@ Allowed reference analogies now have local Core/Agent contracts, current-source
 selection, private metadata stripping, immutable trace binding and ordinary
 submission fencing after late database writes. They require existing explicit
 workspace grants and independent current evaluation approval. No production
-reference feature is enabled. Final lawyer-write expiry fencing, opt-in wiring
-and the reference-positive worker integration test are still being completed.
-Remaining: repeatable live-model usefulness/timings, final full CI, lawyer quality
-review and separate AIF release/enablement. Existing reference approval is
+reference feature is enabled. Lawyer-write expiry fencing, default-off Compose
+wiring and the reference-positive worker integration test are implemented. Five
+worker scenarios pass on real PostgreSQL, including source traces through both
+model projections and assigned-human approval; external model replies in this
+integration test are synthetic. Independent late-wait probes pass, but final
+review found a producer User/membership lock-order conflict with subscription
+management; that real PostgreSQL deadlock is being corrected before acceptance.
+
+A live20-fragment HIGH10000RUB draft produced five evidence-verified actions in
+72.04seconds without clarifications. The corresponding ordinary MEDIUM5000RUB
+path returned three verified claims in53.07seconds, with just one action. Both
+were read-only synthetic probes using the unchanged profiles, not Telegram or
+case-write E2E. The ordinary plan's usefulness and the45second target remain
+open quality findings; a successful claim verifier is not a complete plan.
+Remaining: the lock-order fix, repeatable live-model usefulness/timings, final
+full CI, lawyer quality review and separate AIF release/enablement. Reference approval is
 evaluation approval, not legal authority or an implicit grant to every employee.
 
 Retained intake sources are the original narrative plus latest reply, with prior
