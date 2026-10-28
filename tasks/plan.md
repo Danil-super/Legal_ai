@@ -832,3 +832,17 @@ reference-content guards → combined regression/CI/review → separately approv
 Root owns CI and upload wire; isolated gateway and Core agents own their narrow
 reproductions/fixes. Reference package independence requires an explicit owner
 auth-contract choice; no roles or legal approvals are changed implicitly.
+
+## AI-first local implementation checkpoint — 28 October 2026
+
+The approved AIF01–AIF11 work is implemented through source-bound factual staging,
+optional-context collection, audited question reasons, separately authorized AI
+lawyer drafts, immutable storage and human review UI. Detailed acceptance gaps
+remain in tasks/todo.md; these are local changes, not a production readiness claim.
+
+Finish the pinned Hermes input-boundary correction → fresh full PostgreSQL/MinIO
+verification and complete-context model probes → allowed reference-example
+provenance/authorization → representative legal-quality evaluation → GitHub CI
+and separately reviewed release. Preserve current provider/high profiles, v4,
+10,000RUB threshold and approved-only evidence. Restore service by flags-off on a
+compatible reader; no destructive database downgrade of retained work products.

@@ -24,3 +24,13 @@ contract/storage review and release approval remain the documented checkpoints.
 The second module gets its own reviewed specification before policy changes.
 Keep the existing10,000RUB threshold pending that review; this initiative does
 not silently increase it, reapprove legislation or remove mandatory urgent routing.
+
+## Local status — 28 October 2026
+
+Factual staging, optional context, draft-context authorization, immutable lawyer
+plans and human review are implemented behind default-off flags. Production is
+still PR110. Final integration/live quality gates and release remain open.
+Reference evaluation scenarios are not yet in the model projection; no analogy
+usage is claimed. Their bounded nonauthoritative use must preserve existing
+workspace grants and bind current approved scenario provenance separately from
+normative evidence. No automatic source approval or permission expansion follows.

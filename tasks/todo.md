@@ -11,6 +11,41 @@ All runtime tasks use RED→GREEN, source-bound authorization, focused tests and
 atomic commit. Commands below use the current worktree's source PYTHONPATH and
 `python -m pytest -q`; new test paths are not claimed to exist or pass yet.
 
+### Local verification checkpoint — 28 October 2026
+
+Implemented locally (not deployed): source-bound narrative plus latest-reply
+interpretation and atomic candidate staging; optional chronology/actions/files;
+question-reason audit; separately authorized lawyer-draft context; immutable
+work-product versions; recovery worker; readable lawyer plan and explicit
+human revise/approve versions. Current v4 and10,000RUB threshold are unchanged.
+Focused actual PTB/Core/PostgreSQL and independent reviews cover these paths.
+
+The live-model gate is **open**: expanded approved retrieval exposed pinned
+Hermes'65,536-character message truncation below our existing120,000-character
+client bound. Reordering fields alone is not a fix because it loses a different
+part of the input. A guarded adapter correction and a complete-context live
+probe are required before claiming useful analysis. Diagnostic alternative
+prompts remain outside the repository and are not production configuration.
+
+The full R4 run selected every file once with PostgreSQL/MinIO: five parts passed
+without skips; part4 exposed a destructive migration test using shared retained
+assignment history. Runtime correctly refused that downgrade. The test now owns
+a fresh disposable database and always tests the real roundtrip; a new full run
+is required. No deadline, migration guard or retained history was relaxed.
+
+Remaining: AIF06 allowed reference analogies (currently absent from model context),
+repeatable live-model usefulness/timings, final full CI, lawyer quality review and
+separate release/enablement. Existing reference approval is evaluation approval,
+not a legal authority or an implicit grant to every clinic employee.
+
+Retained intake sources are the original narrative plus latest reply, with prior
+typed confirmed facts; do not claim all historical raw replies are included.
+Old PR110 readers cannot read every new operation payload: flags-off recovery
+must retain a compatible new reader and additive schema, not erase the ledger
+or blindly downgrade to PR110. A retained stale plan currently requires explicit
+fresh analysis/manual handling; lookup intentionally prevents automatic AI
+replacement of human work.
+
 ### AIF01: Reproduce the lawyer's actual workflow gaps
 
 - [x] Independent tests-only commit `fdbcf642f9ae06e3a1e4b119006f3763defde1cb`
@@ -67,7 +102,7 @@ atomic commit. Commands below use the current worktree's source PYTHONPATH and
 
 ### AIF03: Interpret the retained narrative and rich follow-up together
 
-- [ ] Acceptance: a bounded, pseudonymized request includes approved retained source
+- [x] Local implementation/tests: a bounded, pseudonymized request includes approved retained source
   segments and typed current facts; current answer plus additional factual candidates
   are source-grounded; contradictions/corrections are explicit, never guessed facts.
 - Verify: Agent tests/test_ai_first_interpretation.py and tests/test_ai_first_source_guards.py
@@ -78,7 +113,7 @@ atomic commit. Commands below use the current worktree's source PYTHONPATH and
 
 ### AIF04: Stage only current authorized factual candidates
 
-- [ ] Acceptance: Core emits only allowed retained context and validates every candidate
+- [x] Local implementation/tests: Core emits only allowed retained context and validates every candidate
   against its correct source, actor/draft/revision; one atomic staging update preserves
   unknowns and conflicts; no case-fact finalization before summary consent.
 - Verify: Core tests/test_ai_first_staging.py and tests/test_ai_first_context_auth.py (new)
@@ -125,7 +160,7 @@ atomic commit. Commands below use the current worktree's source PYTHONPATH and
 
 ### AIF08: Retain and deliver draft results durably
 
-- [ ] Acceptance: background result is versioned, bound to source/evidence and distinct
+- [x] Local implementation/tests: background result is versioned, bound to source/evidence and distinct
   from a final report; retries do not duplicate work and stale completion cannot replace
   corrected facts or a human-approved version. Failure keeps actionable recovery.
 - Verify: Core tests/test_lawyer_draft_lifecycle.py (new) with PostgreSQL, concurrency,
@@ -142,7 +177,7 @@ atomic commit. Commands below use the current worktree's source PYTHONPATH and
 
 ### AIF09: Show a readable plan instead of manual drafting instructions
 
-- [ ] Acceptance: existing report style presents ordinary internal recommendations and
+- [x] Local implementation/tests: existing report style presents ordinary internal recommendations and
   the explicitly unapproved lawyer draft; missing data has a useful next action;
   no duplicated menus, technical dump or export button for a nonexistent final report.
 - Verify: Gateway tests/test_ai_first_plan_delivery.py and tests/test_ai_first_legacy_readers.py
@@ -152,7 +187,7 @@ atomic commit. Commands below use the current worktree's source PYTHONPATH and
 
 ### AIF10: Review, correct and approve a prepared proposal
 
-- [ ] Acceptance: the authorized lawyer/owner can evaluate the existing AI draft,
+- [x] Local implementation/tests: the authorized lawyer/owner can evaluate the existing AI draft,
   correct it or ask a targeted question; versions and audit remain separate. Approval
   neither reapproves norms nor automatically sends to the patient/closes the case.
 - Verify: Core tests/test_lawyer_work_product_review.py and Gateway
