@@ -136,6 +136,16 @@ def test_actual_worker_routing_draft_replay_and_human_approval(routed_case, monk
         assert reviewed.status_code == 201, reviewed.text
         delivered = client.get(path + "/work-product", headers=actor_headers(actor))
         assert delivered.status_code == 200 and delivered.json()["reviewState"] == "HUMAN_APPROVED"
+        resolved = client.post(path + "/resolve", headers=actor_headers(lawyer),
+                               json={"body": "Синтетическая проверка плана завершена."})
+        assert resolved.status_code == 200, resolved.text
+        retained = client.get(path + "/work-product", headers=actor_headers(actor))
+        assert retained.status_code == 200 and retained.json()["reviewState"] == "HUMAN_APPROVED"
+        assert client.post(path + "/work-product/reviews",
+                           headers=actor_headers(lawyer, uuid4()), json={
+            "expectedVersionId": reviewed.json()["versionId"],
+            "expectedContentSha256": reviewed.json()["contentSha256"], "decision": "APPROVE",
+        }).status_code == 403
     else:
         assert calls == (["researcher.test"] if fault == "researcher-outage"
                          else ["researcher.test", "reviewer.test"])
