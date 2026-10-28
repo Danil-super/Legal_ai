@@ -58,7 +58,7 @@ _STATUS = {
     "DRAFT": "Черновик",
     "READY_FOR_REVIEW": "Ожидает проверки",
     "CHANGES_REQUIRED": "Нужны доработки",
-    "APPROVED_FOR_EVALUATION": "Одобрен юристом",
+    "APPROVED_FOR_EVALUATION": "Проверенный пример",
     "REJECTED": "Не принят для оценки",
     "RETIRED": "Снят с оценки",
 }
@@ -731,7 +731,8 @@ async def _submit_case(
         else:
             await gateway_bot._reply(update, "⚠️ Не удалось направить кейс на проверку.")
         return
-    _clear_pending(context)
+    if not from_detail or (pending is not None and str(pending.get("caseId")) == str(case_id)):
+        _clear_pending(context)
     await gateway_bot._reply(
         update,
         "✅ Кейс направлен на проверку. Статус: "
@@ -779,7 +780,7 @@ async def _review(
         return
     case = result.get("case")
     state = case.get("status") if isinstance(case, dict) else None
-    action = "одобрен юристом" if decision == "APPROVE_FOR_EVALUATION" else "не принят"
+    action = "проверен" if decision == "APPROVE_FOR_EVALUATION" else "не принят"
     await gateway_bot._reply(
         update,
         f"✅ Кейс {action}. Статус: {_STATUS.get(str(state), 'обновлён')}.\n\n"

@@ -323,6 +323,9 @@ def test_imported_draft_submission_uses_real_ptb_dispatch_and_existing_core_tran
                 # A stale/deliberately crafted callback cannot bypass refreshed capability/state.
                 await dispatch(f"refeval:submit:{CASE_ID}", 2)
                 await dispatch(f"refeval:submit:{CASE_ID}", 3)
+                assert app.user_data[ACTOR][PENDING_KEY] == {
+                    "stage": "attachment", "caseId": str(UUID(int=1)),
+                }
             finally:
                 await app.shutdown()
 
@@ -350,6 +353,8 @@ def test_saved_draft_submit_failure_keeps_a_working_case_specific_recovery_contr
         503, "SERVICE_UNAVAILABLE", "Synthetic unavailable service",
     ))
     context = _context(core)
+    unrelated = {"stage": "attachment", "caseId": str(UUID(int=1))}
+    context.user_data[PENDING_KEY] = unrelated
     update = _update(callback=f"refeval:submit:{CASE_ID}")
     asyncio.run(_callback(update, context))
     markup = update.effective_message.reply_text.await_args.kwargs["reply_markup"]
@@ -357,3 +362,4 @@ def test_saved_draft_submit_failure_keeps_a_working_case_specific_recovery_contr
     assert f"refeval:view:{CASE_ID}" in callbacks
     assert "refeval:attachment:submit" not in callbacks
     core.submit_reference_evaluation.assert_awaited_once()
+    assert context.user_data[PENDING_KEY] is unrelated
