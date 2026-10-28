@@ -20,6 +20,7 @@ from legal_core.database import database_url
 from legal_core.main import create_app
 from test_case_api import actor_headers
 from test_lawyer_draft_context import routed_case as routed_case
+from test_reference_analogy_context import SCENARIO, seed_reference
 from test_verified_copy_analysis_e2e import INTERNAL_KEY
 from test_verified_copy_analysis_e2e import isolated_database as isolated_database
 
@@ -28,16 +29,27 @@ pytestmark = pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1",
 ACTION = "Зафиксируйте обращение и сохраните относящиеся к нему документы."
 
 
-@pytest.mark.parametrize("fault", [None, "lost-submit", "unsupported", "researcher-outage"])
+@pytest.mark.parametrize("fault", [None, "lost-submit", "unsupported", "researcher-outage",
+                                   "reference-examples"])
 def test_actual_worker_routing_draft_replay_and_human_approval(routed_case, monkeypatch, fault):
     monkeypatch.setenv("AI_FIRST_LAWYER_DRAFT_ENABLED", "1")
     client, actor, _, _, case, job, *_ = routed_case
+    reference = None
+    if fault == "reference-examples":
+        monkeypatch.setenv("AI_FIRST_REFERENCE_ANALOGIES_ENABLED", "1")
+        reference = seed_reference(routed_case)
     calls, lost, responses = [], [], []
 
     async def model(request):
         calls.append(request.url.host)
         wire = json.loads(request.content)
         context = json.loads(wire["messages"][1]["content"])
+        if reference is not None:
+            assert [item["scenarioText"] for item in context["referenceExamples"]] == [SCENARIO]
+            assert context["referenceExamples"][0]["analogyId"] == "example-1"
+            assert context["referenceExamples"][0]["purpose"] == "NON_AUTHORITATIVE_ANALOGY"
+            assert reference not in json.dumps(context)
+            assert "source" not in context["referenceExamples"][0]
         if request.url.host == "researcher.test":
             if fault == "researcher-outage":
                 raise httpx.ReadTimeout("SYNTHETIC_MODEL_OUTAGE", request=request)
@@ -99,7 +111,7 @@ def test_actual_worker_routing_draft_replay_and_human_approval(routed_case, monk
                                                   base_url="http://agent.test") as worker_http:
                         settings = WorkerSettings("http://agent.test", INTERNAL_KEY)
                         await execute_job(sessions, job, worker_http, settings)
-                        if fault in {None, "lost-submit"}:
+                        if fault in {None, "lost-submit", "reference-examples"}:
                             before = len(calls)
                             # Same still-running lease after a crash/lost response.
                             await execute_job(sessions, job, worker_http, settings)
@@ -109,7 +121,7 @@ def test_actual_worker_routing_draft_replay_and_human_approval(routed_case, monk
             await engine.dispose()
 
     asyncio.run(run())
-    available = fault in {None, "lost-submit"}
+    available = fault in {None, "lost-submit", "reference-examples"}
     with routed_case[9].connect() as db:
         assert db.scalar(text("SELECT count(*) FROM case_work_product_versions")) == int(available)
         assert db.scalar(text("SELECT count(*) FROM case_reports")) == 0
@@ -119,6 +131,9 @@ def test_actual_worker_routing_draft_replay_and_human_approval(routed_case, monk
                          {"id": job.id}) == "SUCCEEDED"
         notifications = db.scalar(text("SELECT count(*) FROM escalation_notifications"))
         assert notifications == len(routed_case[10])
+        if reference is not None:
+            assert db.scalar(text("SELECT reference_example_trace_sha256 "
+                                  "FROM case_work_product_versions")) is not None
     if available:
         path = f"/v1/case-escalations/{routed_case[8]['escalationId']}"
         lawyer = next(iter(routed_case[10]))
@@ -134,6 +149,14 @@ def test_actual_worker_routing_draft_replay_and_human_approval(routed_case, monk
             "decision": "APPROVE",
         })
         assert reviewed.status_code == 201, reviewed.text
+        if reference is not None:
+            assert SCENARIO not in view.text and "referenceExamples" not in view.text
+            assert client.get(f"/v1/reference-evaluations/{reference}",
+                              headers=actor_headers(lawyer)).status_code == 403
+            with routed_case[9].connect() as db:
+                traces = db.scalars(text("SELECT reference_example_trace_sha256 "
+                                         "FROM case_work_product_versions")).all()
+                assert len(traces) == 2 and len(set(traces)) == 1 and traces[0] is not None
         delivered = client.get(path + "/work-product", headers=actor_headers(actor))
         assert delivered.status_code == 200 and delivered.json()["reviewState"] == "HUMAN_APPROVED"
         resolved = client.post(path + "/resolve", headers=actor_headers(lawyer),
