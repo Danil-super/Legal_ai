@@ -9,7 +9,7 @@ import json
 import logging
 import os
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Annotated, Any, Literal, TypedDict
 from uuid import UUID
 
@@ -140,7 +140,7 @@ def build_dependencies(settings: ServiceSettings) -> ServiceDependencies:
             base_url=settings.hermes_researcher_url,
             api_key=settings.hermes_researcher_key,
             model=settings.hermes_researcher_model,
-            timeout_seconds=HERMES_STAGE_TIMEOUT_SECONDS,
+            timeout_seconds=ANALYSIS_WALL_TIMEOUT_SECONDS,
             stream_response=True,
         )
     )
@@ -149,15 +149,21 @@ def build_dependencies(settings: ServiceSettings) -> ServiceDependencies:
             base_url=settings.hermes_reviewer_url,
             api_key=settings.hermes_reviewer_key,
             model=settings.hermes_reviewer_model,
-            timeout_seconds=HERMES_STAGE_TIMEOUT_SECONDS,
+            timeout_seconds=ANALYSIS_WALL_TIMEOUT_SECONDS,
             stream_response=True,
         )
     )
+    # Both reasoning calls remain inside analyze_case's single wall deadline.
+    # Do not reset that deadline between researcher, reviewer or Core writes.
+    # Intake has its own shorter cap and must not inherit a long reasoning call.
+    intake_researcher = HermesClient(replace(
+        researcher.endpoint, timeout_seconds=HERMES_STAGE_TIMEOUT_SECONDS,
+    ))
     return ServiceDependencies(
         legal_core=legal_core,
         reasoning=LegalReasoningOrchestrator(researcher=researcher, reviewer=reviewer),
-        understanding=IntakeUnderstanding(researcher=researcher),
-        answer_understanding=AnswerUnderstanding(researcher=researcher),
+        understanding=IntakeUnderstanding(researcher=intake_researcher),
+        answer_understanding=AnswerUnderstanding(researcher=intake_researcher),
     )
 
 
