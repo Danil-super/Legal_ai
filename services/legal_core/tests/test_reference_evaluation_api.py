@@ -178,9 +178,13 @@ def test_only_explicit_grants_can_upload_and_a_distinct_reviewer_can_approve() -
             json={"decision": "APPROVE_FOR_EVALUATION"},
             headers=actor_headers(owner, uuid4()),
         )
+        detail = client.get(f"/v1/reference-evaluations/{case_id}",
+                            headers=actor_headers(reviewer))
+        assert detail.status_code == 200, detail.text
         approved = client.post(
             f"/v1/reference-evaluations/{case_id}/review",
-            json={"decision": "APPROVE_FOR_EVALUATION"},
+            json={"decision": "APPROVE_FOR_EVALUATION",
+                  "expectedReviewSnapshotSha256": detail.json()["reviewSnapshotSha256"]},
             headers=actor_headers(reviewer, uuid4()),
         )
         downloaded = client.get(

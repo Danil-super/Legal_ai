@@ -30,9 +30,13 @@ def seed_reference(fixture):
     reference = created.json()["case"]["id"]
     assert client.post(f"/v1/reference-evaluations/{reference}/submit",
                        headers=actor_headers(actor, uuid4())).status_code == 200
+    detail = client.get(f"/v1/reference-evaluations/{reference}", headers=actor_headers(reviewer))
+    assert detail.status_code == 200, detail.text
     approved = client.post(f"/v1/reference-evaluations/{reference}/review",
                            headers=actor_headers(reviewer, uuid4()),
-                           json={"decision": "APPROVE_FOR_EVALUATION"})
+                           json={"decision": "APPROVE_FOR_EVALUATION",
+                                 "expectedReviewSnapshotSha256":
+                                     detail.json()["reviewSnapshotSha256"]})
     assert approved.status_code == 200, approved.text
     return reference
 

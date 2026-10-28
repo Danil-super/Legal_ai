@@ -59,9 +59,16 @@ def test_imported_drafts_replay_without_duplicates_and_lawyer_can_read_full_mate
         assert client.get(
             f"/v1/reference-evaluations/{case_id}", headers=actor_headers(outsider)
         ).status_code == 403
+        detail = client.get(f"/v1/reference-evaluations/{case_id}",
+                            headers=actor_headers(lawyer))
+        assert detail.status_code == 200, detail.text
         denied = client.post(
             f"/v1/reference-evaluations/{case_id}/review",
-            headers=actor_headers(lawyer, uuid4()), json={"decision": "APPROVE_FOR_EVALUATION"},
+            headers=actor_headers(lawyer, uuid4()), json={
+                "decision": "APPROVE_FOR_EVALUATION",
+                "expectedReviewSnapshotSha256": detail.json()["reviewSnapshotSha256"],
+            },
         )
         assert denied.status_code == 409  # the import never submits or approves a draft
+        assert denied.json()["error"]["code"] == "REFERENCE_EVALUATION_REVIEW_STATE_INVALID"
     assert len(store.objects) == 1

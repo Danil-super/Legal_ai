@@ -41,9 +41,13 @@ def workspace(isolated_database):
             if approve:
                 assert client.post(f"/v1/reference-evaluations/{identifier}/submit",
                     headers=actor_headers(actor, uuid4())).status_code == 200
+                detail = client.get(f"/v1/reference-evaluations/{identifier}",
+                                    headers=actor_headers(reviewer))
+                assert detail.status_code == 200, detail.text
                 response = client.post(f"/v1/reference-evaluations/{identifier}/review",
                     headers=actor_headers(reviewer, uuid4()),
-                    json={"decision": "APPROVE_FOR_EVALUATION"})
+                    json={"decision": "APPROVE_FOR_EVALUATION",
+                          "expectedReviewSnapshotSha256": detail.json()["reviewSnapshotSha256"]})
                 assert response.status_code == 200, response.text
             return identifier
         yield actor, clinic, membership, reviewer_membership, create, owner
