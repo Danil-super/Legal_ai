@@ -34,3 +34,17 @@ omission at the submission boundary, retain supplied context and optional editin
 and check LOW/5,000-ruble MEDIUM/10,000-ruble HIGH plus missing evidence, date,
 screening and claim dependencies. HTTP/model/Telegram boundaries are faked in PTB
 tests; they do not establish live-provider performance or legal release readiness.
+
+Existing complete drafts retain the historical order of the fact list. Core hashes
+the complete submission wire payload, so moving the two optional facts to the end
+would break a retry after a lost response even though its facts were unchanged.
+A captured synthetic pre-change payload hash guards this compatibility boundary.
+Explicit optional-edit checkpoints remain resumable even with valid/prepopulated
+values: checklist selections do not imply DONE. Accepted single answers and DONE
+persist the next SUMMARY state. Automatic missing-question selection may skip
+absence but must not erase an edit the user opened.
+
+Back from an optional editor returns to the factual summary when its required
+inputs are complete. Current provisional selections stay visible for the single
+final consent; empty optional selections become absent. Back neither creates a
+case nor claims to undo previous saved input. No durable undo marker is introduced.

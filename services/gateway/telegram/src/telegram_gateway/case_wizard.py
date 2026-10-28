@@ -298,6 +298,14 @@ def facts_from_v2_data(data: dict[str, Any]) -> list[dict[str, Any]]:
         _fact("SITUATION_AREAS", "ENUM_SET", {"values": data["situationAreas"]}),
         _fact("EVENT_SUMMARY", "TEXT", {"text": data["eventSummary"]}),
         _fact("EVENT_DATE", "DATE", data["eventDate"]),
+    ]
+    # These facts are optional context, never defaults inferred from silence.
+    # Retain the old order for existing workflow payload/hash replay.
+    if "conflictStage" in data:
+        facts.append(_fact("CONFLICT_STAGE", "ENUM", {"value": data["conflictStage"]}))
+    if "clinicActions" in data:
+        facts.append(_fact("CLINIC_ACTIONS", "ENUM_SET", {"values": data["clinicActions"]}))
+    facts.extend([
         _fact(
             "HEALTH_CONSEQUENCE_SIGNALS",
             "ENUM_SET",
@@ -308,12 +316,7 @@ def facts_from_v2_data(data: dict[str, Any]) -> list[dict[str, Any]]:
         _fact("CASE_MATERIALS_STATUS", "ENUM", {
             "value": data.get("caseMaterialsStatus", "NOT_ATTACHED"),
         }),
-    ]
-    # These facts are optional context, never defaults inferred from silence.
-    if "conflictStage" in data:
-        facts.append(_fact("CONFLICT_STAGE", "ENUM", {"value": data["conflictStage"]}))
-    if "clinicActions" in data:
-        facts.append(_fact("CLINIC_ACTIONS", "ENUM_SET", {"values": data["clinicActions"]}))
+    ])
     if "TREATMENT" in data["situationAreas"]:
         affected_services = data.get("affectedServices")
         if not isinstance(affected_services, list):
