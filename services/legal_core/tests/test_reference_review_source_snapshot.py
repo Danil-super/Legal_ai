@@ -10,7 +10,10 @@ from pydantic import ValidationError
 from sqlalchemy import text
 
 from legal_core.case_api import _canonical_hash
-from legal_core.reference_evaluation_contracts import ReferenceEvaluationReviewRequest
+from legal_core.reference_evaluation_contracts import (
+    ReferenceEvaluationCreateResponse,
+    ReferenceEvaluationReviewRequest,
+)
 from test_case_api import actor_headers, application_client, seed_admin
 from test_reference_analogy_retrieval import workspace as workspace
 from test_reference_evaluation_api import FakeReferenceEvaluationStore, _grant
@@ -29,6 +32,20 @@ def test_absent_review_snapshot_preserves_existing_wire_and_hash():
         "decision": "APPROVE_FOR_EVALUATION", "expectedReviewSnapshotSha256": "a" * 64,
     })
     assert bound.model_dump(by_alias=True)["expectedReviewSnapshotSha256"] == "a" * 64
+
+
+def test_retained_legacy_creation_receipt_without_snapshot_remains_readable():
+    wire = {"case": {
+        "id": str(uuid4()), "displayName": "Синтетический эталон", "groupKey": "healthcare",
+        "status": "DRAFT", "currentVersion": 1, "hasMaterial": False,
+        "createdAt": "2026-10-08T00:00:00Z", "updatedAt": "2026-10-08T00:00:00Z",
+        "asOfDate": "2026-10-08", "expectedRoute": "ABSTAIN",
+        "scenarioText": "Синтетический пример для проверки сохранённой квитанции.",
+        "contentPurgedAt": None, "createdBySelf": True,
+    }}
+    retained = ReferenceEvaluationCreateResponse.model_validate(wire)
+    assert retained.case.review_snapshot_sha256 is None
+    assert retained.model_dump(mode="json", by_alias=True) == wire
 
 
 @pytest.mark.parametrize("token", ["a" * 63, "a" * 65, "A" * 64, "g" * 64, 123, ""])
