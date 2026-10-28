@@ -256,6 +256,20 @@ async def _private_finish(session: AsyncSession, *, actor: ActorContext, case: C
     require_analysis_running()
 
 
+async def _commit_with_reference_fence(
+    session: AsyncSession, *, case: Case, reference_trace: str | None,
+) -> None:
+    # FK checks and final authorization may wait after the first source fence.
+    # Flush every pending version/audit/receipt before evaluating natural expiry.
+    await session.flush()
+    if reference_trace is not None:
+        facts = _domain_facts(await _current_fact_rows(session, case.id))
+        await require_reference_analogy_trace_current(
+            session, case=case, facts=facts, expected_trace=reference_trace,
+        )
+    await session.commit()
+
+
 async def _public_case(session: AsyncSession, *, telegram_user_id: int, escalation_id: UUID,
                         mutation: bool = False) -> tuple[ActorContext, Case, CaseEscalation]:
     _require_enabled()
@@ -317,7 +331,10 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
         await _private_finish(session, actor=loaded.actor, case=loaded.analysis_state.case,
                                telegram_user_id=telegram_user_id, job_id=x_analysis_job_id,
                                job_token=x_analysis_job_token)
-        await session.commit()
+        await _commit_with_reference_fence(
+            session, case=loaded.analysis_state.case,
+            reference_trace=loaded.analysis_state.reference_example_trace_sha256,
+        )
         return result
 
     @router.post("/v1/cases/{case_id}/lawyer-work-products",
@@ -358,7 +375,10 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
             await _private_finish(session, actor=actor, case=state.case,
                                    telegram_user_id=telegram_user_id, job_id=x_analysis_job_id,
                                    job_token=x_analysis_job_token)
-            await session.commit()
+            await _commit_with_reference_fence(
+                session, case=state.case,
+                reference_trace=state.reference_example_trace_sha256,
+            )
             return view
         previous = await _latest(session, actor, case_id)
         if previous is not None and previous.origin == "HUMAN":
@@ -426,7 +446,9 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
         await _private_finish(session, actor=actor, case=state.case,
                                telegram_user_id=telegram_user_id, job_id=x_analysis_job_id,
                                job_token=x_analysis_job_token)
-        await session.commit()
+        await _commit_with_reference_fence(
+            session, case=state.case, reference_trace=state.reference_example_trace_sha256,
+        )
         return view
 
     @router.get("/v1/case-escalations/{escalation_id}/work-product",
@@ -471,7 +493,11 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
                                             case=case)
             _require_enabled()
             require_analysis_running()
-            await session.commit()
+            await _commit_with_reference_fence(
+                session, case=case,
+                reference_trace=(result.content.source.context.reference_example_trace_sha256
+                                 if result.is_current and result.content.source.context else None),
+            )
             return result
         row = await _latest(session, actor, case.id)
         if (row is None or row.id != payload.expected_version_id
@@ -515,7 +541,11 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
                                         case=case)
         _require_enabled()
         require_analysis_running()
-        await session.commit()
+        await _commit_with_reference_fence(
+            session, case=case,
+            reference_trace=(content.source.context.reference_example_trace_sha256
+                             if content.source.context else None),
+        )
         return result
 
     return router

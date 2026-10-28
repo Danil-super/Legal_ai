@@ -104,3 +104,12 @@ the producer/source wall-clock fence, then commit with no intervening write or
 network operation. A stale source rolls the entire transaction back. Real PG
 regressions observe the actual FK lock wait for legacy report, V2 limitation and
 V2 ready branches under the unchanged 5000 RUB/current-v4 scenario.
+
+The same post-flush wall-clock fence covers private draft creation, retained
+submission replay and lookup, plus new human APPROVE/REVISE versions and current
+human replay. A lawyer-membership FK wait cannot extend the lifetime of a selected
+example. The check uses the original Case producer, so assigned lawyers still do
+not need a historical-workspace grant. Stale historical read/replay views remain
+readable as non-current; no fresh positive acceptance is committed after expiry.
+The fence flushes all remaining receipt/audit writes and performs only bounded
+local provenance queries before commit, with no repeated normative retrieval.
