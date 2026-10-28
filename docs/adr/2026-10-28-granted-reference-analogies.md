@@ -31,3 +31,23 @@ the selected trace to final source/idempotency/freshness checks. These future
 steps are not implemented or enabled by a contract alone. Old readers/wire hashes
 and production behavior remain unchanged until separately verified wiring and
 the existing release gate.
+
+R2 implements `select_reference_analogies(session, actor=..., facts=...)`, returning
+the closed context. It independently checks the resolved actor's active membership,
+active user and explicit grant before reading scenario rows, and repeats that
+predicate in the source query. The current case/version and an exact independent
+APPROVE_FOR_EVALUATION event must match in the same tenant; retired, unapproved,
+expired, purged or mismatched content is excluded. Selection reads no attachment
+keys/bytes, expected route, reviewer note or raw workbook. A local lexical overlap
+of bounded current narrative/service terms ranks at most 200 eligible candidates;
+ties use case UUID for deterministic order. Unrelated examples are not padding.
+The greedy complete-example budget keeps up to three within 12000 characters,
+omitting oversized/unsafe/hash-invalid examples without editing their contents.
+
+This selector is inactive until wired. The caller remains responsible for the
+actual case-creator authorization, tenant session, post-model source/grant locks,
+exact trace binding and normative claim verification. It does not reauthorize a
+Case on its own, certify historical answers or make absent examples an error.
+Real disposable PostgreSQL tests exercise current grants, other clinic and same
+clinic ungranted users, revocation between actor resolution and selection, exact
+approval/version/live-content/hash/privacy checks and complete deterministic budgets.
