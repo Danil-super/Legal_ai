@@ -121,6 +121,7 @@ _MULTI_FIELDS = frozenset({"situationAreas", "clinicActions", "healthSignals"})
 _TEXT_FIELDS = {
     "eventSummary": (10, 1_500),
     "clinicActionsNote": (2, 500),
+    "affectedService": (2, 120),
 }
 
 _CLARIFICATION_CHOICES: dict[ClarificationQuestionId, tuple[tuple[str, str], ...]] = {
@@ -368,7 +369,7 @@ def _safe_text(raw: str, *, field: str) -> str:
 
 def _services(raw: str) -> list[str]:
     values = [
-        _safe_text(value, field="clinicActionsNote")
+        _safe_text(value, field="affectedService")
         for value in raw.split(";")
         if value.strip()
     ]
@@ -440,10 +441,12 @@ def _valid_text(value: object, field: str) -> bool:
 
 
 def _valid_services(value: object) -> bool:
+    # Match Core FactInput/DraftSuggestions; older overlong drafts need an edit,
+    # never silent truncation or progression past missing service facts.
     return (
         isinstance(value, list)
         and 1 <= len(value) <= 5
-        and all(isinstance(item, str) and 2 <= len(item.strip()) <= 500 for item in value)
+        and all(isinstance(item, str) and 2 <= len(item.strip()) <= 120 for item in value)
         and len(value) == len(set(value))
     )
 
