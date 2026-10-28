@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -8,6 +9,7 @@ from shlex import quote
 from subprocess import run
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "ops" / "deploy"
@@ -593,6 +595,15 @@ def test_tool_free_hermes_profiles_bypass_the_upstream_s6_entrypoint() -> None:
         assert ":/opt/data/config.yaml:ro" not in service
         assert "no-new-privileges:true" in service
         assert "cap_drop:\n      - ALL" in service
+
+
+def test_both_hermes_profiles_recreate_when_the_guarded_launcher_changes() -> None:
+    launcher = ROOT / "ops/hermes/run_guarded_gateway.py"
+    expected = hashlib.sha256(launcher.read_bytes()).hexdigest()
+    compose = yaml.safe_load((ROOT / "ops/hermes/docker-compose.hermes.yml").read_text())
+    for name in ("hermes-researcher", "hermes-reviewer"):
+        labels = compose["services"][name].get("labels", {})
+        assert labels.get("org.dental-legal-ai.hermes-launcher-sha256") == expected
 
 
 def test_hermes_legal_profile_uses_the_explicit_custom_provider_contract() -> None:

@@ -186,6 +186,7 @@ def test_installer_changes_only_method_in_memory_and_cli_retains_it(monkeypatch)
         calls.append((path, run_name, list(sys.argv)))
 
     monkeypatch.setattr(globals_["runpy"], "run_path", run_cli)
+    monkeypatch.setitem(globals_, "install_input_bound_guard", lambda: None)
     monkeypatch.setattr(sys, "argv", [str(GUARD)])
     globals_["main"]()
     assert calls == [

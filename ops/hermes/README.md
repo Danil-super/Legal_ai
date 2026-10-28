@@ -47,6 +47,25 @@ Compose entrypoints require reviewed recreation of both Hermes containers after 
 Future launcher-only changes also require reviewed recreation: updating a bind-mounted file
 does not replace the handler already installed in a running Python process.
 
+The launcher also checks the exact pinned chat and multimodal normalizer source hashes and
+their original 65,536-character limit before aligning that shared in-memory limit with the
+application's existing 120,000-character user-input bound. The application still rejects larger
+inputs before HTTP I/O. This prevents Hermes from silently removing trailing facts, claims or
+source conditions from a context the application accepted. Source/constant drift aborts startup;
+neither upstream files nor model/profile settings are rewritten.
+
+Recreate **both** researcher and reviewer containers after a reviewed launcher release. A file
+update or recreation of only one profile does not activate this fix for both passes. Verify the
+input-bound startup guard and a complete synthetic context exceeding 65,536 characters before
+claiming live acceptance. The pinned image, tool-free preflight, high reasoning and call deadlines
+remain unchanged.
+
+Each Hermes service has a Compose label containing the SHA256 of
+`run_guarded_gateway.py`. Update both fingerprints whenever that launcher changes;
+CI verifies them against its actual bytes. The changed service configuration makes
+normal `compose up` recreate both profiles, preserving their volumes and applying
+the startup guards without forcing a database or whole-stack restart.
+
 ## Build the exact upstream commit
 
 Do not use `nousresearch/hermes-agent:latest` or another floating tag.
