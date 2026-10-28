@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -60,6 +61,7 @@ async def _select_reference_analogies_for_membership(
 ) -> ReferenceAnalogyContext:
     """Internal source check may use a Case's actual producer; never a client-selected identity."""
     empty = build_reference_analogy_context([])
+    now = datetime.now(UTC)
     permission_query = select(ReferenceEvaluationAccessGrant.id).join(
         ClinicUser, and_(ClinicUser.id == ReferenceEvaluationAccessGrant.membership_id,
                          ClinicUser.clinic_id == ReferenceEvaluationAccessGrant.clinic_id),
@@ -71,9 +73,9 @@ async def _select_reference_analogies_for_membership(
         ReferenceEvaluationAccessGrant.membership_id == membership_id,
         ReferenceEvaluationAccessGrant.permission.in_(("CONTRIBUTOR", "REVIEWER")),
         ClinicUser.status == "ACTIVE", User.status == "ACTIVE",
-        SubscriptionEntitlement.status == "ACTIVE", SubscriptionEntitlement.starts_at <= func.now(),
+        SubscriptionEntitlement.status == "ACTIVE", SubscriptionEntitlement.starts_at <= now,
         or_(SubscriptionEntitlement.ends_at.is_(None),
-            SubscriptionEntitlement.ends_at > func.now()),
+            SubscriptionEntitlement.ends_at > now),
     )
     if user_id is not None:
         permission_query = permission_query.where(ClinicUser.user_id == user_id)
@@ -107,7 +109,7 @@ async def _select_reference_analogies_for_membership(
         permission_query.exists(),
         case.clinic_id == clinic_id, case.status == "APPROVED_FOR_EVALUATION",
         version.content_purged_at.is_(None), version.scenario_text.is_not(None),
-        or_(version.content_expires_at.is_(None), version.content_expires_at > func.now()),
+        or_(version.content_expires_at.is_(None), version.content_expires_at > now),
         func.char_length(func.coalesce(version.scenario_text, "")) <= MAX_REFERENCE_CHARACTERS,
     ).order_by(case.id).limit(MAX_REFERENCE_CANDIDATES))).mappings().all()
     ranked: list[tuple[int, ReferenceAnalogyExample]] = []

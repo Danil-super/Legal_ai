@@ -86,7 +86,8 @@ def test_producer_or_selected_reference_change_cannot_validate_a_stored_plan(wor
     assert caught.value.code == "REFERENCE_ANALOGY_CONTEXT_STALE"
 
 
-def test_real_source_lock_wait_rechecks_retirement_before_accepting_trace(workspace):
+@pytest.mark.parametrize("change", ["retirement", "expiration"])
+def test_real_source_lock_wait_rechecks_retirement_before_accepting_trace(workspace, change):
     actor, _, _, _, create, owner = workspace
     reference = create()
     case = case_for(actor)
@@ -106,8 +107,13 @@ def test_real_source_lock_wait_rechecks_retirement_before_accepting_trace(worksp
             if blocked:
                 break
             time.sleep(0.02)
-        connection.execute(text("UPDATE reference_evaluation_cases SET status='RETIRED' "
-                                "WHERE id=:id"), {"id": reference})
+        if change == "retirement":
+            connection.execute(text("UPDATE reference_evaluation_cases SET status='RETIRED' "
+                                    "WHERE id=:id"), {"id": reference})
+        else:
+            connection.execute(text("UPDATE reference_evaluation_case_versions SET "
+                                    "content_expires_at=clock_timestamp()-interval '1 millisecond' "
+                                    "WHERE reference_case_id=:id"), {"id": reference})
         transaction.commit()
         assert blocked, "actual selected-source lock wait was not observed"
         with pytest.raises(ApiError) as caught:
