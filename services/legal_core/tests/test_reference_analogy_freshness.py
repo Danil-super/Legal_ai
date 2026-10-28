@@ -119,3 +119,40 @@ def test_real_source_lock_wait_rechecks_retirement_before_accepting_trace(worksp
         with pytest.raises(ApiError) as caught:
             future.result(timeout=5)
         assert caught.value.code == "REFERENCE_ANALOGY_CONTEXT_STALE"
+
+
+@pytest.mark.parametrize("withdraw", [False, True])
+def test_producer_guard_matches_administration_user_then_membership_lock_order(workspace, withdraw):
+    actor, _, membership, _, create, owner = workspace
+    create()
+    case = case_for(actor)
+    trace = select(actor).trace_sha256
+    with owner.connect() as admin, ThreadPoolExecutor(max_workers=1) as pool:
+        transaction = admin.begin()
+        admin.execute(text("SELECT id FROM users WHERE telegram_user_id=:actor FOR UPDATE"),
+                      {"actor": actor})
+        future = pool.submit(guard, actor, case, trace)
+        deadline = time.monotonic() + 5
+        blocked = False
+        while time.monotonic() < deadline:
+            with owner.connect() as observer:
+                blocked = bool(observer.scalar(text("SELECT count(*) FROM pg_stat_activity "
+                    "WHERE datname=current_database() AND wait_event_type='Lock' "
+                    "AND query LIKE '%users.id%FOR SHARE%'")))
+            if blocked:
+                break
+            time.sleep(0.02)
+        assert blocked, "the producer User lock wait was not observed"
+        # The real administration order must be able to finish without deadlock.
+        admin.execute(text("SELECT id FROM clinic_users WHERE id=:id FOR UPDATE"),
+                      {"id": membership})
+        if withdraw:
+            admin.execute(text("UPDATE clinic_users SET status='REVOKED' WHERE id=:id"),
+                          {"id": membership})
+        transaction.commit()
+        if withdraw:
+            with pytest.raises(ApiError) as caught:
+                future.result(timeout=5)
+            assert caught.value.code == "REFERENCE_ANALOGY_CONTEXT_STALE"
+        else:
+            assert future.result(timeout=5) is None

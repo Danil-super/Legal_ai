@@ -52,13 +52,21 @@ async def require_reference_analogy_trace_current(
         ).order_by(model.id).with_for_update(read=True))).all()
         if len(locked) != len(ids):
             raise _stale()
+    # Administration locks User before ClinicUser. Resolve only the server-owned
+    # producer ID, take that User lock first, then re-read and lock membership.
+    # Never retain an identity mapping that changed during the actual User wait.
+    producer_user_id = await session.scalar(select(ClinicUser.user_id).where(
+        ClinicUser.clinic_id == case.clinic_id, ClinicUser.id == case.created_by_membership_id,
+    ))
+    if producer_user_id is None:
+        raise _stale()
+    locked_user = await session.scalar(select(User.id).where(User.id == producer_user_id)
+                                       .with_for_update(read=True))
     producer = (await session.execute(select(ClinicUser.id, ClinicUser.user_id).where(
         ClinicUser.clinic_id == case.clinic_id, ClinicUser.id == case.created_by_membership_id,
     ).with_for_update(read=True))).one_or_none()
-    if producer is None:
+    if (locked_user is None or producer is None or producer.user_id != producer_user_id):
         raise _stale()
-    await session.execute(select(User.id).where(User.id == producer.user_id)
-                          .with_for_update(read=True))
     await session.execute(select(SubscriptionEntitlement.id).where(
         SubscriptionEntitlement.clinic_id == case.clinic_id,
         SubscriptionEntitlement.user_id == producer.user_id,

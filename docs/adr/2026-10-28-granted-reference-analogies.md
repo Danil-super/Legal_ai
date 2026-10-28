@@ -113,3 +113,11 @@ not need a historical-workspace grant. Stale historical read/replay views remain
 readable as non-current; no fresh positive acceptance is committed after expiry.
 The fence flushes all remaining receipt/audit writes and performs only bounded
 local provenance queries before commit, with no repeated normative retrieval.
+
+Producer identity locks follow existing administration's User → ClinicUser order.
+The fence resolves only the Case creator's stored user ID without locking, locks
+that User, then re-reads/locks the same tenant membership and rejects a changed
+identity mapping. Source Case → Version locking remains unchanged. A concurrent
+administration transaction can complete its membership update while selection
+waits for the User; final predicates reject revocation after the wait. Real PG
+regressions exercise both successful unchanged access and revoked membership.
