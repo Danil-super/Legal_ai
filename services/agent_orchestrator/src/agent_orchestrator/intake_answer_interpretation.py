@@ -183,7 +183,12 @@ class AnswerUnderstanding:
                     raise ValueError("retained factual context exceeds its budget")
                 requests = [item.clarification_request for item in [question, *allowed_questions]
                             if item.clarification_request is not None and item.scope_basis is None]
-                if requests:
+                if len(requests) > 3:
+                    # The preflight extraction universe spans all real services;
+                    # it is not the persisted, three-question report-recovery batch.
+                    # Re-derive its identities from the actual factual context.
+                    validation_data.pop("analysisClarificationRequests", None)
+                elif requests:
                     validation_data["analysisClarificationRequests"] = [
                         item.model_dump(mode="json", by_alias=True) for item in requests]
         except (ValueError, TypeError, AttributeError):

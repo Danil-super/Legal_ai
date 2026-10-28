@@ -26,6 +26,12 @@ answer, so supplying service facts after the service-selection step does not los
 them. The existing source checks, fill-only semantics and final factual consent
 continue to apply; neither planning nor model extraction confirms a fact.
 
+The Agent must not serialize the full extraction target universe into the retained
+three-question report batch. Larger preflight universes are re-derived from the
+actual factual context; old bounded recovery batches keep their existing restoration.
+Real-client regressions cover primary answers and source-bound additions for two
+and five services without widening the report batch contract.
+
 Synthetic regressions reproduce the premature summary, reuse UNKNOWN attempts,
 preserve service/date scope and urgent bypass, and cover five services and explicit
 Back editing. They do not establish live-model latency or legal readiness.
