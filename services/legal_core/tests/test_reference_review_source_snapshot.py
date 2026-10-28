@@ -71,10 +71,12 @@ def test_old_displayed_revision_cannot_approve_new_unseen_ready_revision(workspa
     reviewer = _reviewer(workspace)
     with application_client() as client:
         reference, base, first = _ready(workspace, client)
-        changes = client.post(base + "/review", headers=actor_headers(reviewer, uuid4()), json={
+        changes_headers = actor_headers(reviewer, uuid4())
+        changes_body = {
             "decision": "CHANGES_REQUIRED", "note": "Уточните синтетическую фабулу.",
             "expectedReviewSnapshotSha256": first,
-        })
+        }
+        changes = client.post(base + "/review", headers=changes_headers, json=changes_body)
         assert changes.status_code == 200, changes.text
         revised = client.post(base + "/revisions", headers=actor_headers(workspace[0], uuid4()),
             json={"asOfDate": "2026-10-08", "expectedRoute": "ABSTAIN",
@@ -92,6 +94,9 @@ def test_old_displayed_revision_cannot_approve_new_unseen_ready_revision(workspa
         current = client.get(base, headers=actor_headers(reviewer)).json()
         assert current["status"] == "READY_FOR_REVIEW" and current["currentVersion"] == 2
         assert current["reviewSnapshotSha256"] != first
+        replay = client.post(base + "/review", headers=changes_headers, json=changes_body)
+        assert replay.status_code == 409, replay.text
+        assert _counts(workspace, reference) == before
 
 
 @postgres
@@ -300,3 +305,112 @@ def test_waiting_review_rechecks_locked_current_source_and_reviewer_grant(worksp
             assert blocked, result.text
             assert result.status_code == (409 if changed == "source" else 403), result.text
         assert _counts(workspace, reference) == (0, 0)
+
+
+def _lock_reviewer(connection, membership):
+    # Match membership administration's User -> ClinicUser order.
+    connection.execute(text("SELECT u.id FROM users u JOIN clinic_users c ON c.user_id=u.id "
+                            "WHERE c.id=:id FOR UPDATE OF u"), {"id": membership})
+    connection.execute(text("SELECT id FROM clinic_users WHERE id=:id FOR UPDATE"),
+                       {"id": membership})
+
+
+def _observed_insert_fk_wait(owner):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        with owner.connect() as observer:
+            if observer.scalar(text("SELECT count(*) FROM pg_stat_activity "
+                "WHERE datname=current_database() AND wait_event_type='Lock' "
+                "AND query LIKE 'INSERT INTO %'")):
+                return True
+        time.sleep(.02)
+    return False
+
+
+@postgres
+@pytest.mark.parametrize("withdraw", ["membership", "grant", "user", "subscription",
+                                      "subscription-expiry"])
+def test_late_approval_fk_wait_cannot_commit_after_reviewer_withdrawal(workspace, monkeypatch,
+                                                                   withdraw):
+    monkeypatch.setenv("AI_FIRST_REFERENCE_ANALOGIES_ENABLED", "1")
+    reviewer = _reviewer(workspace)
+    with application_client() as client:
+        reference, base, token = _ready(workspace, client)
+        key = uuid4()
+        if withdraw == "subscription-expiry":
+            with workspace[5].begin() as connection:
+                connection.execute(text("UPDATE subscription_entitlements "
+                    "SET ends_at=clock_timestamp()+interval '2 seconds' "
+                    "WHERE user_id=(SELECT user_id FROM clinic_users WHERE id=:id)"),
+                    {"id": workspace[3]})
+        with workspace[5].connect() as holder, ThreadPoolExecutor(max_workers=1) as pool:
+            transaction = holder.begin()
+            _lock_reviewer(holder, workspace[3])
+            pending = pool.submit(client.post, base + "/review",
+                headers=actor_headers(reviewer, key), json={
+                    "decision": "APPROVE_FOR_EVALUATION", "expectedReviewSnapshotSha256": token,
+                })
+            blocked = _observed_insert_fk_wait(workspace[5])
+            if withdraw == "membership":
+                holder.execute(text("UPDATE clinic_users SET status='REVOKED' WHERE id=:id"),
+                               {"id": workspace[3]})
+            elif withdraw == "grant":
+                holder.execute(text("DELETE FROM reference_evaluation_access_grants "
+                    "WHERE membership_id=:id AND permission='REVIEWER'"), {"id": workspace[3]})
+            elif withdraw == "user":
+                holder.execute(text("UPDATE users SET status='REVOKED' WHERE telegram_user_id=:id"),
+                               {"id": reviewer})
+            elif withdraw == "subscription":
+                holder.execute(text("UPDATE subscription_entitlements SET status='SUSPENDED' "
+                    "WHERE user_id=(SELECT user_id FROM clinic_users WHERE id=:id)"),
+                    {"id": workspace[3]})
+            else:
+                time.sleep(2.1)
+            transaction.commit()
+            result = pending.result(timeout=5)
+            assert blocked, result.text
+            assert result.status_code == 403, result.text
+        assert _counts(workspace, reference) == (0, 0)
+        with workspace[5].connect() as connection:
+            assert connection.scalar(text("SELECT status FROM reference_evaluation_cases "
+                                          "WHERE id=:id"), {"id": reference}) == "READY_FOR_REVIEW"
+            assert connection.scalar(text("SELECT count(*) FROM idempotency_records "
+                                          "WHERE key=:key"), {"key": str(key)}) == 0
+
+
+@postgres
+@pytest.mark.parametrize("decision", ["APPROVE_FOR_EVALUATION", "CHANGES_REQUIRED"])
+def test_late_review_fk_wait_cannot_clear_or_extend_an_expired_original_deadline(workspace,
+                                                                              monkeypatch,
+                                                                              decision):
+    monkeypatch.setenv("AI_FIRST_REFERENCE_ANALOGIES_ENABLED", "1")
+    reviewer = _reviewer(workspace)
+    with application_client() as client:
+        reference, base, token = _ready(workspace, client)
+        with workspace[5].begin() as connection:
+            connection.execute(text("UPDATE reference_evaluation_case_versions SET "
+                "content_expires_at=clock_timestamp()+interval '2 seconds' "
+                "WHERE reference_case_id=:id"), {"id": reference})
+        key = uuid4()
+        with workspace[5].connect() as holder, ThreadPoolExecutor(max_workers=1) as pool:
+            transaction = holder.begin()
+            _lock_reviewer(holder, workspace[3])
+            pending = pool.submit(client.post, base + "/review",
+                headers=actor_headers(reviewer, key), json={"decision": decision,
+                    "note": "Проверить синтетическую фабулу.",
+                    "expectedReviewSnapshotSha256": token})
+            blocked = _observed_insert_fk_wait(workspace[5])
+            time.sleep(2.1)
+            transaction.commit()
+            result = pending.result(timeout=5)
+            assert blocked, result.text
+            assert result.status_code == 410, result.text
+        assert _counts(workspace, reference) == (0, 0)
+        with workspace[5].connect() as connection:
+            assert connection.scalar(text("SELECT status FROM reference_evaluation_cases "
+                                          "WHERE id=:id"), {"id": reference}) == "READY_FOR_REVIEW"
+            assert connection.scalar(text("SELECT content_expires_at < clock_timestamp() "
+                "FROM reference_evaluation_case_versions WHERE reference_case_id=:id"),
+                {"id": reference}) is True
+            assert connection.scalar(text("SELECT count(*) FROM idempotency_records "
+                                          "WHERE key=:key"), {"key": str(key)}) == 0

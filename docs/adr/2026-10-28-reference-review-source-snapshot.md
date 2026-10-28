@@ -51,6 +51,16 @@ token is always checked. Existing tenant, independent-reviewer, state, privacy,
 expiry and authorization restrictions remain enforced. No production approval is
 performed by development or migration.
 
+All review, receipt and audit writes are explicitly flushed before final access
+validation and commit, including idempotent replay. This lets actual foreign-key
+waits finish before checking current active actor/role, reviewer grant and active
+entitlement. Entitlement time predicates use `clock_timestamp()` rather than
+transaction-start `now()`. The source's original expiry is captured before the
+decision clears or extends it; final validation compares that captured deadline
+with fresh wall time. A rejected late result rolls back the approval, expiry
+change, receipt and audit together. No writes follow final validation except
+commit, and no new authorization-lock ordering is introduced.
+
 ## Verification
 
 Real PostgreSQL tests reproduce old-v1 approval after v2 becomes ready, same-version
@@ -58,3 +68,7 @@ attachment upload/replacement and metadata changes, successful approval lost-rep
 replay, legacy nonapproval hash/replay, missing tokens under both flag values and
 foreign/withdrawn/self/expired access. Strict request tests reject malformed hashes
 and verify omitted-field compatibility. Tests use synthetic material only.
+Actual FK-wait regressions revoke membership, user, reviewer grant or entitlement,
+let an entitlement expire naturally, and let original source expiry elapse during
+approval or changes-request persistence; all must roll back. Existing same-source
+lost-reply replay remains successful.

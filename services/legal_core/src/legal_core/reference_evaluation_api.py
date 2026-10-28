@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -43,6 +43,7 @@ from legal_core.models import (
     ReferenceEvaluationCase,
     ReferenceEvaluationCaseVersion,
     ReferenceEvaluationReviewEvent,
+    SubscriptionEntitlement,
 )
 from legal_core.pseudonymization import pseudonymize_text
 from legal_core.reference_evaluation_contracts import (
@@ -175,6 +176,41 @@ async def _require_workspace(
             message="Reference evaluation workspace is not available",
         )
     return permissions
+
+
+async def _recheck_review_access(
+    session: AsyncSession, *, actor: ActorContext, telegram_user_id: int,
+) -> None:
+    if await resolve_actor(session, telegram_user_id) != actor:
+        raise ApiError(status_code=403, code="ACTOR_NOT_AUTHORIZED",
+                       message="Reference reviewer authorization changed")
+    await _require_workspace(session, actor, review=True)
+    # resolve_actor uses transaction-start now(); a late FK wait can outlive that lease.
+    entitlement = await session.scalar(select(SubscriptionEntitlement.id).where(
+        SubscriptionEntitlement.clinic_id == actor.clinic_id,
+        SubscriptionEntitlement.user_id == actor.user_id,
+        SubscriptionEntitlement.status == "ACTIVE",
+        SubscriptionEntitlement.starts_at <= func.clock_timestamp(),
+        (SubscriptionEntitlement.ends_at.is_(None))
+        | (SubscriptionEntitlement.ends_at > func.clock_timestamp()),
+    ))
+    if entitlement is None:
+        raise ApiError(status_code=403, code="SUBSCRIPTION_INACTIVE",
+                       message="Reference reviewer access is inactive")
+
+
+async def _finish_reference_review(
+    session: AsyncSession, *, actor: ActorContext, telegram_user_id: int,
+    original_deadline: datetime | None,
+) -> None:
+    # Finish every review/receipt/audit FK wait before the last authority/time checks.
+    await session.flush()
+    await _recheck_review_access(session, actor=actor, telegram_user_id=telegram_user_id)
+    # Approval clears the ORM expiry, so checking the mutated version would resurrect it.
+    if original_deadline is not None and original_deadline <= datetime.now(UTC):
+        raise ApiError(status_code=410, code="REFERENCE_EVALUATION_CONTENT_EXPIRED",
+                       message="Reference evaluation content has expired")
+    await session.commit()
 
 
 async def _case(
@@ -839,11 +875,8 @@ def create_reference_evaluation_router(
         case = await _case(session, actor, case_id, for_update=True)
         version = await _current_version(session, case, for_update=True)
         _require_live_version(version)
-        current_actor = await resolve_actor(session, telegram_user_id)
-        if current_actor != actor:
-            raise ApiError(status_code=403, code="ACTOR_NOT_AUTHORIZED",
-                           message="Reference reviewer authorization changed")
-        await _require_workspace(session, actor, review=True)
+        original_deadline = version.content_expires_at
+        await _recheck_review_access(session, actor=actor, telegram_user_id=telegram_user_id)
         if version.created_by_membership_id == actor.membership_id:
             raise ApiError(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -864,6 +897,8 @@ def create_reference_evaluation_router(
             session, actor=actor, scope=scope, key=idempotency_key, request_hash=request_hash
         )
         if replay is not None:
+            await _finish_reference_review(session, actor=actor, telegram_user_id=telegram_user_id,
+                                           original_deadline=original_deadline)
             return ReferenceEvaluationReviewResponse.model_validate(replay)
         is_retire = payload.decision == "RETIRE"
         allowed = (
@@ -932,7 +967,8 @@ def create_reference_evaluation_router(
                 ),
             ]
         )
-        await session.commit()
+        await _finish_reference_review(session, actor=actor, telegram_user_id=telegram_user_id,
+                                       original_deadline=original_deadline)
         return result
 
     return router
