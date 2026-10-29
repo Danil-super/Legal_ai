@@ -56,6 +56,7 @@ services:
     restart: unless-stopped
 
   legal-core:
+    init: true
     build:
       context: .
       dockerfile: services/legal_core/Dockerfile

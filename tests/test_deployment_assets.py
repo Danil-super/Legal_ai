@@ -683,3 +683,10 @@ def test_production_defaults_to_direct_egress_with_legal_watch_in_standby() -> N
     assert "telegram-vpn-proxy:" not in production_compose
     assert "/etc/dental-legal-ai/telegram-vpn" not in production_compose
     assert "networks: [edge]" in base_watcher
+
+
+def test_core_reaps_private_parser_descendants() -> None:
+    import yaml
+
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    assert compose["services"]["legal-core"].get("init") is True
