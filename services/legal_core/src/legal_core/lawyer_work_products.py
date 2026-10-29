@@ -208,7 +208,7 @@ async def _view(session: AsyncSession, *, actor: ActorContext, case: Case,
             if error.code not in {"LAWYER_WORK_PRODUCT_STALE", "RISK_POLICY_NOT_READY",
                                   "ANALYSIS_DATE_UNCERTAIN", "LEGAL_EVIDENCE_UNAVAILABLE",
                                   "LAWYER_DRAFT_CONTEXT_STALE", "REFERENCE_ANALOGY_CONTEXT_STALE",
-                                  "CASE_MATERIAL_CONTEXT_UNAVAILABLE"}:
+                                  "CASE_MATERIAL_CONTEXT_UNAVAILABLE", "ANALYSIS_CONTEXT_STALE"}:
                 raise
             current, citations = False, []
     return LawyerWorkProductView.model_validate({
