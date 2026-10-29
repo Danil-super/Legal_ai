@@ -331,3 +331,33 @@ def test_legacy_report_without_requests_preserves_presentation_and_pdf() -> None
     assert present_report(payload) == present_report({**payload, "clarificationRequests": []})
     restored = CanonicalReport.model_validate({**payload, "clarificationRequests": []})
     assert render_report_pdf(report) == render_report_pdf(restored)
+
+
+def test_case_file_sources_have_their_own_readable_section_without_private_metadata(tmp_path):
+    from uuid import uuid4
+
+    payload = presentation_report().model_dump(mode="json", by_alias=True)
+    payload["caseMaterialContextTraceSha256"] = "c" * 64
+    payload["analysis"]["caseMaterialContextTraceSha256"] = "c" * 64
+    payload["caseMaterials"] = {"status": "USED", "sources": [
+        {"materialId": str(uuid4()), "fragmentId": str(uuid4()), "displayName": "Материал 1",
+         "mimeType": "text/plain", "rawSha256": "a" * 64, "textSha256": "b" * 64,
+         "structuralPath": "paragraph:1", "extractionLimitations": [
+             "Использованы отдельные фрагменты текста.",
+         ]},
+    ]}
+    saved = CanonicalReport.model_validate(payload)
+    view = present_report(saved.model_dump(mode="json", by_alias=True))
+    section = next(block for block in view.blocks if block.title == "Приложенные документы")
+    assert any("Материал 1" in line for line in section.lines)
+    assert any("фрагменты" in line for line in section.lines)
+    source_text = "\n".join(section.lines)
+    for private in ("a" * 64, "b" * 64, "c" * 64, "rawSha256", "materialId"):
+        assert private not in source_text
+    pdf = render_report_pdf(saved)
+    path = tmp_path / "case-files.pdf"
+    path.write_bytes(pdf)
+    extracted = subprocess.run(["pdftotext", str(path), "-"], check=True,
+                               capture_output=True, text=True).stdout
+    assert "Приложенные документы" in extracted and "Материал 1" in extracted
+    assert "a" * 64 not in extracted

@@ -34,6 +34,8 @@ from telegram.ext import (
     filters,
 )
 
+from telegram_gateway.case_material_usage import OFFER_KEY as MATERIAL_ANALYSIS_OFFER
+from telegram_gateway.case_material_usage import enabled as material_analysis_enabled
 from telegram_gateway.case_wizard import (
     V2_INTAKE_SCHEMA_VERSION,
     CaseDraft,
@@ -867,6 +869,7 @@ async def _prompt_v2_draft(
 ) -> None:
     message = update.effective_message
     data.pop("_v2_prompt_message_id", None)
+    data.pop(MATERIAL_ANALYSIS_OFFER, None)
 
     async def reply(text: str, *, reply_markup: InlineKeyboardMarkup) -> None:
         await _reply_draft_controls(update, data, text, reply_markup=reply_markup)
@@ -933,19 +936,32 @@ async def _prompt_v2_draft(
         attached = data.get("caseMaterialsStatus") == "ATTACHED" and not missing_material
         prompt = (
             "6/7. Если есть, приложите обезличенную претензию, переписку или договор — "
-            "юрист сможет их посмотреть. Можно продолжить без файла. "
+            "при необходимости копию можно передать юристу. Можно продолжить без файла. "
             "Форматы: .txt, .pdf или .docx до 15 МБ. "
             "Файл сохраняется в материалах кейса. "
             "Удалите ФИО, контакты, номера карт, изображения и ненужные медицинские сведения. "
             "Рекомендации готовятся по описанию "
             "и подтверждённым ответам."
         )
+        analysis_offer = material_analysis_enabled()
+        if analysis_offer:
+            prompt = (
+                "6/7. Если есть, приложите обезличенную претензию, переписку или договор. "
+                "Фрагменты текста будут использованы для подготовки отчёта по этому кейсу. "
+                "Можно продолжить без файла. Форматы: .txt, .pdf или .docx до 15 МБ. "
+                "Удалите ФИО, контакты, номера карт, изображения и лишние медицинские сведения."
+            )
         rows = [[("Продолжить без файла", "case:v2:material:skip")]]
         if attached:
             prompt = "6/7. Обезличенный материал добавлен. Можно добавить ещё один или продолжить."
+            if analysis_offer:
+                prompt += " Фрагменты нового файла будут использованы для подготовки отчёта."
             rows = [[("Продолжить", "case:v2:material:done")]]
         if message is not None:
             await reply(prompt, reply_markup=_v2_keyboard(rows))
+            prompt_id = data.get("_v2_prompt_message_id")
+            if analysis_offer and type(prompt_id) is int and data.get(DRAFT_ID_KEY):
+                data[MATERIAL_ANALYSIS_OFFER] = (str(data[DRAFT_ID_KEY]), prompt_id)
     elif state is WizardState.SAFETY:
         question = screening_question(data)
         if question is None:
@@ -1403,6 +1419,12 @@ async def _upload_v2_material(
         return ConversationHandler.END
     uploaded: dict[str, Any] | None = None
     receipt_confirmed = False
+    offered = data.get(MATERIAL_ANALYSIS_OFFER)
+    include_in_analysis = (
+        material_analysis_enabled()
+        and offered == (str(data.get(DRAFT_ID_KEY)), data.get("_v2_prompt_message_id"))
+        and type(data.get("_v2_prompt_message_id")) is int
+    )
     try:
         draft_id = UUID(str(data[DRAFT_ID_KEY]))
         uploaded = await _legal_core(context).upload_case_material(
@@ -1411,12 +1433,15 @@ async def _upload_v2_material(
             content=content,
             source_filename=source_filename,
             content_type=content_type,
+            **({"include_in_analysis": True} if include_in_analysis else {}),
         )
         revision = uploaded.get("draftRevision")
         material = uploaded.get("material")
         if not isinstance(revision, int) or revision < 1 or not isinstance(material, dict):
             raise ValueError("material upload response is invalid")
         UUID(str(material["id"]))
+        if include_in_analysis and material.get("analysisUseAllowed") is not True:
+            raise ValueError("material analysis consent receipt is unavailable")
         receipt_confirmed = True
         await _save_v2_material_state(
             context,
@@ -1452,8 +1477,10 @@ async def _upload_v2_material(
         return WizardState.MATERIALS
     await _reply(
         update,
-        "✅ Обезличенный материал добавлен только к этой карточке. Он не является нормативным "
-        "источником и не передаётся модели.",
+        "✅ Файл добавлен. Его обезличенные фрагменты будут учтены при подготовке отчёта."
+        if include_in_analysis else
+        "✅ Обезличенный материал сохранён только в этой карточке. Его текст не используется "
+        "при подготовке отчёта.",
     )
     await _prompt_v2_draft(update, WizardState.MATERIALS, data)
     return WizardState.MATERIALS
@@ -1480,6 +1507,10 @@ async def _prepare_v2_material_input(
         data.clear()
         data.update(current)
         await _prompt_v2_draft(update, state, data)
+        if material_analysis_enabled():
+            # This file arrived before the new purpose notice. Consume only a
+            # subsequent upload, never turn a freshly rendered prompt into consent.
+            return state
     # Do not consume this file/text for a different server-owned step.
     return None if state is WizardState.MATERIALS else state
 
@@ -1662,6 +1693,7 @@ def _draft_payload(data: dict[str, Any]) -> dict[str, Any]:
         if key not in {
             "workflow_id", DRAFT_ID_KEY, DRAFT_REVISION_KEY, DRAFT_STATE_KEY,
             "_v2_prompt_message_id",
+            MATERIAL_ANALYSIS_OFFER,
         }
     }
 

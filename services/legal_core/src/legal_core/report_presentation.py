@@ -242,6 +242,22 @@ def present_report(report: Mapping[str, Any]) -> ReportPresentation:
     requests, questions = _pending_clarifications(report, facts)
     availability = _object(summary.get("analysisAvailability"))
     ready = availability.get("status") == "READY"
+    attachments: list[str] = []
+    attachment_basis = _object(report.get("caseMaterials"))
+    attachment_cards = attachment_basis.get("sources", [])
+    if ready and attachment_basis.get("status") == "USED" and isinstance(attachment_cards, list):
+        labels, limitations = [], []
+        for source in attachment_cards:
+            card = _object(source)
+            name = card.get("displayName")
+            if isinstance(name, str) and re.fullmatch(r"Материал (?:[1-9]|10)", name):
+                labels.append("• " + name)
+                limitations.extend(_texts(card.get("extractionLimitations")))
+        if labels:
+            attachments = [
+                "При подготовке плана учтены обезличенные фрагменты приложений:",
+                *dict.fromkeys(labels), *dict.fromkeys(limitations),
+            ]
     description = summary.get("neutralDescription")
     situation = [
         "По сведениям сотрудника: "
@@ -288,7 +304,7 @@ def present_report(report: Mapping[str, Any]) -> ReportPresentation:
     ]
     if not clinic:
         clinic.append("Действия клиники в отчёте не указаны.")
-    if facts.get("CASE_MATERIALS_STATUS") == "ATTACHED":
+    if facts.get("CASE_MATERIALS_STATUS") == "ATTACHED" and not attachments:
         clinic.append("Обезличенные материалы клиники приложены.")
     elif facts.get("CASE_MATERIALS_STATUS") == "NOT_ATTACHED":
         clinic.append("Материалы клиники не приложены.")
@@ -471,6 +487,7 @@ def present_report(report: Mapping[str, Any]) -> ReportPresentation:
             for title, lines in (
                 ("Ситуация и требования пациента", situation),
                 ("Что уже сделала клиника", clinic),
+                *([("Приложенные документы", attachments)] if attachments else []),
                 ("Риск и следующий шаг", risk_lines),
                 ("План действий", plan),
                 ("Проверенные выводы и нормативные основания", legal),
