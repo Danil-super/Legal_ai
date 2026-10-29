@@ -299,6 +299,8 @@ class ReportReadyResult(PreparationResultBase):
             or context.evidence_trace_sha256 != analysis.evidence_trace_sha256
             or context.clinic_document_context_trace_sha256
             != analysis.clinic_document_context_trace_sha256
+            or context.case_material_context_trace_sha256
+            != canonical.case_material_context_trace_sha256
             or context.risk_policy_version != risk.policy_version
         ):
             raise ValueError("ready report does not match the bound preparation source")

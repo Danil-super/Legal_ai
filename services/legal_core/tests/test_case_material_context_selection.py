@@ -134,3 +134,69 @@ def test_cancelled_worker_kills_native_descendant_and_inherits_no_keys(monkeypat
                 await asyncio.sleep(0.01)
 
     asyncio.run(scenario())
+
+
+def test_all_files_share_one_loader_deadline(monkeypatch):
+    from legal_core import case_material_context as module
+    from legal_core.case_api import ApiError
+    from legal_core.clinic_document_store import case_material_object_key
+
+    clinic_id = uuid4()
+    materials = [parsed(index, "Synthetic material") for index in range(1, 11)]
+    snapshots = [material.snapshot for material in materials]
+    from dataclasses import replace
+    snapshots = [replace(item, raw_object_key=case_material_object_key(
+        clinic_id=clinic_id, material_id=item.material_id, raw_sha256=item.raw_sha256,
+    )) for item in snapshots]
+    calls = []
+
+    class SlowStore:
+        async def get_case_material(self, **kwargs):
+            calls.append(1)
+            await asyncio.sleep(0.04)
+            return b"Synthetic material"
+
+    async def metadata(*args, **kwargs):
+        return tuple(snapshots)
+
+    async def parse(*args, **kwargs):
+        return "Synthetic material"
+
+    monkeypatch.setenv("CASE_MATERIAL_CONTEXT_ENABLED", "true")
+    monkeypatch.setattr(module, "CASE_MATERIAL_CONTEXT_TIMEOUT_SECONDS", 0.06)
+    monkeypatch.setattr(module, "_current_materials", metadata)
+    monkeypatch.setattr(module, "parse_case_material_locally", parse)
+
+    async def scenario():
+        with pytest.raises(ApiError) as error:
+            await module.load_case_material_context(
+                None, clinic_id=clinic_id, case_id=uuid4(), facts={}, raw_store=SlowStore(),
+            )
+        assert error.value.code == "CASE_MATERIAL_CONTEXT_UNAVAILABLE"
+        assert len(calls) == 2  # total set budget, not a fresh timeout for each file
+
+    asyncio.run(scenario())
+
+
+def test_final_metadata_check_uses_remaining_loader_budget(monkeypatch):
+    from legal_core import case_material_context as module
+    from legal_core.case_api import ApiError
+
+    async def stalled_metadata(*args, **kwargs):
+        await asyncio.sleep(60)
+
+    monkeypatch.setenv("CASE_MATERIAL_CONTEXT_ENABLED", "true")
+    monkeypatch.setattr(module, "_current_materials", stalled_metadata)
+
+    async def scenario():
+        state = module.CaseMaterialContextState(
+            deadline_monotonic=asyncio.get_running_loop().time() + 0.02,
+        )
+        async with asyncio.timeout(0.5):
+            with pytest.raises(ApiError) as error:
+                await module.require_case_material_context_current(
+                    None, clinic_id=uuid4(), case_id=uuid4(), state=state,
+                )
+        assert error.value.code == "CASE_MATERIAL_CONTEXT_UNAVAILABLE"
+
+    asyncio.run(scenario())

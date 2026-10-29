@@ -110,6 +110,7 @@ def intermediate_result(
 async def read_preparation_replay(
     session: AsyncSession, *, clinic_id: UUID, actor_membership_id: UUID, case: Case, scope: str,
     idempotency_key: UUID, wire: dict[str, Any],
+    require_current_case_materials: bool = False,
 ) -> PreparationResult:
     """A mutable cache alone is not a source binding; match its retained audit receipt."""
     try:
@@ -142,6 +143,18 @@ async def read_preparation_replay(
         ):
             raise ValueError("preparation receipt binding mismatch")
         _require_case_content_available(case)
+        if require_current_case_materials and result.root.source.context is not None:
+            from legal_core.case_api import _current_fact_rows, _domain_facts
+            from legal_core.case_material_context import load_case_material_context
+
+            context = await load_case_material_context(
+                session, clinic_id=clinic_id, case_id=case.id,
+                facts=_domain_facts(await _current_fact_rows(session, case.id)),
+            )
+            if (context.trace_sha256
+                    != result.root.source.context.case_material_context_trace_sha256):
+                raise ApiError(status_code=409, code="ANALYSIS_CONTEXT_STALE",
+                               message="Case file context changed after the retained preparation")
         return result
     except ValueError as error:
         raise ApiError(status_code=502, code="PREPARATION_RESULT_INVALID",

@@ -64,6 +64,7 @@ class ParsedCaseMaterial:
 class CaseMaterialContextState:
     fragments: tuple[CaseMaterialContextFragment, ...] = ()
     materials: tuple[CaseMaterialSnapshot, ...] = ()
+    deadline_monotonic: float | None = None
 
     @property
     def trace_sha256(self) -> str | None:
@@ -200,11 +201,12 @@ async def load_case_material_context(
     if not case_material_context_enabled():
         return CaseMaterialContextState()
     result = None
+    deadline = asyncio.get_running_loop().time() + CASE_MATERIAL_CONTEXT_TIMEOUT_SECONDS
     try:
-        async with asyncio.timeout(CASE_MATERIAL_CONTEXT_TIMEOUT_SECONDS):
+        async with asyncio.timeout_at(deadline):
             materials = await _current_materials(session, clinic_id=clinic_id, case_id=case_id)
             if not materials:
-                return CaseMaterialContextState()
+                return CaseMaterialContextState(deadline_monotonic=deadline)
             store = raw_store or minio_store_from_environment()
             parsed = []
             for item in materials:
@@ -224,7 +226,7 @@ async def load_case_material_context(
                     raw, mime_type=item.mime_type,
                 )))
             result = CaseMaterialContextState(
-                select_case_material_fragments(parsed, facts), materials,
+                select_case_material_fragments(parsed, facts), materials, deadline,
             )
     except (TimeoutError, ValueError, RuntimeError, KeyError, OSError):
         pass
@@ -239,10 +241,18 @@ async def load_case_material_context(
 async def require_case_material_context_current(
     session: AsyncSession, *, clinic_id: UUID, case_id: UUID, state: CaseMaterialContextState,
 ) -> None:
-    current = await _current_materials(session, clinic_id=clinic_id, case_id=case_id) \
-        if case_material_context_enabled() else ()
-    if state.materials != current:
-        from legal_core.case_api import ApiError
+    from legal_core.case_api import ApiError
 
+    deadline = state.deadline_monotonic
+    if deadline is None:
+        deadline = asyncio.get_running_loop().time() + CASE_MATERIAL_CONTEXT_TIMEOUT_SECONDS
+    try:
+        async with asyncio.timeout_at(deadline):
+            current = await _current_materials(session, clinic_id=clinic_id, case_id=case_id) \
+                if case_material_context_enabled() else ()
+    except (TimeoutError, ValueError):
+        raise ApiError(status_code=503, code="CASE_MATERIAL_CONTEXT_UNAVAILABLE",
+                       message="Case material source check is unavailable") from None
+    if state.materials != current:
         raise ApiError(status_code=409, code="ANALYSIS_CONTEXT_STALE",
                        message="Case material consent or availability changed during analysis")

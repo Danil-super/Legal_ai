@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
@@ -31,6 +31,9 @@ from legal_core.analysis_contracts import (
 from legal_core.analysis_freshness import (
     AnalysisContextFingerprint,
     analysis_context_is_stale,
+)
+from legal_core.case_material_context import (
+    CaseMaterialContextState, load_case_material_context, require_case_material_context_current,
 )
 from legal_core.analysis_safe_stop import require_analysis_running
 from legal_core.api_contracts import LegalFragmentResponse, ReportResponse
@@ -125,6 +128,13 @@ class AnalysisState:
     clinic_document_context_trace_sha256: str
     risk_policy: ApprovedRiskPolicy
     reference_analogies: ReferenceAnalogyContext | None = None
+    case_material_context: CaseMaterialContextState = field(
+        default_factory=CaseMaterialContextState,
+    )
+
+    @property
+    def case_material_context_trace_sha256(self) -> str | None:
+        return self.case_material_context.trace_sha256
 
     @property
     def reference_example_trace_sha256(self) -> str | None:
@@ -138,6 +148,10 @@ async def _commit_analysis_result(session: AsyncSession, state: AnalysisState) -
     await require_reference_analogy_trace_current(
         session, case=state.case, facts=state.facts,
         expected_trace=state.reference_example_trace_sha256,
+    )
+    await require_case_material_context_current(
+        session, clinic_id=state.case.clinic_id, case_id=state.case.id,
+        state=state.case_material_context,
     )
     await session.commit()
 
@@ -314,6 +328,9 @@ async def _retrieve_analysis_state(
         ),
         risk_policy=policy,
         reference_analogies=analogies,
+        case_material_context=await load_case_material_context(
+            session, clinic_id=actor.clinic_id, case_id=case.id, facts=facts,
+        ),
     )
 
 
@@ -324,6 +341,7 @@ def _context_fingerprint(state: AnalysisState) -> AnalysisContextFingerprint:
         evidence_trace_sha256=state.evidence_trace_sha256,
         clinic_document_context_trace_sha256=state.clinic_document_context_trace_sha256,
         risk_policy_version=state.risk_policy.domain.version,
+        case_material_context_trace_sha256=state.case_material_context_trace_sha256,
     )
 
 
@@ -390,6 +408,8 @@ def _context_response(state: AnalysisState) -> AnalysisContextResponse:
         highDemandThresholdKopecks=state.risk_policy.domain.high_demand_threshold_kopecks,
         referenceExamples=state.reference_analogies.examples if state.reference_analogies else None,
         referenceExampleTraceSha256=state.reference_example_trace_sha256,
+        caseMaterialContext=list(state.case_material_context.fragments) or None,
+        caseMaterialContextTraceSha256=state.case_material_context_trace_sha256,
     )
 
 
@@ -561,6 +581,7 @@ def create_analysis_router(
                 session, clinic_id=actor.clinic_id, actor_membership_id=actor.membership_id,
                 case=case, scope=scope, idempotency_key=idempotency_key,
                 wire=retained.response_json,
+                require_current_case_materials=True,
             )
         replay = await _idempotency_replay(
             session, actor=actor, scope=scope, key=idempotency_key, request_hash=request_hash,
@@ -569,6 +590,7 @@ def create_analysis_router(
             return await read_preparation_replay(
                 session, clinic_id=actor.clinic_id, actor_membership_id=actor.membership_id,
                 case=case, scope=scope, idempotency_key=idempotency_key, wire=replay,
+                require_current_case_materials=True,
             )
         _require_analysis_eligible_case(case)
         require_analysis_running()
@@ -659,6 +681,7 @@ def create_analysis_router(
                 payload.expected_clinic_document_context_trace_sha256
             ),
             risk_policy_version=payload.expected_risk_policy_version,
+            case_material_context_trace_sha256=payload.expected_case_material_context_trace_sha256,
         )
         if (analysis_context_is_stale(expected_fingerprint, _context_fingerprint(state))
                 or payload.expected_reference_example_trace_sha256
@@ -750,6 +773,7 @@ def create_analysis_router(
                 clinicDocumentContextTraceSha256=state.clinic_document_context_trace_sha256,
                 riskPolicyVersion=state.risk_policy.domain.version,
                 referenceExampleTraceSha256=state.reference_example_trace_sha256,
+                caseMaterialContextTraceSha256=state.case_material_context_trace_sha256,
             ),
         ) if result_version == 2 else None
         if source is not None:
@@ -797,6 +821,8 @@ def create_analysis_router(
                     state.clinic_document_context_trace_sha256
                 ),
                 clinic_document_context=state.clinic_document_context,
+                case_material_context=state.case_material_context.fragments,
+                case_material_context_trace_sha256=state.case_material_context_trace_sha256,
                 verified_action_items=_verified_action_items(claims, result_by_claim),
                 verified_legal_conclusions=select_verified_legal_conclusions(
                     claims, outcome.verification
@@ -820,6 +846,7 @@ def create_analysis_router(
                 missing_facts=risk_missing_facts(outcome.risk),
                 block_reason_code=block_reason,
                 clarification_requests=clarification_requests,
+                case_material_context_trace_sha256=state.case_material_context_trace_sha256,
             )
 
         canonical = canonical.model_copy(

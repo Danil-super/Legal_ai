@@ -38,6 +38,10 @@ from legal_core.case_api import (
     _tenant_case,
     resolve_actor,
 )
+from legal_core.case_material_context import (
+    CaseMaterialContextState,
+    require_case_material_context_current,
+)
 from legal_core.case_preparation import recheck_submission_access
 from legal_core.case_preparation_contracts import InternalWorkProduct
 from legal_core.contracts import FactKey, LegalFragmentResponse
@@ -143,7 +147,9 @@ def _new_version(actor: ActorContext, content: InternalWorkProduct, *, origin: s
 
 async def _view(session: AsyncSession, *, actor: ActorContext, case: Case,
                 row: CaseWorkProductVersion,
-                loaded_state: AnalysisState | None = None) -> LawyerWorkProductView:
+                loaded_state: AnalysisState | None = None,
+                material_contexts: list[CaseMaterialContextState] | None = None,
+                ) -> LawyerWorkProductView:
     content = InternalWorkProduct.model_validate(row.payload_json)
     reference_trace = (content.source.context.reference_example_trace_sha256
                        if content.source.context else None)
@@ -184,8 +190,14 @@ async def _view(session: AsyncSession, *, actor: ActorContext, case: Case,
             if (bound is None or state.as_of_date != bound.as_of_date
                     or state.evidence_trace_sha256 != bound.evidence_trace_sha256
                     or state.clinic_document_context_trace_sha256
-                    != bound.clinic_document_context_trace_sha256):
+                    != bound.clinic_document_context_trace_sha256
+                    or state.case_material_context_trace_sha256
+                    != bound.case_material_context_trace_sha256):
                 raise _stale()
+            if material_contexts is not None:
+                # Let mutations recheck natural expiry after subsequent FK/auth
+                # waits without repeating private-object I/O under those locks.
+                material_contexts.append(state.case_material_context)
             by_id = {fragment.fragment_id: fragment for fragment in state.evidence}
             citations = [LegalFragmentResponse.model_validate(by_id[identifier],
                                                               from_attributes=True)
@@ -195,7 +207,8 @@ async def _view(session: AsyncSession, *, actor: ActorContext, case: Case,
         except ApiError as error:
             if error.code not in {"LAWYER_WORK_PRODUCT_STALE", "RISK_POLICY_NOT_READY",
                                   "ANALYSIS_DATE_UNCERTAIN", "LEGAL_EVIDENCE_UNAVAILABLE",
-                                  "LAWYER_DRAFT_CONTEXT_STALE", "REFERENCE_ANALOGY_CONTEXT_STALE"}:
+                                  "LAWYER_DRAFT_CONTEXT_STALE", "REFERENCE_ANALOGY_CONTEXT_STALE",
+                                  "CASE_MATERIAL_CONTEXT_UNAVAILABLE"}:
                 raise
             current, citations = False, []
     return LawyerWorkProductView.model_validate({
@@ -258,6 +271,7 @@ async def _private_finish(session: AsyncSession, *, actor: ActorContext, case: C
 
 async def _commit_with_reference_fence(
     session: AsyncSession, *, case: Case, reference_trace: str | None,
+    material_context: CaseMaterialContextState | None = None,
 ) -> None:
     # FK checks and final authorization may wait after the first source fence.
     # Flush every pending version/audit/receipt before evaluating natural expiry.
@@ -266,6 +280,10 @@ async def _commit_with_reference_fence(
         facts = _domain_facts(await _current_fact_rows(session, case.id))
         await require_reference_analogy_trace_current(
             session, case=case, facts=facts, expected_trace=reference_trace,
+        )
+    if material_context is not None:
+        await require_case_material_context_current(
+            session, clinic_id=case.clinic_id, case_id=case.id, state=material_context,
         )
     await session.commit()
 
@@ -334,6 +352,7 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
         await _commit_with_reference_fence(
             session, case=loaded.analysis_state.case,
             reference_trace=loaded.analysis_state.reference_example_trace_sha256,
+            material_context=loaded.analysis_state.case_material_context,
         )
         return result
 
@@ -378,6 +397,7 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
             await _commit_with_reference_fence(
                 session, case=state.case,
                 reference_trace=state.reference_example_trace_sha256,
+                material_context=state.case_material_context,
             )
             return view
         previous = await _latest(session, actor, case_id)
@@ -448,6 +468,7 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
                                job_token=x_analysis_job_token)
         await _commit_with_reference_fence(
             session, case=state.case, reference_trace=state.reference_example_trace_sha256,
+            material_context=state.case_material_context,
         )
         return view
 
@@ -486,9 +507,11 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
         )
         replay = await _receipt_row(session, actor=actor, case=case, scope=scope,
                                      key=idempotency_key, request_hash=request_hash)
+        material_contexts: list[CaseMaterialContextState] = []
         if replay is not None:
             response.status_code = 200
-            result = await _view(session, actor=actor, case=case, row=replay)
+            result = await _view(session, actor=actor, case=case, row=replay,
+                                 material_contexts=material_contexts)
             await recheck_submission_access(session, actor=actor, telegram_user_id=telegram_user_id,
                                             case=case)
             _require_enabled()
@@ -497,6 +520,7 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
                 session, case=case,
                 reference_trace=(result.content.source.context.reference_example_trace_sha256
                                  if result.is_current and result.content.source.context else None),
+                material_context=material_contexts[-1] if material_contexts else None,
             )
             return result
         row = await _latest(session, actor, case.id)
@@ -505,7 +529,8 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
             raise _stale()
         if row.review_state == "HUMAN_APPROVED" and payload.decision == "APPROVE":
             raise _stale()
-        existing = await _view(session, actor=actor, case=case, row=row)
+        existing = await _view(session, actor=actor, case=case, row=row,
+                               material_contexts=material_contexts)
         if not existing.is_current:
             raise _stale()
         wire = existing.content.model_dump(mode="json", by_alias=True)
@@ -545,6 +570,7 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
             session, case=case,
             reference_trace=(content.source.context.reference_example_trace_sha256
                              if content.source.context else None),
+            material_context=material_contexts[-1] if material_contexts else None,
         )
         return result
 

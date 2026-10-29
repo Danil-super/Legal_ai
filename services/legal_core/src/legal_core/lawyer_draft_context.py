@@ -34,6 +34,7 @@ from legal_core.case_api import (
     _tenant_case,
     resolve_actor,
 )
+from legal_core.case_material_context import require_case_material_context_current
 from legal_core.case_preparation import read_preparation_replay, recheck_submission_access
 from legal_core.case_preparation_contracts import (
     HumanReviewResult,
@@ -184,6 +185,7 @@ async def load_lawyer_draft_context(
                 clinicDocumentContextTraceSha256=state.clinic_document_context_trace_sha256,
                 riskPolicyVersion=policy.domain.version,
                 referenceExampleTraceSha256=state.reference_example_trace_sha256,
+                caseMaterialContextTraceSha256=state.case_material_context_trace_sha256,
             ),
         ), escalationId=escalation.id, riskLevel=retained.risk_level, context=context,
     )
@@ -221,6 +223,10 @@ def create_lawyer_draft_context_router(sessions: async_sessionmaker[AsyncSession
             session, case_id=case_id, telegram_user_id=telegram_user_id,
             idempotency_key=idempotency_key, job_id=x_analysis_job_id,
             job_token=x_analysis_job_token, request=request,
+        )
+        await require_case_material_context_current(
+            session, clinic_id=loaded.actor.clinic_id, case_id=case_id,
+            state=loaded.analysis_state.case_material_context,
         )
         await session.commit()
         return loaded.response
