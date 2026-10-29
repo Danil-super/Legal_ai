@@ -184,7 +184,7 @@ async def harness():
             return True  # A deletion is not a newly sent message or a new prompt ID.
         if endpoint == "getMe":
             return {"id": 123, "is_bot": True, "first_name": "Test", "username": "test_bot"}
-        if endpoint == "answerCallbackQuery":
+        if endpoint in {"answerCallbackQuery", "sendChatAction"}:
             return True
         data = dict(data or {})
         if endpoint == "editMessageReplyMarkup":

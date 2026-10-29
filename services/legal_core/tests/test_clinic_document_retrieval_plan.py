@@ -48,3 +48,37 @@ def test_free_text_service_query_is_local_bounded_and_deduplicated() -> None:
     assert len(queries[0]) <= 120
     assert "ортодонт" in queries
     assert queries[-3:] == ("договор", "согласие", "гарант")
+
+
+def test_guided_v2_queries_use_confirmed_services_and_plain_factual_signals() -> None:
+    facts = {
+        FactKey.INTAKE_VERSION: "GUIDED_V2",
+        FactKey.SITUATION_AREAS: ["TREATMENT", "MEDICAL_RECORDS"],
+        FactKey.AFFECTED_SERVICES: ["Имплантация зуба"],
+        FactKey.FACTUAL_SAFETY_SCREENING: {
+            "schemaVersion": "factual-safety-intake.v1",
+            "healthDeteriorationReported": "NO", "hospitalizationReported": "NO",
+            "representativeContact": "NO", "writtenRequirementsReceived": "YES",
+            "authorityOrCourtDocumentReceived": "NO", "authorityReferralMentioned": "NO",
+            "moneyRequested": "YES", "amount": {"currency": "RUB", "amountKopecks": 500000},
+        },
+    }
+    original = {key: value for key, value in facts.items()}
+    queries = plan_clinic_document_queries(facts)
+
+    assert queries[0] == "Имплантация зуба"
+    assert "имплант" in queries and "после имплант" in queries
+    assert "претенз" in queries and "возврат" in queries and "документ" in queries
+    assert len(queries) <= 8 and len(set(queries)) == len(queries)
+    assert facts == original and FactKey.FORMAL_CLAIM not in facts
+
+
+def test_guided_v2_never_uses_stale_legacy_service_or_unconfirmed_money() -> None:
+    queries = plan_clinic_document_queries({
+        FactKey.INTAKE_VERSION: "GUIDED_V2",
+        FactKey.SITUATION_AREAS: ["SERVICE"],
+        FactKey.SERVICE_TYPE: "Имплантация",
+        FactKey.AFFECTED_SERVICES: ["Имплантация"],
+        FactKey.PATIENT_DEMAND: ["REFUND"],
+    })
+    assert queries == ("договор", "согласие", "гарант")

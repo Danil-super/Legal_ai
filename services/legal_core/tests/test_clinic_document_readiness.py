@@ -145,3 +145,33 @@ def test_specialty_consent_alias_satisfies_implant_expectation() -> None:
 
     assert implant.status is ClinicDocumentReadinessStatus.AVAILABLE_NOT_RETRIEVED
     assert implant.matched_document_keys == ("surgery-consent",)
+
+
+def test_guided_v2_readiness_uses_all_treatment_services_without_legacy_qualification() -> None:
+    facts = {
+        FactKey.INTAKE_VERSION: "GUIDED_V2",
+        FactKey.SITUATION_AREAS: ["TREATMENT", "MEDICAL_RECORDS"],
+        FactKey.AFFECTED_SERVICES: ["Пломба", "Имплантация зуба"],
+    }
+    expectations = plan_clinic_document_expectations(facts)
+    assert {item.expectation_code for item in expectations} == {
+        "CONTRACT", "GENERAL_CONSENT", "WARRANTY_POLICY", "IMPLANT_CONSENT",
+        "POST_IMPLANT_MEMO", "MEDICAL_RECORD_ACCESS",
+    }
+    assert FactKey.SERVICE_TYPE not in facts and FactKey.FORMAL_CLAIM not in facts
+
+
+def test_guided_v2_non_treatment_area_does_not_inherit_legacy_implant_expectations() -> None:
+    expectations = plan_clinic_document_expectations({
+        FactKey.INTAKE_VERSION: "GUIDED_V2", FactKey.SITUATION_AREAS: ["SERVICE"],
+        FactKey.SERVICE_TYPE: "Имплантация", FactKey.AFFECTED_SERVICES: ["Имплантация"],
+        FactKey.INCIDENT_TYPES: ["IMPLANT_PROBLEM"],
+    })
+    assert {item.expectation_code for item in expectations} == {"CONTRACT", "GENERAL_CONSENT"}
+
+
+def test_legacy_readiness_keeps_full_service_label_for_existing_hints() -> None:
+    expectations = plan_clinic_document_expectations({
+        FactKey.SERVICE_TYPE: "Описание услуги " * 12 + "Имплантация",
+    })
+    assert "IMPLANT_CONSENT" in {item.expectation_code for item in expectations}

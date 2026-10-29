@@ -224,9 +224,11 @@ def test_jobs_client_and_periodic_notifier_follow_application_lifecycle():
         await app.post_init(app)
         client = app.bot_data[JOBS_CLIENT_KEY]
         assert len(app.job_queue.get_jobs_by_name("durable-analysis-notifications")) == 1
+        assert len(app.job_queue.get_jobs_by_name("analysis-typing-activity")) == 1
         await app.post_shutdown(app)
         assert events == ["init", "shutdown"]
         assert client.http.is_closed
         assert JOBS_CLIENT_KEY not in app.bot_data
+        assert "analysis_activity" not in app.bot_data
 
     asyncio.run(scenario())

@@ -85,6 +85,7 @@ def isolated_database(monkeypatch):
         "guided-v2",
         "guided-v2-factual-low",
         "guided-v2-factual-medium",
+        "guided-v2-factual-clinic-doc",
     ],
 )
 def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block(
@@ -125,6 +126,11 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
         fragment_id = evidence["fragmentId"]
         model_calls.append(body["model"])
         if body["model"] == "researcher":
+            if intake_mode.endswith("clinic-doc"):
+                assert len(projection["clinicDocumentContext"]) == 1
+                document = projection["clinicDocumentContext"][0]
+                assert document["documentType"] == "PATIENT_MEMO_POST_IMPLANT"
+                assert document["text"] == "Имплант: сохраняйте памятку, выданную клиникой."
             result = {
                 "claims": [
                     {
@@ -265,10 +271,21 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                                 },
                             )
                         guided_data["safetyScreening"] = screening
+                    if intake_mode.endswith("clinic-doc"):
+                        guided_data["affectedServices"] = ["Имплантация зуба"]
+                        guided_data["analysisClarificationAnswers"] = {"answers": [
+                            {"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 0,
+                             "value": "PAID"},
+                            {"questionId": "SERVICE_PROVIDED_DATE", "serviceSlot": 0,
+                             "value": {"date": "2026-09-12", "precision": "EXACT"}},
+                            {"questionId": "RESPONSE_PURPOSE", "serviceSlot": None,
+                             "value": "ANSWER_REQUEST"},
+                        ]}
                     workflow = await core_http.post(
                         f"/v1/telegram-case-workflows/{uuid4()}/submissions",
                         headers=actor_headers(owner_id),
                         json={
+                            **({"receiptVersion": 2} if intake_mode.endswith("clinic-doc") else {}),
                             "intakeSchemaVersion": "dental-case-intake.v2",
                             "locale": "ru-RU",
                             "facts": facts_from_v2_data(guided_data),
@@ -277,7 +294,7 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                     assert workflow.status_code == 201, workflow.text
                     case_id = workflow.json()["case"]["id"]
                     assert workflow.json()["case"]["status"] == "ANALYSIS_BLOCKED"
-                    initial_report_count = 1
+                    initial_report_count = 0 if intake_mode.endswith("clinic-doc") else 1
                 else:
                     created = await core_http.post(
                         "/v1/cases",
@@ -319,13 +336,23 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                     assert response.json()["state"] == "QUEUED"
                     return response.json()["jobId"]
 
-                blocked_job = await enqueue()
-                assert await worker_once(sessions, worker_http, worker_settings)
-                blocked = await core_http.get(
-                    f"/v1/analysis-jobs/{blocked_job}", headers=actor_headers(owner_id)
-                )
-                assert blocked.json()["state"] == "FAILED", blocked.text
-                assert blocked.json()["errorCode"] == "LEGAL_EVIDENCE_UNAVAILABLE", blocked.text
+                blocked_job = None
+                if intake_mode.endswith("clinic-doc"):
+                    blocked = await core_http.get(
+                        f"/v1/cases/{case_id}/analysis-context", headers={
+                            **actor_headers(owner_id), "X-Agent-Internal-Key": INTERNAL_KEY,
+                        },
+                    )
+                    assert blocked.status_code == 409, blocked.text
+                    assert blocked.json()["error"]["code"] == "LEGAL_EVIDENCE_UNAVAILABLE"
+                else:
+                    blocked_job = await enqueue()
+                    assert await worker_once(sessions, worker_http, worker_settings)
+                    blocked = await core_http.get(
+                        f"/v1/analysis-jobs/{blocked_job}", headers=actor_headers(owner_id)
+                    )
+                    assert blocked.json()["state"] == "FAILED", blocked.text
+                    assert blocked.json()["errorCode"] == "LEGAL_EVIDENCE_UNAVAILABLE", blocked.text
                 assert model_calls == []
 
                 editor_headers = {
@@ -355,6 +382,48 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                     },
                 )
                 assert approval.status_code == 200, approval.text
+                clinic_version_id = None
+                if intake_mode.endswith("clinic-doc"):
+                    clinic_document = await core_http.post(
+                        "/v1/clinic-documents", headers=actor_headers(owner_id), json={
+                            "documentKey": "post-treatment-memo",
+                            "documentType": "PATIENT_MEMO_POST_IMPLANT",
+                            "title": "Инструкция после процедуры",
+                        },
+                    )
+                    assert clinic_document.status_code == 201, clinic_document.text
+                    raw_clinic_text = "Имплант: сохраняйте памятку, выданную клиникой."
+                    clinic_version = await core_http.post(
+                        f"/v1/clinic-documents/{clinic_document.json()['id']}/file-versions",
+                        headers={**actor_headers(owner_id), "X-Source-Filename": "memo.txt",
+                                 "Content-Type": "text/plain"},
+                        params={"valid_from": "2026-09-01", "valid_to": "2026-10-01"},
+                        content=raw_clinic_text.encode(),
+                    )
+                    assert clinic_version.status_code == 201, clinic_version.text
+                    clinic_version_id = clinic_version.json()["id"]
+                    assert clinic_version.json()["rawSha256"] == hashlib.sha256(
+                        raw_clinic_text.encode(),
+                    ).hexdigest()
+                    context_headers = {
+                        **actor_headers(owner_id), "X-Agent-Internal-Key": INTERNAL_KEY,
+                    }
+                    pending_context = await core_http.get(
+                        f"/v1/cases/{case_id}/analysis-context", headers=context_headers,
+                    )
+                    assert pending_context.status_code == 200, pending_context.text
+                    assert pending_context.json()["clinicDocumentContext"] == []
+                    clinic_review = await core_http.post(
+                        f"/v1/clinic-documents/versions/{clinic_version_id}/approval-events",
+                        headers=actor_headers(owner_id),
+                        json={"decision": "APPROVED", "reasonCode": "SYNTHETIC_REVIEW_PASSED"},
+                    )
+                    assert clinic_review.status_code == 201, clinic_review.text
+                    outside = await core_http.get(
+                        "/v1/clinic-documents/fragments", headers=actor_headers(owner_id),
+                        params={"query": "имплант", "as_of_date": "2026-08-31"},
+                    )
+                    assert outside.status_code == 200 and outside.json()["items"] == []
                 for path in (
                     "/v1/legal/library?as_of_date=2026-09-12",
                     "/v1/legal/fragments?query=платные%20медицинские%20услуги&as_of_date=2026-09-12",
@@ -374,6 +443,11 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                 assert context.status_code == 200, context.text
                 assert context.json()["asOfDate"] == "2026-09-12"
                 assert context.json()["evidence"][0]["versionId"] == str(version_id)
+                if clinic_version_id is not None:
+                    assert len(context.json()["clinicDocumentContext"]) == 1
+                    assert context.json()["clinicDocumentContext"][0]["versionId"] == (
+                        clinic_version_id
+                    )
                 for outside_date in ("2026-08-03", "2027-08-04"):
                     outside = await core_http.get(
                         "/v1/legal/fragments",
@@ -390,7 +464,11 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                 )
                 assert completed.json()["state"] == "SUCCEEDED", (completed.text, model_calls)
                 result = completed.json()["result"]
-                assert result["escalationRequired"] is False
+                if intake_mode.endswith("clinic-doc"):
+                    assert completed.json()["resultVersion"] == 2
+                    assert result["status"] == "READY", result
+                else:
+                    assert result["escalationRequired"] is False
                 report = result["report"]
                 canonical = report["reportJson"]
                 if intake_mode == "guided-v2":
@@ -403,15 +481,24 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                     assert canonical["recommendations"]["status"] == "NOT_AVAILABLE"
                 else:
                     expected_level = "MEDIUM" if intake_mode.endswith("medium") else "LOW"
-                    assert (
-                        result["analysisAllowed"] is True and result["riskLevel"] == expected_level
-                    )
+                    assert result["analysisAllowed"] is True
+                    assert canonical["risk"]["level"] == expected_level
+                    if not intake_mode.endswith("clinic-doc"):
+                        assert result["riskLevel"] == expected_level
                     assert canonical["legalBasis"]["status"] == "AVAILABLE"
                     source = canonical["legalBasis"]["sources"][0]
                     assert source["fragmentId"] == context.json()["evidence"][0]["fragmentId"]
                     assert source["rawSha256"] == version["rawSha256"]
                     assert canonical["analysis"]["verifierStatus"] == "PASSED"
                     assert canonical["recommendations"]["items"] == [ACTION]
+                    if clinic_version_id is not None:
+                        assert canonical["clinicDocuments"]["status"] == "USED"
+                        assert canonical["clinicDocuments"]["sources"][0]["versionId"] == (
+                            clinic_version_id
+                        )
+                        assert canonical["clinicDocuments"]["sources"][0]["documentTitle"] == (
+                            "Инструкция после процедуры"
+                        )
                 assert model_calls == ["researcher", "reviewer"]
                 pdf = await core_http.get(
                     f"/v1/reports/{report['id']}/pdf", headers=actor_headers(owner_id)
@@ -473,7 +560,9 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                                 "SELECT count(*) FROM idempotency_records WHERE key=:key "
                                 "AND scope=:scope AND state='SUCCEEDED'"
                             ),
-                            {"key": job_id, "scope": f"cases:{case_id}:analysis-submissions"},
+                            {"key": job_id, "scope": f"cases:{case_id}:"
+                             + ("preparation-submissions" if intake_mode.endswith("clinic-doc")
+                                else "analysis-submissions")},
                         )
                         == 1
                     )

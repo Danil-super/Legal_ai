@@ -14,8 +14,10 @@ from enum import StrEnum
 from legal_core.clinic_document_retrieval import (
     ApprovedClinicDocumentFragment,
     AvailableClinicDocument,
+    clinic_document_service_labels,
 )
 from legal_core.contracts import FactKey
+from legal_core.factual_safety_risk import confirmed_screening
 
 
 class ClinicDocumentExpectationImportance(StrEnum):
@@ -68,11 +70,12 @@ def _is_yes(value: object) -> bool:
 
 
 def _service_text(facts: Mapping[FactKey, object]) -> str:
-    raw = facts.get(FactKey.SERVICE_TYPE)
-    return raw.casefold() if isinstance(raw, str) else ""
+    return " ".join(clinic_document_service_labels(facts)).casefold()
 
 
 def _incident_tokens(facts: Mapping[FactKey, object]) -> set[str]:
+    if facts.get(FactKey.INTAKE_VERSION) == "GUIDED_V2":
+        return set()
     values = _tokens(facts.get(FactKey.INCIDENT_TYPES))
     values.update(_tokens(facts.get(FactKey.PRIMARY_INCIDENT_TYPE)))
     return values
@@ -84,6 +87,8 @@ def _has_incident_marker(facts: Mapping[FactKey, object], markers: Sequence[str]
 
 
 def _has_demand_marker(facts: Mapping[FactKey, object], markers: Sequence[str]) -> bool:
+    if facts.get(FactKey.INTAKE_VERSION) == "GUIDED_V2":
+        return False
     demands = _tokens(facts.get(FactKey.PATIENT_DEMAND))
     return any(marker in token for token in demands for marker in markers)
 
@@ -142,6 +147,16 @@ def plan_clinic_document_expectations(
     regulator_case = _is_yes(facts.get(FactKey.REGULATOR_THREAT)) or _is_yes(
         facts.get(FactKey.REGULATOR_OR_COURT)
     )
+    if facts.get(FactKey.INTAKE_VERSION) == "GUIDED_V2":
+        records_case = "MEDICAL_RECORDS" in _tokens(facts.get(FactKey.SITUATION_AREAS))
+        screening = confirmed_screening(facts)
+        formal_claim_case = bool(
+            screening is not None and screening.written_requirements_received == "YES"
+        )
+        regulator_case = bool(screening is not None and (
+            screening.authority_or_court_document_received == "YES"
+            or screening.authority_referral_mentioned == "YES"
+        ))
 
     if warranty_case:
         planned.append(
@@ -188,7 +203,9 @@ def plan_clinic_document_expectations(
                 "CLAIM_WORKFLOW",
                 ClinicDocumentExpectationImportance.SUPPORTING,
                 ("CLAIM_POLICY",),
-                "FORMAL_CLAIM_INTERNAL_WORKFLOW",
+                "WRITTEN_REQUIREMENTS_INTERNAL_WORKFLOW"
+                if facts.get(FactKey.INTAKE_VERSION) == "GUIDED_V2"
+                else "FORMAL_CLAIM_INTERNAL_WORKFLOW",
             )
         )
     if regulator_case:

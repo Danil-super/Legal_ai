@@ -18,7 +18,8 @@ def setup_watch():
     user = User(actor, "Synthetic", False)
     update = Update(1, message=Message(2, datetime.now(UTC), Chat(actor, "private"),
                                        from_user=user))
-    app = SimpleNamespace(bot_data={}, user_data={actor: {}}, bot=None)
+    app = SimpleNamespace(bot_data={}, user_data={actor: {}},
+                          bot=SimpleNamespace(send_chat_action=AsyncMock(return_value=True)))
 
     def create_task(coro, **kwargs):
         task = asyncio.create_task(coro, **kwargs)
@@ -89,6 +90,7 @@ def test_review_bounded_poll_and_duplicate_watch():
         assert not events and not app.bot_data[delivery._KEY]
         notice.assert_awaited_once()
         assert notice.await_args.args[1] == draft
+        app.bot.send_chat_action.assert_awaited_once()
     asyncio.run(scenario())
 
 
