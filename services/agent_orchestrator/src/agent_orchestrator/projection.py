@@ -9,12 +9,14 @@ from uuid import UUID
 
 from agent_orchestrator.contracts import (
     CaseProjection,
+    CaseMaterialContextItem,
     ClinicDocumentContextItem,
     ClinicDocumentReadinessItem,
     EvidenceItem,
     ReferenceAnalogyItem,
 )
 from legal_core.analysis_contracts import AnalysisContextResponse
+from legal_core.case_material_context_contracts import case_material_context_trace_sha256
 from legal_core.clinic_document_conflicts import detect_potential_clinic_document_conflicts
 from legal_core.clinic_document_retrieval import ApprovedClinicDocumentFragment
 from legal_core.contracts import FactKey
@@ -149,6 +151,28 @@ def _reference_items(context: AnalysisContextResponse) -> list[ReferenceAnalogyI
         raise ValueError("reference analogy source context is invalid") from None
 
 
+def _case_material_items(
+    context: AnalysisContextResponse, *, known_identifiers: dict[str, str],
+) -> list[CaseMaterialContextItem] | None:
+    fragments, trace = context.case_material_context, context.case_material_context_trace_sha256
+    if fragments is None and trace is None:
+        return None
+    try:
+        if not fragments or trace is None or case_material_context_trace_sha256(fragments) != trace:
+            raise ValueError("case material source binding mismatch")
+        return [CaseMaterialContextItem(
+            displayName=item.display_name,
+            structuralPath=_redact_clinic_text(item.structural_path,
+                                               known_identifiers=known_identifiers),
+            text=_redact_clinic_text(item.text, known_identifiers=known_identifiers),
+            extractionLimitations=[_redact_clinic_text(value,
+                known_identifiers=known_identifiers) for value in item.extraction_limitations],
+        ) for item in fragments]
+    except (ValueError, TypeError, AttributeError):
+        pass
+    raise ValueError("case material source context is invalid")
+
+
 def build_projection_from_context(
     context: AnalysisContextResponse,
     *,
@@ -158,6 +182,7 @@ def build_projection_from_context(
 
     reference_examples = _reference_items(context)
     identifiers = known_identifiers or {}
+    case_material_context = _case_material_items(context, known_identifiers=identifiers)
     projected_facts = {
         key: _pseudonymize_value(value, known_identifiers=identifiers)
         for key, value in sorted(context.facts.items())
@@ -218,4 +243,5 @@ def build_projection_from_context(
         clinicDocumentContext=projected_clinic_context,
         clinicDocumentReadiness=readiness,
         referenceExamples=reference_examples,
+        caseMaterialContext=case_material_context,
     )
