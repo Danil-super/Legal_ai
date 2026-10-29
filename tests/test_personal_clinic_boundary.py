@@ -34,7 +34,7 @@ CLINIC_BASELINE = {
     # Personal entry points, permissions and isolation checks remain frozen.
     # Reviewed default-off clinical draft flag is shared by Core/Agent/Gateway.
     # Reviewed Core-only analogy flag defaults off (2026-10-28 granted-reference ADR).
-    "docker-compose.yml": "41e391156d05622211b0bfadeb789d6982f404ee",
+    "docker-compose.yml": "b47e56a78ef1637bff6b82e6e92d744cc5493207",
     "ops/deploy/docker-compose.production.yml": "9d07d50c67787a0da7a13fcfc49907d550298b83",
 }
 

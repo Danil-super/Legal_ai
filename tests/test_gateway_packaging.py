@@ -86,6 +86,14 @@ def test_packaging_check_detects_missing_shared_contracts(tmp_path: Path) -> Non
     assert "No module named 'legal_core.contracts'" in result.stderr
 
 
+def test_packaging_check_detects_missing_case_material_context_contracts(tmp_path: Path) -> None:
+    _copy_runtime(tmp_path)
+    (tmp_path / "services/legal_core/src/legal_core/case_material_context_contracts.py").unlink()
+    result = _import_runtime(tmp_path)
+    assert result.returncode != 0
+    assert "No module named 'legal_core.case_material_context_contracts'" in result.stderr
+
+
 def test_packaging_check_detects_missing_shared_clarification_contracts(tmp_path: Path) -> None:
     _copy_runtime(tmp_path)
     (tmp_path / "services/legal_core/src/legal_core/analysis_clarifications.py").unlink()
