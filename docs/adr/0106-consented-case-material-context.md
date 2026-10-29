@@ -33,3 +33,8 @@ The early HIGH/CRITICAL routing receipt has no file-based recommendation and kee
 its fast context-free path; the separate lawyer-draft context loads and binds files
 before optional model reasoning. No raw download right, model, risk rule, normative
 approval or clinic-template approval changes.
+
+The local parser runs in a private process group with no inherited provider/database
+credentials. The whole material set shares a 15-second budget. Core bounds stdout
+before EOF and kills/reaps the worker and native descendants on cancellation or
+overflow. This does not change existing global PDF limits or grant a sandbox claim.
