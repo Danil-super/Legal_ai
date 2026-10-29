@@ -18,6 +18,7 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from legal_core.contracts import FactKey
+from legal_core.factual_safety_risk import confirmed_screening
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +154,22 @@ def _service_specific_queries(value: object) -> list[str]:
     return queries
 
 
+def clinic_document_service_labels(facts: Mapping[FactKey, object]) -> tuple[str, ...]:
+    """Read actual service labels without manufacturing legacy/legal classifications."""
+    if facts.get(FactKey.INTAKE_VERSION) == "GUIDED_V2":
+        if "TREATMENT" not in _tokens(facts.get(FactKey.SITUATION_AREAS)):
+            return ()
+        values = facts.get(FactKey.AFFECTED_SERVICES)
+        if not isinstance(values, (list, tuple)):
+            return ()
+        return tuple(dict.fromkeys(
+            value.strip()[:120] for value in values[:5]
+            if isinstance(value, str) and value.strip()
+        ))
+    value = facts.get(FactKey.SERVICE_TYPE)
+    return (value.strip(),) if isinstance(value, str) and value.strip() else ()
+
+
 def _warranty_sensitive_incident(facts: Mapping[FactKey, object]) -> bool:
     incident_tokens = _tokens(facts.get(FactKey.INCIDENT_TYPES))
     incident_tokens.update(_tokens(facts.get(FactKey.PRIMARY_INCIDENT_TYPE)))
@@ -172,19 +189,31 @@ def plan_clinic_document_queries(facts: Mapping[FactKey, object]) -> tuple[str, 
     """
 
     queries: list[str] = []
-    queries.extend(_service_specific_queries(facts.get(FactKey.SERVICE_TYPE)))
+    for service in clinic_document_service_labels(facts):
+        queries.extend(_service_specific_queries(service))
 
-    if _is_yes(facts.get(FactKey.FORMAL_CLAIM)):
-        queries.append("претенз")
+    if facts.get(FactKey.INTAKE_VERSION) == "GUIDED_V2":
+        screening = confirmed_screening(facts)
+        # These are local search candidates, not findings of a formal claim or
+        # a refund right. Do not fill the corresponding legacy fact keys.
+        if screening is not None and screening.written_requirements_received == "YES":
+            queries.append("претенз")
+        if screening is not None and screening.money_requested == "YES":
+            queries.append("возврат")
+        if "MEDICAL_RECORDS" in _tokens(facts.get(FactKey.SITUATION_AREAS)):
+            queries.append("документ")
+    else:
+        if _is_yes(facts.get(FactKey.FORMAL_CLAIM)):
+            queries.append("претенз")
 
-    demands = _tokens(facts.get(FactKey.PATIENT_DEMAND))
-    if any("REFUND" in token or "RETURN" in token for token in demands):
-        queries.append("возврат")
-    if any("DOCUMENT" in token or "RECORD" in token for token in demands):
-        queries.append("документ")
+        demands = _tokens(facts.get(FactKey.PATIENT_DEMAND))
+        if any("REFUND" in token or "RETURN" in token for token in demands):
+            queries.append("возврат")
+        if any("DOCUMENT" in token or "RECORD" in token for token in demands):
+            queries.append("документ")
 
-    if _warranty_sensitive_incident(facts):
-        queries.append("гарант")
+        if _warranty_sensitive_incident(facts):
+            queries.append("гарант")
 
     queries.extend(["договор", "согласие", "гарант"])
     unique = tuple(dict.fromkeys(query for query in queries if query.strip()))
