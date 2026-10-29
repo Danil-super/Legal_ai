@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 from uuid import uuid4
 
@@ -46,6 +47,7 @@ EVIDENCE = (
     "Зафиксировать обращение пациента во внутреннем журнале."
 )
 ACTION = "Зафиксировать обращение пациента во внутреннем журнале."
+CASE_MATERIAL_TEXT = "Учебное приложение: клиника предложила повторный осмотр без оплаты."
 
 
 @pytest.fixture
@@ -86,11 +88,18 @@ def isolated_database(monkeypatch):
         "guided-v2-factual-low",
         "guided-v2-factual-medium",
         "guided-v2-factual-clinic-doc",
+        "guided-v2-factual-case-file",
+        "guided-v2-factual-clinic-doc-case-file",
     ],
 )
 def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block(
-    isolated_database, tmp_path: Path, intake_mode: str
+    isolated_database, tmp_path: Path, intake_mode: str, monkeypatch
 ) -> None:
+    with_clinic_documents = "clinic-doc" in intake_mode
+    with_case_materials = "case-file" in intake_mode
+    pre_report_mode = with_clinic_documents or with_case_materials
+    if with_case_materials:
+        monkeypatch.setenv("CASE_MATERIAL_CONTEXT_ENABLED", "1")
     owner_id = 71_000_000_000 + uuid4().int % 1_000_000_000
     editor_id = owner_id + 2_000_000_000
     clinic_id, _ = seed_admin(owner_id, role="CLINIC_OWNER")
@@ -126,11 +135,20 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
         fragment_id = evidence["fragmentId"]
         model_calls.append(body["model"])
         if body["model"] == "researcher":
-            if intake_mode.endswith("clinic-doc"):
+            if with_clinic_documents:
                 assert len(projection["clinicDocumentContext"]) == 1
                 document = projection["clinicDocumentContext"][0]
                 assert document["documentType"] == "PATIENT_MEMO_POST_IMPLANT"
                 assert document["text"] == "Имплант: сохраняйте памятку, выданную клиникой."
+            if with_case_materials:
+                attachments = projection["caseMaterialContext"]
+                assert len(attachments) == 1
+                assert attachments[0]["contextKind"] == "CASE_MATERIAL_CONTEXT"
+                assert attachments[0]["displayName"] == "Материал 1"
+                assert attachments[0]["text"] == CASE_MATERIAL_TEXT
+                assert not ({"materialId", "fragmentId", "rawSha256", "textSha256"}
+                            & attachments[0].keys())
+                assert "synthetic-case-note" not in json.dumps(projection)
             result = {
                 "claims": [
                     {
@@ -148,6 +166,7 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
             assert body["model"] == "reviewer"
             assert projection["claims"][0]["evidenceFragmentIds"] == [fragment_id]
             assert "clinicDocumentContext" not in projection
+            assert "caseMaterialContext" not in projection
             result = {
                 "reviews": [
                     {
@@ -271,7 +290,7 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                                 },
                             )
                         guided_data["safetyScreening"] = screening
-                    if intake_mode.endswith("clinic-doc"):
+                    if pre_report_mode:
                         guided_data["affectedServices"] = ["Имплантация зуба"]
                         guided_data["analysisClarificationAnswers"] = {"answers": [
                             {"questionId": "SERVICE_PAYMENT_BASIS", "serviceSlot": 0,
@@ -281,11 +300,32 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                             {"questionId": "RESPONSE_PURPOSE", "serviceSlot": None,
                              "value": "ANSWER_REQUEST"},
                         ]}
+                    workflow_id = uuid4()
+                    material_id = None
+                    if with_case_materials:
+                        draft = await core_http.post(
+                            "/v1/telegram-intake-drafts", headers=actor_headers(owner_id, uuid4()),
+                            json={"intakeSchemaVersion": "dental-case-intake.v2"},
+                        )
+                        assert draft.status_code == 201, draft.text
+                        workflow_id = draft.json()["id"]
+                        uploaded = await core_http.post(
+                            f"/v1/telegram-intake-drafts/{workflow_id}/case-materials",
+                            headers={**actor_headers(owner_id, uuid4()),
+                                     "X-Source-Filename": "synthetic-case-note.txt",
+                                     "Content-Type": "text/plain"},
+                            params={"include_in_analysis": "true"},
+                            content=CASE_MATERIAL_TEXT.encode(),
+                        )
+                        assert uploaded.status_code == 201, uploaded.text
+                        assert uploaded.json()["material"]["analysisUseAllowed"] is True
+                        material_id = uploaded.json()["material"]["id"]
+                        guided_data["caseMaterialsStatus"] = "ATTACHED"
                     workflow = await core_http.post(
-                        f"/v1/telegram-case-workflows/{uuid4()}/submissions",
+                        f"/v1/telegram-case-workflows/{workflow_id}/submissions",
                         headers=actor_headers(owner_id),
                         json={
-                            **({"receiptVersion": 2} if intake_mode.endswith("clinic-doc") else {}),
+                            **({"receiptVersion": 2} if pre_report_mode else {}),
                             "intakeSchemaVersion": "dental-case-intake.v2",
                             "locale": "ru-RU",
                             "facts": facts_from_v2_data(guided_data),
@@ -294,7 +334,7 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                     assert workflow.status_code == 201, workflow.text
                     case_id = workflow.json()["case"]["id"]
                     assert workflow.json()["case"]["status"] == "ANALYSIS_BLOCKED"
-                    initial_report_count = 0 if intake_mode.endswith("clinic-doc") else 1
+                    initial_report_count = 0 if pre_report_mode else 1
                 else:
                     created = await core_http.post(
                         "/v1/cases",
@@ -337,7 +377,7 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                     return response.json()["jobId"]
 
                 blocked_job = None
-                if intake_mode.endswith("clinic-doc"):
+                if pre_report_mode:
                     blocked = await core_http.get(
                         f"/v1/cases/{case_id}/analysis-context", headers={
                             **actor_headers(owner_id), "X-Agent-Internal-Key": INTERNAL_KEY,
@@ -383,7 +423,7 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                 )
                 assert approval.status_code == 200, approval.text
                 clinic_version_id = None
-                if intake_mode.endswith("clinic-doc"):
+                if with_clinic_documents:
                     clinic_document = await core_http.post(
                         "/v1/clinic-documents", headers=actor_headers(owner_id), json={
                             "documentKey": "post-treatment-memo",
@@ -448,6 +488,12 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                     assert context.json()["clinicDocumentContext"][0]["versionId"] == (
                         clinic_version_id
                     )
+                if with_case_materials:
+                    file_context = context.json()["caseMaterialContext"]
+                    assert len(file_context) == 1
+                    assert file_context[0]["materialId"] == material_id
+                    assert file_context[0]["text"] == CASE_MATERIAL_TEXT
+                    assert context.json()["caseMaterialContextTraceSha256"]
                 for outside_date in ("2026-08-03", "2027-08-04"):
                     outside = await core_http.get(
                         "/v1/legal/fragments",
@@ -464,7 +510,7 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                 )
                 assert completed.json()["state"] == "SUCCEEDED", (completed.text, model_calls)
                 result = completed.json()["result"]
-                if intake_mode.endswith("clinic-doc"):
+                if pre_report_mode:
                     assert completed.json()["resultVersion"] == 2
                     assert result["status"] == "READY", result
                 else:
@@ -483,7 +529,7 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                     expected_level = "MEDIUM" if intake_mode.endswith("medium") else "LOW"
                     assert result["analysisAllowed"] is True
                     assert canonical["risk"]["level"] == expected_level
-                    if not intake_mode.endswith("clinic-doc"):
+                    if not pre_report_mode:
                         assert result["riskLevel"] == expected_level
                     assert canonical["legalBasis"]["status"] == "AVAILABLE"
                     source = canonical["legalBasis"]["sources"][0]
@@ -499,12 +545,35 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                         assert canonical["clinicDocuments"]["sources"][0]["documentTitle"] == (
                             "Инструкция после процедуры"
                         )
+                if with_case_materials:
+                    assert canonical["caseMaterials"]["status"] == "USED"
+                    file_source = canonical["caseMaterials"]["sources"][0]
+                    assert file_source["materialId"] == material_id
+                    assert file_source["displayName"] == "Материал 1"
+                    assert file_source["rawSha256"] == hashlib.sha256(
+                        CASE_MATERIAL_TEXT.encode(),
+                    ).hexdigest()
+                    assert canonical["caseMaterialContextTraceSha256"] == (
+                        context.json()["caseMaterialContextTraceSha256"]
+                    )
+                    assert file_source["fragmentId"] not in {
+                        source["fragmentId"] for source in canonical["legalBasis"]["sources"]
+                    }
                 assert model_calls == ["researcher", "reviewer"]
                 pdf = await core_http.get(
                     f"/v1/reports/{report['id']}/pdf", headers=actor_headers(owner_id)
                 )
                 assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF-"), pdf.text[:100]
                 assert hashlib.sha256(pdf.content).hexdigest() == report["pdfSha256"]
+                if with_case_materials:
+                    pdf_text = subprocess.run(
+                        ["pdftotext", "-", "-"], input=pdf.content, capture_output=True,
+                        timeout=10, check=True,
+                    ).stdout.decode()
+                    assert "Приложенные документы" in pdf_text
+                    assert "Материал 1" in pdf_text
+                    assert "synthetic-case-note" not in pdf_text
+                    assert CASE_MATERIAL_TEXT not in json.dumps(canonical, ensure_ascii=False)
                 assert not await worker_once(sessions, worker_http, worker_settings)
                 assert model_calls == ["researcher", "reviewer"]
                 discovery = await core_http.get(
@@ -561,7 +630,7 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
                                 "AND scope=:scope AND state='SUCCEEDED'"
                             ),
                             {"key": job_id, "scope": f"cases:{case_id}:"
-                             + ("preparation-submissions" if intake_mode.endswith("clinic-doc")
+                             + ("preparation-submissions" if pre_report_mode
                                 else "analysis-submissions")},
                         )
                         == 1
