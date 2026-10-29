@@ -6,12 +6,18 @@ from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
+from complete_intake_fixture import with_unknown_clarification_attempts
 from telegram_gateway import bot
 from telegram_gateway.guided_case_intake_v2 import active_states
 from test_case_experience import harness
 from test_case_wizard import FakeQuery
 from test_dialog_isolation import DRAFT
-from test_factual_safety_gateway import completed_data, runtime_context
+from test_factual_safety_gateway import completed_data as _completed_data
+from test_factual_safety_gateway import runtime_context
+
+
+def completed_data(**overrides):
+    return with_unknown_clarification_attempts(_completed_data(**overrides))
 
 
 @pytest.mark.parametrize("precision", ["UNKNOWN", "APPROXIMATE", "EXACT"])

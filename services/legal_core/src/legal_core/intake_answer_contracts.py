@@ -12,8 +12,8 @@ from pydantic import ConfigDict, Field, JsonValue, field_validator, model_valida
 
 from legal_core.analysis_clarifications import (
     ClarificationRequest,
-    ClarificationRequestBatch,
     confirmed_answers,
+    intake_clarification_requests,
 )
 from legal_core.case_preparation_contracts import PreparationModel, Sha256
 from legal_core.factual_safety_intake import (
@@ -130,11 +130,16 @@ class AnswerInterpretation(PreparationModel):
         if self.status == "PROPOSED":
             if self.value is None or not self.source_spans or self.reason_code is not None:
                 raise ValueError("proposed answers require a value and literal source anchors")
-        elif self.value is not None or self.reason_code is None:
+        elif self.value is not None or self.reason_code is None or (
+            self.factual_proposal is not None and self.source_spans
+        ):
             raise ValueError("unresolved answers require only a bounded reason, never a value")
-        if self.status != "PROPOSED" and self.factual_proposal is not None:
-            raise ValueError("additional facts require a resolved current answer")
         return self
+
+    @property
+    def has_provisional_facts(self) -> bool:
+        """A missing primary answer does not discard independently grounded additions."""
+        return self.status == "PROPOSED" or self.factual_proposal is not None
 
     def validate_source(self, source: str) -> None:
         try:
@@ -185,9 +190,7 @@ def derive_answer_question(
             return None
         payload["screeningField"] = field
     elif wizard_state == "ANALYSIS_CLARIFICATION":
-        requests = ClarificationRequestBatch.model_validate({
-            "requests": draft_data.get("analysisClarificationRequests", []),
-        }).requests
+        requests = intake_clarification_requests(draft_data)
         answers = confirmed_answers(_facts(draft_data))
         identities = {(item.question_id, item.service_slot) for item in answers.answers}
         request = next((item for item in requests

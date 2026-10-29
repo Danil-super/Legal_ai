@@ -77,7 +77,9 @@ confirm facts, approve norms or produce a report. Return only the JSON Schema ob
 The primary value answers only question, with sourceSpans anchored ONLY in the current answer.
 PROPOSED requires a value and 1-3 literal nonblank spans; UNRESOLVED requires null value and
 reasonCode AMBIGUOUS, CONTRADICTS_CONFIRMED or OFF_QUESTION. Changing the current target is a
-permitted correction. An unresolved current answer must omit factualProposal.
+permitted correction. UNRESOLVED keeps sourceSpans empty. If only other allowed targets are
+answered, preserve them in factualProposal while leaving the primary unresolved; never invent
+a primary value or UNKNOWN to retain independently supported secondary facts.
 Optionally include factualProposal (schemaVersion ai-first-factual-proposal.v1). Each candidate
 must copy one exact identity from allowedQuestions and use anchors with sourceId/sourceSha256
 from retainedSources and zero-based Unicode offsets [start,end). Never invent another source,
@@ -111,6 +113,32 @@ Do not stitch separate quotes or sources. Never copy another service's
 date or payment basis. If the service list is unchanged, preserve all existing scoped answers,
 including UNKNOWN; do not propose their replacement through these templates.
 """ + _VALUE_GUIDANCE
+
+
+def _literal_factual_value(source: str, question: AnswerQuestion) -> object | None:
+    """Recognize only a whole exact short answer to the bound current question."""
+    literal = source.strip()
+    if question.target_field == "safetyScreening" and question.screening_field != "amount":
+        return {"да": "YES", "нет": "NO"}.get(literal.casefold())
+    request = question.clarification_request
+    if (question.target_field == "eventDate" or (
+        request is not None and request.question_id == "SERVICE_PROVIDED_DATE"
+    )) and re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{2}\.[0-9]{2}\.[0-9]{4}", literal,
+    ):
+        try:
+            if "." in literal:
+                day, month, year = (int(part) for part in literal.split("."))
+                parsed = date(year, month, day)
+            else:
+                parsed = date.fromisoformat(literal)
+            return {"date": parsed.isoformat(), "precision": "EXACT"}
+        except ValueError:
+            pass
+    if request is not None and request.question_id == "SERVICE_PAYMENT_BASIS":
+        return {"платно": "PAID", "омс": "PUBLICLY_COVERED",
+                "по омс": "PUBLICLY_COVERED"}.get(literal.casefold())
+    return None
 
 
 def _context(data: dict[str, object]) -> dict[str, object]:
@@ -183,7 +211,12 @@ class AnswerUnderstanding:
                     raise ValueError("retained factual context exceeds its budget")
                 requests = [item.clarification_request for item in [question, *allowed_questions]
                             if item.clarification_request is not None and item.scope_basis is None]
-                if requests:
+                if len(requests) > 3:
+                    # The preflight extraction universe spans all real services;
+                    # it is not the persisted, three-question report-recovery batch.
+                    # Re-derive its identities from the actual factual context.
+                    validation_data.pop("analysisClarificationRequests", None)
+                elif requests:
                     validation_data["analysisClarificationRequests"] = [
                         item.model_dump(mode="json", by_alias=True) for item in requests]
         except (ValueError, TypeError, AttributeError):
@@ -204,6 +237,21 @@ class AnswerUnderstanding:
                     else:
                         return AnswerInterpretation(status="PROPOSED", value=value,
                             sourceSpans=[SourceSpan(start=0, end=len(source))])
+            literal = _literal_factual_value(source, question)
+            retained_material_targets = (
+                any(item.kind == "INITIAL_DESCRIPTION" for item in retained_sources or [])
+                and any(item.clarification_request is not None
+                        for item in allowed_questions or [])
+            )
+            if literal is not None and not retained_material_targets:
+                try:
+                    value = validate_answer_value(question, literal, source, validation_data,
+                                                  as_of_date=as_of_date)
+                except ValueError:
+                    pass
+                else:
+                    return AnswerInterpretation(status="PROPOSED", value=value,
+                        sourceSpans=[SourceSpan(start=0, end=len(source))])
             schema = AnswerInterpretation.model_json_schema(by_alias=True)
             if question.target_field == "safetyScreening" and question.screening_field != "amount":
                 # The wire value is generic JSON across question families. Give the model
@@ -245,9 +293,9 @@ class AnswerUnderstanding:
                     proposed = AnswerInterpretation.model_validate({
                         **proposed.model_dump(by_alias=True), "value": value,
                     })
-                    if proposed.factual_proposal is not None:
-                        apply_factual_answer(validation_data, question, proposed, source,
-                                             retained_sources or [], as_of_date=as_of_date)
+                if proposed.factual_proposal is not None:
+                    apply_factual_answer(validation_data, question, proposed, source,
+                                         retained_sources or [], as_of_date=as_of_date)
                 factual_values = [proposed.value, *(item.value for item in (
                     proposed.factual_proposal.candidates if proposed.factual_proposal else []))]
                 # Source IDs/digests and question enums are closed typed metadata,

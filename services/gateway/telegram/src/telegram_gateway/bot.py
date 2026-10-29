@@ -41,6 +41,7 @@ from telegram_gateway.case_wizard import (
     LegalCoreApiError,
     LegalCoreClient,
     SignalAnswer,
+    confirmed_clarification_answers,
     facts_from_draft,
     facts_from_v2_data,
     parse_date_answer,
@@ -53,7 +54,6 @@ from telegram_gateway.factual_safety_intake import (
     explicitly_skip_other_questions,
     known_urgent_report,
     previous_screening_question,
-    reopen_unknown_screening_question,
     screening_complete,
     screening_question,
 )
@@ -64,6 +64,7 @@ from telegram_gateway.guided_case_intake_v2 import (
     apply_clarification_answer,
     clarification_choices,
     clarification_question,
+    clarification_requests,
     invalidate_service_clarification_answers,
     next_clarification_request,
     previous_clarification_question,
@@ -968,8 +969,6 @@ async def _prompt_v2_draft(
             for index, page in enumerate(pages):
                 rows = [
                     [("✅ Всё верно", "case:v2:summary:confirm")],
-                    [("✏️ Действия клиники", "case:v2:context:actions"),
-                     ("✏️ Ход обращения", "case:v2:context:history")],
                     [("📎 Добавить файл", "case:v2:material:attach")],
                 ] if index == len(pages) - 1 else []
                 await reply(page, reply_markup=_v2_keyboard(rows))
@@ -980,8 +979,21 @@ async def _prompt_v2_draft(
             return
         slot = "global" if request.service_slot is None else str(request.service_slot)
         prefix = f"case:v2:clarify:{request.question_id}:{slot}:"
+        answered = {
+            (answer.question_id, answer.service_slot)
+            for answer in confirmed_clarification_answers(data).answers
+        }
+        pending = [item for item in clarification_requests(data)
+                   if (item.question_id, item.service_slot) not in answered]
+        questions = "\n\n".join(
+            f"{index}. {clarification_question(item, data)}"
+            for index, item in enumerate(pending, start=1)
+        )
         await reply(
-            clarification_question(request, data),
+            "Уточните недостающие факты:\n\n" + questions
+            + "\n\nМожно ответить на все вопросы одним сообщением. "
+            "Если сведений нет, напишите, что именно неизвестно. "
+            "Кнопки ниже относятся к первому вопросу.",
             reply_markup=_v2_keyboard([
                 [(label, prefix + value)] for value, label in clarification_choices(request)
             ]),
@@ -1207,6 +1219,48 @@ async def edit_v2_optional_context(update: Update, context: ContextTypes.DEFAULT
     return selected
 
 
+async def _retire_v2_controls(update: Update) -> None:
+    query = update.callback_query
+    if query is None or query.message is None:
+        return
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except (TelegramError, TypeError):
+        # A completed submission stays completed if Telegram cannot edit history.
+        logger.info("obsolete intake keyboard could not be retired")
+
+
+async def recover_v2_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Old recap controls can recover the selected draft, never select another one."""
+    await _answer_callback(update)
+    data = _user_data(context).get(WIZARD_DATA_KEY)
+    if not isinstance(data, dict):
+        await _retire_v2_controls(update)
+        await _reply(update, "Эта карточка завершена или больше не активна. "
+                     "Продолжайте текущий диалог по последнему сообщению.")
+        return ConversationHandler.END
+    try:
+        actor_id = _actor_id(update)
+        if actor_id is None:
+            raise ValueError("draft actor is missing")
+        draft_id = UUID(str(data[DRAFT_ID_KEY]))
+        current = _saved_draft_selection(
+            draft_id, await _legal_core(context).get_intake_draft(draft_id, actor_id),
+            is_v2=_is_v2_draft(data),
+        )
+    except (KeyError, ValueError, LegalCoreApiError):
+        _clear_wizard(context)
+        await _retire_v2_controls(update)
+        await _reply(update, "🔒 Черновик сейчас недоступен. Обновите список через /menu.")
+        return ConversationHandler.END
+    data.clear()
+    data.update(current)
+    await _retire_v2_controls(update)
+    state = WizardState[str(data[DRAFT_STATE_KEY])]
+    await _prompt_resumed_draft(update, state, data)
+    return state
+
+
 async def confirm_v2_summary(
     update: Update, context: ContextTypes.DEFAULT_TYPE, *, preparation: bool = False,
 ) -> int:
@@ -1218,11 +1272,6 @@ async def confirm_v2_summary(
         await _reply(update, "Перед подтверждением уточните недостающие сведения.")
         await _prompt_v2_draft(update, missing, data)
         return missing
-    if not preparation and reopen_unknown_screening_question(data) is not None:
-        await _reply(update, "Нужно уточнить неизвестный факт. Если сейчас уточнить нельзя, "
-                     "/cancel сохранит черновик; неизвестное не считается ответом «Нет».")
-        await _prompt_v2_draft(update, WizardState.SAFETY, data)
-        return WizardState.SAFETY
     await _prompt_v2_draft(update, WizardState.V2_CONFIRM, data, preparation=preparation)
     return WizardState.V2_CONFIRM
 
@@ -1674,6 +1723,8 @@ async def _persist_selected_transition(
             type(expected_message) is not int or message is None
             or message.message_id != expected_message
         ):
+            if query.data in {"case:v2:context:actions", "case:v2:context:history"}:
+                return await recover_v2_context(update, context)
             await _answer_callback(update)
             await _reply(
                 update, "Эта карточка устарела. Используйте кнопки последнего вопроса "
@@ -2164,14 +2215,19 @@ async def _prompt_resumed_draft(update: Update, state: WizardState, data: dict[s
 
 async def resume_intake_draft(
     update: Update, context: ContextTypes.DEFAULT_TYPE, *, preparation: bool = False,
+    draft_id: UUID | None = None,
 ) -> int:
+    direct_resume = draft_id is not None
     callback = await _answer_callback(update)
     _clear_pending_admin_grant(context)
     actor_id = _actor_id(update)
     if callback is None or actor_id is None:
         return ConversationHandler.END
     try:
-        draft_id = UUID(callback.removeprefix("case:draft:"))
+        if draft_id is None:
+            draft_id = UUID(callback.removeprefix("case:draft:"))
+        elif not isinstance(draft_id, UUID):
+            raise ValueError("direct resume requires a validated draft identity")
         draft = await _legal_core(context).get_intake_draft(draft_id, actor_id)
         state_name = draft.get("wizardState")
         revision = draft.get("revision")
@@ -2184,6 +2240,8 @@ async def resume_intake_draft(
         ):
             raise ValueError("draft response is invalid")
         state = WizardState[state_name]
+        if direct_resume:
+            _saved_draft_selection(draft_id, draft, is_v2=draft_data.get("intakeVersion") == 2)
     except (KeyError, ValueError, LegalCoreApiError) as exc:
         logger.warning("intake draft resume failed: %s", type(exc).__name__)
         _clear_wizard(context)
@@ -2215,7 +2273,8 @@ async def resume_intake_draft(
         }
     )
     _user_data(context)[WIZARD_DATA_KEY] = data
-    await _reply(update, "✅ Черновик открыт. Продолжаем с сохранённого шага.")
+    if not (direct_resume and context.bot_data.get("intake_simplified_dialogue") is True):
+        await _reply(update, "✅ Черновик открыт. Продолжаем с сохранённого шага.")
     await _prompt_resumed_draft(update, state, data)
     return state
 
@@ -2880,11 +2939,6 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                              "Черновик сохранён.")
                 await _prompt_v2_draft(update, missing, data)
                 return missing
-            if not preparation and reopen_unknown_screening_question(data) is not None:
-                await _reply(update, "До подтверждения уточните неизвестный факт. "
-                             "/cancel сохранит черновик.")
-                await _prompt_v2_draft(update, WizardState.SAFETY, data)
-                return WizardState.SAFETY
         client = _legal_core(context)
         if _is_v2_draft(data):
             if data.get("caseMaterialsStatus") == "ATTACHED":
@@ -2975,6 +3029,8 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
              "повторное подтверждение безопасно."),
         )
 
+    if _is_v2_draft(data):
+        await _retire_v2_controls(update)
     _clear_wizard(context)
     return ConversationHandler.END
 
@@ -3410,6 +3466,9 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
                 ],
             },
             fallbacks=[
+                CallbackQueryHandler(
+                    recover_v2_context, pattern=r"^case:v2:context:(actions|history)$",
+                ),
                 CommandHandler("cancel", cancel_case),
                 CommandHandler(["start", "menu"], exit_to_menu),
                 CallbackQueryHandler(
@@ -3460,6 +3519,9 @@ def build_application(token: str, *, proxy_url: str | None = None) -> TelegramAp
         )
     )
     application.add_handler(CallbackQueryHandler(show_intake_drafts, pattern=r"^case:drafts$"))
+    application.add_handler(CallbackQueryHandler(
+        recover_v2_context, pattern=r"^case:v2:context:(actions|history)$",
+    ))
     application.add_handler(CallbackQueryHandler(menu_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_input))
     application.add_error_handler(on_error)

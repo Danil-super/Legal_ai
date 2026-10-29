@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 from telegram_gateway import bot
-from test_aif05_material_question_reproductions import known_data
+from test_aif05_material_question_reproductions import known_data, legacy_context_controls
 from test_dialog_isolation import ACTOR
 from test_intake_single_summary import simplified_harness
 from test_intake_transient_cleanup import delivery_finished
@@ -26,6 +26,7 @@ def test_optional_action_selection_resumes_until_done_then_returns_to_summary(pr
             await delivery_finished(app)
             assert core.draft["wizardState"] == "SUMMARY"
 
+            legacy_context_controls(sent)
             await dispatch("case:v2:context:actions")
             await dispatch("case:v2:multi:clinicActions:OFFERED_REFUND")
             assert core.draft["wizardState"] == "CLINIC_ACTIONS"

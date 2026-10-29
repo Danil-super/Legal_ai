@@ -175,6 +175,8 @@ def test_active_both_entries_reach_one_report_free_case_through_real_http_and_po
                 field, _prompt = pending
                 answer = "UNKNOWN" if field == "representativeContact" else "NO"
                 await send(f"case:safety:{field}:{answer}")
+            assert data[bot.DRAFT_STATE_KEY] == "ANALYSIS_CLARIFICATION"
+            await send("case:v2:clarify:RESPONSE_PURPOSE:global:UNKNOWN")
             assert data[bot.DRAFT_STATE_KEY] == "SUMMARY"
             assert data["eventDate"] == UNKNOWN_DATE
             assert data["safetyScreening"]["representativeContact"] == "UNKNOWN"
@@ -207,6 +209,9 @@ def test_active_both_entries_reach_one_report_free_case_through_real_http_and_po
                 assert facts["EVENT_DATE"] == UNKNOWN_DATE
                 assert facts["FACTUAL_SAFETY_SCREENING"] == confirmed["safetyScreening"]
                 assert facts["HEALTH_CONSEQUENCE_SIGNALS"] == {"values": ["UNKNOWN"]}
+                assert facts["ANALYSIS_CLARIFICATION_ANSWERS"] == {"answers": [
+                    {"questionId": "RESPONSE_PURPOSE", "serviceSlot": None, "value": "UNKNOWN"},
+                ]}
                 assert "CONFLICT_STAGE" not in facts and "CLINIC_ACTIONS" not in facts
                 assert (
                     connection.scalar(text("SELECT receipt_version FROM telegram_case_workflows"))

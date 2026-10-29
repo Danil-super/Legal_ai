@@ -133,19 +133,19 @@ async def checked_proposal(
                     )
                 ):
                     raise ValueError("service is not grounded in an answer anchor")
-                if interpretation.factual_proposal is not None:
-                    if stored.retained_sources is None or stored.allowed_questions is None:
-                        raise ValueError("additional facts lack the reserved source context")
-                    if draft is None:
-                        validate_factual_proposal(
-                            interpretation.factual_proposal, stored.retained_sources,
-                            stored.allowed_questions, {"intakeVersion": 2},
-                            as_of_date=stored.intent.as_of_date,
-                        )
-                    else:
-                        apply_factual_answer(draft.draft_json, stored.question, interpretation,
-                                             stored.answer, stored.retained_sources,
-                                             as_of_date=stored.intent.as_of_date)
+            if interpretation.factual_proposal is not None:
+                if stored.retained_sources is None or stored.allowed_questions is None:
+                    raise ValueError("additional facts lack the reserved source context")
+                if draft is None:
+                    validate_factual_proposal(
+                        interpretation.factual_proposal, stored.retained_sources,
+                        stored.allowed_questions, {"intakeVersion": 2},
+                        as_of_date=stored.intent.as_of_date,
+                    )
+                else:
+                    apply_factual_answer(draft.draft_json, stored.question, interpretation,
+                                         stored.answer, stored.retained_sources,
+                                         as_of_date=stored.intent.as_of_date)
             valid = (record.state == "SUCCEEDED" and record.lease_token is None
                      and record.lease_until is None)
     except (ValueError, TypeError):

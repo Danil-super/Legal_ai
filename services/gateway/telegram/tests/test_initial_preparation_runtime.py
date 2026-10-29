@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 import httpx2
 import pytest
+from complete_intake_fixture import with_unknown_clarification_attempts
 from sqlalchemy import text
 from telegram.error import TelegramError
 from telegram.ext import ConversationHandler
@@ -24,7 +25,9 @@ from test_report_free_workflow import preparation_workflow as preparation_workfl
 
 
 def _context(*, event=None, unknown=False):
-    data = completed_data(**({"representativeContact": "UNKNOWN"} if unknown else {}))
+    data = with_unknown_clarification_attempts(
+        completed_data(**({"representativeContact": "UNKNOWN"} if unknown else {})),
+    )
     if event is not None:
         data["eventDate"] = event
     update, context, client, message = runtime_context(data, "synthetic")

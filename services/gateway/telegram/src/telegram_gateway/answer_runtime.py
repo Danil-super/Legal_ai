@@ -164,7 +164,8 @@ async def _show(update: Update, context: ContextTypes.DEFAULT_TYPE, status: Answ
     if status.state == "MANUAL_CONTINUATION":
         data.pop(_SELECTED, None)
         return await _open(update, context, draft)
-    if context.bot_data.get(ENABLED) is True and status.state == "PROPOSED":
+    if (context.bot_data.get(ENABLED) is True and status.interpretation is not None
+            and status.interpretation.has_provisional_facts):
         if update.callback_query is not None:
             actor = bot._actor_id(update)
             if actor is None or status.source is None:

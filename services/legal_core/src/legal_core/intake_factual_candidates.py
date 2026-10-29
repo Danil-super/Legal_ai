@@ -10,7 +10,7 @@ from uuid import UUID, uuid5
 
 from pydantic import JsonValue
 
-from legal_core.analysis_clarifications import ClarificationRequestBatch, confirmed_answers
+from legal_core.analysis_clarifications import confirmed_answers, intake_clarification_requests
 from legal_core.contracts import validate_intake_draft_data
 from legal_core.factual_safety_intake import (
     SCREENING_FIELDS,
@@ -68,9 +68,7 @@ def allowed_factual_questions(
         "schemaVersion": "intake-answer-question.v1", "wizardState": "SAFETY",
         "targetField": "safetyScreening", "screeningField": field,
     }) for field in fields if field not in screening)
-    requests = ClarificationRequestBatch.model_validate({
-        "requests": data.get("analysisClarificationRequests", []),
-    }).requests
+    requests = intake_clarification_requests(data)
     if current.wizard_state == "SERVICES":
         # These are extraction slots within the primary service proposal, not
         # current service identities. Core binds them after validating its names.
@@ -142,9 +140,10 @@ def apply_factual_answer(
     """All-or-nothing provisional merge. Only the current target may be corrected."""
     parsed = AnswerInterpretation.model_validate(interpretation.model_dump(by_alias=True))
     parsed.validate_source(answer)
-    if parsed.status != "PROPOSED":
-        raise ValueError("current answer has not been resolved")
-    result = apply_answer_value(data, current, parsed.value, answer, as_of_date=as_of_date)
+    if not parsed.has_provisional_facts:
+        raise ValueError("answer has no provisional facts")
+    result = (apply_answer_value(data, current, parsed.value, answer, as_of_date=as_of_date)
+              if parsed.status == "PROPOSED" else deepcopy(dict(data)))
     proposal = parsed.factual_proposal
     if proposal is None:
         return result

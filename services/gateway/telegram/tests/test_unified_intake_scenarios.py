@@ -19,6 +19,7 @@ from telegram_gateway import bot as gateway_bot
 from telegram_gateway.case_wizard import LegalCoreApiError, LegalCoreClient
 from telegram_gateway.clarification_intent import encode_clarification_callback
 from telegram_gateway.factual_safety_intake import screening_question
+from telegram_gateway.guided_case_intake_v2 import next_clarification_request
 from test_case_experience import harness
 from test_dialog_isolation import ACTOR, DRAFT
 
@@ -234,6 +235,17 @@ def test_shared_v2_services_dates_safety_summary_and_confirmation(path, area, ca
                         field == "representativeContact"
                     ) else "NO"
                     await dispatch(f"case:safety:{field}:{answer}")
+            clarified = set()
+            for _ in range(11):
+                if core.draft["wizardState"] != "ANALYSIS_CLARIFICATION":
+                    break
+                request = next_clarification_request(core.draft["draftData"])
+                identity = (request.question_id, request.service_slot)
+                assert identity not in clarified
+                clarified.add(identity)
+                slot = "global" if request.service_slot is None else str(request.service_slot)
+                await dispatch(f"case:v2:clarify:{request.question_id}:{slot}:UNKNOWN")
+            assert len(clarified) == (0 if urgent else 5 if area == "TREATMENT" else 1)
             assert core.draft["wizardState"] == "SUMMARY"
             assert any("Краткая фабула" in message.get("text", "") for message in sent)
             assert core.submissions == [], "Summary must be reviewed before creating a case"
@@ -242,10 +254,10 @@ def test_shared_v2_services_dates_safety_summary_and_confirmation(path, area, ca
                 assert screening["representativeContact"] == "UNKNOWN"
             await dispatch("case:v2:summary:confirm")
             if case == "unknown_safety":
-                assert core.draft["wizardState"] == "SAFETY"
-                assert screening_question(core.draft["draftData"])[0] == "representativeContact"
+                screening = core.draft["draftData"]["safetyScreening"]
+                assert screening["representativeContact"] == "UNKNOWN"
+                assert screening_question(core.draft["draftData"]) is None
                 assert core.submissions == []
-                return
             assert core.draft["wizardState"] == "V2_CONFIRM"
             await dispatch(f"case:confirm:{DRAFT}")
             if case == "unknown_date":
@@ -257,6 +269,10 @@ def test_shared_v2_services_dates_safety_summary_and_confirmation(path, area, ca
                 summary_fact = next(item for item in core.submissions[0][1]
                                     if item["factKey"] == "EVENT_SUMMARY")
                 assert summary_fact["value"] == {"text": DESCRIPTION}
+                if case == "unknown_safety":
+                    screening_fact = next(item for item in core.submissions[0][1]
+                                          if item["factKey"] == "FACTUAL_SAFETY_SCREENING")
+                    assert screening_fact["value"]["representativeContact"] == "UNKNOWN"
     asyncio.run(scenario())
 
 

@@ -49,7 +49,7 @@ CASES = [
     ("SITUATION", {}, "Лечение и обслуживание", ["TREATMENT", "SERVICE"]),
     ("SERVICES", {"situationAreas": ["TREATMENT"]}, "установка коронки", ["установка коронки"]),
     ("EVENT", {}, SUMMARY, SUMMARY),
-    ("EVENT_DATE", {}, "15.10.2026", {"date": "2026-10-15", "precision": "EXACT"}),
+    ("EVENT_DATE", {}, "Дата 15.10.2026", {"date": "2026-10-15", "precision": "EXACT"}),
     ("CHRONOLOGY", {}, "Это первое обращение", "FIRST"),
     ("CLINIC_ACTIONS", {}, "Пригласили на осмотр", ["INVITED_FOR_EXAMINATION"]),
     ("HEALTH", {}, "Не знаю", ["UNKNOWN"]),
@@ -104,7 +104,7 @@ def counts(clinic):
 
 
 async def run_flow(*, actor, clinic, state, data, answer, value, unresolved=False, cancel=False,
-                   extra_facts=None, staging=False):
+                   extra_facts=None, staging=False, expected_model_calls=1):
     engine = create_async_engine(database_url())
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     core = core_app(
@@ -125,9 +125,18 @@ async def run_flow(*, actor, clinic, state, data, answer, value, unresolved=Fals
                 json.loads(request.content) if request.content else None,
             )
         )
-        return await core_transport.handle_async_request(request)
+        response = await core_transport.handle_async_request(request)
+        if (expected_model_calls == 0 and response.status_code == 200
+                and request.url.path.startswith("/v1/intake-answer-preparations/")
+                and request.url.path.endswith("/context")):
+            # A literal has no model stage to block. Hold the actual private
+            # response after Core has checked actor/lease/source instead.
+            entered.set()
+            await release.wait()
+        return response
 
     async def model(request):
+        assert expected_model_calls == 1, "a literal answer must not invoke the model"
         model_calls.append(json.loads(request.content))
         entered.set()
         await release.wait()
@@ -270,8 +279,10 @@ async def run_flow(*, actor, clinic, state, data, answer, value, unresolved=Fals
                         json={"expectedRevision": draft["revision"], "answer": answer},
                     )
                     assert replay.status_code == 202 and replay.json() == pending
-                    # The handler has already returned while the real model call remains blocked.
-                    assert len(model_calls) == len(agent_requests) == 1 and not release.is_set()
+                    # HTTP intent returns before either the model or the literal's
+                    # private-context delivery completes; both preserve draft data.
+                    assert len(model_calls) == expected_model_calls
+                    assert len(agent_requests) == 1 and not release.is_set()
                     metadata = agent_requests[0][1]
                     assert set(metadata) == {
                         "draftId",
@@ -280,13 +291,15 @@ async def run_flow(*, actor, clinic, state, data, answer, value, unresolved=Fals
                         "expectedInputSha256",
                     }
                     assert answer not in json.dumps(metadata, ensure_ascii=False)
-                    user = json.loads(model_calls[0]["messages"][1]["content"])
-                    assert user["answer"] == answer and user["question"] == question.model_dump(
-                        mode="json", by_alias=True
-                    )
-                    assert model_calls[0]["model"] == "existing-researcher"
-                    assert metadata["leaseToken"] not in model_calls[0]["messages"][1]["content"]
-                    assert draft["id"] not in model_calls[0]["messages"][1]["content"]
+                    if expected_model_calls:
+                        user = json.loads(model_calls[0]["messages"][1]["content"])
+                        assert user["answer"] == answer and user["question"] == question.model_dump(
+                            mode="json", by_alias=True
+                        )
+                        assert model_calls[0]["model"] == "existing-researcher"
+                        model_source = model_calls[0]["messages"][1]["content"]
+                        assert metadata["leaseToken"] not in model_source
+                        assert draft["id"] not in model_source
                     assert any(path == operation + "/context" for _, path, _ in core_requests)
                     if cancel:
                         cancelled = await asyncio.wait_for(
@@ -354,7 +367,8 @@ async def run_flow(*, actor, clinic, state, data, answer, value, unresolved=Fals
                     replayed = await core_http.post(operation + suffix,
                                                     headers=actor_headers(actor), json=consent)
                     assert replayed.status_code == 200 and replayed.json() == receipt
-                    assert len(model_calls) == len(agent_requests) == 1
+                    assert len(model_calls) == expected_model_calls
+                    assert len(agent_requests) == 1
                     assert counts(clinic) == (0, 0, 0, 0)
                 finally:
                     release.set()
@@ -421,3 +435,21 @@ def test_rich_reply_uses_real_core_agent_http_and_stages_all_facts_with_one_mode
             ),
         },
     ))
+
+
+@pytest.mark.parametrize("state,data,answer,value", [
+    ("EVENT_DATE", {}, "15.10.2026", {"date": "2026-10-15", "precision": "EXACT"}),
+    ("EVENT_DATE", {}, "2026-10-15", {"date": "2026-10-15", "precision": "EXACT"}),
+    ("SAFETY", {}, "Нет", "NO"),
+    ("ANALYSIS_CLARIFICATION", clarification("SERVICE_PAYMENT_BASIS"), "платно", "PAID"),
+    ("ANALYSIS_CLARIFICATION", clarification("SERVICE_PROVIDED_DATE"), "15.10.2026",
+     {"date": "2026-10-15", "precision": "EXACT"}),
+])
+def test_literal_answers_use_real_private_context_and_require_consent_without_a_model(
+    monkeypatch, state, data, answer, value,
+):
+    monkeypatch.setenv("AGENT_INTERNAL_KEY", KEY)
+    actor = 41_800_000_000 + uuid4().int % 100_000_000
+    clinic, _ = seed_admin(actor)
+    asyncio.run(run_flow(actor=actor, clinic=clinic, state=state, data=data,
+                         answer=answer, value=value, expected_model_calls=0))

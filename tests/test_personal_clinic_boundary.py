@@ -22,7 +22,9 @@ CLINIC_BASELINE = {
     "services/gateway/telegram/src/telegram_gateway/case_experience_runtime.py":
         # Owner-approved opt-in clinical plan review (2026-10-27 lawyer-work-product UI ADR);
         # both clinical flags default off, personal entry points remain inert.
-        "aa615e00250d8d0ab3159a911e7ce13514424616",
+        # Reviewed clinical dialogue-only installer, gated by the existing default-off
+        # simplified flag (ADR0103). Personal entry, identity and grants stay inert.
+        "b9f97eec8be01ab2ac217aa7a4be79aadec30b42",
     "services/legal_core/src/legal_core/main.py":
         # Owner-approved clinical work-product routes; personal remains inert (AIF08 ADR).
         "0a37aed06336cfc12c4016df8ff10eb8858addef",

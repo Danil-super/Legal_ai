@@ -9,7 +9,15 @@ from telegram.ext import ConversationHandler
 from telegram_gateway import bot
 from telegram_gateway.dialogue_staging import ENABLED
 from test_case_wizard import FakeQuery
-from test_initial_preparation_runtime import _context
+from test_initial_preparation_runtime import _context as _initial_context
+from test_shared_preparation_form import with_unknown_clarification_attempts
+
+
+def _context():
+    result = _initial_context()
+    data = result[1].user_data[bot.WIZARD_DATA_KEY]
+    data.update(with_unknown_clarification_attempts(data))
+    return result
 
 
 @pytest.mark.parametrize("urgent", [False, True])

@@ -16,10 +16,17 @@ from telegram_gateway.dialogue_staging import ENABLED
 from telegram_gateway.guided_case_intake_v2 import next_missing_state, review_blocks
 from test_case_wizard import FakeQuery
 from test_dialog_isolation import ACTOR, DRAFT
-from test_factual_safety_gateway import completed_data
-from test_initial_preparation_runtime import _context
+from test_initial_preparation_runtime import _context as _initial_context
 from test_intake_single_summary import simplified_harness
 from test_intake_transient_cleanup import delivery_finished
+from test_shared_preparation_form import completed_data, with_unknown_clarification_attempts
+
+
+def _context():
+    result = _initial_context()
+    data = result[1].user_data[bot.WIZARD_DATA_KEY]
+    data.update(with_unknown_clarification_attempts(data))
+    return result
 
 
 def complete_without_upload():

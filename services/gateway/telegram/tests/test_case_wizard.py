@@ -975,6 +975,11 @@ def test_v2_confirmation_submits_plain_language_facts_without_legacy_qualificati
         },
     )
 
+    from complete_intake_fixture import with_unknown_clarification_attempts
+
+    context.user_data["case_wizard"] = with_unknown_clarification_attempts(
+        context.user_data["case_wizard"],
+    )
     prepare_selected_draft(context, update)
     result = asyncio.run(_persist_transition(confirm_case, update, context))
 

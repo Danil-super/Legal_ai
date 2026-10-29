@@ -14,7 +14,12 @@ from typing import Any, cast
 from uuid import UUID
 
 import httpx2
-from legal_core.analysis_clarifications import ClarificationRequestBatch, validate_request_scope
+from legal_core.analysis_clarifications import (
+    ClarificationQuestionId,
+    ClarificationRequest,
+    ClarificationRequestBatch,
+    validate_request_scope,
+)
 from legal_core.analysis_contracts import (
     PreparationJobResponse,
     PreparationResult,
@@ -209,6 +214,17 @@ def _ready_for_presentation(result: ReportReadyResult) -> dict[str, Any]:
     }
 
 
+def _preparation_question(request: ClarificationRequest) -> str:
+    """Use typed identities only: this envelope has no trusted service titles."""
+    if request.question_id == ClarificationQuestionId.RESPONSE_PURPOSE:
+        return "Что клинике нужно сделать в связи с обращением?"
+    assert request.service_slot is not None
+    service = f"услуга №{request.service_slot + 1}"
+    if request.question_id == ClarificationQuestionId.SERVICE_PAYMENT_BASIS:
+        return f"Как оплачивалась {service}?"
+    return f"Когда была оказана {service}?"
+
+
 def _preparation_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
     result = PreparationResult.model_validate(job.result).root
     if result.source.case_id != job.case_id:
@@ -217,14 +233,11 @@ def _preparation_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
         return job_message(JobSnapshot(
             job.job_id, job.case_id, job.state, job.error_code, _ready_for_presentation(result),
         ))
-    rows = [[InlineKeyboardButton(
-        "🔄 Проверить статус", callback_data=f"analysis:status:{job.job_id}",
-    )]]
+    rows: list[list[InlineKeyboardButton]] = []
     if result.status == "NEEDS_FACTS":
-        text = (
-            "Для подготовки рекомендаций нужно уточнить факты. "
-            "Итоговый ответ ещё не сформирован."
-        )
+        questions = [_preparation_question(request) for request in result.clarification_requests]
+        text = ("Уточните, пожалуйста:\n" + "\n".join(questions) if questions else
+                "Для подготовки рекомендаций нужно уточнить факты.")
     elif result.status == "LIMITED":
         text = (
             "Пока недостаточно подтверждённых данных или применимой нормативной базы. "
@@ -237,7 +250,7 @@ def _preparation_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
         )])
     if result.status in {"NEEDS_FACTS", "LIMITED"}:
         rows.insert(0, [InlineKeyboardButton(
-            "Уточнить факты" if result.status == "NEEDS_FACTS" else "Изменить сведения",
+            "Ответить" if result.status == "NEEDS_FACTS" else "Изменить сведения",
             callback_data=encode_preparation_callback(job.case_id, result.source.operation_id),
         )])
     rows.extend(list(row) for row in back_keyboard().inline_keyboard)
@@ -254,7 +267,7 @@ def job_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
     if job.result_version == 2 and job.state == "SUCCEEDED":
         return _preparation_message(job)
 
-    rows = [
+    rows = [] if job.state in TERMINAL_STATES else [
         [InlineKeyboardButton("🔄 Проверить статус", callback_data=f"analysis:status:{job.job_id}")]
     ]
     if job.state == "QUEUED":

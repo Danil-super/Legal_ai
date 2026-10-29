@@ -59,6 +59,7 @@ def fake_update(*, text: str = "", callback: str | None = None) -> SimpleNamespa
         callback_query=(
             None if callback is None else SimpleNamespace(
                 data=callback, answer=AsyncMock(), message=SimpleNamespace(message_id=3),
+                edit_message_reply_markup=AsyncMock(),
             )
         ),
     )
@@ -235,6 +236,11 @@ def test_v2_delivery_failure_preserves_guided_confirmation_for_safe_retry(
                             **dict.fromkeys(SCREENING_FIELDS, "NO"),
                             "amount": "NOT_REQUESTED"},
     }
+    from complete_intake_fixture import with_unknown_clarification_attempts
+
+    context.user_data[bot.WIZARD_DATA_KEY] = with_unknown_clarification_attempts(
+        context.user_data[bot.WIZARD_DATA_KEY],
+    )
     client = context.bot_data[bot.LEGAL_CORE_CLIENT_KEY]
     client.submit_workflow = AsyncMock(return_value={})
     client.archive_intake_draft = AsyncMock()
