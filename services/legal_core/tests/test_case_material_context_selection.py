@@ -65,8 +65,10 @@ def test_local_worker_overflow_stops_before_waiting_for_eof(monkeypatch):
     processes = []
 
     async def replacement(*args, **kwargs):
+        # Exceed both the accepted output cap and the pipe/StreamReader buffers:
+        # wait() after kill alone still deadlocks when stdout has paused reading.
         process = await actual_spawn(sys.executable, "-c", (
-            "import sys,time; sys.stdout.buffer.write(b'x'*1000001); "
+            "import sys,time; sys.stdout.buffer.write(b'x'*10000000); "
             "sys.stdout.buffer.flush(); time.sleep(60)"
         ), **kwargs)
         processes.append(process)
@@ -198,6 +200,55 @@ def test_final_metadata_check_uses_remaining_loader_budget(monkeypatch):
                     None, clinic_id=uuid4(), case_id=uuid4(), state=state,
                 )
         assert error.value.code == "CASE_MATERIAL_CONTEXT_UNAVAILABLE"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["timeout", "runtime-error"])
+def test_failed_final_metadata_check_never_returns_unchecked_excerpts(monkeypatch, failure):
+    from dataclasses import replace
+
+    from legal_core import case_material_context as module
+    from legal_core.case_api import ApiError
+    from legal_core.clinic_document_store import case_material_object_key
+
+    clinic_id = uuid4()
+    material = parsed(1, "Synthetic material")
+    snapshot = replace(material.snapshot, raw_object_key=case_material_object_key(
+        clinic_id=clinic_id, material_id=material.snapshot.material_id,
+        raw_sha256=material.snapshot.raw_sha256,
+    ))
+    calls = []
+
+    class Store:
+        async def get_case_material(self, **kwargs):
+            return b"Synthetic material"
+
+    async def metadata(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            if failure == "timeout":
+                await asyncio.sleep(0.15)
+            else:
+                raise RuntimeError("Synthetic metadata failure")
+        return (snapshot,)
+
+    async def parse(*args, **kwargs):
+        return "Synthetic material"
+
+    monkeypatch.setenv("CASE_MATERIAL_CONTEXT_ENABLED", "true")
+    monkeypatch.setattr(module, "CASE_MATERIAL_CONTEXT_TIMEOUT_SECONDS", 0.03)
+    monkeypatch.setattr(module, "_current_materials", metadata)
+    monkeypatch.setattr(module, "parse_case_material_locally", parse)
+
+    async def scenario():
+        async with asyncio.timeout(0.5):
+            with pytest.raises(ApiError) as error:
+                await module.load_case_material_context(
+                    None, clinic_id=clinic_id, case_id=uuid4(), facts={}, raw_store=Store(),
+                )
+        assert error.value.code == "CASE_MATERIAL_CONTEXT_UNAVAILABLE"
+        assert len(calls) == 2
 
     asyncio.run(scenario())
 

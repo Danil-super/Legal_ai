@@ -110,6 +110,11 @@ async def parse_case_material_locally(raw: bytes, *, mime_type: str) -> str:
             os.killpg(process.pid, signal.SIGKILL)
         writer.cancel()
         await asyncio.gather(writer, return_exceptions=True)
+        # Even after SIGKILL, a paused stdout transport can keep wait() blocked
+        # until its buffered pipe reaches EOF. Discard bounded chunks rather
+        # than accumulating rejected output with communicate().
+        while await process.stdout.read(65536):
+            pass
         await process.wait()
     if process.returncode != 0:
         raise ValueError("case material parsing is unavailable")
@@ -225,14 +230,15 @@ async def load_case_material_context(
                 parsed.append(ParsedCaseMaterial(item, await parse_case_material_locally(
                     raw, mime_type=item.mime_type,
                 )))
-            result = CaseMaterialContextState(
+            candidate = CaseMaterialContextState(
                 select_case_material_fragments(parsed, facts), materials, deadline,
             )
             # The same source may naturally expire while local extraction runs.
             # Never expose expired excerpts even before the later submission fence.
             await require_case_material_context_current(
-                session, clinic_id=clinic_id, case_id=case_id, state=result,
+                session, clinic_id=clinic_id, case_id=case_id, state=candidate,
             )
+            result = candidate
     except (TimeoutError, ValueError, RuntimeError, KeyError, OSError):
         pass
     if result is None:
