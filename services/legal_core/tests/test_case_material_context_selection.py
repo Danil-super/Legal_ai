@@ -124,8 +124,11 @@ def test_cancelled_worker_kills_native_descendant_and_inherits_no_keys(monkeypat
         async with asyncio.timeout(3):
             while os.path.exists(f"/proc/{child_pid}/stat"):
                 # A killed grandchild can briefly await PID1 reaping; it cannot run.
-                with open(f"/proc/{child_pid}/stat") as status:
-                    state = status.read().split()[2]
+                try:
+                    with open(f"/proc/{child_pid}/stat") as status:
+                        state = status.read().split()[2]
+                except FileNotFoundError:
+                    break  # PID1 reaped it between the existence check and read.
                 if state == "Z":
                     break
                 await asyncio.sleep(0.01)

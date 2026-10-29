@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from pydantic import TypeAdapter
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +25,7 @@ from legal_core.case_material_context_contracts import (
     CaseMaterialContextFragment,
     case_material_context_trace_sha256,
 )
+from legal_core.case_material_contracts import CaseMaterialMimeType
 from legal_core.clinic_document_parser import MAX_UPLOAD_BYTES
 from legal_core.clinic_document_store import (
     RawCaseMaterialStore,
@@ -45,7 +47,7 @@ def case_material_context_enabled() -> bool:
 class CaseMaterialSnapshot:
     material_id: UUID
     display_name: str
-    mime_type: str
+    mime_type: CaseMaterialMimeType
     raw_sha256: str
     raw_size_bytes: int
     raw_object_key: str
@@ -182,9 +184,10 @@ async def _current_materials(
       .with_for_update(read=True).execution_options(populate_existing=True))).all())
     if len(rows) > 10:
         raise ValueError("case material set exceeds the supported bound")
-    now = await session.scalar(select(func.clock_timestamp()))
+    now = (await session.execute(select(func.clock_timestamp()))).scalar_one()
     return tuple(CaseMaterialSnapshot(
-        material_id=row.id, display_name=row.display_name, mime_type=row.mime_type,
+        material_id=row.id, display_name=row.display_name,
+        mime_type=TypeAdapter(CaseMaterialMimeType).validate_python(row.mime_type),
         raw_sha256=row.raw_sha256, raw_size_bytes=row.raw_size_bytes,
         raw_object_key=row.raw_object_key, expires_at=row.expires_at,
     ) for row in rows if row.analysis_use_allowed and row.expires_at > now)

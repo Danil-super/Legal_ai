@@ -210,3 +210,34 @@ def test_store_rejects_redirect_instead_of_following_it() -> None:
                 )
 
     asyncio.run(scenario())
+
+
+def test_case_material_download_stops_stream_at_bound_instead_of_reading_entire_object():
+    consumed = []
+
+    class Oversized(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            for _ in range(100):
+                consumed.append(1)
+                yield b"x" * 65536
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = Oversized()
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, stream=stream, request=request),
+        )) as client:
+            store = MinioRawClinicDocumentStore(_settings(), client=client)
+            with pytest.raises(RuntimeError, match="size"):
+                await store.get_case_material(stored_location=case_material_object_key(
+                    clinic_id=CLINIC_ID, material_id=DOCUMENT_ID, raw_sha256="a" * 64,
+                ), max_bytes=100)
+        assert len(consumed) == 1
+        assert stream.closed
+
+    asyncio.run(scenario())
