@@ -15,6 +15,7 @@ from legal_core.case_material_context import (
 )
 from legal_core.clinic_document_store import minio_store_from_environment
 from legal_core.database import database_url
+from test_lawyer_draft_context import routed_case as routed_case
 from test_preparation_analysis import _submission
 from test_preparation_analysis import prepared_case as prepared_case
 from test_verified_copy_analysis_e2e import isolated_database as isolated_database
@@ -205,3 +206,69 @@ def test_natural_expiry_after_local_parse_is_rechecked_without_reloading_raw(pre
             await db.dispose()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("change", ["expiry", "consent"])
+def test_file_changing_during_parse_never_leaves_core_context(prepared_case, monkeypatch, change):
+    from legal_core import case_material_context as module
+
+    _, actor, clinic, case, _, _, engine = prepared_case
+    material, _ = add_material(engine, clinic, case)
+    actual_parser = module.parse_case_material_locally
+
+    async def scenario():
+        db = create_async_engine(database_url())
+        try:
+            async with async_sessionmaker(db, expire_on_commit=False)() as session:
+                await resolve_actor(session, actor)
+
+                async def parse_then_expire(*args, **kwargs):
+                    result = await actual_parser(*args, **kwargs)
+                    assignment = (
+                        "expires_at=clock_timestamp()-interval '1 second'" if change == "expiry"
+                        else "analysis_use_allowed=false"
+                    )
+                    await session.execute(text(
+                        "UPDATE case_materials SET " + assignment + " WHERE id=:id"
+                    ), {"id": material})
+                    return result
+
+                monkeypatch.setattr(module, "parse_case_material_locally", parse_then_expire)
+                with pytest.raises(ApiError) as refused:
+                    await load_case_material_context(
+                        session, clinic_id=clinic, case_id=UUID(case), facts={},
+                    )
+                assert refused.value.code == "ANALYSIS_CONTEXT_STALE"
+        finally:
+            await db.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_high_case_ai_plan_binds_files_without_making_them_norms_or_patient_report(routed_case):
+    from test_case_api import actor_headers
+    from test_lawyer_work_product_api import owner_role, plan_path, post, submission
+
+    client, actor, clinic, _, case, *_ = routed_case
+    engine = routed_case[9]
+    material, _ = add_material(engine, clinic, case)
+    payload = submission(routed_case)
+    trace = payload["expectedSource"]["context"]["caseMaterialContextTraceSha256"]
+    created = post(routed_case, payload)
+    assert created.status_code == 201, created.text
+    assert created.json()["content"]["source"]["context"][
+        "caseMaterialContextTraceSha256"
+    ] == trace
+    assert created.json()["isCurrent"]
+    owner_role(routed_case)
+    with engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE case_materials SET expires_at=clock_timestamp()-interval '1 second' "
+            "WHERE id=:id"
+        ), {"id": material})
+    stale = client.get(plan_path(routed_case), headers=actor_headers(actor))
+    assert stale.status_code == 200, stale.text
+    assert not stale.json()["isCurrent"]
+    assert stale.json()["citations"] == []
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT count(*) FROM case_reports")) == 0

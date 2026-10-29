@@ -127,7 +127,7 @@ def test_cancelled_worker_kills_native_descendant_and_inherits_no_keys(monkeypat
                 try:
                     with open(f"/proc/{child_pid}/stat") as status:
                         state = status.read().split()[2]
-                except FileNotFoundError:
+                except (FileNotFoundError, ProcessLookupError):
                     break  # PID1 reaped it between the existence check and read.
                 if state == "Z":
                     break
@@ -200,3 +200,24 @@ def test_final_metadata_check_uses_remaining_loader_budget(monkeypatch):
         assert error.value.code == "CASE_MATERIAL_CONTEXT_UNAVAILABLE"
 
     asyncio.run(scenario())
+
+
+def test_local_worker_handles_docx_and_native_pdf_with_the_same_privacy_boundary():
+    from io import BytesIO
+
+    from reportlab.pdfgen import canvas
+
+    from test_clinic_document_parser import _docx_bytes
+
+    content = "Synthetic anonymised material for a review appointment."
+    docx = _docx_bytes(paragraphs=(content,))
+    assert asyncio.run(parse_case_material_locally(
+        docx, mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )) == content
+    output = BytesIO()
+    pdf = canvas.Canvas(output)
+    pdf.drawString(40, 800, content)
+    pdf.save()
+    assert asyncio.run(parse_case_material_locally(
+        output.getvalue(), mime_type="application/pdf",
+    )) == content

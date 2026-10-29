@@ -228,6 +228,11 @@ async def load_case_material_context(
             result = CaseMaterialContextState(
                 select_case_material_fragments(parsed, facts), materials, deadline,
             )
+            # The same source may naturally expire while local extraction runs.
+            # Never expose expired excerpts even before the later submission fence.
+            await require_case_material_context_current(
+                session, clinic_id=clinic_id, case_id=case_id, state=result,
+            )
     except (TimeoutError, ValueError, RuntimeError, KeyError, OSError):
         pass
     if result is None:
