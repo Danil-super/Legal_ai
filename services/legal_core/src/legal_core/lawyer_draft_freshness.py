@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from legal_core.analysis import evidence_trace_sha256
 from legal_core.analysis_api import AnalysisState
 from legal_core.case_api import ActorContext, ApiError
+from legal_core.case_material_context import require_case_material_context_current
 from legal_core.clinic_document_retrieval import (
     _FRAGMENT_COLUMNS as _CLINIC_COLUMNS,
 )
@@ -121,3 +122,7 @@ async def require_lawyer_draft_sources_current(
             or clinic_document_context_trace_sha256(selected_clinic, as_of_date=state.as_of_date)
             != state.clinic_document_context_trace_sha256):
         raise _stale()
+    await require_case_material_context_current(
+        session, clinic_id=actor.clinic_id, case_id=state.case.id,
+        state=state.case_material_context,
+    )

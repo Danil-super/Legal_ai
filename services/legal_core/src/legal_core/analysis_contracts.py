@@ -20,6 +20,9 @@ from legal_core.case_preparation_contracts import (
 from legal_core.contracts import (
     CanonicalReport, ContractModel, FactKey, LegalFragmentResponse, ReportResponse,
 )
+from legal_core.case_material_context_contracts import (
+    CaseMaterialContextFragment, case_material_context_trace_sha256,
+)
 from legal_core.risk_engine import fact_snapshot_sha256
 from legal_core.reference_analogy_contracts import (
     ReferenceAnalogyExample,
@@ -90,6 +93,24 @@ class AnalysisContextResponse(ContractModel):
         default=None, alias="referenceExampleTraceSha256", pattern=r"^[0-9a-f]{64}$",
         exclude_if=lambda value: value is None,
     )
+    case_material_context: list[CaseMaterialContextFragment] | None = Field(
+        default=None, alias="caseMaterialContext", min_length=1, max_length=12,
+        exclude_if=lambda value: value is None,
+    )
+    case_material_context_trace_sha256: str | None = Field(
+        default=None, alias="caseMaterialContextTraceSha256", pattern=r"^[0-9a-f]{64}$",
+        exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def exact_case_material_context(self) -> AnalysisContextResponse:
+        if ((self.case_material_context is None)
+                != (self.case_material_context_trace_sha256 is None)):
+            raise ValueError("case material context requires its exact source trace")
+        if (self.case_material_context is not None and case_material_context_trace_sha256(
+                self.case_material_context) != self.case_material_context_trace_sha256):
+            raise ValueError("case material context does not match its source trace")
+        return self
 
     @model_validator(mode="after")
     def exact_optional_reference_context(self) -> AnalysisContextResponse:
@@ -159,6 +180,10 @@ class AnalysisSubmissionRequest(ContractModel):
     )
     expected_reference_example_trace_sha256: str | None = Field(
         default=None, alias="expectedReferenceExampleTraceSha256", pattern=r"^[0-9a-f]{64}$",
+        exclude_if=lambda value: value is None,
+    )
+    expected_case_material_context_trace_sha256: str | None = Field(
+        default=None, alias="expectedCaseMaterialContextTraceSha256", pattern=r"^[0-9a-f]{64}$",
         exclude_if=lambda value: value is None,
     )
     claims: list[AnalysisClaimInput] = Field(max_length=30)
@@ -274,6 +299,8 @@ class ReportReadyResult(PreparationResultBase):
             or context.evidence_trace_sha256 != analysis.evidence_trace_sha256
             or context.clinic_document_context_trace_sha256
             != analysis.clinic_document_context_trace_sha256
+            or context.case_material_context_trace_sha256
+            != canonical.case_material_context_trace_sha256
             or context.risk_policy_version != risk.policy_version
         ):
             raise ValueError("ready report does not match the bound preparation source")

@@ -18,6 +18,7 @@ class AnalysisContextFingerprint:
     evidence_trace_sha256: str
     clinic_document_context_trace_sha256: str
     risk_policy_version: str
+    case_material_context_trace_sha256: str | None = None
 
 
 def analysis_context_is_stale(

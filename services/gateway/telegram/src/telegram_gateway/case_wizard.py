@@ -1003,6 +1003,7 @@ class LegalCoreClient:
         content: bytes,
         source_filename: str,
         content_type: str,
+        include_in_analysis: bool = False,
     ) -> dict[str, Any]:
         """Upload a bounded Telegram document to the isolated Core endpoint.
 
@@ -1014,6 +1015,8 @@ class LegalCoreClient:
             raise ValueError("case material is outside the supported size")
         if not source_filename or len(source_filename) > 255:
             raise ValueError("case material filename is invalid")
+        if type(include_in_analysis) is not bool:
+            raise ValueError("case material analysis consent must be boolean")
         try:
             response = await self._http.post(
                 f"/v1/telegram-intake-drafts/{draft_id}/case-materials",
@@ -1023,6 +1026,7 @@ class LegalCoreClient:
                     "Content-Type": content_type,
                 },
                 content=content,
+                params={"include_in_analysis": "true"} if include_in_analysis else None,
             )
         except httpx2.HTTPError as exc:
             raise LegalCoreApiError(

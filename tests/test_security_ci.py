@@ -74,11 +74,11 @@ def test_pdf_test_jobs_install_native_tools_before_testing(job: str) -> None:
 def test_integration_suite_keeps_full_scope_and_a_bounded_process_deadline() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     shard = workflow["jobs"]["postgres-integration-shard"]
-    assert shard["strategy"] == {"fail-fast": False, "matrix": {"shard": [0, 1, 2, 3, 4, 5]}}
+    assert shard["strategy"] == {"fail-fast": False, "matrix": {"shard": [0, 1, 2, 3, 4, 5, 6, 7]}}
     test_step = next(step for step in shard["steps"]
                      if "python ops/ci/run_integration_shard.py" in step.get("run", ""))
     assert test_step["run"] == (
-        'timeout 180s python ops/ci/run_integration_shard.py --index "$SHARD_INDEX" --count 6'
+        'timeout 180s python ops/ci/run_integration_shard.py --index "$SHARD_INDEX" --count 8'
     )
     assert not test_step.get("continue-on-error", False)
     gate = workflow["jobs"]["postgres-integration"]

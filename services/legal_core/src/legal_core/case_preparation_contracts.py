@@ -57,6 +57,10 @@ class PreparationContext(PreparationModel):
     reference_example_trace_sha256: Sha256 | None = Field(
         default=None, alias="referenceExampleTraceSha256", exclude_if=lambda value: value is None,
     )
+    case_material_context_trace_sha256: Sha256 | None = Field(
+        default=None, alias="caseMaterialContextTraceSha256",
+        exclude_if=lambda value: value is None,
+    )
 
     @field_validator("risk_policy_version")
     @classmethod

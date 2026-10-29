@@ -28,10 +28,18 @@ from reportlab.platypus import (  # type: ignore[import-untyped]
 )
 
 from legal_core.analysis_clarifications import ClarificationRequest
+from legal_core.case_material_context_contracts import (
+    CaseMaterialContextFragment,
+)
+from legal_core.case_material_context_contracts import (
+    case_material_context_trace_sha256 as material_trace,
+)
 from legal_core.contracts import (
     AnalysisAvailability,
     AnalysisSnapshot,
     CanonicalReport,
+    CaseMaterialBasis,
+    CaseMaterialSourceCard,
     CaseStatus,
     ClinicDocumentBasis,
     ClinicDocumentSourceCard,
@@ -111,6 +119,7 @@ def build_intake_report(
     missing_facts: Sequence[MissingFact],
     block_reason_code: str = "LEGAL_CORPUS_NOT_READY",
     clarification_requests: Sequence[ClarificationRequest] = (),
+    case_material_context_trace_sha256: str | None = None,
 ) -> CanonicalReport:
     serialized_facts, facts_sha256 = _serialized_facts(facts)
     incident_types, summary = _summary_parts(facts)
@@ -135,6 +144,7 @@ def build_intake_report(
         draftResponse=DraftResponse(),
         legalBasis=LegalBasis(),
         clinicDocuments=ClinicDocumentBasis(),
+        caseMaterialContextTraceSha256=case_material_context_trace_sha256,
         factSnapshotSha256=facts_sha256,
         disclaimer=DISCLAIMER,
     )
@@ -234,6 +244,8 @@ def build_analysis_report(
     clinic_document_context: Sequence[ApprovedClinicDocumentFragment],
     verified_action_items: Sequence[str],
     verified_legal_conclusions: Sequence[LegalConclusion] = (),
+    case_material_context: Sequence[CaseMaterialContextFragment] = (),
+    case_material_context_trace_sha256: str | None = None,
 ) -> CanonicalReport:
     """Build a user-visible report only after all server-side evidence gates passed."""
 
@@ -241,6 +253,8 @@ def build_analysis_report(
         raise ValueError("an unavailable risk result cannot produce a READY analysis report")
     if not evidence:
         raise ValueError("a READY analysis report requires approved legal evidence")
+    if material_trace(case_material_context) != case_material_context_trace_sha256:
+        raise ValueError("case material report context is not bound to its source trace")
     verified_by_claim = {claim.claim_id: claim for claim in verification.claims}
     for conclusion in verified_legal_conclusions:
         verified = verified_by_claim.get(conclusion.claim_id)
@@ -291,6 +305,10 @@ def build_analysis_report(
         ),
         legalConclusions=list(verified_legal_conclusions),
         clinicDocuments=clinic_basis,
+        caseMaterials=CaseMaterialBasis(sources=[CaseMaterialSourceCard.model_validate(
+            item.model_dump(mode="json", by_alias=True, exclude={"text"}),
+        ) for item in case_material_context]) if case_material_context else None,
+        caseMaterialContextTraceSha256=case_material_context_trace_sha256,
         risk=RiskSummary(
             level=risk_level,
             reasonCodes=list(risk.reason_codes),
@@ -303,6 +321,7 @@ def build_analysis_report(
             verifierStatus="PASSED",
             evidenceTraceSha256=evidence_trace_sha256,
             clinicDocumentContextTraceSha256=clinic_document_context_trace_sha256,
+            caseMaterialContextTraceSha256=case_material_context_trace_sha256,
         ),
         factSnapshotSha256=facts_sha256,
         disclaimer=DISCLAIMER,

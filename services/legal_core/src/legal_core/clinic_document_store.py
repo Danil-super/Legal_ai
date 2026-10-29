@@ -250,6 +250,7 @@ class MinioRawClinicDocumentStore:
         *,
         content: bytes = b"",
         content_type: str | None = None,
+        max_response_bytes: int | None = None,
     ) -> httpx.Response:
         headers = self._authorization_headers(
             method=method,
@@ -266,12 +267,34 @@ class MinioRawClinicDocumentStore:
             trust_env=False,
         )
         try:
-            response = await client.request(
-                method,
-                f"{self._settings.base_url}{canonical_uri}",
-                headers=headers,
-                content=content,
-            )
+            if max_response_bytes is None:
+                response = await client.request(
+                    method, f"{self._settings.base_url}{canonical_uri}",
+                    headers=headers, content=content,
+                )
+            else:
+                headers["Accept-Encoding"] = "identity"
+                async with client.stream(
+                    method, f"{self._settings.base_url}{canonical_uri}",
+                    headers=headers, content=content,
+                ) as streamed:
+                    if streamed.headers.get("content-encoding", "identity") != "identity":
+                        raise RuntimeError("raw case material storage encoding is invalid")
+                    body = bytearray()
+                    if streamed.is_stream_consumed:
+                        # Injected transports can return an already buffered response.
+                        if len(streamed.content) > max_response_bytes:
+                            raise RuntimeError("raw case material download size is invalid")
+                        body.extend(streamed.content)
+                    else:
+                        async for chunk in streamed.aiter_raw(chunk_size=65536):
+                            if len(body) + len(chunk) > max_response_bytes:
+                                raise RuntimeError("raw case material download size is invalid")
+                            body.extend(chunk)
+                    response = httpx.Response(
+                        streamed.status_code, headers=streamed.headers,
+                        content=bytes(body), request=streamed.request,
+                    )
         except (httpx.HTTPError, TimeoutError) as exc:
             raise RuntimeError("raw clinic document storage is unavailable") from exc
         finally:
@@ -378,14 +401,14 @@ class MinioRawClinicDocumentStore:
             raise RuntimeError(f"raw case material deletion failed: HTTP {response.status_code}")
 
     async def get_case_material(self, *, stored_location: str, max_bytes: int) -> bytes:
-        """Read one authorised private object with a strict post-read size cap."""
+        """Stream one authorised private object with a strict pre-buffer size cap."""
 
         if not _CASE_MATERIAL_OBJECT_KEY_RE.fullmatch(stored_location):
             raise ValueError("raw case material object key is invalid")
         if not 1 <= max_bytes <= 15_000_000:
             raise ValueError("raw case material maximum size is invalid")
         canonical_uri = self._bucket_uri() + "/" + quote(stored_location, safe="/-_.~")
-        response = await self._request("GET", canonical_uri)
+        response = await self._request("GET", canonical_uri, max_response_bytes=max_bytes)
         if response.status_code != 200:
             raise RuntimeError(f"raw case material download failed: HTTP {response.status_code}")
         if not response.content or len(response.content) > max_bytes:

@@ -17,6 +17,7 @@ COPY services/legal_core/src/legal_core/__init__.py ./services/legal_core/src/le
 COPY services/legal_core/src/legal_core/pseudonymization.py ./services/legal_core/src/legal_core/pseudonymization.py
 COPY services/legal_core/src/legal_core/contracts.py ./services/legal_core/src/legal_core/contracts.py
 COPY services/legal_core/src/legal_core/case_material_contracts.py ./services/legal_core/src/legal_core/case_material_contracts.py
+COPY services/legal_core/src/legal_core/case_material_context_contracts.py ./services/legal_core/src/legal_core/case_material_context_contracts.py
 COPY services/legal_core/src/legal_core/analysis_clarifications.py ./services/legal_core/src/legal_core/analysis_clarifications.py
 COPY services/legal_core/src/legal_core/report_presentation.py ./services/legal_core/src/legal_core/report_presentation.py
 COPY services/legal_core/src/legal_core/upload_filename.py ./services/legal_core/src/legal_core/upload_filename.py

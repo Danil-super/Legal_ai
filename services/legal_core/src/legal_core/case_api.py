@@ -2010,7 +2010,8 @@ def create_case_router(
 
         # The Telegram workflow identifier is the durable draft identifier. A
         # submission moves private material metadata to the confirmed case without
-        # copying raw bytes or exposing them to report, retrieval, or model paths.
+        # copying raw bytes. Only the separately consented, bounded local excerpt
+        # loader can supply case-file context to analysis; raw bytes stay private.
         await session.execute(
             update(CaseMaterial)
             .where(

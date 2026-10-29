@@ -717,6 +717,7 @@ class CaseMaterial(Base):
     raw_size_bytes: Mapped[int] = mapped_column(BigInteger)
     raw_sha256: Mapped[str] = mapped_column(String(64))
     raw_object_key: Mapped[str] = mapped_column(String(512))
+    analysis_use_allowed: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     deletion_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deletion_lease_token: Mapped[UUID | None] = mapped_column(UUID_PK)

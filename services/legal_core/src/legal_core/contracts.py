@@ -339,6 +339,34 @@ class ClinicDocumentBasis(ContractModel):
         return self
 
 
+class CaseMaterialSourceCard(ContractModel):
+    material_id: UUID = Field(alias="materialId")
+    fragment_id: UUID = Field(alias="fragmentId")
+    display_name: str = Field(alias="displayName", pattern=r"^Материал (?:[1-9]|10)$")
+    mime_type: Literal[
+        "text/plain", "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ] = Field(alias="mimeType")
+    raw_sha256: str = Field(alias="rawSha256", pattern=r"^[0-9a-f]{64}$")
+    text_sha256: str = Field(alias="textSha256", pattern=r"^[0-9a-f]{64}$")
+    structural_path: str = Field(alias="structuralPath", min_length=1, max_length=500)
+    extraction_limitations: list[str] = Field(
+        default_factory=list, alias="extractionLimitations", max_length=8,
+    )
+
+
+class CaseMaterialBasis(ContractModel):
+    status: Literal["USED"] = "USED"
+    sources: list[CaseMaterialSourceCard] = Field(min_length=1, max_length=12)
+
+    @model_validator(mode="after")
+    def distinct_sources(self) -> "CaseMaterialBasis":
+        if (len({item.fragment_id for item in self.sources}) != len(self.sources)
+                or len({item.material_id for item in self.sources}) > 10):
+            raise ValueError("case material report source identities are invalid")
+        return self
+
+
 class ClinicDocumentReadinessCard(ContractModel):
     expectation_code: str = Field(alias="expectationCode", min_length=1, max_length=80)
     importance: Literal["CORE", "SCENARIO", "SUPPORTING"]
@@ -371,6 +399,10 @@ class AnalysisSnapshot(ContractModel):
         default=None,
         alias="clinicDocumentContextTraceSha256",
         pattern=r"^[0-9a-f]{64}$",
+    )
+    case_material_context_trace_sha256: str | None = Field(
+        default=None, alias="caseMaterialContextTraceSha256", pattern=r"^[0-9a-f]{64}$",
+        exclude_if=lambda value: value is None,
     )
 
 
@@ -423,6 +455,13 @@ class CanonicalReport(ContractModel):
         default_factory=ClinicDocumentBasis,
         alias="clinicDocuments",
     )
+    case_materials: CaseMaterialBasis | None = Field(
+        default=None, alias="caseMaterials", exclude_if=lambda value: value is None,
+    )
+    case_material_context_trace_sha256: str | None = Field(
+        default=None, alias="caseMaterialContextTraceSha256", pattern=r"^[0-9a-f]{64}$",
+        exclude_if=lambda value: value is None,
+    )
     clinic_document_readiness: list[ClinicDocumentReadinessCard] = Field(
         default_factory=list,
         alias="clinicDocumentReadiness",
@@ -451,6 +490,15 @@ class CanonicalReport(ContractModel):
             raise ValueError("BLOCKED intake report cannot contain analysis snapshots")
         if not ready and self.clinic_documents.status != "NOT_USED":
             raise ValueError("BLOCKED intake report cannot expose clinic document analysis context")
+        if not ready and self.case_materials is not None:
+            raise ValueError("BLOCKED intake report cannot claim case file use")
+        if ready:
+            if (self.analysis is not None
+                    and self.analysis.case_material_context_trace_sha256
+                    != self.case_material_context_trace_sha256):
+                raise ValueError("case material report trace does not match its analysis")
+            if (self.case_materials is None) != (self.case_material_context_trace_sha256 is None):
+                raise ValueError("case material report sources require their context trace")
         if self.legal_conclusions:
             if not ready or self.analysis is None or self.analysis.verifier_status != "PASSED":
                 raise ValueError("legal conclusions require a passed analysis")

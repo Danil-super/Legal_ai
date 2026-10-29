@@ -467,6 +467,7 @@ class LegalCoreClient:
             expectedClinicDocumentContextTraceSha256=(
                 context.clinic_document_context_trace_sha256
             ),
+            expectedCaseMaterialContextTraceSha256=context.case_material_context_trace_sha256,
             expectedRiskPolicyVersion=context.risk_policy_version,
             expectedReferenceExampleTraceSha256=context.reference_example_trace_sha256,
             claims=claims,
@@ -495,10 +496,17 @@ class LegalCoreClient:
                     or bound.evidence_trace_sha256 != context.evidence_trace_sha256
                     or bound.clinic_document_context_trace_sha256
                     != context.clinic_document_context_trace_sha256
+                    or bound.case_material_context_trace_sha256
+                    != context.case_material_context_trace_sha256
                     or bound.risk_policy_version != context.risk_policy_version
                 ):
                     raise LegalCoreProtocolError("preparation result context mismatch")
                 return result
-            return AnalysisSubmissionResponse.model_validate(payload)
+            response = AnalysisSubmissionResponse.model_validate(payload)
+            if response.report.report_json.get("caseMaterialContextTraceSha256") != (
+                context.case_material_context_trace_sha256
+            ):
+                raise LegalCoreProtocolError("analysis result context mismatch")
+            return response
         except ValidationError as exc:
             raise LegalCoreProtocolError("analysis submission response contract mismatch") from exc

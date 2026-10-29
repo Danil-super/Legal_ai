@@ -43,6 +43,8 @@ class LawyerDraftContextResponse(PreparationModel):
                 or bound.clinic_document_context_trace_sha256
                 != context.clinic_document_context_trace_sha256
                 or bound.reference_example_trace_sha256 != context.reference_example_trace_sha256
+                or bound.case_material_context_trace_sha256
+                != context.case_material_context_trace_sha256
                 or bound.risk_policy_version != context.risk_policy_version):
             raise ValueError("lawyer draft source does not match its actual context")
         return self

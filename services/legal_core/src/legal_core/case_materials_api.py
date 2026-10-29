@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Header, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -57,6 +57,7 @@ def _material_response(material: CaseMaterial) -> CaseMaterialResponse:
         mimeType=cast(CaseMaterialMimeType, material.mime_type),
         sizeBytes=material.raw_size_bytes,
         createdAt=material.created_at,
+        analysisUseAllowed=True if material.analysis_use_allowed is True else None,
     )
 
 
@@ -277,6 +278,7 @@ def create_case_materials_router(
         idempotency_key: IdempotencyKey,
         session: Session,
         source_filename_encoding: SourceFilenameEncoding = None,
+        include_in_analysis: Annotated[bool, Query()] = False,
     ) -> CaseMaterialMutationResponse:
         actor = await resolve_actor(session, telegram_user_id)
         _require_case_intake_actor(actor)
@@ -310,7 +312,9 @@ def create_case_materials_router(
             ) from exc
         # `raw` and parsed text never enter SQL, audit data, exceptions, or logs.
         request_hash = _canonical_hash(
-            {"rawSha256": parsed.raw_sha256, "mimeType": parsed.mime_type, "draftId": str(draft_id)}
+            {"rawSha256": parsed.raw_sha256, "mimeType": parsed.mime_type,
+             "draftId": str(draft_id),
+             **({"includeInAnalysis": True} if include_in_analysis else {})}
         )
         scope = f"case-materials:create:{draft_id}"
         replay = await _idempotency_replay(
@@ -321,6 +325,9 @@ def create_case_materials_router(
             return CaseMaterialMutationResponse.model_validate(replay)
 
         draft = await _actor_draft(session, actor, draft_id)
+        if include_in_analysis and draft.purge_after <= datetime.now(UTC):
+            raise ApiError(status_code=409, code="INTAKE_DRAFT_CLOSED",
+                           message="An expired draft cannot grant new analysis consent")
         existing = await session.scalar(
             select(CaseMaterial).where(
                 CaseMaterial.clinic_id == actor.clinic_id,
@@ -331,6 +338,14 @@ def create_case_materials_router(
         )
         if existing is not None:
             _require_live_material(existing)
+            if include_in_analysis and not existing.analysis_use_allowed:
+                existing.analysis_use_allowed = True
+                await _set_draft_material_state(session, draft, attached=True)
+                session.add(_audit(
+                    actor=actor, action="CASE_MATERIAL_ANALYSIS_CONSENT_GRANTED",
+                    resource_type="CASE_MATERIAL", resource_id=existing.id,
+                    metadata={"includeInAnalysis": True},
+                ))
             result = CaseMaterialMutationResponse(
                 material=_material_response(existing), draftRevision=draft.revision
             )
@@ -376,6 +391,7 @@ def create_case_materials_router(
             raw_size_bytes=parsed.raw_size_bytes,
             raw_sha256=parsed.raw_sha256,
             raw_object_key="pending",
+            analysis_use_allowed=include_in_analysis,
             expires_at=draft.purge_after,
         )
         try:
@@ -431,6 +447,12 @@ def create_case_materials_router(
                 metadata={"mimeType": material.mime_type, "sizeBytes": material.raw_size_bytes},
             )
         )
+        if include_in_analysis:
+            session.add(_audit(
+                actor=actor, action="CASE_MATERIAL_ANALYSIS_CONSENT_GRANTED",
+                resource_type="CASE_MATERIAL", resource_id=material.id,
+                metadata={"includeInAnalysis": True},
+            ))
         await session.commit()
         return result
 
