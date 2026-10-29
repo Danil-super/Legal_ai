@@ -48,6 +48,7 @@ from legal_core.api_contracts import (
     TelegramWorkflowResponse,
     TelegramWorkflowSubmissionRequest,
 )
+from legal_core.clinic_case_quota import monthly_case_limit
 from legal_core.contracts import CanonicalReport, CaseStatus, FactKey
 from legal_core.intake import missing_facts_for
 from legal_core.models import (
@@ -305,6 +306,16 @@ async def _enforce_case_limits(
             )
 
     if enforce_monthly_limit:
+        try:
+            monthly_limit = monthly_case_limit(
+                actor.clinic_id, default_limit=CONFIRMED_CASE_MONTHLY_LIMIT_PER_CLINIC,
+            )
+        except ValueError:
+            raise ApiError(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="CASE_QUOTA_CONFIGURATION_UNAVAILABLE",
+                message="Case quota configuration is unavailable",
+            ) from None
         monthly_count = await session.scalar(
             select(func.count())
             .select_from(Case)
@@ -313,7 +324,7 @@ async def _enforce_case_limits(
                 Case.closed_at >= func.date_trunc("month", func.timezone("UTC", func.now())),
             )
         )
-        if int(monthly_count or 0) >= CONFIRMED_CASE_MONTHLY_LIMIT_PER_CLINIC:
+        if int(monthly_count or 0) >= monthly_limit:
             raise ApiError(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 code="CLINIC_MONTHLY_CASE_LIMIT_REACHED",
@@ -321,7 +332,7 @@ async def _enforce_case_limits(
                     "The clinic confirmed case limit for the current UTC calendar month was reached"
                 ),
                 details={
-                    "limit": CONFIRMED_CASE_MONTHLY_LIMIT_PER_CLINIC,
+                    "limit": monthly_limit,
                     "confirmedCaseCount": int(monthly_count or 0),
                     "period": "CURRENT_UTC_CALENDAR_MONTH",
                 },
