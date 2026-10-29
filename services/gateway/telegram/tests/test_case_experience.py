@@ -200,7 +200,12 @@ async def harness():
                 "chat": {"id": data.get("chat_id", ACTOR), "type": "private"},
                 "text": data.get("text", "")}
 
-    with patch.object(ExtBot, "_post", fake_post):
+    # Simulated operations complete immediately. Keep the real watcher and its
+    # guards, but avoid a production polling second per synthetic dialogue.
+    # Dedicated delivery-bound tests exercise the production limits separately.
+    with patch.object(ExtBot, "_post", fake_post), patch(
+        "telegram_gateway.intake_delivery.POLL_INTERVAL", 0.01,
+    ):
         app = build_application_with_case_experience("123456:unit_test_token_value_1234567890")
         core = ExperienceCore()
         app.bot_data["legal_core_client"] = core
