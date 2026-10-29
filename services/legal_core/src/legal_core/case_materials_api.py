@@ -57,6 +57,7 @@ def _material_response(material: CaseMaterial) -> CaseMaterialResponse:
         mimeType=cast(CaseMaterialMimeType, material.mime_type),
         sizeBytes=material.raw_size_bytes,
         createdAt=material.created_at,
+        analysisUseAllowed=True if material.analysis_use_allowed is True else None,
     )
 
 

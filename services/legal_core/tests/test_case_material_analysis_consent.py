@@ -62,6 +62,7 @@ def test_new_upload_opts_in_only_when_explicitly_requested(isolated_database):
         created = client.post(path, params={"include_in_analysis": "true"}, content=RAW,
                               headers=_upload_headers(actor, uuid4()))
         assert created.status_code == 201, created.text
+        assert created.json()["material"]["analysisUseAllowed"] is True
         assert consent(created.json()["material"]["id"]) is True
 
 
@@ -80,6 +81,7 @@ def test_old_default_and_receipt_replay_stay_storage_only_until_new_owned_intent
         created = client.post(path, content=RAW, headers=_upload_headers(actor, old_key))
         assert created.status_code == 201, created.text
         original = created.json()
+        assert "analysisUseAllowed" not in original["material"]
         material_id = original["material"]["id"]
         assert consent(material_id) is False
         old_hash, grants = audit_and_hash(material_id, old_key)
@@ -96,6 +98,7 @@ def test_old_default_and_receipt_replay_stay_storage_only_until_new_owned_intent
         opted = client.post(path, params={"include_in_analysis": "true"}, content=RAW,
                             headers=_upload_headers(actor, uuid4()))
         assert opted.status_code == 200, opted.text
+        assert opted.json()["material"]["analysisUseAllowed"] is True
         assert opted.json()["material"]["id"] == material_id and consent(material_id) is True
         assert opted.json()["draftRevision"] == original["draftRevision"] + 1
         replay = client.post(path, content=RAW, headers=_upload_headers(actor, old_key))

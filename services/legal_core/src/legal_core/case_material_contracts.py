@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, StrictBool
 
 from legal_core.contracts import ContractModel
 
@@ -21,6 +21,9 @@ class CaseMaterialResponse(ContractModel):
     mime_type: CaseMaterialMimeType = Field(alias="mimeType")
     size_bytes: int = Field(alias="sizeBytes", ge=1, le=15_000_000)
     created_at: datetime = Field(alias="createdAt")
+    analysis_use_allowed: StrictBool | None = Field(
+        default=None, alias="analysisUseAllowed", exclude_if=lambda value: value is not True,
+    )
 
 
 class CaseMaterialListResponse(ContractModel):
