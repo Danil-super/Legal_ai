@@ -22,6 +22,7 @@ from telegram import (
 from telegram.ext import ContextTypes
 
 from telegram_gateway.case_wizard import LegalCoreApiError
+from telegram_gateway.processing_activity import TypingPulse
 
 POLL_INTERVAL = 1.0
 MAX_POLLS = 90
@@ -106,6 +107,7 @@ def watch(
 
     async def deliver() -> None:
         try:
+            pulse = TypingPulse()
             failures = 0
             for _ in range(MAX_POLLS):
                 await asyncio.sleep(POLL_INTERVAL)
@@ -122,6 +124,7 @@ def watch(
                     return
                 failures = 0
                 if status.state == "PENDING":
+                    await pulse.send(app.bot, actor)
                     continue
                 await dispatch_result()
                 return

@@ -2110,21 +2110,15 @@ async def show_intake_drafts(update: Update, context: ContextTypes.DEFAULT_TYPE)
         label = _DRAFT_INCIDENT_LABELS.get(
             incident_type if isinstance(incident_type, str) else "", "Новая карточка"
         )
-        state = item.get("wizardState")
-        step = state if isinstance(state, str) else "СОХРАНЁННЫЙ ШАГ"
-        button_label = f"{index}. {label} · {step}"[:42]
+        button_label = f"{index}. {label}"[:42]
         rows.append(
             [
                 InlineKeyboardButton(
                     f"{button_label}\n{_draft_updated_label(item.get('updatedAt'))}",
                     callback_data=f"case:draft:{draft_id}",
-                )
-            ]
-        )
-        rows.append(
-            [
+                ),
                 InlineKeyboardButton(
-                    "🗑 Удалить черновик",
+                    "🗑 Удалить",
                     callback_data=_draft_delete_callback_data(draft_id),
                 )
             ]

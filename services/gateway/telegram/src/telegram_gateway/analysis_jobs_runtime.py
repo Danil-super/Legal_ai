@@ -35,11 +35,74 @@ from telegram_gateway.clarification_intent import (
     encode_clarification_callback,
     encode_preparation_callback,
 )
+from telegram_gateway.processing_activity import TypingPulse
 from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
 JOBS_CLIENT_KEY = "analysis_jobs_client"
 TERMINAL_STATES = {"SUCCEEDED", "FAILED"}
+ACTIVITY_KEY = "analysis_activity"
+MAX_ACTIVITY = 64
+ACTIVITY_SECONDS = 300
+
+
+@dataclass
+class _Activity:
+    job: JobSnapshot
+    expires: float
+    pulse: TypingPulse
+    failures: int = 0
+
+
+def _track_activity(context: ContextTypes.DEFAULT_TYPE, actor: int, job: JobSnapshot) -> None:
+    pending = context.bot_data.setdefault(ACTIVITY_KEY, {})
+    if job.state in TERMINAL_STATES:
+        previous = pending.get(actor)
+        if previous is not None and previous.job.job_id == job.job_id:
+            pending.pop(actor, None)
+    elif actor in pending or len(pending) < MAX_ACTIVITY:
+        previous = pending.get(actor)
+        if previous is None or previous.job.job_id != job.job_id:
+            pending[actor] = _Activity(job, time.monotonic() + ACTIVITY_SECONDS, TypingPulse())
+
+
+async def notify_analysis_activity(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Read authorized live job state; never rerun analysis, deliver results, or ACK."""
+    pending = context.bot_data.get(ACTIVITY_KEY, {})
+    semaphore = asyncio.Semaphore(4)
+
+    async def refresh(actor: int, entry: _Activity) -> None:
+        async with semaphore:
+            if pending.get(actor) is not entry:
+                return
+            if time.monotonic() >= entry.expires:
+                pending.pop(actor, None)
+                return
+            try:
+                job = JobSnapshot.parse(await _client(context).status(entry.job.job_id, actor))
+                if job.job_id != entry.job.job_id or job.case_id != entry.job.case_id:
+                    raise ValueError("activity response identity mismatch")
+            except (LegalCoreApiError, ValueError) as error:
+                entry.failures += 1
+                if pending.get(actor) is entry and (
+                    entry.failures >= 3 or isinstance(error, ValueError)
+                    or (isinstance(error, LegalCoreApiError) and error.status_code in {403, 404})
+                ):
+                    pending.pop(actor, None)
+                return
+            if pending.get(actor) is not entry:
+                return
+            if job.state in TERMINAL_STATES:
+                pending.pop(actor, None)
+                return
+            entry.failures = 0
+            await entry.pulse.send(context.bot, actor)
+
+    try:
+        async with asyncio.timeout(10):
+            await asyncio.gather(*(refresh(actor, entry) for actor, entry in list(pending.items())))
+    except TimeoutError:
+        pass  # Durable job/result delivery is independent of cosmetic activity.
 
 
 @asynccontextmanager
@@ -355,6 +418,7 @@ async def enqueue_analysis(
             if job.case_id != case_id:
                 raise ValueError("analysis response case mismatch")
             await _edit_status(context, actor, placeholder.message_id, job)
+            _track_activity(context, actor, job)
         # Do not ACK here: duplicate submission may refer to a different persisted placeholder.
         # The notifier will idempotently update that original message before acknowledging it.
     except (LegalCoreApiError, ValueError) as exc:
@@ -432,6 +496,7 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         job = JobSnapshot.parse(await _client(context).status(job_id, actor))
         if job.job_id != job_id:
             raise ValueError("analysis response job mismatch")
+        _track_activity(context, actor, job)
         if action == "result" and job.result is not None:
             from telegram_gateway.analysis_runtime import telegram_analysis_messages
 
@@ -453,6 +518,7 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     fresh = JobSnapshot.parse(await _client(context).status(job_id, actor))
                     if fresh.job_id != job_id:
                         raise ValueError("analysis response job mismatch")
+                    _track_activity(context, actor, fresh)
                     await _edit_status(context, actor, message.message_id, fresh)
             else:
                 text, keyboard = job_message(job)
@@ -499,6 +565,7 @@ async def notify_completed_analyses(context: ContextTypes.DEFAULT_TYPE) -> None:
                     job = JobSnapshot.parse(await client.status(job_id, actor))
                     if job.job_id != job_id or job.state not in TERMINAL_STATES:
                         raise ValueError("notification result mismatch")
+                    _track_activity(context, actor, job)
                     try:
                         await _edit_status(context, actor, message_id, job)
                     except (BadRequest, Forbidden) as exc:
@@ -562,8 +629,13 @@ def install_analysis_jobs(application: gateway_bot.TelegramApplication, internal
             name="durable-analysis-notifications",
             job_kwargs={"max_instances": 1, "coalesce": True},
         )
+        app.job_queue.run_repeating(
+            notify_analysis_activity, interval=4, first=1, name="analysis-typing-activity",
+            job_kwargs={"max_instances": 1, "coalesce": True},
+        )
 
     async def shutdown(app: gateway_bot.TelegramApplication) -> None:
+        app.bot_data.pop(ACTIVITY_KEY, None)
         client = app.bot_data.pop(JOBS_CLIENT_KEY, None)
         if client is not None:
             await client.http.aclose()

@@ -295,6 +295,10 @@ def test_draft_list_offers_confirmed_archive_for_the_callers_own_draft() -> None
     assert keyboard is not None
     callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
     assert f"case:draft:delete:{draft_id}" in callbacks
+    assert [button.callback_data for button in keyboard.inline_keyboard[0]] == [
+        f"case:draft:{draft_id}", f"case:draft:delete:{draft_id}",
+    ]
+    assert "INCIDENT" not in keyboard.inline_keyboard[0][0].text
 
     confirm_query = FakeCallbackQuery(f"case:draft:delete:{draft_id}")
     confirm_update = FakeUpdate(
