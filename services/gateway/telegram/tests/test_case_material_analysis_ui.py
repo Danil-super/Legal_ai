@@ -12,6 +12,7 @@ from telegram_gateway import bot, case_material_usage
 from telegram_gateway.case_wizard import LegalCoreClient
 from test_dialog_isolation import ACTOR, DRAFT
 from test_guided_case_intake_v2 import _base_data
+from test_scenario_gateway_audit_20261014 import dispatch_raw
 from test_unified_intake_scenarios import versioned_harness
 
 
@@ -19,8 +20,11 @@ def setup_upload(*, allowed=False):
     data = {"intakeVersion": 2, bot.DRAFT_ID_KEY: str(DRAFT),
             bot.DRAFT_REVISION_KEY: 7, bot.DRAFT_STATE_KEY: "MATERIALS"}
     reply = AsyncMock(return_value=SimpleNamespace(message_id=11))
+    message = SimpleNamespace(reply_text=reply, message_id=12,
+        from_user=SimpleNamespace(id=ACTOR, is_bot=False),
+        chat=SimpleNamespace(id=ACTOR, type="private"))
     update = SimpleNamespace(effective_user=SimpleNamespace(id=ACTOR),
-                             effective_message=SimpleNamespace(reply_text=reply))
+                             effective_message=message, message=message)
     core = SimpleNamespace(upload_case_material=AsyncMock(return_value={
         "draftRevision": 8,
         "material": {"id": str(uuid4()), "analysisUseAllowed": allowed},
@@ -158,11 +162,37 @@ def test_actual_telegram_dialogue_opts_in_only_after_the_delivered_file_notice(m
             async with httpx2.AsyncClient(base_url="http://synthetic.invalid",
                                           transport=httpx2.MockTransport(receive)) as http:
                 core.upload_case_material = LegalCoreClient(http).upload_case_material
-                await dispatch("text:Синтетический обезличенный документ по ситуации.")
+                notice_id = app.user_data[ACTOR][bot.WIZARD_DATA_KEY]["_v2_prompt_message_id"]
+                await dispatch_raw(app,
+                    media={"text": "Синтетический обезличенный документ по ситуации."},
+                    message_id=notice_id + 1, update_id=10000)
             assert len(calls) == 1
             assert case_material_usage.OFFER_KEY not in core.draft["draftData"]
             assert any("будут учтены" in message.get("text", "") for message in sent)
             core.submit_workflow.assert_not_awaited()
             assert app.user_data[ACTOR][bot.WIZARD_DATA_KEY][bot.DRAFT_STATE_KEY] == "MATERIALS"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("incoming_id", [None, 10, 11])
+def test_a_queued_or_unidentified_upload_cannot_use_a_later_purpose_notice(
+    monkeypatch, incoming_id,
+):
+    monkeypatch.setenv("CASE_MATERIAL_CONTEXT_ENABLED", "1")
+
+    async def scenario():
+        data, update, context, core, _reply = setup_upload(allowed=False)
+        await bot._prompt_v2_draft(update, bot.WizardState.MATERIALS, data)
+        update.message.message_id = incoming_id
+        with patch.object(bot, "_save_v2_material_state", new_callable=AsyncMock), patch.object(
+            bot, "_reconcile_v2_material", new_callable=AsyncMock,
+            return_value=bot.WizardState.MATERIALS,
+        ):
+            await bot._upload_v2_material(update, context, content=b"Synthetic document.",
+                source_filename="synthetic.txt", content_type="text/plain",
+                source_status="FILE_ATTACHED")
+        assert core.upload_case_material.await_args.kwargs.get("include_in_analysis", False) \
+            is False
 
     asyncio.run(scenario())

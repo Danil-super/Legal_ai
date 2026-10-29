@@ -36,6 +36,7 @@ from telegram.ext import (
 
 from telegram_gateway.case_material_usage import OFFER_KEY as MATERIAL_ANALYSIS_OFFER
 from telegram_gateway.case_material_usage import enabled as material_analysis_enabled
+from telegram_gateway.case_material_usage import informed_upload
 from telegram_gateway.case_wizard import (
     V2_INTAKE_SCHEMA_VERSION,
     CaseDraft,
@@ -1419,11 +1420,9 @@ async def _upload_v2_material(
         return ConversationHandler.END
     uploaded: dict[str, Any] | None = None
     receipt_confirmed = False
-    offered = data.get(MATERIAL_ANALYSIS_OFFER)
-    include_in_analysis = (
-        material_analysis_enabled()
-        and offered == (str(data.get(DRAFT_ID_KEY)), data.get("_v2_prompt_message_id"))
-        and type(data.get("_v2_prompt_message_id")) is int
+    include_in_analysis = informed_upload(
+        update, actor_id, draft_id=data.get(DRAFT_ID_KEY),
+        prompt_id=data.get("_v2_prompt_message_id"), offer=data.get(MATERIAL_ANALYSIS_OFFER),
     )
     try:
         draft_id = UUID(str(data[DRAFT_ID_KEY]))
