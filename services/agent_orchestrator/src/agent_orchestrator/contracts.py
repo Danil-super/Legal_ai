@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -94,6 +94,29 @@ class ReferenceAnalogyItem(StrictModel):
         return value
 
 
+class CaseMaterialContextItem(StrictModel):
+    """Anonymized user-supplied excerpts without private source identifiers."""
+
+    model_config = ConfigDict(frozen=True, revalidate_instances="always", hide_input_in_errors=True)
+    context_kind: Literal["CASE_MATERIAL_CONTEXT"] = Field(
+        default="CASE_MATERIAL_CONTEXT", alias="contextKind",
+    )
+    display_name: str = Field(alias="displayName", pattern=r"^Материал (?:[1-9]|10)$")
+    structural_path: str = Field(alias="structuralPath", min_length=1, max_length=500)
+    text: str = Field(min_length=1, max_length=1_200)
+    extraction_limitations: list[Annotated[str, Field(min_length=1, max_length=160)]] = Field(
+        default_factory=list, alias="extractionLimitations", max_length=8,
+    )
+
+    @field_validator("text", "structural_path", "extraction_limitations")
+    @classmethod
+    def deidentified_context(cls, value: str | list[str]) -> str | list[str]:
+        values = [value] if isinstance(value, str) else value
+        if any(not item.strip() or pseudonymize_text(item).changed for item in values):
+            raise ValueError("case material context must be bounded and de-identified")
+        return value
+
+
 class CaseProjection(StrictModel):
     """Minimal pseudonymous input that may be sent to a reasoning provider."""
 
@@ -109,8 +132,10 @@ class CaseProjection(StrictModel):
         alias="clinicDocumentReadiness",
         max_length=20,
     )
-
-
+    case_material_context: list[CaseMaterialContextItem] | None = Field(
+        default=None, alias="caseMaterialContext", min_length=1, max_length=12,
+        exclude_if=lambda value: value is None,
+    )
     reference_examples: list[ReferenceAnalogyItem] = Field(
         default_factory=list, alias="referenceExamples", max_length=3,
         exclude_if=lambda value: not value,
