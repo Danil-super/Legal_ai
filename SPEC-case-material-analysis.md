@@ -42,7 +42,7 @@ missing case-attachment path without treating attachments as law.
   Prefer case-relevant fragments locally, with deterministic fallback. Record
   extraction/truncation limitations rather than claiming a whole-file review.
 - Typed additions: `caseMaterialContext` and
-  `caseMaterialContextTraceSha256` on Core analysis context / Agent projection;
+  `caseMaterialContextTraceSha256` on private Core analysis context;
   `expectedCaseMaterialContextTraceSha256` on fresh analysis submissions.
   Add equivalent optional trace binding to preparation source/snapshots and the
   canonical report. Optional fields are omitted when absent, preserving existing
@@ -54,6 +54,9 @@ missing case-attachment path without treating attachments as law.
 - Researcher receives excerpts as untrusted user-provided case context: no
   instructions/tool calls, no independent legal authority, no automatic factual
   confirmation. Normative evidence and the independent review rules stay intact.
+  Model-visible projection keeps only generic labels, structural paths, text and
+  extraction limitations; material IDs, hashes and traces stay on the private
+  Core↔Agent metadata boundary, following existing clinic-context minimization.
 - Canonical report has an additive optional `caseMaterials` source-card section;
   Core builds cards from the verified context, never from model-invented IDs.
   Existing reports remain readable. Show generic source labels and limitations
@@ -62,6 +65,10 @@ missing case-attachment path without treating attachments as law.
   10,000-RUB threshold, model/high, subscriptions or roles. Raw file download
   access remains unchanged; case-analysis consent does not grant a new raw-file
   viewer permission. Audit metadata only, no raw patient/file text in logs.
+
+Rollback means disabling the new producer flag on compatible readers. Retain
+consent metadata and historical reports; do not deploy an older strict reader or
+downgrade/drop consent storage after nonnull context/cards have been used.
 
 ## Required evidence
 
