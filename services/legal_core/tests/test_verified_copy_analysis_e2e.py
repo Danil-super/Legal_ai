@@ -87,6 +87,7 @@ def isolated_database(monkeypatch):
         "guided-v2",
         "guided-v2-factual-low",
         "guided-v2-factual-medium",
+        "guided-v2-factual-lawyer",
         "guided-v2-factual-clinic-doc",
         "guided-v2-factual-case-file",
         "guided-v2-factual-clinic-doc-case-file",
@@ -97,12 +98,13 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
 ) -> None:
     with_clinic_documents = "clinic-doc" in intake_mode
     with_case_materials = "case-file" in intake_mode
-    pre_report_mode = with_clinic_documents or with_case_materials
+    with_lawyer = intake_mode.endswith("lawyer")
+    pre_report_mode = with_clinic_documents or with_case_materials or with_lawyer
     if with_case_materials:
         monkeypatch.setenv("CASE_MATERIAL_CONTEXT_ENABLED", "1")
     owner_id = 71_000_000_000 + uuid4().int % 1_000_000_000
     editor_id = owner_id + 2_000_000_000
-    clinic_id, _ = seed_admin(owner_id, role="CLINIC_OWNER")
+    clinic_id, _ = seed_admin(owner_id, role="CLINIC_LAWYER" if with_lawyer else "CLINIC_OWNER")
     _seed_user(editor_id, system_role="LEGAL_EDITOR")
     manifest_path = _write_manifest(
         tmp_path, fragment_text=EVIDENCE, effective_from="2026-08-04", effective_to="2027-08-04"

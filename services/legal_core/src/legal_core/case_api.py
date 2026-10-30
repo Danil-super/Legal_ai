@@ -83,7 +83,7 @@ ACTIVE_CASE_LIMIT_PER_ADMIN = 5
 CONFIRMED_CASE_MONTHLY_LIMIT_PER_CLINIC = 30
 FINALIZED_CASE_RETENTION = timedelta(days=90)
 CLINIC_ACTOR_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN", "CLINIC_LAWYER"})
-CASE_INTAKE_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN"})
+CASE_INTAKE_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN", "CLINIC_LAWYER"})
 ACTIVE_CASE_STATUSES = frozenset(
     {
         CaseStatus.COLLECTING.value,
@@ -234,13 +234,16 @@ def _require_clinic_owner(actor: ActorContext) -> None:
         )
 
 
-def _require_case_intake_actor(actor: ActorContext) -> None:
+def _require_case_intake_actor(actor: ActorContext, *, case: Case | None = None) -> None:
     if actor.role not in CASE_INTAKE_ROLES:
         raise ApiError(
             status_code=status.HTTP_403_FORBIDDEN,
             code="CASE_INTAKE_NOT_ALLOWED",
-            message="Only clinic owners and administrators may create or change case intake",
+            message="An active clinic case creator is required",
         )
+    if (case is not None and actor.role == "CLINIC_LAWYER"
+            and case.created_by_membership_id != actor.membership_id):
+        raise ApiError(status_code=404, code="CASE_NOT_FOUND", message="Case not found")
 
 
 def _set_case_retention_due(case: Case, now: datetime) -> None:
@@ -553,6 +556,13 @@ async def _tenant_case(
             code="CASE_NOT_FOUND",
             message="Case not found",
         )
+    if actor.role == "CLINIC_LAWYER" and case.created_by_membership_id != actor.membership_id:
+        escalation = await session.scalar(select(CaseEscalation.id).where(
+            CaseEscalation.clinic_id == actor.clinic_id,
+            CaseEscalation.case_id == case.id,
+        ).limit(1))
+        if escalation is None:
+            raise ApiError(status_code=404, code="CASE_NOT_FOUND", message="Case not found")
     _require_case_content_available(case)
     return case
 
@@ -1624,6 +1634,7 @@ def create_case_router(
         actor = await resolve_actor(session, telegram_user_id)
         _require_case_intake_actor(actor)
         case = await _tenant_case(session, actor, case_id)
+        _require_case_intake_actor(actor, case=case)
         return _intake_response(case, _domain_facts(await _current_fact_rows(session, case.id)))
 
     @router.post("/cases/{case_id}/facts", response_model=IntakeResponse)
@@ -1637,6 +1648,7 @@ def create_case_router(
         actor = await resolve_actor(session, telegram_user_id)
         _require_case_intake_actor(actor)
         case = await _tenant_case(session, actor, case_id, for_update=True)
+        _require_case_intake_actor(actor, case=case)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         scope = f"cases:{case_id}:facts"
         replay = await _idempotency_replay(
@@ -1717,6 +1729,7 @@ def create_case_router(
         actor = await resolve_actor(session, telegram_user_id)
         _require_case_intake_actor(actor)
         case = await _tenant_case(session, actor, case_id, for_update=True)
+        _require_case_intake_actor(actor, case=case)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         scope = f"cases:{case_id}:finalize"
         replay = await _idempotency_replay(
@@ -1806,6 +1819,7 @@ def create_case_router(
         _require_case_intake_actor(actor)
         # Serialize report versions with every writer that locks this case.
         case = await _tenant_case(session, actor, case_id, for_update=True)
+        _require_case_intake_actor(actor, case=case)
         _require_finalized_case(case)
         request_hash = _canonical_hash(payload.model_dump(mode="json", by_alias=True))
         scope = f"cases:{case_id}:reports"

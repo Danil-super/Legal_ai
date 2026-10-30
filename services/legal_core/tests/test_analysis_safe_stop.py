@@ -48,8 +48,9 @@ def test_stop_fences_context_before_fact_or_corpus_read(monkeypatch):
     monkeypatch.setattr(analysis_api, "_tenant_case", AsyncMock(return_value=case))
     facts = AsyncMock(side_effect=AssertionError("no analysis data reads while stopped"))
     monkeypatch.setattr(analysis_api, "_current_fact_rows", facts)
+    actor = SimpleNamespace(role="CLINIC_OWNER")
     with pytest.raises(ApiError) as raised:
-        asyncio.run(analysis_api._load_analysis_state(None, object(), uuid4()))
+        asyncio.run(analysis_api._load_analysis_state(None, actor, uuid4()))
     assert raised.value.status_code == 503
     assert raised.value.code == "ANALYSIS_SAFE_STOP"
     facts.assert_not_awaited()

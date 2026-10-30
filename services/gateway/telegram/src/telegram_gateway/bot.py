@@ -129,7 +129,7 @@ TELEGRAM_POLLING_POOL_SIZE = 2
 TELEGRAM_POOL_TIMEOUT_SECONDS = 10.0
 TELEGRAM_MAX_CONCURRENT_ACTORS = 8
 TELEGRAM_QUEUED_UPDATE_LIMIT = 64
-CASE_INTAKE_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN"})
+CASE_INTAKE_ROLES = frozenset({"CLINIC_OWNER", "CLINIC_ADMIN", "CLINIC_LAWYER"})
 CALLBACK_ERROR_MESSAGE = "⚠️ Не удалось выполнить действие. Откройте /menu и попробуйте ещё раз."
 _DRAFT_DELETE_CALLBACK_RE = re.compile(
     r"^case:draft:delete(?::confirm)?:"

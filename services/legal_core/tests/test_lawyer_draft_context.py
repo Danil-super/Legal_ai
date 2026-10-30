@@ -207,7 +207,8 @@ def test_no_other_actor_or_lawyer_can_use_the_creators_background_context(routed
                                     "'SYNTHETIC',clock_timestamp()-interval '1 day' "
                                     "FROM clinic_users WHERE id=:id"), {"id": member})
     denied = read(routed_case, headers=routed_case[6] | {"X-Telegram-User-Id": str(other)})
-    assert denied.status_code == (403 if role == "CLINIC_LAWYER" else 404), denied.text
+    assert denied.status_code == 404, denied.text
+    assert denied.json()["error"]["code"] == "CASE_NOT_FOUND"
 
 
 @pytest.mark.parametrize("field,value", [

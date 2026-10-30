@@ -149,6 +149,8 @@ def main_menu_keyboard(
     ]
     if role == "CLINIC_LAWYER":
         lawyer_rows: list[list[InlineKeyboardButton]] = [
+            [InlineKeyboardButton("📝 Создать кейс", callback_data="quick:start")],
+            [InlineKeyboardButton("📂 Мои черновики", callback_data="case:drafts")],
             [
                 InlineKeyboardButton(
                     "⚖️ Эскалации HIGH/CRITICAL", callback_data="case:escalations"

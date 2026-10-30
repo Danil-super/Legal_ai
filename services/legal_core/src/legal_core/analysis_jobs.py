@@ -37,6 +37,7 @@ from legal_core.case_api import (
     TelegramUserId,
     _audit,
     _require_case_content_available,
+    _require_case_intake_actor,
     _require_finalized_case,
     _tenant_case,
     resolve_actor,
@@ -261,6 +262,7 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
 
         actor = await resolve_actor(session, telegram_user_id)
         case = await _tenant_case(session, actor, case_id)
+        _require_case_intake_actor(actor, case=case)
         _require_finalized_case(case)
         if case.retention_due_at is not None and case.retention_due_at <= datetime.now(UTC):
             raise ApiError(
@@ -295,6 +297,7 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
             from legal_core.case_preparation import recheck_submission_access
 
             case = await _tenant_case(session, actor, case_id, for_update=True)
+            _require_case_intake_actor(actor, case=case)
             await recheck_submission_access(
                 session, actor=actor, telegram_user_id=telegram_user_id, case=case,
             )

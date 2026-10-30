@@ -857,26 +857,24 @@ def test_retention_purges_confirmed_case_content_but_keeps_bounded_metadata() ->
     assert unavailable.json()["error"]["code"] == "CASE_CONTENT_PURGED"
 
 
-def test_clinic_lawyer_cannot_create_or_submit_case_intake() -> None:
+def test_active_clinic_lawyer_can_create_and_submit_owned_case_intake() -> None:
     lawyer = 7_500_000_001 + uuid4().int % 100_000_000
     seed_admin(lawyer, role="CLINIC_LAWYER")
 
     with application_client() as client:
-        create_blocked = client.post(
+        created = client.post(
             "/v1/cases",
             headers=actor_headers(lawyer, uuid4()),
             json={"intakeSchemaVersion": "dental-case-intake.v1", "channel": "TELEGRAM"},
         )
-        submit_blocked = client.post(
+        submitted = client.post(
             f"/v1/telegram-case-workflows/{uuid4()}/submissions",
             headers=actor_headers(lawyer),
             json=workflow_submission(),
         )
 
-    assert create_blocked.status_code == 403
-    assert submit_blocked.status_code == 403
-    assert create_blocked.json()["error"]["code"] == "CASE_INTAKE_NOT_ALLOWED"
-    assert submit_blocked.json()["error"]["code"] == "CASE_INTAKE_NOT_ALLOWED"
+    assert created.status_code == 201, created.text
+    assert submitted.status_code == 201, submitted.text
 
 
 def test_unknown_telegram_user_is_denied_without_tenant_details() -> None:
