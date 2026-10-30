@@ -264,7 +264,8 @@ def test_same_clinic_noncreator_and_lawyer_cannot_submit_or_replay_preparation(p
             ), {"clinic": clinic, "id": member})
         response = client.post(path, headers=headers | {"X-Telegram-User-Id": str(other)},
                                json=payload)
-        assert response.status_code == (403 if role == "CLINIC_LAWYER" else 404), response.text
+        assert response.status_code == 404, response.text
+        assert response.json()["error"]["code"] == "CASE_NOT_FOUND"
 
 
 def test_same_case_receipt_cannot_replace_a_different_request_result(prepared_case):

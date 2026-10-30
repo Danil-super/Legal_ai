@@ -79,10 +79,13 @@ def test_preview_and_recovery_remain_creator_only(prepared_case, outsider_kind):
                 "(clinic_id,user_id,status,plan_code,starts_at) "
                 "VALUES(:clinic,:user,'ACTIVE','MVP',clock_timestamp())"
             ), {"clinic": clinic, "user": user})
-    expected = 403 if outsider_kind == "lawyer" else 404
-    assert _preview(client, outsider, case, result["source"]["operationId"]).status_code == expected
+    # Lawyers may create their own cases; every non-creator still sees no foreign case.
+    preview = _preview(client, outsider, case, result["source"]["operationId"])
+    assert preview.status_code == 404, preview.text
+    assert preview.json()["error"]["code"] == "CASE_NOT_FOUND"
     rejected = _recover(client, outsider, case, result)
-    assert rejected.status_code == expected, rejected.text
+    assert rejected.status_code == 404, rejected.text
+    assert rejected.json()["error"]["code"] == "CASE_NOT_FOUND"
 
 
 @pytest.mark.parametrize("expiry", ["case", "draft", "membership"])
