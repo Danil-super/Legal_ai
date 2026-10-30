@@ -223,6 +223,7 @@ def _require_analysis_eligible_case(case: Case) -> None:
 
 async def _load_analysis_state(session: AsyncSession, actor: Any, case_id: UUID) -> AnalysisState:
     case = await _tenant_case(session, actor, case_id)
+    _require_case_intake_actor(actor, case=case)
     _require_analysis_eligible_case(case)
     require_analysis_running()
     facts = _domain_facts(await _current_fact_rows(session, case.id))
@@ -520,6 +521,7 @@ def create_analysis_router(
         # A successful idempotency record is not an exemption from case retention.
         # Do not require analysis eligibility here: a valid completed case must still replay.
         owned_case = await _tenant_case(session, actor, case_id)
+        _require_case_intake_actor(actor, case=owned_case)
         if result_version == 2:
             _require_case_intake_actor(actor)
             if owned_case.created_by_membership_id != actor.membership_id:
@@ -527,6 +529,7 @@ def create_analysis_router(
         # Serialize replay, eligibility and writes on a freshly loaded case. The case
         # lock precedes the job lock; no external/model I/O occurs in this transaction.
         owned_case = await _tenant_case(session, actor, case_id, for_update=True)
+        _require_case_intake_actor(actor, case=owned_case)
         if x_analysis_job_id is not None or x_analysis_job_token is not None:
             from legal_core.analysis_jobs import require_job_lease
             if (x_analysis_job_id is None or x_analysis_job_token is None

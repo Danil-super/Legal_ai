@@ -17,8 +17,9 @@ CLINIC_BASELINE = {
     "services/gateway/telegram/src/telegram_gateway/__main__.py":
         "dc29188aba35fcd386a7b132f0c4a012026497ae",
     "services/gateway/telegram/src/telegram_gateway/ui.py":
-        # Reviewed owner-requested single clinical case entry; personal stays hidden (ADR 0099).
-        "c9adedf6e5711e244be6f7a569e1b721c6e5068d",
+        # Independently reviewed lawyer-only clinical creation/drafts (ADR 0109);
+        # personal entry points, identity and grants remain unchanged.
+        "20eb525ba7005aa3d1f4fc4f016bea008bb24df1",
     "services/gateway/telegram/src/telegram_gateway/case_experience_runtime.py":
         # Owner-approved opt-in clinical plan review (2026-10-27 lawyer-work-product UI ADR);
         # both clinical flags default off, personal entry points remain inert.

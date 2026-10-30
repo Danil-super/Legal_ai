@@ -324,15 +324,16 @@ def test_draft_list_offers_confirmed_archive_for_the_callers_own_draft() -> None
     assert archive_query.text_edits[-1][1].inline_keyboard[-1][0].callback_data == "menu"
 
 
-def test_lawyer_menu_exposes_only_review_workspace_actions() -> None:
+def test_lawyer_menu_exposes_own_case_creation_and_review_workspace_actions() -> None:
     keyboard = main_menu_keyboard("CLINIC_LAWYER")
     callbacks = {button.callback_data for row in keyboard.inline_keyboard for button in row}
 
     assert "case:escalations" in callbacks
     assert "legalbase:open" in callbacks
     assert "case:start" not in callbacks
-    assert "quick:start" not in callbacks
-    assert "case:drafts" not in callbacks
+    assert "quick:start" in callbacks
+    assert "case:drafts" in callbacks
+    assert "team:open" not in callbacks
 
 
 def test_platform_editor_control_composes_with_the_clinic_lawyer_menu() -> None:

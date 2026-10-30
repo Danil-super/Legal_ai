@@ -6,7 +6,13 @@ from uuid import uuid4
 import pytest
 
 from telegram_gateway.case_wizard import facts_from_v2_data
-from test_case_api import actor_headers, application_client, seed_admin, workflow_submission
+from test_case_api import (
+    actor_headers,
+    application_client,
+    complete_fact_batch,
+    seed_admin,
+    workflow_submission,
+)
 from test_case_materials_api import FakeCaseMaterialStore, _new_draft, _upload_headers
 from test_escalation_assignment import _add_member, _sql
 from test_factual_safety_intake import screening
@@ -106,7 +112,11 @@ def test_same_clinic_lawyer_cannot_read_unescalated_case_before_creating_anythin
             assert response.status_code in {403, 404}, (path, response.text)
 
 
-def test_escalated_case_stays_readable_without_granting_intake_mutation(isolated_database):
+def test_escalated_case_stays_readable_without_granting_intake_mutation(
+    isolated_database, monkeypatch,
+):
+    internal_key = "synthetic-agent-key-for-lawyer-access-test"
+    monkeypatch.setenv("AGENT_INTERNAL_KEY", internal_key)
     owner, escalation, clinic = seed_escalation()
     lawyer = owner + 2_000_000_000
     case = _sql("SELECT case_id FROM case_escalations WHERE id=:id", id=escalation)[0]["case_id"]
@@ -115,11 +125,21 @@ def test_escalated_case_stays_readable_without_granting_intake_mutation(isolated
         assert client.get(f"/v1/case-escalations/{escalation}",
                           headers=actor_headers(lawyer)).status_code == 200
         assert client.get(f"/v1/cases/{case}", headers=actor_headers(lawyer)).status_code == 200
-        from test_case_api import complete_fact_batch
-
-        mutation = client.post(f"/v1/cases/{case}/facts",
-                               headers=actor_headers(lawyer, uuid4()), json=complete_fact_batch())
-        assert mutation.status_code in {403, 404}, mutation.text
+        for suffix, payload in (
+            ("facts", complete_fact_batch()), ("finalize", {}), ("reports", {}),
+            ("analysis-jobs", {"messageId": 1}),
+        ):
+            denied = client.post(f"/v1/cases/{case}/{suffix}",
+                                 headers=actor_headers(lawyer, uuid4()), json=payload)
+            assert denied.status_code == 404, (suffix, denied.text)
+        internal_headers = actor_headers(lawyer, uuid4()) | {
+            "X-Agent-Internal-Key": internal_key,
+        }
+        context = client.get(f"/v1/cases/{case}/analysis-context", headers=internal_headers)
+        assert context.status_code == 404, context.text
+        preparation = client.post(f"/v1/cases/{case}/preparation-context",
+                                  headers=internal_headers)
+        assert preparation.status_code == 404, preparation.text
 
 
 @pytest.mark.parametrize("state", ["membership-revoked", "user-blocked", "no-subscription"])
