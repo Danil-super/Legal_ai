@@ -237,6 +237,14 @@ async def show_workspace(
         can_assign=membership.get("role") == "CLINIC_OWNER",
     )
     rows = list(keyboard.inline_keyboard)
+    if (context.bot_data.get("ai_first_lawyer_draft_enabled") is True
+            and plan_view is None and detail.get("canRequestAiPlan") is True
+            and detail.get("status") != "RESOLVED"):
+        rows.insert(0, (InlineKeyboardButton(
+            "📋 Подготовить план ИИ", callback_data=f"case:analyze:{detail['caseId']}",
+        ),))
+        plan_instruction = ("Нажмите «Подготовить план ИИ»: бот подготовит предварительный "
+                            "разбор с действиями и основаниями для проверки юристом.")
     if plan_view is not None:
         rows.insert(0, (InlineKeyboardButton(
             "📋 План решения", callback_data=f"lawplan:open:{escalation_id}",

@@ -19,9 +19,14 @@ async def present_submission(
         raise ValueError("simplified dialogue requires a V2 preparation receipt")
     escalation = receipt.case.early_escalation_id
     if escalation is not None:
-        await bot._reply(update, "Кейс передан юристу. Он проверит ситуацию и подготовит ответ.",
+        prepare_plan = context.bot_data.get("ai_first_lawyer_draft_enabled") is True
+        text = ("Кейс передан юристу. Готовлю предварительный разбор ИИ: "
+                "действия и нормативные основания для проверки юристом." if prepare_plan else
+                "Кейс передан юристу. Он проверит ситуацию и подготовит ответ.")
+        await bot._reply(update, text,
                          reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
                              "Открыть кейс", callback_data=f"case:escalation:{escalation}",
                          )], *back_keyboard().inline_keyboard]))
-        return
+        if not prepare_plan:
+            return
     await enqueue_analysis(update, context, receipt.case.id)

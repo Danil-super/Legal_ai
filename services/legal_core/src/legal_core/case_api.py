@@ -399,6 +399,14 @@ async def _escalation_detail(
 ) -> EscalationDetailResponse:
     case = await _tenant_case(session, actor, escalation.case_id)
     state, assignee = await _escalation_state(session, actor, escalation.id)
+    from legal_core.lawyer_plan_readiness import has_lawyer_plan, lawyer_plans_enabled
+
+    can_request_ai_plan = (
+        lawyer_plans_enabled() and state != "RESOLVED"
+        and case.created_by_membership_id == actor.membership_id
+        and case.status in {"ANALYSIS_BLOCKED", "ESCALATION_REQUIRED"}
+        and not await has_lawyer_plan(session, clinic_id=actor.clinic_id, case_id=case.id)
+    )
     report = await session.scalar(
         select(CaseReport.report_json)
         .where(
@@ -422,6 +430,7 @@ async def _escalation_detail(
         )) if assignee else None,
         caseId=case.id,
         caseStatus=case.status,
+        canRequestAiPlan=can_request_ai_plan,
         facts={
             key.value: value
             for key, value in _domain_facts(await _current_fact_rows(session, case.id)).items()
