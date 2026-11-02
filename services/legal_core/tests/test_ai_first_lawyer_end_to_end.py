@@ -3,6 +3,8 @@
 import asyncio
 import json
 import os
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import httpx
@@ -16,8 +18,10 @@ from agent_orchestrator.main import ServiceDependencies, ServiceSettings
 from agent_orchestrator.main import create_app as create_agent
 from agent_orchestrator.reasoning import LegalReasoningOrchestrator
 from legal_core.analysis_job_worker import WorkerSettings, execute_job, finish_job
+from legal_core.analysis_jobs import claim_job
 from legal_core.database import database_url
 from legal_core.main import create_app
+from telegram_gateway.dialogue_submission import present_submission
 from test_case_api import actor_headers
 from test_lawyer_draft_context import routed_case as routed_case
 from test_reference_analogy_context import SCENARIO, seed_reference
@@ -120,7 +124,27 @@ def test_actual_worker_routing_draft_replay_and_human_approval(routed_case, monk
         finally:
             await engine.dispose()
 
-    asyncio.run(run())
+    # Drive the actual post-confirmation Gateway seam as well: an early escalation
+    # must not return before dispatching the existing durable analysis intent.
+    with routed_case[9].connect() as db:
+        workflow_id = db.scalar(text("SELECT id FROM telegram_case_workflows WHERE case_id=:case"),
+                                {"case": case})
+    receipt = client.get(f"/v1/telegram-case-workflows/{workflow_id}",
+                         headers=actor_headers(actor))
+    assert receipt.status_code == 200 and receipt.json()["case"]["earlyEscalationId"]
+
+    async def queue_and_process(_update, _context, case_id):
+        queued = client.post(f"/v1/cases/{case_id}/analysis-jobs", headers=actor_headers(actor),
+                             json={"messageId": 45})
+        assert queued.status_code == 202 and queued.json()["jobId"] == str(job.id)
+        await run()
+
+    with (patch("telegram_gateway.dialogue_submission.enqueue_analysis", queue_and_process),
+          patch("telegram_gateway.bot._reply", new_callable=AsyncMock)):
+        asyncio.run(present_submission(
+            SimpleNamespace(), SimpleNamespace(bot_data={"ai_first_lawyer_draft_enabled": True}),
+            receipt.json(),
+        ))
     available = fault in {None, "lost-submit", "reference-examples"}
     with routed_case[9].connect() as db:
         assert db.scalar(text("SELECT count(*) FROM case_work_product_versions")) == int(available)
@@ -172,3 +196,29 @@ def test_actual_worker_routing_draft_replay_and_human_approval(routed_case, monk
     else:
         assert calls == (["researcher.test"] if fault == "researcher-outage"
                          else ["researcher.test", "reviewer.test"])
+        if fault == "researcher-outage":
+            path = f"/v1/case-escalations/{routed_case[8]['escalationId']}"
+            assert client.get(path, headers=actor_headers(actor)).json()["canRequestAiPlan"]
+            retry = client.post(f"/v1/cases/{case}/analysis-jobs", headers=actor_headers(actor),
+                                json={"messageId": 99})
+            assert retry.status_code == 202 and retry.json()["state"] == "QUEUED"
+
+            async def reclaim():
+                engine = create_async_engine(database_url())
+                try:
+                    return await claim_job(async_sessionmaker(engine, expire_on_commit=False))
+                finally:
+                    await engine.dispose()
+
+            previous = job
+            job = asyncio.run(reclaim())
+            assert job.id == previous.id and job.lease_token != previous.lease_token
+            fault = None  # The external provider has recovered.
+            calls.clear()
+            asyncio.run(run())
+            lawyer = next(iter(routed_case[10]))
+            assert client.post(path + "/claim", headers=actor_headers(lawyer)).status_code == 200
+            plan = client.get(path + "/work-product", headers=actor_headers(lawyer))
+            assert plan.status_code == 200 and plan.json()["content"]["actions"] == [ACTION]
+            assert plan.json()["citations"] and plan.json()["reviewState"] == "UNAPPROVED"
+            assert not client.get(path, headers=actor_headers(actor)).json()["canRequestAiPlan"]

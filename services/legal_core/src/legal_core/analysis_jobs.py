@@ -36,13 +36,16 @@ from legal_core.case_api import (
     ApiError,
     TelegramUserId,
     _audit,
+    _escalation_state,
     _require_case_content_available,
     _require_case_intake_actor,
     _require_finalized_case,
     _tenant_case,
     resolve_actor,
 )
+from legal_core.case_preparation_contracts import HumanReviewResult
 from legal_core.contracts import ContractModel
+from legal_core.lawyer_plan_readiness import has_lawyer_plan, lawyer_plans_enabled
 from legal_core.models import Base, Case, IdempotencyRecord, TelegramCaseWorkflow
 
 JobState = Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED"]
@@ -204,6 +207,11 @@ async def _response(session: AsyncSession, job: AnalysisJob) -> AnalysisJobRecei
     result = None if (
         job.state == "FAILED" and job.error_code == "ANALYSIS_RESULT_INVALID"
     ) else await job_result(session, job)
+    if (job.result_version == 2 and job.state in {"QUEUED", "RUNNING"}
+            and lawyer_plans_enabled() and isinstance(result, PreparationResult)
+            and isinstance(result.root, HumanReviewResult)):
+        # Routing remains durable, but the optional AI plan is still being prepared.
+        result = None
     if job.result_version == 2:
         assert result is None or isinstance(result, PreparationResult)
         missing = result is None and job.state == "SUCCEEDED"
@@ -232,14 +240,17 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
 
     session_dep = Depends(session_dependency)
 
-    async def owned_job(session: AsyncSession, actor: ActorContext, job_id: UUID) -> AnalysisJob:
-        job = await session.scalar(
-            select(AnalysisJob).where(
+    async def owned_job(
+        session: AsyncSession, actor: ActorContext, job_id: UUID, *, for_update: bool = False,
+    ) -> AnalysisJob:
+        query = select(AnalysisJob).where(
                 AnalysisJob.id == job_id,
                 AnalysisJob.clinic_id == actor.clinic_id,
                 AnalysisJob.actor_membership_id == actor.membership_id,
-            )
         )
+        if for_update:
+            query = query.with_for_update().execution_options(populate_existing=True)
+        job = await session.scalar(query)
         if job is None:
             raise ApiError(status_code=404, code="ANALYSIS_JOB_NOT_FOUND", message="Job not found")
         case = await _tenant_case(session, actor, job.case_id)
@@ -312,7 +323,37 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
             )
             .order_by(AnalysisJob.created_at.desc(), AnalysisJob.id.desc())
             .limit(1)
+            .with_for_update().execution_options(populate_existing=True)
         )
+        if (latest is not None and latest.state in {"SUCCEEDED", "FAILED"}
+                and latest.result_version == 2 and lawyer_plans_enabled()
+                and latest.actor_membership_id == actor.membership_id
+                and case.created_by_membership_id == actor.membership_id):
+            retained = await job_result(session, latest)
+            if (isinstance(retained, PreparationResult)
+                    and isinstance(retained.root, HumanReviewResult)):
+                if not await has_lawyer_plan(session, clinic_id=actor.clinic_id, case_id=case_id):
+                    escalation_state, _ = await _escalation_state(
+                        session, actor, retained.root.escalation_id,
+                    )
+                    if escalation_state == "RESOLVED":
+                        raise ApiError(status_code=409, code="ESCALATION_RESOLVED",
+                                       message="The escalation has already been resolved")
+                    previous_attempts = latest.attempts
+                    latest.state = "QUEUED"
+                    latest.attempts = 0  # A new explicit retry gets the existing automatic budget.
+                    latest.error_code = latest.lease_token = latest.lease_until = None
+                    latest.notified_at = None
+                    latest.updated_at = datetime.now(UTC)
+                    session.add(_audit(
+                        actor=actor, action="LAWYER_DRAFT_REQUEUED", resource_type="CASE",
+                        resource_id=case_id, metadata={"jobId": str(latest.id),
+                                                       "previousAttempts": previous_attempts},
+                    ))
+                    response = await _response(session, latest)
+                    await session.commit()
+                    return response
+                return await _response(session, latest)
         if latest is not None and latest.state in {"QUEUED", "RUNNING", "SUCCEEDED"}:
             if latest.actor_membership_id != actor.membership_id:
                 raise ApiError(
@@ -362,7 +403,7 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
         job_id: UUID, telegram_user_id: TelegramUserId, session: AsyncSession = session_dep
     ) -> None:
         actor = await resolve_actor(session, telegram_user_id)
-        job = await owned_job(session, actor, job_id)
+        job = await owned_job(session, actor, job_id, for_update=True)
         if job.state in {"SUCCEEDED", "FAILED"}:
             job.notified_at = datetime.now(UTC)
             await session.commit()

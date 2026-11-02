@@ -57,3 +57,23 @@ def test_one_click_summary_does_not_bypass_missing_facts():
     assert state == bot.WizardState.EVENT
     core.submit_workflow.assert_not_awaited()
     enqueue.assert_not_awaited()
+
+
+def test_urgent_summary_also_starts_ai_plan_when_lawyer_drafts_are_enabled():
+    update, context, core, message, _ = _context()
+    update.callback_query = FakeQuery("case:v2:summary:confirm")
+    context.bot_data[ENABLED] = True
+    context.bot_data["ai_first_lawyer_draft_enabled"] = True
+    receipt = core.submit_workflow.return_value
+    case_id, escalation = UUID(receipt["case"]["id"]), uuid4()
+    receipt["case"]["earlyEscalationId"] = str(escalation)
+    with patch(
+        "telegram_gateway.dialogue_submission.enqueue_analysis", new_callable=AsyncMock,
+    ) as enqueue:
+        state = asyncio.run(bot.confirm_case(update, context))
+    assert state == ConversationHandler.END
+    enqueue.assert_awaited_once_with(update, context, case_id)
+    text = "\n".join(message.text_replies)
+    assert "юрист" in text and "ИИ" in text
+    assert "Он проверит ситуацию и подготовит ответ" not in text
+    core.download_pdf.assert_not_awaited()

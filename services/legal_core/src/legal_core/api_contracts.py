@@ -247,6 +247,7 @@ class EscalationQueueItemResponse(ContractModel):
 class EscalationDetailResponse(EscalationQueueItemResponse):
     case_id: UUID = Field(alias="caseId")
     case_status: str = Field(alias="caseStatus")
+    can_request_ai_plan: bool = Field(default=False, alias="canRequestAiPlan")
     facts: dict[str, Any]
     report: dict[str, Any] | None = None
     assigned_role: ClinicRole | None = Field(default=None, alias="assignedRole")

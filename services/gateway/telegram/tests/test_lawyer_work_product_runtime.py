@@ -413,6 +413,31 @@ def test_flag_off_keeps_the_original_workspace_copy_without_any_plan_read():
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("creator,case_status,status,enabled,offered", [
+    (True, "ANALYSIS_BLOCKED", "IN_PROGRESS", True, True),
+    (False, "ANALYSIS_BLOCKED", "IN_PROGRESS", True, False),
+    (True, "ESCALATION_REQUIRED", "IN_PROGRESS", True, True),
+    (True, "ANALYSIS_BLOCKED", "RESOLVED", True, False),
+    (True, "ANALYSIS_BLOCKED", "IN_PROGRESS", False, False),
+])
+def test_unstarted_plan_has_recovery_only_for_its_creator(
+    creator, case_status, status, enabled, offered,
+):
+    async def scenario():
+        async with plan_harness(enabled=enabled) as (_app, core, sent, dispatch):
+            core.unavailable = True
+            original = core.get_escalation
+
+            async def detail(*args):
+                return {**await original(*args), "canRequestAiPlan": creator,
+                        "caseStatus": case_status, "status": status}
+
+            core.get_escalation = detail
+            await dispatch(f"case:escalation:{ESCALATION}")
+            assert (f"case:analyze:{CASE}" in callbacks(sent)) is offered
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("enabled", [True, False])
 def test_downloaded_full_card_uses_the_same_actual_plan_status(enabled):
     async def scenario():
