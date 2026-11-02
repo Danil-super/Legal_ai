@@ -319,3 +319,14 @@ def test_punycode_email_in_model_action_is_rejected_before_reviewer_request(emai
     assert len(calls) == 1
     assert email not in str(caught.value)
     assert caught.value.__context__ is None and caught.value.__cause__ is None
+
+
+@pytest.mark.parametrize("assessment", [
+    [claim(2, kind="LEGAL", text="x" * 601)],
+    [claim(i + 2, kind="LEGAL") for i in range(9)],
+])
+def test_unstorable_legal_assessment_stops_before_second_profile(assessment):
+    invoke, calls = run(proposal([claim(), *assessment]))
+    with pytest.raises(HermesProtocolError, match="bounded legal assessment"):
+        invoke()
+    assert [host for host, _ in calls] == ["researcher.test"]

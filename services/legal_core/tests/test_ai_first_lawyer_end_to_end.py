@@ -34,14 +34,19 @@ ACTION = "Зафиксируйте обращение и сохраните от
 
 
 @pytest.mark.parametrize("fault", [None, "lost-submit", "unsupported", "researcher-outage",
-                                   "reference-examples"])
+                                   "reference-examples", "owner-confirmed-reference"])
 def test_actual_worker_routing_draft_replay_and_human_approval(routed_case, monkeypatch, fault):
     monkeypatch.setenv("AI_FIRST_LAWYER_DRAFT_ENABLED", "1")
     client, actor, _, _, case, job, *_ = routed_case
     reference = None
-    if fault == "reference-examples":
+    if fault in {"reference-examples", "owner-confirmed-reference"}:
         monkeypatch.setenv("AI_FIRST_REFERENCE_ANALOGIES_ENABLED", "1")
-        reference = seed_reference(routed_case)
+        if fault == "owner-confirmed-reference":
+            with routed_case[9].begin() as db:
+                db.execute(text("UPDATE clinic_users SET role='CLINIC_OWNER' WHERE id=:id"),
+                           {"id": routed_case[3]})
+        reference = seed_reference(
+            routed_case, owner_confirmation=fault == "owner-confirmed-reference")
     calls, lost, responses = [], [], []
 
     async def model(request):
@@ -62,6 +67,13 @@ def test_actual_worker_routing_draft_replay_and_human_approval(routed_case, monk
                 "evidenceFragmentIds": [context["evidence"][0]["fragmentId"]],
                 "requiredFactKeys": ["EVENT_SUMMARY"],
             }], "internalRecommendations": [], "patientDraft": None, "clarificationRequests": []}
+            if fault == "owner-confirmed-reference":
+                body["claims"].append({
+                    "claimId": "assessment", "kind": "LEGAL",
+                    "text": "Обращение требует проверки по документам клиники.",
+                    "evidenceFragmentIds": [context["evidence"][0]["fragmentId"]],
+                    "requiredFactKeys": ["EVENT_SUMMARY"],
+                })
         else:
             body = {"reviews": [{
                 "claimId": item["claimId"],
@@ -115,7 +127,8 @@ def test_actual_worker_routing_draft_replay_and_human_approval(routed_case, monk
                                                   base_url="http://agent.test") as worker_http:
                         settings = WorkerSettings("http://agent.test", INTERNAL_KEY)
                         await execute_job(sessions, job, worker_http, settings)
-                        if fault in {None, "lost-submit", "reference-examples"}:
+                        if fault in {None, "lost-submit", "reference-examples",
+                                     "owner-confirmed-reference"}:
                             before = len(calls)
                             # Same still-running lease after a crash/lost response.
                             await execute_job(sessions, job, worker_http, settings)
@@ -145,7 +158,7 @@ def test_actual_worker_routing_draft_replay_and_human_approval(routed_case, monk
             SimpleNamespace(), SimpleNamespace(bot_data={"ai_first_lawyer_draft_enabled": True}),
             receipt.json(),
         ))
-    available = fault in {None, "lost-submit", "reference-examples"}
+    available = fault in {None, "lost-submit", "reference-examples", "owner-confirmed-reference"}
     with routed_case[9].connect() as db:
         assert db.scalar(text("SELECT count(*) FROM case_work_product_versions")) == int(available)
         assert db.scalar(text("SELECT count(*) FROM case_reports")) == 0
@@ -166,6 +179,9 @@ def test_actual_worker_routing_draft_replay_and_human_approval(routed_case, monk
         assert view.status_code == 200, view.text
         plan = view.json()
         assert plan["content"]["actions"] == [ACTION]
+        if fault == "owner-confirmed-reference":
+            assert plan["content"]["legalAssessment"] == [
+                "Обращение требует проверки по документам клиники."]
         assert plan["citations"] and plan["reviewState"] == "UNAPPROVED"
         reviewed = client.post(path + "/work-product/reviews",
                                 headers=actor_headers(lawyer, uuid4()), json={
