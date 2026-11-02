@@ -71,6 +71,31 @@ def test_approval_has_no_edits_and_exact_displayed_immutable_binding():
         review_request(view, "APPROVE", actions=["Подменить содержание."])
 
 
+def with_assessment(wire, text="Требование требует оценки по подтверждённым обстоятельствам."):
+    wire["content"]["legalAssessment"] = [text]
+    wire["contentSha256"] = InternalWorkProduct.model_validate(wire["content"]).content_sha256
+    return wire
+
+
+def test_plan_shows_retained_legal_assessment_before_recommended_actions():
+    view = LawyerWorkProductView.model_validate(with_assessment(plan_wire()))
+    text = "\n".join(render_plan(view, "DL-TEST-1"))
+    assert view.content.legal_assessment[0] in text
+    assert text.index("Предварительная правовая оценка") < text.index("Рекомендуемые действия")
+
+
+def test_review_receipt_cannot_silently_change_the_legal_assessment():
+    from telegram_gateway.lawyer_work_product_runtime import _checked_result
+
+    view = LawyerWorkProductView.model_validate(with_assessment(plan_wire()))
+    wire = with_assessment(plan_wire(state="HUMAN_APPROVED"), "Другая непоказанная оценка.")
+    wire["versionId"] = str(UUID(int=999))
+    wire["content"].update(version=2, parentVersion=1)
+    wire["contentSha256"] = InternalWorkProduct.model_validate(wire["content"]).content_sha256
+    with pytest.raises(ValueError, match="receipt"):
+        _checked_result(wire, {"caseId": str(CASE)}, view, review_request(view, "APPROVE"))
+
+
 def test_numbered_edits_are_bounded_and_leave_facts_source_and_approval_unchanged():
     wire = plan_wire()
     original = deepcopy(wire)
@@ -144,7 +169,9 @@ class PlanCore(ExperienceCore):
         updated["content"]["parentVersion"] = updated["content"]["version"]
         updated["content"]["version"] += 1
         if payload["decision"] == "REVISE":
-            updated["content"]["actions"] = payload["actions"]
+            for field in ("actions", "legalAssessment"):
+                if field in payload:
+                    updated["content"][field] = payload[field]
         updated["contentSha256"] = InternalWorkProduct.model_validate(
             updated["content"],
         ).content_sha256
@@ -178,6 +205,26 @@ def callbacks(sent):
 
 def action(sent, name):
     return next(value for value in reversed(callbacks(sent)) if value.startswith("lawplan:" + name))
+
+
+def test_lawyer_revises_legal_assessment_in_telegram_without_changing_actions_or_sources():
+    async def scenario():
+        async with plan_harness() as (_app, core, sent, dispatch):
+            core.wire = with_assessment(core.wire)
+            original = deepcopy(core.wire["content"])
+            await dispatch(f"lawplan:open:{ESCALATION}")
+            await dispatch(action(sent, "assessment"))
+            await dispatch("text:1. Оценку требования следует соотнести доказанным недостаткам.")
+            await dispatch(action(sent, "save"))
+            assert len(core.reviews) == 1
+            assert core.wire["content"]["legalAssessment"] == [
+                "Оценку требования следует соотнести доказанным недостаткам.",
+            ]
+            assert core.wire["content"]["actions"] == original["actions"]
+            assert core.wire["content"]["source"] == original["source"]
+            assert core.wire["content"]["legalFragmentIds"] == original["legalFragmentIds"]
+            assert core.wire["reviewState"] == "HUMAN_REVISED"
+    asyncio.run(scenario())
 
 
 def test_disabled_extension_makes_no_plan_requests_or_controls():

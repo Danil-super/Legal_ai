@@ -179,6 +179,10 @@ class InternalWorkProduct(PreparationModel):
                                     min_length=1, max_length=80)
     status: Literal["UNAPPROVED"]
     summary: str = Field(strict=True, min_length=1, max_length=1500)
+    legal_assessment: list[
+        Annotated[str, Field(strict=True, min_length=1, max_length=600)]
+    ] = Field(default_factory=list, alias="legalAssessment", max_length=8,
+              exclude_if=lambda value: not value)
     actions: list[Annotated[str, Field(strict=True, min_length=1, max_length=600)]] = Field(
         min_length=1, max_length=8,
     )
@@ -204,7 +208,8 @@ class InternalWorkProduct(PreparationModel):
 
         if self.parent_version != (self.version - 1 if self.version > 1 else None):
             raise ValueError("work-product version must retain its immediate parent")
-        texts = [self.summary, self.risk_policy_version, *self.actions, *self.uncertainties]
+        texts = [self.summary, self.risk_policy_version, *self.legal_assessment,
+                 *self.actions, *self.uncertainties]
         if any(not item.strip() for item in texts) or pseudonymize_text(
             json.dumps(texts, ensure_ascii=False),
         ).changed:

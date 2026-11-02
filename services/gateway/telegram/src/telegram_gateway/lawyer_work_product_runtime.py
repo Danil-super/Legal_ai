@@ -31,11 +31,11 @@ PENDING = "lawyer_work_product_pending"
 
 def review_request(
     view: LawyerWorkProductView, decision: Literal["APPROVE", "REVISE"], *,
-    actions: list[str] | None = None,
+    actions: list[str] | None = None, legal_assessment: list[str] | None = None,
 ) -> LawyerWorkProductReview:
     return LawyerWorkProductReview(
         expectedVersionId=view.version_id, expectedContentSha256=view.content_sha256,
-        decision=decision, actions=actions,
+        decision=decision, actions=actions, legalAssessment=legal_assessment,
     )
 
 
@@ -88,9 +88,14 @@ def render_plan(view: LawyerWorkProductView, public_number: str) -> tuple[str, .
         blocks.append("Обстоятельства или основания изменились. Эта версия требует обновления; "
                       "утверждать её нельзя.")
     content = view.content
-    blocks.extend(["Ситуация\n" + content.summary, "Рекомендуемые действия\n" + "\n".join(
+    blocks.append("Ситуация\n" + content.summary)
+    if content.legal_assessment:
+        blocks.append("Предварительная правовая оценка\n" + "\n".join(
+            "• " + item for item in content.legal_assessment
+        ))
+    blocks.append("Рекомендуемые действия\n" + "\n".join(
         f"{index}. {action}" for index, action in enumerate(content.actions, 1)
-    )])
+    ))
     if view.citations:
         citations = []
         for norm in view.citations:
@@ -202,6 +207,9 @@ def _keyboard(pending: dict[str, Any], *, can_edit: bool, approved: bool = False
             rows.append([InlineKeyboardButton("✏️ Изменить действия", callback_data=_callback(
                 "edit", escalation, pending["nonce"],
             ))])
+            rows.append([InlineKeyboardButton("✏️ Изменить правовую оценку", callback_data=_callback(
+                "assessment", escalation, pending["nonce"],
+            ))])
     return InlineKeyboardMarkup([*rows, *_back(escalation).inline_keyboard])
 
 
@@ -256,6 +264,9 @@ def _checked_result(
             or content.legal_fragment_ids != old.legal_fragment_ids
             or content.summary != old.summary
             or content.uncertainties != old.uncertainties
+            or content.legal_assessment != (request.legal_assessment
+                                            if request.legal_assessment is not None
+                                            else old.legal_assessment)
             or content.actions != (request.actions if request.actions is not None
                                    else old.actions)):
         raise ValueError("review receipt does not match the displayed plan and decision")
@@ -299,9 +310,13 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         view = _bound_view(pending["view"], detail)
         if not _can_edit(detail, membership, view):
             raise ValueError("current assignment required")
-        if action == "edit" and not pending.get("sentReview"):
-            pending.update(mode="EDIT", nonce=uuid4().hex[:12])
-            await bot._reply(update, "Пришлите новый список действий: от 1 до 8 пунктов, "
+        if action in {"edit", "assessment"} and not pending.get("sentReview"):
+            pending.pop("actions", None)
+            pending.pop("legalAssessment", None)
+            field = "actions" if action == "edit" else "legalAssessment"
+            pending.update(mode="EDIT", editField=field, nonce=uuid4().hex[:12])
+            subject = "список действий" if action == "edit" else "правовую оценку"
+            await bot._reply(update, f"Пришлите {subject}: от 1 до 8 пунктов, "
                              "каждый с новой строки, с нумерацией 1., 2. и далее. "
                              "До 600 символов в пункте, без персональных данных. "
                              "Сначала покажу правки; факты и основания сохраняются.",
@@ -313,8 +328,11 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             raise ValueError("explicit decision required")
         if action == "approve" and view.review_state == "HUMAN_APPROVED":
             raise ValueError("this displayed version is already approved")
-        request = review_request(view, "APPROVE" if action == "approve" else "REVISE",
-                                 actions=pending.get("actions") if action == "save" else None)
+        request = review_request(
+            view, "APPROVE" if action == "approve" else "REVISE",
+            actions=pending.get("actions") if action == "save" else None,
+            legal_assessment=pending.get("legalAssessment") if action == "save" else None,
+        )
         payload = request.model_dump(mode="json", by_alias=True, exclude_none=True)
         pending["sentReview"] = payload
         key = uuid5(NAMESPACE_URL, f"lawyer-plan:{actor}:{escalation}:" + json.dumps(
@@ -356,13 +374,19 @@ async def receive_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                          "или откройте план из кейса.", reply_markup=_back(escalation))
         raise ApplicationHandlerStop
     try:
-        actions = parse_steps(bot._message_text(update))
+        edits = parse_steps(bot._message_text(update))
     except ValueError as error:
         await bot._reply(update, str(error), reply_markup=_back(escalation))
         raise ApplicationHandlerStop from None
-    pending.update(mode="PREVIEW", actions=actions, nonce=uuid4().hex[:12])
-    pages = _pages(["Предпросмотр правок — ещё не сохранены.", "\n".join(
-        f"{number}. {step}" for number, step in enumerate(actions, 1)
+    field = pending.get("editField", "actions")
+    if field not in {"actions", "legalAssessment"}:
+        data.pop(PENDING, None)
+        raise ApplicationHandlerStop
+    pending.update(mode="PREVIEW", nonce=uuid4().hex[:12])
+    pending[field] = edits
+    label = "Действия" if field == "actions" else "Правовая оценка"
+    pages = _pages(["Предпросмотр правок — ещё не сохранены.", label, "\n".join(
+        f"{number}. {step}" for number, step in enumerate(edits, 1)
     )])
     for index, page in enumerate(pages):
         await bot._reply(update, page, reply_markup=_keyboard(pending, can_edit=True)
@@ -374,6 +398,7 @@ def install(application: bot.TelegramApplication) -> None:
     application.bot_data[ENABLED] = True
     application.add_handler(TypeHandler(Update, fence), group=-96)
     application.add_handler(CallbackQueryHandler(controls, pattern=(
-        r"^lawplan:(?:open:[0-9a-f-]{36}|(?:approve|edit|save):[A-Za-z0-9_-]{22}:[0-9a-f]{12})$"
+        r"^lawplan:(?:open:[0-9a-f-]{36}|(?:approve|edit|assessment|save):"
+        r"[A-Za-z0-9_-]{22}:[0-9a-f]{12})$"
     )), group=-9)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_edit), group=-9)

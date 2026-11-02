@@ -46,7 +46,8 @@ def test_generator_does_not_choose_storage_identity_status_or_delivery(extra):
 
 
 @pytest.mark.parametrize("fault", ["no-context", "duplicate-claim", "unknown-review",
-                                   "duplicate-review", "too-many-actions", "long-action", "pii"])
+                                   "duplicate-review", "too-many-actions", "long-action",
+                                   "too-many-legal", "long-legal", "pii"])
 def test_missing_bindings_or_invalid_work_product_claims_are_rejected_without_echo(fault):
     wire = submission()
     if fault == "no-context":
@@ -62,6 +63,12 @@ def test_missing_bindings_or_invalid_work_product_claims_are_rejected_without_ec
         wire["semanticReviews"] = []
     elif fault == "long-action":
         wire["claims"][0]["text"] = "x" * 601
+    elif fault == "too-many-legal":
+        wire["claims"] = [dict(wire["claims"][0], kind="LEGAL", claimId=f"law-{index}")
+                          for index in range(9)]
+        wire["semanticReviews"] = []
+    elif fault == "long-legal":
+        wire["claims"][0].update(kind="LEGAL", text="x" * 601)
     else:
         wire["claims"][0]["text"] = "private@example.invalid"
     original = deepcopy(wire)
