@@ -21,7 +21,8 @@ ReferenceEvaluationStatus = Literal[
     "RETIRED",
 ]
 ReferenceReviewDecision = Literal[
-    "APPROVE_FOR_EVALUATION", "CHANGES_REQUIRED", "REJECT", "RETIRE"
+    "APPROVE_FOR_EVALUATION", "CHANGES_REQUIRED", "REJECT", "RETIRE",
+    "OWNER_CONFIRMED_APPROVAL"
 ]
 ReferenceMaterialMimeType = Literal[
     "text/plain",
@@ -108,6 +109,9 @@ class ReferenceEvaluationReviewRequest(ContractModel):
 
     @model_validator(mode="after")
     def require_note_for_changes(self) -> "ReferenceEvaluationReviewRequest":
+        if (self.decision == "OWNER_CONFIRMED_APPROVAL"
+                and self.note != "LAWYER_PROVIDED_AND_CONFIRMED"):
+            raise ValueError("owner must explicitly attest the lawyer-provided reference")
         if self.decision == "CHANGES_REQUIRED" and not (self.note and self.note.strip()):
             raise ValueError("note is required when changes are requested")
         return self

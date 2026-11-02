@@ -50,6 +50,86 @@ def owner_role(fixture):
                    {"id": fixture[3]})
 
 
+def legal_submission(fixture):
+    body = submission(fixture)
+    fragment = body["claims"][0]["evidenceFragmentIds"][0]
+    body["claims"].append({
+        "claimId": "legal-assessment", "kind": "LEGAL",
+        "text": "Обращение следует рассмотреть с учётом подтверждённых обстоятельств.",
+        "evidenceFragmentIds": [fragment], "requiredFactKeys": ["EVENT_SUMMARY"],
+    })
+    body["semanticReviews"].append({
+        "claimId": "legal-assessment", "verdict": "SUPPORTED",
+        "reviewedFragmentIds": [fragment],
+    })
+    return body
+
+
+def test_verified_legal_assessment_is_stored_and_shown_with_the_same_evidence(routed_case):
+    body = legal_submission(routed_case)
+    created = post(routed_case, body)
+    assert created.status_code == 201, created.text
+    assert created.json()["content"]["legalAssessment"] == [body["claims"][1]["text"]]
+    assert created.json()["content"]["actions"] == [body["claims"][0]["text"]]
+    owner_role(routed_case)
+    viewed = routed_case[0].get(plan_path(routed_case), headers=actor_headers(routed_case[1]))
+    assert viewed.status_code == 200 and viewed.json() == created.json()
+    replay = post(routed_case, body)
+    assert replay.status_code == 200 and replay.json() == created.json()
+
+
+@pytest.mark.parametrize("review", ["UNSUPPORTED", None])
+def test_unverified_legal_assessment_is_never_published_even_with_supported_actions(
+    routed_case, review,
+):
+    body = legal_submission(routed_case)
+    if review is None:
+        body["semanticReviews"].pop()
+    else:
+        body["semanticReviews"][1]["verdict"] = review
+    denied = post(routed_case, body)
+    assert denied.status_code == 422, denied.text
+    assert denied.json()["error"]["code"] == "LAWYER_WORK_PRODUCT_NOT_VERIFIED"
+    with routed_case[9].connect() as db:
+        assert db.scalar(text("SELECT count(*) FROM case_work_product_versions")) == 0
+
+
+def test_human_revision_of_assessment_retains_ai_version_and_can_be_approved(routed_case):
+    created = post(routed_case, legal_submission(routed_case))
+    assert created.status_code == 201, created.text
+    client, actor = routed_case[:2]
+    owner_role(routed_case)
+    path = plan_path(routed_case)
+    assert client.post(path.rsplit("/", 1)[0] + "/claim",
+                       headers=actor_headers(actor)).status_code == 200
+    edit = {
+        "expectedVersionId": created.json()["versionId"],
+        "expectedContentSha256": created.json()["contentSha256"], "decision": "REVISE",
+        "legalAssessment": ["Для оценки требования следует проверить подтверждающие документы."],
+    }
+    key = uuid4()
+    revised = client.post(path + "/reviews", headers=actor_headers(actor, key), json=edit)
+    assert revised.status_code == 201, revised.text
+    assert revised.json()["content"]["legalAssessment"] == edit["legalAssessment"]
+    assert revised.json()["content"]["actions"] == created.json()["content"]["actions"]
+    assert revised.json()["content"]["source"] == created.json()["content"]["source"]
+    assert revised.json()["content"]["legalFragmentIds"] == (
+        created.json()["content"]["legalFragmentIds"]
+    )
+    assert client.post(path + "/reviews", headers=actor_headers(actor, key),
+                       json=edit).json() == revised.json()
+    approved = client.post(path + "/reviews", headers=actor_headers(actor, uuid4()), json={
+        "expectedVersionId": revised.json()["versionId"],
+        "expectedContentSha256": revised.json()["contentSha256"], "decision": "APPROVE",
+    })
+    assert approved.status_code == 201, approved.text
+    assert approved.json()["content"]["legalAssessment"] == edit["legalAssessment"]
+    with routed_case[9].connect() as db:
+        original = db.scalar(text("SELECT payload_json FROM case_work_product_versions "
+                                  "WHERE id=:id"), {"id": created.json()["versionId"]})
+    assert original["legalAssessment"] == created.json()["content"]["legalAssessment"]
+
+
 def test_verified_ai_plan_is_durable_idempotent_and_never_a_patient_report(routed_case):
     body = submission(routed_case)
     created = post(routed_case, body)

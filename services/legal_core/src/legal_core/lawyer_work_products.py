@@ -434,6 +434,7 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
             source=source, asOfDate=state.as_of_date,
             riskPolicyVersion=state.risk_policy.domain.version,
             status="UNAPPROVED", summary=summary, actions=actions,
+            legalAssessment=[item.text for item in claims if item.kind == ClaimKind.LEGAL],
             uncertainties=_uncertainties(state.facts),
             legalFragmentIds=fragment_ids,
         )
@@ -539,6 +540,8 @@ def create_lawyer_work_product_router(sessions: async_sessionmaker[AsyncSession]
             value = getattr(payload, name)
             if value is not None:
                 wire[name] = value
+        if payload.legal_assessment is not None:
+            wire["legalAssessment"] = payload.legal_assessment
         content = InternalWorkProduct.model_validate(wire)
         new_row = _new_version(actor, content, origin="HUMAN", review_state=(
             "HUMAN_APPROVED" if payload.decision == "APPROVE" else "HUMAN_REVISED"

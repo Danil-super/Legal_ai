@@ -17,12 +17,14 @@ pytestmark = pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1",
 SCENARIO = "Вымышленный пример: обращение клиники для проверки фактических уточнений."
 
 
-def seed_reference(fixture):
+def seed_reference(fixture, *, owner_confirmation=False):
     client, actor, clinic, member, *_ = fixture
     _grant(clinic, member, "CONTRIBUTOR")
-    reviewer = 151_000_000_000 + uuid4().int % 100_000_000
-    reviewer_member = _add_member(clinic, reviewer)
-    _grant(clinic, reviewer_member, "REVIEWER")
+    reviewer = actor
+    if not owner_confirmation:
+        reviewer = 151_000_000_000 + uuid4().int % 100_000_000
+        reviewer_member = _add_member(clinic, reviewer)
+        _grant(clinic, reviewer_member, "REVIEWER")
     created = client.post("/v1/reference-evaluations", headers=actor_headers(actor, uuid4()),
                           json={"groupKey": "healthcare", "asOfDate": "2026-10-08",
                                 "expectedRoute": "ABSTAIN", "scenarioText": SCENARIO})
@@ -34,7 +36,10 @@ def seed_reference(fixture):
     assert detail.status_code == 200, detail.text
     approved = client.post(f"/v1/reference-evaluations/{reference}/review",
                            headers=actor_headers(reviewer, uuid4()),
-                           json={"decision": "APPROVE_FOR_EVALUATION",
+                           json={"decision": ("OWNER_CONFIRMED_APPROVAL" if owner_confirmation
+                                              else "APPROVE_FOR_EVALUATION"),
+                                 **({"note": "LAWYER_PROVIDED_AND_CONFIRMED"}
+                                    if owner_confirmation else {}),
                                  "expectedReviewSnapshotSha256":
                                      detail.json()["reviewSnapshotSha256"]})
     assert approved.status_code == 200, approved.text

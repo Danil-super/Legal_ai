@@ -44,7 +44,8 @@ async def select_reference_analogies(
 ) -> ReferenceAnalogyContext:
     """Caller supplies its resolved tenant actor; this does not grant workspace access.
 
-    Only complete, independently reviewed scenario text crosses this boundary.
+    Only complete, explicitly approved scenario text crosses this boundary.
+    Owner attestations preserve their distinct approval-event provenance.
     Selection is optional and local: unavailable/irrelevant/unsafe examples yield
     an empty context, never invented source authority or a weaker legal gate.
     Callers must reauthorize and fence this trace before accepting model output.
@@ -103,8 +104,11 @@ async def _select_reference_analogies_for_membership(
                          version.clinic_id == case.clinic_id,
                          version.version == case.current_version)).join(review, and_(
         review.reference_case_id == case.id, review.clinic_id == case.clinic_id,
-        review.reference_version_id == version.id, review.decision == "APPROVE_FOR_EVALUATION",
-        review.reviewer_membership_id != version.created_by_membership_id,
+        review.reference_version_id == version.id,
+        or_(and_(review.decision == "APPROVE_FOR_EVALUATION",
+                 review.reviewer_membership_id != version.created_by_membership_id),
+            and_(review.decision == "OWNER_CONFIRMED_APPROVAL",
+                 review.note == "LAWYER_PROVIDED_AND_CONFIRMED")),
     )).where(
         permission_query.exists(),
         case.clinic_id == clinic_id, case.status == "APPROVED_FOR_EVALUATION",

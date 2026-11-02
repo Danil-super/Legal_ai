@@ -34,6 +34,9 @@ class LawyerWorkProductSubmission(PreparationModel):
         actions = [item for item in self.claims if item.kind == "ACTION"]
         if len(actions) > 8 or any(len(item.text) > 600 for item in actions):
             raise ValueError("a draft permits at most eight bounded action claims")
+        assessment = [item for item in self.claims if item.kind == "LEGAL"]
+        if len(assessment) > 8 or any(len(item.text) > 600 for item in assessment):
+            raise ValueError("a draft permits at most eight bounded legal assessment claims")
         if any(not item.text.strip() or pseudonymize_text(item.text).changed
                for item in self.claims):
             raise ValueError("draft claims must be nonblank de-identified text")
@@ -75,16 +78,19 @@ class LawyerWorkProductReview(PreparationModel):
     expected_content_sha256: Sha256 = Field(alias="expectedContentSha256")
     decision: Literal["APPROVE", "REVISE"]
     summary: str | None = Field(default=None, strict=True, min_length=1, max_length=1500)
+    legal_assessment: list[BoundedStep] | None = Field(
+        default=None, alias="legalAssessment", max_length=8, exclude_if=lambda value: value is None,
+    )
     actions: list[BoundedStep] | None = Field(default=None, min_length=1, max_length=8)
     uncertainties: list[BoundedStep] | None = Field(default=None, max_length=5)
 
     @model_validator(mode="after")
     def explicit_review_decision(self) -> Self:
         changes = (self.summary is not None or self.actions is not None
-                   or self.uncertainties is not None)
+                   or self.uncertainties is not None or self.legal_assessment is not None)
         if (self.decision == "REVISE") != changes:
             raise ValueError("approve the displayed version or explicitly revise its content")
-        text = [*(self.actions or []), *(self.uncertainties or [])]
+        text = [*(self.legal_assessment or []), *(self.actions or []), *(self.uncertainties or [])]
         if self.summary is not None:
             text.append(self.summary)
         if any(not item.strip() or pseudonymize_text(item).changed for item in text):

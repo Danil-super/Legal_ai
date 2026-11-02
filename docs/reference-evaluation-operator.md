@@ -64,3 +64,27 @@ UNAVAILABLE until they have a separately reviewed comparison contract.
 Do not put workbook rows, private manifests, API exports or audit output in git,
 fixtures, application logs or provider requests. The CLI does not manage a new
 retention store; the operator owns and removes these local files when finished.
+
+## Owner confirms lawyer-provided cases (2026-11-02)
+
+An explicit owner instruction may use the separate attestation path from ADR0111.
+Fetch each current detail, freeze its version and `reviewSnapshotSha256`, then call
+`POST /v1/reference-evaluations/{id}/review` as the actual clinic owner with a
+stable per-version `Idempotency-Key` and this body:
+
+```json
+{
+  "decision": "OWNER_CONFIRMED_APPROVAL",
+  "note": "LAWYER_PROVIDED_AND_CONFIRMED",
+  "expectedReviewSnapshotSha256": "<exact current 64-character snapshot>"
+}
+```
+
+Keep the private exact-version manifest and receipts outside git; do not replace
+a stale snapshot with a freshly fetched one without inspecting the changed source.
+The audit records the owner's attestation of lawyer review, never a fictitious
+click by the lawyer. Ordinary self-review remains forbidden. This path does not
+approve laws, label expected risk/routes, start fine-tuning, or grant workspace
+access to other staff. Approved matching compact scenarios, including their
+supplied short answers, can enter both model profiles as analogies; complete
+source attachments remain available in the private reference workspace.
