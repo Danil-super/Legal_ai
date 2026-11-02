@@ -1,5 +1,26 @@
 # Dental Legal AI task list
 
+## Lawyer-provided references and legal assessment — 2 November 2026
+
+- [x] Read-only production inventory: all 67 current references are available,
+  de-identified compact scenarios with supplied short answers; 67 READY_FOR_REVIEW.
+- [x] Distinct owner-confirmed approval contract, current-source snapshot,
+  append-only audit, current authorization/expiry checks, guarded migration.
+- [x] Verified LEGAL assessment is retained with actions and citations; the
+  assigned lawyer can preview/revise it and approve an immutable human version.
+- [x] Actual worker → Agent → Core → PostgreSQL → assigned-human test includes
+  owner-attested examples in both model profiles and stored legal assessment.
+- [x] 20 owner-boundary/complete-flow tests pass; 69 reference-source regression
+  tests pass. Full local unit baseline: 4352 pass, 1144 integration-disabled skips.
+  An additional 105 focused model/contract/Gateway tests pass after bound checks.
+- [ ] Successful release CI, deployment, exact 67-version owner approval receipts,
+  and read-only live model verification with current approved-reference context.
+
+No fine-tuning job is claimed or started: current gpt-6.1-sol has no fine-tuning
+support. This uses approved compact reference analogies, including short answers;
+full private attachments are not model context or normative evidence. Lawyer
+prose-quality evaluation and latency targets are not certified by structural tests.
+
 ## AI-first resolution — AIF,26October2026
 
 - [x] Owner approved behavioral contract SPEC-ai-first-resolution.md.

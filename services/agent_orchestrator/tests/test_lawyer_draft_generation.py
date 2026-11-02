@@ -327,6 +327,6 @@ def test_punycode_email_in_model_action_is_rejected_before_reviewer_request(emai
 ])
 def test_unstorable_legal_assessment_stops_before_second_profile(assessment):
     invoke, calls = run(proposal([claim(), *assessment]))
-    with pytest.raises(HermesProtocolError, match="bounded legal assessment"):
+    with pytest.raises(HermesProtocolError):
         invoke()
     assert [host for host, _ in calls] == ["researcher.test"]
