@@ -176,6 +176,17 @@ evidence недостаточно, откажись от неподдержан�
 """
 
 
+_CONCISE_PLAN_STYLE = (
+    '\nФорма результата: короткий практический план без повторов. Для типовой '
+    'ситуации обычно 2–3 LEGAL и 3–4 ACTION, по 1–2 коротких предложения, ориентир '
+    '120–300 символов в пункте. Не пересказывай исходную фабулу и не повторяй одно '
+    'ограничение в разных пунктах. Сохрани существенные правовые условия, сроки, '
+    'различия вариантов, неизвестные обстоятельства и распределение доказывания. '
+    'Если для полноты нужно больше текста или пунктов — добавь, это важнее ориентира '
+    'длины. Все нормативные основания и проверки обязательны.\n'
+)
+
+
 _REFERENCE_ANALOGY_RULES = """\
 
 referenceExamples — необязательные аналогии, они не являются правовым основанием,
@@ -276,7 +287,7 @@ def _research_prompt(projection: CaseProjection, *, lawyer_review_draft: bool = 
         if projection.facts.get("INTAKE_VERSION") == "GUIDED_V2" else "UNSPECIFIED",
         "presentFactKeys": sorted({key.value for key in FactKey} & projection.facts.keys()),
     }
-    return system + "\nJSON контекста анкеты:\n" + json.dumps(
+    return system + _CONCISE_PLAN_STYLE + "\nJSON контекста анкеты:\n" + json.dumps(
         fact_context, ensure_ascii=False, sort_keys=True,
     ) + "\nJSON Schema ответа:\n" + json.dumps(
         schema, ensure_ascii=False, sort_keys=True,
