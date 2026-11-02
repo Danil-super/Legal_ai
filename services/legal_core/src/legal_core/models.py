@@ -865,7 +865,8 @@ class ReferenceEvaluationReviewEvent(Base):
             ondelete="RESTRICT",
         ),
         CheckConstraint(
-            "decision IN ('APPROVE_FOR_EVALUATION', 'CHANGES_REQUIRED', 'REJECT', 'RETIRE')"
+            "decision IN ('APPROVE_FOR_EVALUATION', 'CHANGES_REQUIRED', 'REJECT', 'RETIRE', "
+            "'OWNER_CONFIRMED_APPROVAL')"
         ),
         UniqueConstraint("clinic_id", "reference_case_id", "reference_version_id", "decision"),
         UniqueConstraint("clinic_id", "id"),

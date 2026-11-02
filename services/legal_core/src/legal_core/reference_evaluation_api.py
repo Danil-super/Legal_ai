@@ -1,7 +1,8 @@
 """Private API for reviewable, de-identified historical evaluation cases.
 
-Nothing in this router is a legal source, a retrieval input, a model prompt, or a
-patient-facing response.  It is a narrow human review workspace with explicit
+Nothing in this router is a legal source or a patient-facing response.
+Explicitly approved scenarios can be selected as non-authoritative analogies.
+It is a narrow human review workspace with explicit
 membership grants and storage-first retention of optional source files.
 """
 
@@ -16,7 +17,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.case_api import (
@@ -29,6 +30,7 @@ from legal_core.case_api import (
     _finish_idempotency,
     _idempotency_replay,
     _new_idempotency_record,
+    _require_clinic_owner,
     resolve_actor,
 )
 from legal_core.case_materials_api import _read_bounded_material_upload
@@ -180,11 +182,15 @@ async def _require_workspace(
 
 async def _recheck_review_access(
     session: AsyncSession, *, actor: ActorContext, telegram_user_id: int,
+    owner_confirmation: bool = False,
 ) -> None:
     if await resolve_actor(session, telegram_user_id) != actor:
         raise ApiError(status_code=403, code="ACTOR_NOT_AUTHORIZED",
                        message="Reference reviewer authorization changed")
-    await _require_workspace(session, actor, review=True)
+    if owner_confirmation:
+        _require_clinic_owner(actor)
+    await _require_workspace(session, actor, contribute=owner_confirmation,
+                             review=not owner_confirmation)
     # resolve_actor uses transaction-start now(); a late FK wait can outlive that lease.
     entitlement = await session.scalar(select(SubscriptionEntitlement.id).where(
         SubscriptionEntitlement.clinic_id == actor.clinic_id,
@@ -201,11 +207,22 @@ async def _recheck_review_access(
 
 async def _finish_reference_review(
     session: AsyncSession, *, actor: ActorContext, telegram_user_id: int,
-    original_deadline: datetime | None,
+    original_deadline: datetime | None, owner_confirmation: bool = False,
 ) -> None:
     # Finish every review/receipt/audit FK wait before the last authority/time checks.
-    await session.flush()
-    await _recheck_review_access(session, actor=actor, telegram_user_id=telegram_user_id)
+    try:
+        await session.flush()
+    except DBAPIError as exc:
+        diagnostic = getattr(exc.orig, "diag", None)
+        if (owner_confirmation and getattr(exc.orig, "sqlstate", None) == "P0001"
+                and getattr(diagnostic, "message_primary", None)
+                == "reference owner attestation is invalid"):
+            await session.rollback()
+            raise ApiError(status_code=403, code="ACTOR_NOT_AUTHORIZED",
+                           message="Reference owner authorization changed") from None
+        raise
+    await _recheck_review_access(session, actor=actor, telegram_user_id=telegram_user_id,
+                                 owner_confirmation=owner_confirmation)
     # Approval clears the ORM expiry, so checking the mutated version would resurrect it.
     if original_deadline is not None and original_deadline <= datetime.now(UTC):
         raise ApiError(status_code=410, code="REFERENCE_EVALUATION_CONTENT_EXPIRED",
@@ -860,7 +877,11 @@ def create_reference_evaluation_router(
         session: Session,
     ) -> ReferenceEvaluationReviewResponse:
         actor = await resolve_actor(session, telegram_user_id)
-        await _require_workspace(session, actor, review=True)
+        owner_confirmation = payload.decision == "OWNER_CONFIRMED_APPROVAL"
+        if owner_confirmation:
+            _require_clinic_owner(actor)
+        await _require_workspace(session, actor, contribute=owner_confirmation,
+                                 review=not owner_confirmation)
         note = None
         if payload.note is not None:
             note = _reject_identifiers(
@@ -876,15 +897,16 @@ def create_reference_evaluation_router(
         version = await _current_version(session, case, for_update=True)
         _require_live_version(version)
         original_deadline = version.content_expires_at
-        await _recheck_review_access(session, actor=actor, telegram_user_id=telegram_user_id)
-        if version.created_by_membership_id == actor.membership_id:
+        await _recheck_review_access(session, actor=actor, telegram_user_id=telegram_user_id,
+                                     owner_confirmation=owner_confirmation)
+        if not owner_confirmation and version.created_by_membership_id == actor.membership_id:
             raise ApiError(
                 status_code=status.HTTP_403_FORBIDDEN,
                 code="REFERENCE_EVALUATION_SELF_REVIEW_FORBIDDEN",
                 message="A reviewer cannot review their own reference evaluation version",
             )
         current_snapshot = _review_snapshot_sha256(case, version)
-        required = (payload.decision == "APPROVE_FOR_EVALUATION"
+        required = (payload.decision in {"APPROVE_FOR_EVALUATION", "OWNER_CONFIRMED_APPROVAL"}
                     or os.getenv("AI_FIRST_REFERENCE_ANALOGIES_ENABLED", "0") == "1")
         if ((required and expected_snapshot is None)
                 or (expected_snapshot is not None and expected_snapshot != current_snapshot)):
@@ -898,7 +920,8 @@ def create_reference_evaluation_router(
         )
         if replay is not None:
             await _finish_reference_review(session, actor=actor, telegram_user_id=telegram_user_id,
-                                           original_deadline=original_deadline)
+                                           original_deadline=original_deadline,
+                                       owner_confirmation=owner_confirmation)
             return ReferenceEvaluationReviewResponse.model_validate(replay)
         is_retire = payload.decision == "RETIRE"
         allowed = (
@@ -915,6 +938,7 @@ def create_reference_evaluation_router(
         now = datetime.now(UTC)
         new_status = {
             "APPROVE_FOR_EVALUATION": "APPROVED_FOR_EVALUATION",
+            "OWNER_CONFIRMED_APPROVAL": "APPROVED_FOR_EVALUATION",
             "CHANGES_REQUIRED": "CHANGES_REQUIRED",
             "REJECT": "REJECTED",
             "RETIRE": "RETIRED",
@@ -968,7 +992,8 @@ def create_reference_evaluation_router(
             ]
         )
         await _finish_reference_review(session, actor=actor, telegram_user_id=telegram_user_id,
-                                       original_deadline=original_deadline)
+                                       original_deadline=original_deadline,
+                                       owner_confirmation=owner_confirmation)
         return result
 
     return router
