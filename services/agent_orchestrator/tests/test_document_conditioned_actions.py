@@ -8,17 +8,32 @@ import asyncio
 import json
 from datetime import date
 from typing import cast
+from uuid import UUID
 
 import pytest
 
 from agent_orchestrator.hermes_client import HermesClient
 from agent_orchestrator.reasoning import LegalReasoningOrchestrator
 from legal_core.analysis_api import _verified_action_items
+from legal_core.contracts import FactKey
+from legal_core.legal_retrieval import ApprovedLegalFragment
 from legal_core.verifier import verify_claims
 from test_reasoning import (
     FakeHermes, _claim_response, _projection, _projection_with_clinic_context, _review_response,
 )
-from test_verifier import _evidence
+
+
+def _normative_fragment():
+    item = _projection().evidence[0]
+    return ApprovedLegalFragment(
+        fragment_id=item.fragment_id, version_id=UUID(int=2), document_id=UUID(int=3),
+        article=None, part=None, point=None, structural_path=item.structural_path,
+        fragment_text=item.text, text_sha256="a" * 64, raw_sha256="b" * 64,
+        effective_from=item.effective_from, effective_to=item.effective_to,
+        source_url=item.source_url, document_title=item.document_title,
+        issuer="Synthetic authority", official_number=item.official_number,
+        version_date=date(2026, 1, 1), publication_date=date(2026, 1, 1),
+    )
 
 
 @pytest.mark.parametrize("clause,action", [
@@ -54,8 +69,8 @@ def test_conditional_document_action_is_published_only_after_independent_review(
         assert reviewed_context["facts"] == _projection().facts == projection.facts
         assert len(reviewed_context["evidence"]) == 1
         decision = verify_claims(
-            result.claims, evidence=[_evidence(effective_from=date(2026, 1, 1))],
-            facts={key: value for key, value in projection.facts.items()},
+            result.claims, evidence=[_normative_fragment()],
+            facts={FactKey(key): value for key, value in projection.facts.items()},
             as_of_date=projection.as_of_date, semantic_reviews=result.semantic_reviews,
         )
         actions = _verified_action_items(
