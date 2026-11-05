@@ -135,16 +135,15 @@ def test_actor_editor_report_and_identity_writer_complete_without_deadlock(
             "WHERE telegram_user_id=:actor) AND status='ACTIVE'"
         ), {"actor": actor}).all()
         assert roles == [expected_role]
-    if writer_kind == "bootstrap":
-        assert report_response.status_code == 403, report_response.text
-        assert report_response.json()["error"]["code"] == "ACTOR_CONTEXT_CHANGED"
-    else:
-        # A changed role or renewed start time invalidates this transaction's old
-        # actor context. It fails closed and can be submitted again with current access.
-        assert report_response.status_code == 403, report_response.text
-        assert report_response.json()["error"]["code"] in {
-            "ACTOR_CONTEXT_CHANGED", "SUBSCRIPTION_INACTIVE",
-        }
+    if writer_kind == "platform_grant":
+        # A current renewal preserves the exact same actor and can commit the report.
+        assert report_response.status_code == 201, report_response.text
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT count(*) FROM case_reports WHERE case_id=:case"),
+                                     {"case": case}) == 1
+        return
+    assert report_response.status_code == 403, report_response.text
+    assert report_response.json()["error"]["code"] == "ACTOR_CONTEXT_CHANGED"
     with engine.connect() as connection:
         for table in ("case_reports", "case_analysis_runs", "case_risk_assessments"):
             assert connection.scalar(text(f"SELECT count(*) FROM {table} WHERE case_id=:case"),

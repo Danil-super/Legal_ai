@@ -206,9 +206,9 @@ async def resolve_actor(session: AsyncSession, telegram_user_id: int) -> ActorCo
             SubscriptionEntitlement.clinic_id == clinic_id,
             SubscriptionEntitlement.user_id == user_id,
             SubscriptionEntitlement.status == "ACTIVE",
-            SubscriptionEntitlement.starts_at <= func.now(),
+            SubscriptionEntitlement.starts_at <= func.clock_timestamp(),
             (SubscriptionEntitlement.ends_at.is_(None))
-            | (SubscriptionEntitlement.ends_at > func.now()),
+            | (SubscriptionEntitlement.ends_at > func.clock_timestamp()),
         )
     )
     if entitlement is None:
