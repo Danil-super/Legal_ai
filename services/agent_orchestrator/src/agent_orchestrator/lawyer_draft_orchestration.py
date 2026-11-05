@@ -28,15 +28,15 @@ async def maybe_generate_lawyer_draft(
     original: PreparationResult, *, core: LegalCoreClient, reasoning: LegalReasoningOrchestrator,
     telegram_user_id: int, idempotency_key: UUID, job_id: UUID | None,
     job_token: UUID | None, parent_deadline: float,
-) -> None:
+) -> str | None:
     if (os.getenv("AI_FIRST_LAWYER_DRAFT_ENABLED", "0").strip().lower() not in {"true", "1"}
             or not isinstance(original.root, HumanReviewResult)
             or job_id is None or job_token is None or job_id != idempotency_key):
-        return
+        return None
     budget = min(DRAFT_WALL_TIMEOUT_SECONDS,
                  parent_deadline - asyncio.get_running_loop().time() - RETURN_MARGIN_SECONDS)
     if budget <= 0:
-        return
+        return "LAWYER_DRAFT_UNAVAILABLE"
     result = original.root
     binding = LawyerDraftContextRequest(
         expectedPreparationOperationId=result.source.operation_id,
@@ -51,7 +51,7 @@ async def maybe_generate_lawyer_draft(
                 idempotency_key=idempotency_key, binding=binding, **lease,
             )
             if retained is not None:
-                return
+                return None
             context = await core.get_lawyer_draft_context(
                 case_id=result.source.case_id, telegram_user_id=telegram_user_id,
                 idempotency_key=idempotency_key, binding=binding, **lease,
@@ -61,7 +61,7 @@ async def maybe_generate_lawyer_draft(
                 raise LegalCoreProtocolError("lawyer draft escalation binding mismatch")
             generated = await LawyerDraftGenerator(reasoning=reasoning).generate(context)
             if not generated.claims:
-                return  # Honest abstention is not a fabricated completed plan.
+                return "LAWYER_DRAFT_NO_SUPPORTED_CLAIMS"
             await core.submit_lawyer_work_product(
                 context=context, reasoning=generated, telegram_user_id=telegram_user_id,
                 idempotency_key=idempotency_key, **lease,
@@ -69,8 +69,17 @@ async def maybe_generate_lawyer_draft(
         outcome = "STORED"
     except TimeoutError:
         outcome = "TIMEOUT"
-    except (LegalCoreError, LegalCoreProtocolError, HermesUnavailable, HermesProtocolError,
+    except LegalCoreError as error:
+        outcome = error.code if error.code in {
+            "ANALYSIS_DATE_UNCERTAIN", "LEGAL_EVIDENCE_UNAVAILABLE", "LAWYER_DRAFT_CONTEXT_INVALID",
+        } else "UNAVAILABLE"
+    except (LegalCoreProtocolError, HermesUnavailable, HermesProtocolError,
             ValueError, TypeError, AttributeError):
         outcome = "UNAVAILABLE"
     # No exception messages, case text, tokens or raw upstream responses survive.
     logger.info("lawyer_draft_attempt job=%s outcome=%s", idempotency_key, outcome)
+    if outcome == "STORED":
+        return None
+    return outcome if outcome in {
+        "ANALYSIS_DATE_UNCERTAIN", "LEGAL_EVIDENCE_UNAVAILABLE", "LAWYER_DRAFT_CONTEXT_INVALID",
+    } else "LAWYER_DRAFT_UNAVAILABLE"

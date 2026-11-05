@@ -311,7 +311,7 @@ async def _public_case(session: AsyncSession, *, telegram_user_id: int, escalati
             raise ApiError(status_code=403, code="WORK_PRODUCT_REVIEW_NOT_ALLOWED",
                            message="Only the currently assigned lawyer may review this plan")
     elif actor.role != "CLINIC_OWNER" and not is_assigned:
-        if (actor.role != "CLINIC_ADMIN"
+        if (actor.role not in {"CLINIC_ADMIN", "CLINIC_LAWYER"}
                 or case.created_by_membership_id != actor.membership_id):
             raise _missing()
     return actor, case, locked_escalation

@@ -30,6 +30,7 @@ from legal_core.case_api import (
     _current_fact_rows,
     _domain_facts,
     _draft_response,
+    _escalation_state,
     _finish_idempotency,
     _idempotency_replay,
     _new_idempotency_record,
@@ -41,6 +42,7 @@ from legal_core.case_api import (
 from legal_core.case_preparation import read_preparation_replay, recheck_submission_access
 from legal_core.contracts import CanonicalReport, ContractModel, FactKey
 from legal_core.factual_safety_intake import FactualSafetyScreening
+from legal_core.lawyer_plan_readiness import has_lawyer_plan, lawyer_plans_enabled
 from legal_core.models import (
     AuditEvent,
     Case,
@@ -154,7 +156,21 @@ async def _source(
         if prepared.root.source.operation_id != operation_id:
             raise ApiError(status_code=409, code="CASE_PREPARATION_STALE",
                            message="The preparation source has changed")
-        if prepared.root.status not in {"NEEDS_FACTS", "LIMITED"}:
+        urgent_date_recovery = False
+        if prepared.root.status == "HUMAN_REVIEW" and lawyer_plans_enabled():
+            from legal_core.analysis_api import _analysis_date
+
+            try:
+                _analysis_date(facts)
+            except ApiError as error:
+                urgent_date_recovery = error.code == "ANALYSIS_DATE_UNCERTAIN"
+            urgent_date_recovery = (
+                urgent_date_recovery and case.status == "ESCALATION_REQUIRED"
+                and not await has_lawyer_plan(session, clinic_id=actor.clinic_id, case_id=case.id)
+                and (await _escalation_state(session, actor, prepared.root.escalation_id))[0]
+                != "RESOLVED"
+            )
+        if prepared.root.status not in {"NEEDS_FACTS", "LIMITED"} and not urgent_date_recovery:
             raise ApiError(status_code=409, code="CLARIFICATION_OPERATION_UNAVAILABLE",
                            message="This result does not require a clarification draft")
         if prepared.root.source.fact_snapshot_sha256 != source_hash:
@@ -244,7 +260,12 @@ def _prefill(
         if isinstance(event_date, dict) and event_date.get("precision") == "EXACT"
         else "EVENT_DATE"
     )
-    if source_preparation is not None and isinstance(event_date, dict):
+    if source_preparation is not None and source_preparation.root.status == "HUMAN_REVIEW":
+        # Reopen only the missing date; previously confirmed answers stay populated.
+        # The immutable source still records the user's earlier uncertainty.
+        data.pop("eventDate", None)
+        state = "EVENT_DATE"
+    elif source_preparation is not None and isinstance(event_date, dict):
         # Attempted UNKNOWN/APPROXIMATE is not an unanswered question.
         try:
             FactualSafetyScreening.model_validate(screening)

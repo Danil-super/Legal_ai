@@ -274,6 +274,23 @@ def test_private_lookup_avoids_repeating_models_and_requires_the_live_creator_le
     assert client.post(path, headers=headers, json=request).status_code == 409
 
 
+def test_lawyer_creator_can_read_own_ai_plan_before_claim_but_cannot_approve_it(routed_case):
+    created = post(routed_case)
+    assert created.status_code == 201, created.text
+    with routed_case[9].begin() as db:
+        db.execute(text("UPDATE clinic_users SET role='CLINIC_LAWYER' WHERE id=:id"),
+                   {"id": routed_case[3]})
+    client, actor = routed_case[:2]
+    path = plan_path(routed_case)
+    view = client.get(path, headers=actor_headers(actor))
+    assert view.status_code == 200 and view.json() == created.json(), view.text
+    denied = client.post(path + "/reviews", headers=actor_headers(actor, uuid4()), json={
+        "expectedVersionId": created.json()["versionId"],
+        "expectedContentSha256": created.json()["contentSha256"], "decision": "APPROVE",
+    })
+    assert denied.status_code == 403, denied.text
+
+
 @pytest.mark.parametrize("who", ["creator", "owner-unassigned", "lawyer-unassigned", "foreign"])
 def test_review_cannot_be_performed_by_unassigned_or_foreign_actor(routed_case, who):
     created = post(routed_case)

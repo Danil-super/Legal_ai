@@ -324,6 +324,13 @@ class PreparationResult(RootModel[Annotated[
     model_config = ConfigDict(revalidate_instances="always")
 
 
+LawyerDraftErrorCode = Literal[
+    "ANALYSIS_DATE_UNCERTAIN", "LEGAL_EVIDENCE_UNAVAILABLE",
+    "LAWYER_DRAFT_CONTEXT_INVALID", "LAWYER_DRAFT_UNAVAILABLE",
+    "LAWYER_DRAFT_NO_SUPPORTED_CLAIMS",
+]
+
+
 class PreparationJobResponse(PreparationModel):
     result_version: Literal[2] = Field(alias="resultVersion")
     job_id: UUID = Field(alias="jobId")
@@ -331,6 +338,13 @@ class PreparationJobResponse(PreparationModel):
     state: Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED"]
     error_code: str | None = Field(default=None, alias="errorCode", max_length=80)
     result: PreparationResult | None = None
+    lawyer_draft_available: bool | None = Field(
+        default=None, alias="lawyerDraftAvailable", strict=True,
+        exclude_if=lambda value: value is None,
+    )
+    lawyer_draft_error_code: LawyerDraftErrorCode | None = Field(
+        default=None, alias="lawyerDraftErrorCode", exclude_if=lambda value: value is None,
+    )
 
     @field_validator("result_version", mode="before")
     @classmethod
@@ -347,4 +361,10 @@ class PreparationJobResponse(PreparationModel):
             raise ValueError("preparation result case mismatch")
         if self.state == "SUCCEEDED" and self.error_code is not None:
             raise ValueError("successful preparation cannot include a failure")
+        if ((self.lawyer_draft_available is not None or self.lawyer_draft_error_code is not None)
+                and (self.state != "SUCCEEDED" or self.result is None
+                    or not isinstance(self.result.root, HumanReviewResult)
+                    or self.lawyer_draft_available is None
+                    or (self.lawyer_draft_available and self.lawyer_draft_error_code is not None))):
+            raise ValueError("draft metadata requires a completed urgent routing result")
         return self
