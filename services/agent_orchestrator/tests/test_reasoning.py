@@ -424,7 +424,7 @@ def test_reviewer_cannot_reference_a_fragment_outside_the_claim() -> None:
     asyncio.run(scenario())
 
 
-def test_clinic_document_context_is_visible_to_researcher_but_hidden_from_reviewer() -> None:
+def test_clinic_document_context_reaches_both_passes_without_becoming_evidence() -> None:
     async def scenario() -> None:
         researcher = FakeHermes(name="researcher", response=_claim_response())
         reviewer = FakeHermes(name="reviewer", response=_review_response())
@@ -437,8 +437,11 @@ def test_clinic_document_context_is_visible_to_researcher_but_hidden_from_review
 
         assert "Синтетическое положение о гарантиях" in researcher.users[0]
         assert "При сколе конструкции" in researcher.users[0]
-        assert "Синтетическое положение о гарантиях" not in reviewer.users[0]
-        assert "При сколе конструкции" not in reviewer.users[0]
+        review = json.loads(reviewer.users[0])
+        research = json.loads(researcher.users[0])
+        assert review["clinicDocumentContext"] == research["clinicDocumentContext"]
+        assert review["evidence"] == research["evidence"]
+        assert review["facts"] == research["facts"]
 
     asyncio.run(scenario())
 
