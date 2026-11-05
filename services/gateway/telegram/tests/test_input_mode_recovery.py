@@ -340,39 +340,23 @@ def test_uncertain_legal_date_explains_how_to_supply_a_corrected_case() -> None:
     assert "Создайте новый кейс" in message
 
 
-def test_durable_result_callback_delivers_every_chunk_to_the_private_actor() -> None:
+def test_old_result_button_downloads_pdf_without_repeating_report_text(monkeypatch) -> None:
     from telegram_gateway.analysis_jobs_runtime import JOBS_CLIENT_KEY, status_callback
+    from test_case_preparation_contracts import _ready
 
-    draft = "synthetic response " * 250 + " final sentence"
-    payload = {
-        "analysisAllowed": True,
-        "escalationRequired": False,
-        "report": {
-            "reportJson": {
-                "case": {"publicNumber": "DL-2026-TEST"},
-                "risk": {"level": "LOW", "reasonCodes": [], "escalationRequired": False},
-                "recommendations": {"items": []},
-                "legalBasis": {"sources": []},
-                "draftResponse": {"status": "AVAILABLE", "text": draft},
-            }
-        },
-    }
+    result = _ready()
     client = SimpleNamespace(status=AsyncMock(return_value={
-        "jobId": DRAFT_ID,
-        "caseId": DRAFT_ID,
-        "state": "SUCCEEDED",
-        "errorCode": None,
-        "result": payload,
+        "resultVersion": 2, "jobId": DRAFT_ID, "caseId": result["source"]["caseId"],
+        "state": "SUCCEEDED", "result": result,
     }))
     context = SimpleNamespace(
         bot_data={JOBS_CLIENT_KEY: client}, bot=SimpleNamespace(send_message=AsyncMock())
     )
+    queue = AsyncMock()
+    monkeypatch.setattr("telegram_gateway.report_pdf_delivery.queue_report_pdf", queue)
     with pytest.raises(ApplicationHandlerStop):
         asyncio.run(status_callback(fake_update(callback=f"analysis:result:{DRAFT_ID}"), context))
-    sent = context.bot.send_message.call_args_list
-    assert len(sent) > 1
-    assert all(call.kwargs["chat_id"] == ACTOR_ID for call in sent)
-    assert all(len(call.kwargs["text"].encode("utf-16-le")) // 2 <= 4_000 for call in sent)
-    combined = "".join(call.kwargs["text"] for call in sent)
-    assert draft in combined
-    assert combined.endswith("Автоматическая отправка пациенту отключена.")
+    queue.assert_awaited_once()
+    assert queue.await_args.kwargs["actor_id"] == ACTOR_ID
+    assert asyncio.run(queue.await_args.kwargs["resolve_report"]()) == UUID(result["report"]["id"])
+    context.bot.send_message.assert_not_awaited()

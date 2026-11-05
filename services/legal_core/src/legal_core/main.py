@@ -23,6 +23,7 @@ from legal_core.analysis_diagnostics import create_analysis_diagnostics_router
 from legal_core.analysis_job_worker import WorkerSettings, run_analysis_worker
 from legal_core.analysis_jobs import create_analysis_jobs_router
 from legal_core.case_api import ApiError, create_case_router
+from legal_core.case_history import create_case_history_router
 from legal_core.case_material_retention import purge_expired_case_materials
 from legal_core.case_materials_api import create_case_materials_router
 from legal_core.case_retention import purge_expired_case_content
@@ -273,6 +274,7 @@ def create_app(
         )
 
     app.include_router(create_case_router(sessions))
+    app.include_router(create_case_history_router(sessions))
     app.include_router(create_case_materials_router(sessions, raw_store=case_material_store))
     app.include_router(
         create_reference_evaluation_router(sessions, raw_store=reference_evaluation_store)

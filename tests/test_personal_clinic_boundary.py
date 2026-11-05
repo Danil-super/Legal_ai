@@ -19,7 +19,9 @@ CLINIC_BASELINE = {
     "services/gateway/telegram/src/telegram_gateway/ui.py":
         # Independently reviewed lawyer-only clinical creation/drafts (ADR 0109);
         # personal entry points, identity and grants remain unchanged.
-        "20eb525ba7005aa3d1f4fc4f016bea008bb24df1",
+        # Owner-requested clinical PDF/history surface (ADR 0114);
+        # personal entry points and grants remain inert.
+        "c7bd512a8eb93456b7b11301029ddd5761b96dbf",
     "services/gateway/telegram/src/telegram_gateway/case_experience_runtime.py":
         # Owner-approved opt-in clinical plan review (2026-10-27 lawyer-work-product UI ADR);
         # both clinical flags default off, personal entry points remain inert.
@@ -28,7 +30,9 @@ CLINIC_BASELINE = {
         "b9f97eec8be01ab2ac217aa7a4be79aadec30b42",
     "services/legal_core/src/legal_core/main.py":
         # Owner-approved clinical work-product routes; personal remains inert (AIF08 ADR).
-        "0a37aed06336cfc12c4016df8ff10eb8858addef",
+        # Owner-requested clinical PDF/history surface (ADR 0114);
+        # personal entry points and grants remain inert.
+        "baf19f9b589a8f6ec67e31f6a3644869c105d392",
     # Separately reviewed clinical automation pause; no personal surface change (ADR 0064).
     # Reviewed Gateway-only intake flag pass-through; defaults off (ADR 0091).
     # Owner-approved clinical multi-fact intake flag; defaults off (ADR0101).

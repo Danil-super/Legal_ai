@@ -53,6 +53,8 @@ def test_completed_job_offers_a_report_pdf_button_with_an_opaque_job_pointer():
         "lawyer",
         "pdf_denied",
         "revoked_while_waiting",
+        "history",
+        "history_denied",
     ],
 )
 def test_report_pdf_queue_reauthorizes_preserves_state_and_leaves_menu_responsive(
@@ -93,6 +95,19 @@ def test_report_pdf_queue_reauthorizes_preserves_state_and_leaves_menu_responsiv
 
             async def get_actor(self, actor):
                 return {"role": "CLINIC_OWNER"}
+
+            async def _json_request(self, method, path, *, telegram_user_id):
+                assert method == "GET" and telegram_user_id == ACTOR
+                assert path == f"/v1/case-history/{CASE}?offset=0"
+                checked.set()
+                if mode == "history_denied":
+                    raise LegalCoreApiError(404, "CASE_NOT_FOUND", "Synthetic denial")
+                return {"case": {"id": str(CASE), "publicNumber": "DL-2026-000001",
+                                  "status": "REPORT_READY",
+                                  "intakeSchemaVersion": "dental-case-intake.v2",
+                                  "createdAt": "2026-11-05T10:00:00Z"},
+                        "reports": [{"id": str(REPORT), "reportVersion": 1,
+                                     "createdAt": "2026-11-05T10:00:00Z", "kind": "READY"}]}
 
             async def download_pdf(self, report, actor):
                 assert (report, actor) == (REPORT, ACTOR)
@@ -159,6 +174,10 @@ def test_report_pdf_queue_reauthorizes_preserves_state_and_leaves_menu_responsiv
                 app.user_data[ACTOR]["escalation_discussion_id"] = str(CASE)
                 before = dict(app.user_data[ACTOR])
                 action = f"esc:pdf:{CASE}" if mode == "lawyer" else f"analysis:pdf:{JOB}"
+                if mode.startswith("history"):
+                    from telegram_gateway.case_history_runtime import _pdf_callback
+
+                    action = _pdf_callback(CASE, REPORT, 0)
                 await asyncio.wait_for(app.process_update(callback(app, action, 1)), 0.5)
                 if mode == "revoked_while_waiting":
                     assert not checked.is_set(), "authorization ran before queued transfer began"
@@ -166,7 +185,7 @@ def test_report_pdf_queue_reauthorizes_preserves_state_and_leaves_menu_responsiv
                     release_previous_file.set()
                 await asyncio.wait_for(checked.wait(), 0.5)
                 assert app.user_data[ACTOR] == before
-                if mode in {"success", "lawyer"}:
+                if mode in {"success", "lawyer", "history"}:
                     await asyncio.wait_for(started.wait(), 0.5)
                     assert not finish.is_set()
                     await asyncio.wait_for(app.process_update(callback(app, "menu", 2)), 0.5)
@@ -175,7 +194,7 @@ def test_report_pdf_queue_reauthorizes_preserves_state_and_leaves_menu_responsiv
                 queue = app.bot_data["legal_editor_file_deliveries"]
                 await asyncio.wait_for(queue.drain(), 1)
                 documents = [data for endpoint, data in sent if endpoint == "sendDocument"]
-                if mode in {"success", "lawyer"}:
+                if mode in {"success", "lawyer", "history"}:
                     assert len(documents) == 1
                     assert documents[0]["document"].input_file_content == PDF
                     assert documents[0]["chat_id"] == ACTOR

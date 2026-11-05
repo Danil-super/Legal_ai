@@ -7,9 +7,10 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import timedelta
+from io import BytesIO
 from typing import Any, cast
 from uuid import UUID
 
@@ -25,8 +26,14 @@ from legal_core.analysis_contracts import (
     PreparationResult,
     ReportReadyResult,
 )
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.error import BadRequest, Forbidden, RetryAfter, TelegramError
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputFile,
+    InputMediaDocument,
+    Update,
+)
+from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTypes
 
 from telegram_gateway import bot as gateway_bot
@@ -352,8 +359,12 @@ def job_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
     from telegram_gateway.analysis_runtime import (
         analysis_error_message,
         escalation_id_from_analysis,
-        telegram_analysis_messages,
     )
+    from telegram_gateway.completed_report import ready_report, report_caption, report_keyboard
+
+    report = ready_report(job)
+    if report is not None:
+        return report_caption(report)[0], report_keyboard(job.case_id)
 
     if job.result_version == 2 and job.state == "SUCCEEDED":
         return _preparation_message(job)
@@ -377,10 +388,7 @@ def job_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
     else:
         if job.result is None:
             raise ValueError("missing result")
-        text = telegram_analysis_messages(job.result)[0]
-        rows.insert(
-            0, [InlineKeyboardButton("📋 Результат", callback_data=f"analysis:result:{job.job_id}")]
-        )
+        text = "Карточка кейса сохранена. Для рекомендаций нужны уточнения или проверка юриста."
         rows.insert(
             1,
             [InlineKeyboardButton("📄 PDF результата", callback_data=f"analysis:pdf:{job.job_id}")],
@@ -412,9 +420,48 @@ async def _edit_status(
 ) -> None:
     text, keyboard = job_message(job)
     try:
-        await context.bot.edit_message_text(
-            chat_id=actor, message_id=message_id, text=text, reply_markup=keyboard
-        )
+        from telegram_gateway.completed_report import ready_report, report_caption
+
+        report = ready_report(job)
+        if report is None:
+            await context.bot.edit_message_text(
+                chat_id=actor, message_id=message_id, text=text, reply_markup=keyboard
+            )
+        else:
+            semaphore = context.bot_data.setdefault("report_pdf_transfer", asyncio.Semaphore(1))
+            try:
+                async with asyncio.timeout(20), semaphore:
+                    pdf = await gateway_bot._legal_core(context).download_pdf(report.id, actor)
+                    await context.bot.edit_message_media(
+                        chat_id=actor, message_id=message_id,
+                        media=InputMediaDocument(
+                            InputFile(
+                                BytesIO(pdf), filename=report_caption(report)[1], attach=True,
+                            ),
+                            caption=text,
+                        ), reply_markup=keyboard,
+                    )
+            except (LegalCoreApiError, NetworkError, TimeoutError) as exc:
+                if isinstance(exc, BadRequest):
+                    raise  # Preserve the existing no-op/deleted-message handling below.
+                # Upload may have succeeded before its response was lost.
+                with suppress(TelegramError, TimeoutError):
+                    async with asyncio.timeout(3):
+                        await context.bot.edit_message_text(
+                            chat_id=actor, message_id=message_id,
+                            text=("Не удалось прикрепить PDF. Отчёт сохранён — "
+                                  "попробуйте скачать его ещё раз."),
+                            reply_markup=InlineKeyboardMarkup([
+                                [InlineKeyboardButton(
+                                    "📄 Скачать PDF", callback_data=f"analysis:pdf:{job.job_id}",
+                                )], *keyboard.inline_keyboard,
+                            ]),
+                        )
+                if isinstance(exc, TimeoutError):
+                    raise LegalCoreApiError(
+                        503, "PDF_DELIVERY_UNAVAILABLE", "PDF transfer timed out",
+                    ) from exc
+                raise
     except BadRequest as exc:
         if str(exc).lower() != "message is not modified" and not str(exc).lower().startswith(
             "message is not modified:"
@@ -474,6 +521,47 @@ async def enqueue_analysis(
         )
 
 
+async def _queue_job_pdf(
+    context: ContextTypes.DEFAULT_TYPE, job_id: UUID, actor: int,
+) -> None:
+    from telegram_gateway.report_pdf_delivery import queue_report_pdf
+
+    async def resolve_report() -> UUID:
+        current = JobSnapshot.parse(await _client(context).status(job_id, actor))
+        if (
+            current.job_id != job_id
+            or current.state != "SUCCEEDED"
+            or current.result is None
+        ):
+            raise ValueError("analysis PDF unavailable")
+        if current.result_version == 2 and current.result.get("status") != "READY":
+            raise ValueError("preparation has no final PDF")
+        report = current.result.get("report")
+        if (
+            not isinstance(report, dict)
+            or UUID(str(report.get("caseId"))) != current.case_id
+        ):
+            raise ValueError("analysis report case mismatch")
+        report_id = UUID(str(report.get("id")))
+        canonical = report.get("reportJson")
+        if (
+            not isinstance(canonical, dict)
+            or UUID(str(canonical.get("reportId"))) != report_id
+        ):
+            raise ValueError("canonical report identity mismatch")
+        case = canonical.get("case")
+        if not isinstance(case, dict) or UUID(str(case.get("id"))) != current.case_id:
+            raise ValueError("canonical report case mismatch")
+        return report_id
+
+    await queue_report_pdf(
+        context,
+        actor_id=actor,
+        resolve_report=resolve_report,
+        return_callback=f"analysis:status:{job_id}",
+    )
+
+
 async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query, actor = update.callback_query, gateway_bot._actor_id(update)
     if query is None or actor is None or not isinstance(query.data, str):
@@ -483,60 +571,20 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         _, action, raw_id = query.data.split(":")
         job_id = UUID(raw_id)
         if action == "pdf":
-            from telegram_gateway.report_pdf_delivery import queue_report_pdf
-
-            async def resolve_report() -> UUID:
-                current = JobSnapshot.parse(await _client(context).status(job_id, actor))
-                if (
-                    current.job_id != job_id
-                    or current.state != "SUCCEEDED"
-                    or current.result is None
-                ):
-                    raise ValueError("analysis PDF unavailable")
-                if current.result_version == 2 and current.result.get("status") != "READY":
-                    raise ValueError("preparation has no final PDF")
-                report = current.result.get("report")
-                if (
-                    not isinstance(report, dict)
-                    or UUID(str(report.get("caseId"))) != current.case_id
-                ):
-                    raise ValueError("analysis report case mismatch")
-                report_id = UUID(str(report.get("id")))
-                canonical = report.get("reportJson")
-                if (
-                    not isinstance(canonical, dict)
-                    or UUID(str(canonical.get("reportId"))) != report_id
-                ):
-                    raise ValueError("canonical report identity mismatch")
-                case = canonical.get("case")
-                if not isinstance(case, dict) or UUID(str(case.get("id"))) != current.case_id:
-                    raise ValueError("canonical report case mismatch")
-                return report_id
-
-            await queue_report_pdf(
-                context,
-                actor_id=actor,
-                resolve_report=resolve_report,
-                return_callback=f"analysis:status:{job_id}",
-            )
+            await _queue_job_pdf(context, job_id, actor)
             raise ApplicationHandlerStop
         job = JobSnapshot.parse(await _client(context).status(job_id, actor))
         if job.job_id != job_id:
             raise ValueError("analysis response job mismatch")
         _track_activity(context, actor, job)
         if action == "result" and job.result is not None:
-            from telegram_gateway.analysis_runtime import telegram_analysis_messages
+            from telegram_gateway.completed_report import ready_report
 
-            if job.result_version == 2:
-                prepared_result = PreparationResult.model_validate(job.result).root
-                messages = telegram_analysis_messages(_ready_for_presentation(prepared_result)) \
-                    if isinstance(prepared_result, ReportReadyResult) else [job_message(job)[0]]
+            if ready_report(job) is not None:
+                await _queue_job_pdf(context, job_id, actor)
             else:
-                messages = telegram_analysis_messages(job.result)
-            for text in messages:
-                await context.bot.send_message(
-                    chat_id=actor, text=text, reply_markup=job_message(job)[1]
-                )
+                text, keyboard = job_message(job)
+                await context.bot.send_message(chat_id=actor, text=text, reply_markup=keyboard)
         else:
             message = query.message
             if message is not None and message.chat.id == actor:
