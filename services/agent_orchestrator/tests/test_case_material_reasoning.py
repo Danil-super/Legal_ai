@@ -36,7 +36,7 @@ def projection(**changes):
     })
 
 
-def test_attachment_context_goes_only_to_researcher_and_preserves_confirmed_facts():
+def test_attachment_context_reaches_both_passes_and_preserves_confirmed_facts():
     async def run():
         researcher = FakeHermes(name="researcher", response=_claim_response())
         reviewer = FakeHermes(name="reviewer", response=_review_response())
@@ -50,8 +50,11 @@ def test_attachment_context_goes_only_to_researcher_and_preserves_confirmed_fact
         review = json.loads(reviewer.users[0])
         assert research["caseMaterialContext"] == [material_context()]
         assert research["facts"] == before == supplied.facts
-        assert "caseMaterialContext" not in review and TEXT not in reviewer.users[0]
+        assert review["caseMaterialContext"] == [material_context()]
+        assert review["facts"] == before
+        assert review["evidence"] == research["evidence"]
         assert "неподтверждённые" in researcher.systems[0]
+        assert "неподтверждённые" in reviewer.systems[0]
         schema = json.loads(researcher.systems[0].split(SCHEMA_MARKER)[1])
         assert schema["$defs"]["ClaimProposal"]["properties"]["evidenceFragmentIds"][
             "items"

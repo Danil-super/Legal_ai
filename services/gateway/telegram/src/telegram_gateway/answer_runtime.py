@@ -279,7 +279,7 @@ async def route_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     data = bot._user_data(context)
     callback = update.callback_query.data if update.callback_query is not None else None
     if isinstance(callback, str) and callback.startswith(
-        ("answer:", "case:draft:", "analysis:pdf:", "esc:pdf:"),
+        ("answer:", "case:draft:", "analysis:pdf:", "esc:pdf:", "history:pdf:"),
     ):
         return
     wizard = data.get(bot.WIZARD_DATA_KEY)

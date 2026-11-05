@@ -403,3 +403,22 @@ def test_whole_deadline_closes_in_progress_hermes_http_stream(monkeypatch):
     assert response.status_code == 503
     assert stream.closed
     assert legal_core.submit_calls == 0
+
+
+def test_core_protocol_failure_is_terminal_provider_invalid():
+    from agent_orchestrator.legal_core_client import LegalCoreProtocolError
+
+    client, legal_core, reasoning = _client()
+
+    async def invalid_context(**kwargs):
+        raise LegalCoreProtocolError("synthetic private protocol detail")
+
+    legal_core.get_analysis_context = invalid_context
+    response = client.post(f"/v1/cases/{CASE_ID}/analyze", headers={
+        "X-Agent-Internal-Key": INTERNAL_KEY, "X-Telegram-User-Id": "123",
+        "Idempotency-Key": str(IDEMPOTENCY_KEY),
+    })
+    assert response.status_code == 502
+    assert response.json() == {"detail": {"code": "ANALYSIS_PROVIDER_INVALID"}}
+    assert reasoning.calls == 0
+    assert "synthetic private protocol detail" not in response.text

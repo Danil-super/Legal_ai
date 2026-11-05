@@ -124,6 +124,7 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
     )
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     model_calls = []
+    model_inputs = {}
 
     def model_http(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/chat/completions"
@@ -136,6 +137,7 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
         assert evidence["effectiveFrom"] == "2026-08-04"
         fragment_id = evidence["fragmentId"]
         model_calls.append(body["model"])
+        model_inputs[body["model"]] = projection
         if body["model"] == "researcher":
             if with_clinic_documents:
                 assert len(projection["clinicDocumentContext"]) == 1
@@ -167,8 +169,13 @@ def test_approved_copy_analysis_distinguishes_legacy_report_from_guided_v2_block
         else:
             assert body["model"] == "reviewer"
             assert projection["claims"][0]["evidenceFragmentIds"] == [fragment_id]
-            assert "clinicDocumentContext" not in projection
-            assert "caseMaterialContext" not in projection
+            assert projection["facts"] == model_inputs["researcher"]["facts"]
+            for field, present in (("clinicDocumentContext", with_clinic_documents),
+                                   ("caseMaterialContext", with_case_materials)):
+                if present:
+                    assert projection[field] == model_inputs["researcher"][field]
+                else:
+                    assert field not in projection
             result = {
                 "reviews": [
                     {

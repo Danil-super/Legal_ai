@@ -24,6 +24,18 @@ from legal_core.pseudonymization import contains_obvious_direct_identifier, pseu
 logger = logging.getLogger(__name__)
 _RRF_K = 60.0
 
+# These broad queries supply the patient/paid-service foundation, not occupational
+# qualifications or tax treatment. Targeted queries retain the entire approved corpus.
+MEDICAL_FOUNDATION_QUERIES = (
+    "платные медицинские услуги",
+    "права пациента медицинская помощь",
+    "ответственность исполнитель медицинские услуги",
+)
+_MEDICAL_FOUNDATION = """
+    lower(document_title) NOT LIKE '%профессиональн%стандарт%'
+    AND lower(document_title) NOT LIKE '%налогов%кодекс%'
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class ApprovedLegalFragment:
@@ -103,6 +115,7 @@ _SEARCH_APPROVED_LEXICAL = text(
       FROM production_legal_fragments
      WHERE effective_from <= :as_of_date
        AND (effective_to IS NULL OR :as_of_date < effective_to)
+       AND (NOT :foundation_scope OR ({_MEDICAL_FOUNDATION}))
        AND (
             strpos(lower(fragment_text), lower(:query)) > 0
             OR to_tsvector('russian', fragment_text)
@@ -131,6 +144,7 @@ _SEARCH_APPROVED_VECTOR = text(
        AND e.fragment_text_sha256 = p.text_sha256
      WHERE p.effective_from <= :as_of_date
        AND (p.effective_to IS NULL OR :as_of_date < p.effective_to)
+       AND (NOT :foundation_scope OR ({_MEDICAL_FOUNDATION}))
        AND e.model_key = :model_key
        AND e.dimensions = :dimensions
      ORDER BY e.embedding <=> CAST(:embedding AS vector),
@@ -140,24 +154,40 @@ _SEARCH_APPROVED_VECTOR = text(
     """
 )
 
-# One query-local approved snapshot; preserve explicit ordering within each query as well.
-_LEXICAL_ORDER = _SEARCH_APPROVED_LEXICAL.text.split("ORDER BY", 1)[1].rsplit("LIMIT", 1)[0]
+# Materialize the corpus and the query expressions once per statement. No cross-request
+# cache: approval and date applicability are checked against the current database snapshot.
+_LEXICAL_ORDER = """
+    CASE WHEN strpos(lexical_text, query_rows.lexical_query) > 0 THEN 1 ELSE 0 END DESC,
+    ts_rank_cd(lexical_vector, query_rows.query_vector) DESC, document_id, fragment_id
+"""
 _SEARCH_APPROVED_LEXICAL_BATCH = text(
-    f"WITH corpus AS MATERIALIZED (SELECT {_FRAGMENT_COLUMNS}, "
-    "lower(fragment_text) AS lexical_text, "
-    "to_tsvector('russian', fragment_text) AS lexical_vector FROM production_legal_fragments "
-    "WHERE effective_from <= :as_of_date AND (effective_to IS NULL OR :as_of_date < effective_to)) "
-    "SELECT query_rows.ordinal AS query_index, hits.* "
-    "FROM unnest(CAST(:queries AS text[])) WITH ORDINALITY AS query_rows(query, ordinal) "
-    "CROSS JOIN LATERAL ("
-    + _SEARCH_APPROVED_LEXICAL.text.replace(
-        f"SELECT {_FRAGMENT_COLUMNS}",
-        f"SELECT row_number() OVER (ORDER BY {_LEXICAL_ORDER}) AS hit_rank, {_FRAGMENT_COLUMNS}",
-    ).replace("FROM production_legal_fragments", "FROM corpus")
-    .replace(":query", "query_rows.query")
-    .replace("lower(fragment_text)", "lexical_text")
-    .replace("to_tsvector('russian', fragment_text)", "lexical_vector")
-    + ") AS hits ORDER BY query_rows.ordinal, hits.hit_rank"
+    f"""
+    WITH query_rows AS MATERIALIZED (
+        SELECT ordinal, foundation_scope, lower(query) AS lexical_query,
+               plainto_tsquery('russian', query) AS query_vector
+          FROM unnest(CAST(:queries AS text[]), CAST(:foundation_scopes AS boolean[]))
+               WITH ORDINALITY AS planned(query, foundation_scope, ordinal)
+    ), corpus AS MATERIALIZED (
+        SELECT {_FRAGMENT_COLUMNS}, lower(fragment_text) AS lexical_text,
+               to_tsvector('russian', fragment_text) AS lexical_vector,
+               ({_MEDICAL_FOUNDATION}) AS medical_foundation
+          FROM production_legal_fragments
+         WHERE effective_from <= :as_of_date
+           AND (effective_to IS NULL OR :as_of_date < effective_to)
+           AND (NOT :foundation_only OR ({_MEDICAL_FOUNDATION}))
+    )
+    SELECT query_rows.ordinal AS query_index, hits.* FROM query_rows
+    CROSS JOIN LATERAL (
+        SELECT row_number() OVER (ORDER BY {_LEXICAL_ORDER}) AS hit_rank,
+               {_FRAGMENT_COLUMNS}
+          FROM corpus
+         WHERE (NOT query_rows.foundation_scope OR medical_foundation)
+           AND (strpos(lexical_text, query_rows.lexical_query) > 0
+                OR lexical_vector @@ query_rows.query_vector)
+         ORDER BY {_LEXICAL_ORDER}
+         LIMIT :limit
+    ) AS hits ORDER BY query_rows.ordinal, hits.hit_rank
+    """
 )
 
 _LIST_APPROVED_LIBRARY_DOCUMENTS = text(
@@ -262,7 +292,12 @@ class ApprovedLegalCorpusRepository:
     ) -> list[ApprovedLegalFragment]:
         result = await self._session.execute(
             _SEARCH_APPROVED_LEXICAL,
-            {"query": query, "as_of_date": as_of_date, "limit": limit},
+            {
+                "query": query,
+                "as_of_date": as_of_date,
+                "limit": limit,
+                "foundation_scope": query in MEDICAL_FOUNDATION_QUERIES,
+            },
         )
         return [_row_fragment(row) for row in result.mappings()]
 
@@ -287,6 +322,7 @@ class ApprovedLegalCorpusRepository:
         embedding: Sequence[float],
         *,
         provider: EmbeddingProvider,
+        foundation_scope: bool,
         as_of_date: date,
         limit: int,
     ) -> list[ApprovedLegalFragment]:
@@ -297,6 +333,7 @@ class ApprovedLegalCorpusRepository:
                     embedding,
                     expected_dimensions=provider.dimensions,
                 ),
+                "foundation_scope": foundation_scope,
                 "model_key": provider.model_key,
                 "dimensions": provider.dimensions,
                 "as_of_date": as_of_date,
@@ -334,7 +371,13 @@ class ApprovedLegalCorpusRepository:
             ]
         result = await self._session.execute(
             _SEARCH_APPROVED_LEXICAL_BATCH,
-            {"queries": normalized, "as_of_date": as_of_date, "limit": limit},
+            {
+                "queries": normalized,
+                "as_of_date": as_of_date,
+                "limit": limit,
+                "foundation_scopes": [q in MEDICAL_FOUNDATION_QUERIES for q in normalized],
+                "foundation_only": all(q in MEDICAL_FOUNDATION_QUERIES for q in normalized),
+            },
         )
         batches: list[list[ApprovedLegalFragment]] = [[] for _ in queries]
         for row in result.mappings():
@@ -384,6 +427,7 @@ class ApprovedLegalCorpusRepository:
             semantic_hits = await self._semantic(
                 vectors[0],
                 provider=provider,
+                foundation_scope=normalized_query in MEDICAL_FOUNDATION_QUERIES,
                 as_of_date=as_of_date,
                 limit=candidate_limit,
             )

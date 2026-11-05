@@ -32,6 +32,10 @@ from legal_core.model_admission import ModelAdmission
 logger = logging.getLogger(__name__)
 ANALYSIS_HTTP_TIMEOUT_SECONDS = 160
 ANALYSIS_REQUEST_WALL_TIMEOUT_SECONDS = 165
+MAX_NORMAL_ANALYSIS_ATTEMPTS = 2
+_RETRYABLE_ANALYSIS_ERRORS = frozenset({
+    "ANALYSIS_PROVIDER_UNAVAILABLE", "ANALYSIS_SERVICE_UNAVAILABLE",
+})
 
 
 def _resume_optional_lawyer_draft(
@@ -113,11 +117,14 @@ async def execute_job(
         timeout=ANALYSIS_REQUEST_WALL_TIMEOUT_SECONDS,
     )
     if response.is_error:
-        code = "ANALYSIS_SERVICE_UNAVAILABLE"
+        # An untyped HTTP rejection is not evidence of a transient outage.
+        code = "ANALYSIS_PROVIDER_INVALID"
         try:
             detail = response.json().get("detail", {})
             candidate = detail.get("code") if isinstance(detail, dict) else None
-            if isinstance(candidate, str) and re.fullmatch(r"[A-Z_]{1,80}", candidate):
+            if (isinstance(candidate, str) and re.fullmatch(r"[A-Z_]{1,80}", candidate)
+                    and (candidate not in _RETRYABLE_ANALYSIS_ERRORS
+                         or response.status_code >= 500)):
                 code = candidate
         except (ValueError, AttributeError):
             pass
@@ -157,19 +164,26 @@ async def finish_job(
         except ApiError as exc:
             # A corrupt/expired retained result is terminal, not an endless RUNNING lease.
             result, error = None, exc.code
-        job.state = "SUCCEEDED" if result is not None else "FAILED"
+        retry = (
+            result is None and error in _RETRYABLE_ANALYSIS_ERRORS
+            and job.attempts < MAX_NORMAL_ANALYSIS_ATTEMPTS
+        )
+        job.state = "QUEUED" if retry else "SUCCEEDED" if result is not None else "FAILED"
         optional_failure = (
             isinstance(result, PreparationResult)
             and _resume_optional_lawyer_draft(job.result_version, result)
             and error is not None
         )
-        job.error_code = error if optional_failure else (
+        job.error_code = None if retry else error if optional_failure else (
             None if result is not None else error or "ANALYSIS_RESULT_MISSING"
         )
         job.lease_token = None
         job.lease_until = None
         job.updated_at = datetime.now(UTC)
         await session.commit()
+        if retry:
+            logger.info("analysis_job_retry_queued job=%s attempt=%d error=%s",
+                        job.id, job.attempts, error)
 
 
 async def process_job(
@@ -184,6 +198,8 @@ async def process_job(
         error = await execute_job(sessions, job, client, settings)
     except ApiError as exc:
         error = exc.code
+    except (httpx.ProtocolError, httpx.DecodingError):
+        error = "ANALYSIS_PROVIDER_INVALID"
     except (httpx.HTTPError, TimeoutError):
         error = "ANALYSIS_SERVICE_UNAVAILABLE"
     except Exception:

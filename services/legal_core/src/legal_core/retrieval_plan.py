@@ -16,14 +16,14 @@ from uuid import UUID
 
 from legal_core.contracts import FactKey
 from legal_core.factual_safety_risk import confirmed_screening
-from legal_core.legal_retrieval import ApprovedLegalCorpusRepository, ApprovedLegalFragment
-
-
-_BASE_QUERIES: Final = (
-    "платные медицинские услуги",
-    "права пациента медицинская помощь",
-    "ответственность исполнитель медицинские услуги",
+from legal_core.legal_retrieval import (
+    MEDICAL_FOUNDATION_QUERIES,
+    ApprovedLegalCorpusRepository,
+    ApprovedLegalFragment,
 )
+
+
+_BASE_QUERIES: Final = MEDICAL_FOUNDATION_QUERIES
 _REWORK_QUERIES: Final = (
     "безвозмездное устранение недостатков",
     "повторное выполнение работы",

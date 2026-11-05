@@ -46,14 +46,17 @@ dateBasis=LAWYER_CURRENT_COPY означает проверенную юрист
 
 clinicDocumentContext — это одобренные клиникой договоры, ИДС, гарантии и внутренние правила.
 Это НЕ нормативные правовые источники и НЕ legal evidence. Их можно учитывать только при подготовке
-internalRecommendations и patientDraft. Нельзя обосновывать ими LEGAL/ACTION claims и нельзя
-пытаться использовать идентификаторы из clinicDocumentContext как evidenceFragmentIds.
+условных проверок и вариантов ACTION, правовое основание которых подтверждено evidence.
+Одобрение шаблона НЕ доказывает, что пациент подписал эту редакцию или что условие применимо
+к нему. Не устанавливай по шаблону факты, сроки гарантии пациента или право на возврат.
+Если связь с пациентом не подтверждена, предложи сверить подписанный документ; сохраняй условие
+«если эта редакция применима». Не цитируй clinicDocumentContext как evidenceFragmentIds.
 
 clinicDocumentReadiness — это НЕ перечень юридически обязательных документов и НЕ evidence. Это
 неблокирующий внутренний checklist для разбора кейса. NOT_AVAILABLE означает только, что Legal Core
 не видит подходящий одобренный документ клиники на дату кейса. AVAILABLE_NOT_RETRIEVED означает,
 что документ есть в tenant-базе, но его текст не вошёл в текущий bounded context: не придумывай его
-содержание. В internalRecommendations можно предложить сотруднику проверить/добавить такой документ.
+содержание. Проверку документа включай в ACTION лишь при поддержке evidence и известных facts.
 
 Если у элемента clinicDocumentContext есть conflictHints, это НЕ вывод о незаконности документа.
 Это deterministic warning, что абсолютную внутреннюю формулировку нельзя применять без сверки с
@@ -132,8 +135,12 @@ ANALYSIS_CLARIFICATION_ANSWERS к claim только ради уточнения
 _REVIEW_SYSTEM = """\
 Ты — независимый verifier Dental Legal AI. Тебе переданы approved evidence и claims другого
 агента. Для КАЖДОГО claim реши, действительно ли его смысл поддерживается указанными фрагментами.
-Не оценивай полезность формулировки и не добавляй новые нормы. Документы клиники намеренно не
-передаются тебе: они не являются источником права и не могут подтвердить claim.
+Не оценивай полезность формулировки и не добавляй новые нормы. clinicDocumentContext, если передан,
+служит только контекстом выбора условных проверок и вариантов, а не источником права или фактов.
+Одобренный шаблон не доказывает подпись пациента, редакцию его договора или применимость условия.
+Проверь, что ACTION сохраняет эти неизвестные условия и не превращает шаблон в факт или норму.
+Проверяй противоречия с facts и обязательным evidence; conflictHints — предупреждения для проверки,
+а не доказательство незаконности. Правовые основания берутся только из нормативных evidence.
 
 Верни ТОЛЬКО JSON-объект без markdown, комментариев и дополнительного текста.
 Структура, допустимые claimId, UUID и verdict заданы JSON Schema в конце инструкции.
@@ -310,7 +317,10 @@ def _check_lawyer_draft_proposal(proposal: ClaimProposalBatch, projection: CaseP
         raise HermesProtocolError("lawyer draft clarification scope is invalid") from None
 
 
-def _review_prompt(proposal: ClaimProposalBatch, *, reference_analogies: bool = False) -> str:
+def _review_prompt(
+    proposal: ClaimProposalBatch, *, reference_analogies: bool = False,
+    case_materials: bool = False,
+) -> str:
     schema = SemanticReviewBatch.model_json_schema(by_alias=True)
     properties = schema["$defs"]["SemanticReviewItem"]["properties"]
     properties["claimId"]["enum"] = sorted({claim.claim_id for claim in proposal.claims})
@@ -319,6 +329,8 @@ def _review_prompt(proposal: ClaimProposalBatch, *, reference_analogies: bool = 
         for claim in proposal.claims for fragment_id in claim.evidence_fragment_ids
     })
     system = _REVIEW_SYSTEM + (_REFERENCE_ANALOGY_RULES if reference_analogies else "")
+    if case_materials:
+        system += _CASE_MATERIAL_RULES
     return system + "\nJSON Schema ответа:\n" + json.dumps(
         schema, ensure_ascii=False, sort_keys=True,
     )
@@ -409,8 +421,15 @@ class LegalReasoningOrchestrator:
         }
         if reference_examples:
             review_input["referenceExamples"] = reference_examples
+        if projection.clinic_document_context:
+            review_input["clinicDocumentContext"] = serialized_projection["clinicDocumentContext"]
+        if case_material_context is not None:
+            review_input["caseMaterialContext"] = case_material_context
         review_raw = await self._reviewer.complete_json(
-            system=_review_prompt(proposal, reference_analogies=bool(reference_examples)),
+            system=_review_prompt(
+                proposal, reference_analogies=bool(reference_examples),
+                case_materials=case_material_context is not None,
+            ),
             user=json.dumps(review_input, ensure_ascii=False, sort_keys=True),
         )
         try:

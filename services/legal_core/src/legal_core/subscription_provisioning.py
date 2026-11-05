@@ -52,7 +52,9 @@ async def _membership_for_provisioning(
     session: AsyncSession, membership_id: UUID
 ) -> ClinicUser:
     membership = await session.scalar(
-        select(ClinicUser).where(ClinicUser.id == membership_id).with_for_update()
+        # Only role/status stability is needed; referenced identity keys never change.
+        # NO KEY UPDATE still excludes role writers and permits report/audit FK locks.
+        select(ClinicUser).where(ClinicUser.id == membership_id).with_for_update(key_share=True)
     )
     if membership is None or membership.status != "ACTIVE" or membership.role not in _MEMBER_ROLES:
         raise ValueError("membership must be an active clinic member")

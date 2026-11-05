@@ -22,6 +22,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Integer,
     String,
+    func,
     select,
     text,
 )
@@ -190,12 +191,14 @@ async def require_job_lease(
         .with_for_update()
         .execution_options(populate_existing=True)
     )
+    # Unlike now()/transaction_timestamp(), this advances through row-lock waits.
+    current_time = (await session.execute(select(func.clock_timestamp()))).scalar_one()
     if (
         job is None
         or job.state != "RUNNING"
         or job.lease_token != token
         or job.lease_until is None
-        or job.lease_until <= datetime.now(UTC)
+        or job.lease_until <= current_time
     ):
         raise ApiError(
             status_code=409,
