@@ -441,6 +441,7 @@ async def _route_input_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         data.pop("quick_intake_candidate", None)
     if not isinstance(callback, str) or not callback.startswith("clinicdoc:"):
         data.pop("clinic_document_upload", None)
+    if not isinstance(callback, str) or not callback.startswith(("clinicdoc:", "cliniclib:date:")):
         data.pop("clinic_document_effective_date_pending", None)
     if not isinstance(callback, str) or not callback.startswith("refeval:"):
         data.pop("reference_evaluation_pending", None)
