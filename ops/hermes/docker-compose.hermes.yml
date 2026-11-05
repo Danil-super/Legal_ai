@@ -8,7 +8,7 @@ services:
   hermes-researcher:
     profiles: [analysis]
     # A bind-mounted file update alone cannot restart the guarded Python process.
-    # Keep both labels equal to the launcher's SHA256; CI checks the actual bytes.
+    # Each label pins its own launcher/profile/guard file; CI checks the actual bytes.
     labels:
       org.dental-legal-ai.hermes-launcher-sha256: 1ee2c42292ec67051702003253f70e35f641b9f7fffa0c5f9b2491fc1354658b
       org.dental-legal-ai.hermes-profile-sha256: c660544a0de00f4e64ee4d9318621fdd66552a2f766f0b60c6880518604c370b
