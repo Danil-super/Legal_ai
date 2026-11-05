@@ -112,6 +112,13 @@ jobs:
             -e POSTGRES_APP_PASSWORD=synthetic-runtime-password-12345678901234567890 \
             -e MODULE="$MODULE" --entrypoint python "$IMAGE" -c \
             'import importlib, os; assert os.getuid() != 0; importlib.import_module(os.environ["MODULE"]); print("Offline container import passed")'
+      - name: Construct the Telegram application offline in its production image
+        if: matrix.service == 'telegram'
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 128 --memory 512m \
+            --tmpfs /tmp:rw,nosuid,size=16777216 \
+            --entrypoint python dental-ci-telegram -m telegram_gateway.startup_smoke
       - name: Exercise native PDF limits in the actual Core image
         if: matrix.service == 'core'
         run: |

@@ -16,6 +16,7 @@ COPY services/gateway/telegram/src ./services/gateway/telegram/src
 COPY services/legal_core/src/legal_core/__init__.py ./services/legal_core/src/legal_core/__init__.py
 COPY services/legal_core/src/legal_core/pseudonymization.py ./services/legal_core/src/legal_core/pseudonymization.py
 COPY services/legal_core/src/legal_core/contracts.py ./services/legal_core/src/legal_core/contracts.py
+COPY services/legal_core/src/legal_core/case_history_contracts.py ./services/legal_core/src/legal_core/case_history_contracts.py
 COPY services/legal_core/src/legal_core/case_material_contracts.py ./services/legal_core/src/legal_core/case_material_contracts.py
 COPY services/legal_core/src/legal_core/case_material_context_contracts.py ./services/legal_core/src/legal_core/case_material_context_contracts.py
 COPY services/legal_core/src/legal_core/analysis_clarifications.py ./services/legal_core/src/legal_core/analysis_clarifications.py
@@ -43,5 +44,6 @@ USER app
 # A green source-tree test suite does not prove that COPY included every shared dependency.
 RUN python -c "import telegram_gateway.__main__, telegram_gateway.analysis_jobs_runtime"
 RUN python -c "import telegram_gateway.lawyer_work_product_runtime"
+RUN python -m telegram_gateway.startup_smoke
 
 CMD ["python", "-m", "telegram_gateway"]
