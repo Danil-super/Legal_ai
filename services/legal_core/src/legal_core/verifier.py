@@ -135,6 +135,22 @@ def _is_effective(fragment: ApprovedLegalFragment, as_of_date: date) -> bool:
     )
 
 
+def _exact_legacy_service_date(value: object) -> date | None:
+    if isinstance(value, dict):
+        if value.get("precision") != "EXACT":
+            return None
+        value = value.get("date")
+    if type(value) is date:
+        return value
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if value == parsed.isoformat() else None
+
+
 def _structurally_applicable_evidence(
     claim: ProposedClaim,
     *,
@@ -190,6 +206,23 @@ def _structurally_applicable_evidence(
             )
         if any(fragment is not None and not _is_effective(fragment, service_date)
                for fragment in returned for service_date in dates):
+            return VerifiedClaim(
+                claim_id=claim.claim_id, result=VerificationResult.NOT_APPLICABLE,
+                reason_code="EVIDENCE_NOT_EFFECTIVE_ON_SERVICE_DATE", verified_fragment_ids=(),
+            )
+    elif (facts.get(FactKey.INTAKE_VERSION) != "GUIDED_V2"
+          and claim.kind is ClaimKind.LEGAL
+          and FactKey.SERVICE_DATE in claim.required_fact_keys):
+        # A retrospective legal assessment explicitly depends on the old service
+        # date. Current organizational ACTIONs retain their case-date basis.
+        legacy_date = _exact_legacy_service_date(facts.get(FactKey.SERVICE_DATE))
+        if legacy_date is None:
+            return VerifiedClaim(
+                claim_id=claim.claim_id, result=VerificationResult.INSUFFICIENT_FACTS,
+                reason_code="SERVICE_DATE_BINDING_UNKNOWN", verified_fragment_ids=(),
+            )
+        if any(fragment is not None and not _is_effective(fragment, legacy_date)
+               for fragment in returned):
             return VerifiedClaim(
                 claim_id=claim.claim_id, result=VerificationResult.NOT_APPLICABLE,
                 reason_code="EVIDENCE_NOT_EFFECTIVE_ON_SERVICE_DATE", verified_fragment_ids=(),
