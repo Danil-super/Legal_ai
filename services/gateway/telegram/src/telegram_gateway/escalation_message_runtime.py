@@ -56,6 +56,7 @@ async def submit_message(
     resolving: bool,
     operation: UUID,
     source: int | None,
+    recovering: bool = False,
 ) -> None:
     from telegram_gateway.analysis_runtime import _active_discussion_keyboard
 
@@ -96,10 +97,10 @@ async def submit_message(
             message = update.effective_message
             if message is not None:
                 try:
-                    await message.reply_text(
-                        "\u041d\u0435 удалось проверить отправку. Нажмите «Проверить "
-                        "отправку» или повторите тот же текст — дубля не будет.", **kwargs,
-                    )
+                    next_step = ("Нажмите «Проверить отправку» или откройте историю кейса."
+                                 if source is not None else "Откройте историю кейса.")
+                    await message.reply_text("\u041d\u0435 удалось проверить отправку. "
+                                             + next_step, **kwargs)
                 except BadRequest:
                     await gateway_bot._reply(update, "Откройте историю кейса и проверьте "
                                              "результат отправки.", reply_markup=back_keyboard())
@@ -117,6 +118,18 @@ async def submit_message(
         for key in ("escalation_discussion_id", "escalation_resolution_pending"):
             if data.get(key) == str(escalation):
                 data.pop(key, None)
+    if recovering:
+        await gateway_bot._reply(
+            update,
+            "✅ Отправка проверена. Обращение завершено. Итог сохранён в истории." if resolving else
+            "✅ Отправка проверена. Сообщение сохранено в истории кейса.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("← \u041a кейсу" if resolving else "💬 Открыть диалог",
+                                      callback_data=f"case:escalation:{escalation}")],
+                *back_keyboard().inline_keyboard,
+            ]),
+        )
+        raise ApplicationHandlerStop
     await gateway_bot._reply(
         update,
         "✅ Обращение завершено. Итог сохранён в истории."
@@ -162,4 +175,5 @@ async def retry_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         resolving=mode == "c",
         source=source,
         operation=message_operation(actor, escalation, mode == "c", source),
+        recovering=True,
     )

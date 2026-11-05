@@ -28,11 +28,18 @@ pending metadata. Existing immutable records are not rewritten.
 The Telegram operation UUID derives from original private message ID, actor,
 escalation and action. A transport/invalid-response retry uses the identical key,
 body and actor, at most once automatically, with existing HTTP timeouts unchanged.
-An uncertain manual repeat retains that binding; a new text uses a new intent.
+An uncertain manual repeat retains that binding only while the matching pending
+gateway state still exists; a new text uses a new intent. Identical text sent
+with a new message ID after restart is a new intent, not a text-based replay.
+The UI therefore directs uncertain sends to the recovery button or case history,
+and does not promise deduplication for manually resending the text after restart.
 An explicit recovery button replies to the original Telegram message. Its source
 ID and the original private sender let a restarted gateway reconstruct the same
 operation without storing raw message text. Missing or unverifiable originals
 stop with a route to case history rather than creating a new message.
+Successful button recovery confirms the saved operation and offers explicit case
+or discussion navigation. It does not activate an input mode or promise that the
+next text will enter a discussion, so a newly started intake remains intact.
 
 Tests cover the original RED duplicate, real PostgreSQL concurrent requests,
 payload mismatch, current access/retention, malformed keys, and Gateway → actual
