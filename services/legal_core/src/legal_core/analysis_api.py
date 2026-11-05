@@ -141,7 +141,21 @@ class AnalysisState:
         return self.reference_analogies.trace_sha256 if self.reference_analogies else None
 
 
-async def _commit_analysis_result(session: AsyncSession, state: AnalysisState) -> None:
+async def _recheck_submission_lease(
+    session: AsyncSession, *, actor: ActorContext, case_id: UUID,
+    job_id: UUID | None, job_token: UUID | None,
+) -> None:
+    if job_id is not None and job_token is not None:
+        from legal_core.analysis_jobs import require_job_lease
+        # Case and Job are already locked in that order by submission_case.
+        # The lock fences competing owners, but it cannot stop wall-clock expiry.
+        await require_job_lease(session, actor, case_id, job_id, job_token)
+
+
+async def _commit_analysis_result(
+    session: AsyncSession, state: AnalysisState, *, actor: ActorContext,
+    job_id: UUID | None, job_token: UUID | None,
+) -> None:
     # Flush risk/report/receipt writes (including their actual FK waits) before
     # the last wall-clock/source check. No new writes or waits may follow it.
     await session.flush()
@@ -152,6 +166,9 @@ async def _commit_analysis_result(session: AsyncSession, state: AnalysisState) -
     await require_case_material_context_current(
         session, clinic_id=state.case.clinic_id, case_id=state.case.id,
         state=state.case_material_context,
+    )
+    await _recheck_submission_lease(
+        session, actor=actor, case_id=state.case.id, job_id=job_id, job_token=job_token,
     )
     await session.commit()
 
@@ -636,6 +653,11 @@ def create_analysis_router(
             session, actor=actor, case=case, scope=scope, idempotency_key=idempotency_key,
             request_hash=request_hash, result=prepared,
         )
+        await session.flush()
+        await _recheck_submission_lease(
+            session, actor=actor, case_id=case.id,
+            job_id=x_analysis_job_id, job_token=x_analysis_job_token,
+        )
         await session.commit()
         response.status_code = status.HTTP_201_CREATED
         return prepared
@@ -791,7 +813,10 @@ def create_analysis_router(
                     session, actor=actor, case=state.case, scope=scope,
                     idempotency_key=idempotency_key, request_hash=request_hash, result=preparation,
                 )
-                await _commit_analysis_result(session, state)
+                await _commit_analysis_result(
+                    session, state, actor=actor,
+                    job_id=x_analysis_job_id, job_token=x_analysis_job_token,
+                )
                 return preparation
 
         current_version = await session.scalar(
@@ -873,7 +898,10 @@ def create_analysis_router(
                 session, actor=actor, case=state.case, scope=scope,
                 idempotency_key=idempotency_key, request_hash=request_hash, result=ready,
             )
-            await _commit_analysis_result(session, state)
+            await _commit_analysis_result(
+                session, state, actor=actor,
+                job_id=x_analysis_job_id, job_token=x_analysis_job_token,
+            )
             return ready
         idempotency = _new_idempotency_record(
             actor=actor,
@@ -928,7 +956,10 @@ def create_analysis_router(
                 },
             )
         )
-        await _commit_analysis_result(session, state)
+        await _commit_analysis_result(
+            session, state, actor=actor,
+            job_id=x_analysis_job_id, job_token=x_analysis_job_token,
+        )
         return response_payload
 
     @router.post(
