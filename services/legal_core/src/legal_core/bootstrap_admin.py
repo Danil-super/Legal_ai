@@ -91,7 +91,8 @@ async def bootstrap_admin(
                     ClinicUser.status == "ACTIVE",
                     ClinicUser.role == "CLINIC_ADMIN",
                 )
-                .with_for_update()
+                # Promotion changes role, never the membership identity referenced by reports.
+                .with_for_update(key_share=True)
             )
             if existing_admin is not None:
                 existing_admin.role = "CLINIC_OWNER"

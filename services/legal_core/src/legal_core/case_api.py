@@ -790,7 +790,8 @@ def create_case_router(
         membership = await session.scalar(
             select(ClinicUser)
             .where(ClinicUser.clinic_id == actor.clinic_id, ClinicUser.user_id == member_user.id)
-            .with_for_update()
+            # Role/status writes keep membership keys; allow report/audit FK KEY SHARE.
+            .with_for_update(key_share=True)
             .execution_options(populate_existing=True)
         )
         if membership is None:
@@ -1521,7 +1522,8 @@ def create_case_router(
                         ClinicUser.status == "ACTIVE",
                         ClinicUser.role.in_(CLINIC_ACTOR_ROLES),
                     )
-                    .with_for_update()
+                    # Preserve User-first serialization without blocking membership FKs.
+                    .with_for_update(key_share=True)
                     .execution_options(populate_existing=True)
                 )
             ).all()
