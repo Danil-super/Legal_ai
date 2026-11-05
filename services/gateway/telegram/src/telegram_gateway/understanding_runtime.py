@@ -276,7 +276,11 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 
 async def fence_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from telegram_gateway.escalation_message_runtime import is_recovery_callback
+
     callback = update.callback_query.data if update.callback_query is not None else None
+    if is_recovery_callback(callback):
+        return  # Replaying an old message does not navigate away from the current draft.
     text = bot._message_text(update) if update.callback_query is None else ""
     if isinstance(callback, str) and callback.startswith(
         ("understanding:", "case:draft:", "analysis:pdf:", "esc:pdf:", "history:pdf:")

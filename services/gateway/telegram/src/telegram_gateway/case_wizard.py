@@ -802,11 +802,28 @@ class LegalCoreClient:
             telegram_user_id=telegram_user_id, payload={},
         )
 
+    async def _post_escalation_message(
+        self, escalation_id: UUID, telegram_user_id: int, *, action: str,
+        body: str, operation_id: UUID | None,
+    ) -> dict[str, Any]:
+        for attempt in range(2):
+            try:
+                return await self._json_request(
+                    "POST", f"/v1/case-escalations/{escalation_id}/{action}",
+                    telegram_user_id=telegram_user_id, payload={"body": body},
+                    idempotency_key=operation_id,
+                )
+            except LegalCoreApiError as exc:
+                if operation_id is None or attempt or exc.code not in {
+                    "LEGAL_CORE_UNAVAILABLE", "INVALID_LEGAL_CORE_RESPONSE",
+                }:
+                    raise
+        raise AssertionError("unreachable operation retry")
+
     async def resolve_escalation(self, escalation_id: UUID, telegram_user_id: int, *,
-                                 body: str) -> dict[str, Any]:
-        return await self._json_request(
-            "POST", f"/v1/case-escalations/{escalation_id}/resolve",
-            telegram_user_id=telegram_user_id, payload={"body": body},
+                                 body: str, operation_id: UUID | None = None) -> dict[str, Any]:
+        return await self._post_escalation_message(
+            escalation_id, telegram_user_id, action="resolve", body=body, operation_id=operation_id,
         )
 
     async def assign_escalation(
@@ -823,13 +840,12 @@ class LegalCoreClient:
         )
 
     async def post_escalation_discussion_message(
-        self, escalation_id: UUID, telegram_user_id: int, *, body: str
+        self, escalation_id: UUID, telegram_user_id: int, *, body: str,
+        operation_id: UUID | None = None,
     ) -> dict[str, Any]:
-        return await self._json_request(
-            "POST",
-            f"/v1/case-escalations/{escalation_id}/discussion",
-            telegram_user_id=telegram_user_id,
-            payload={"body": body},
+        return await self._post_escalation_message(
+            escalation_id, telegram_user_id, action="discussion", body=body,
+            operation_id=operation_id,
         )
 
     async def grant_subscription(

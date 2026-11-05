@@ -412,8 +412,12 @@ async def _route_input_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     The wizard remains owned by ConversationHandler; its durable draft is never deleted.
     An old discussion button cannot replace an active wizard (checked by that handler).
     """
+    from telegram_gateway.escalation_message_runtime import is_recovery_callback
+
     query = update.callback_query
     callback = query.data if query is not None else None
+    if is_recovery_callback(callback):
+        return  # Operation recovery does not select or replace an input mode.
     if isinstance(callback, str) and callback.startswith((
         "analysis:pdf:", "esc:pdf:", "history:pdf:",
     )):

@@ -276,8 +276,12 @@ async def controls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def route_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Short authoritative reads; no poll loop and no waiting for a model result."""
+    from telegram_gateway.escalation_message_runtime import is_recovery_callback
+
     data = bot._user_data(context)
     callback = update.callback_query.data if update.callback_query is not None else None
+    if is_recovery_callback(callback):
+        return  # The existing draft and its in-flight answer retain their input mode.
     if isinstance(callback, str) and callback.startswith(
         ("answer:", "case:draft:", "analysis:pdf:", "esc:pdf:", "history:pdf:"),
     ):
