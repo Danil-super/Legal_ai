@@ -50,11 +50,11 @@ def test_independent_required_aggregate_shell_gate_accepts_only_success(outcome)
     shard = workflow["jobs"]["postgres-integration-shard"]
     aggregate = workflow["jobs"]["postgres-integration"]
     assert shard["strategy"]["fail-fast"] is False
-    assert shard["strategy"]["matrix"]["shard"] == [0, 1, 2, 3, 4, 5, 6, 7]
+    assert shard["strategy"]["matrix"]["shard"] == list(range(12))
     integration_step = next(step for step in shard["steps"]
                             if step.get("name") == "PostgreSQL and MinIO integration tests")
     assert integration_step["run"] == (
-        'timeout 180s python ops/ci/run_integration_shard.py --index "$SHARD_INDEX" --count 8'
+        'timeout 180s python ops/ci/run_integration_shard.py --index "$SHARD_INDEX" --count 12'
     )
     assert not shard.get("continue-on-error", False)
     # Keep the OS compatible with the pinned Python; ubuntu-latest migrated
@@ -109,7 +109,7 @@ def test_independent_pattern_overlap_does_not_repeat_files_and_cli_refuses_empty
 def test_configured_matrix_preserves_the_complete_repository_partition():
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     indices = workflow["jobs"]["postgres-integration-shard"]["strategy"]["matrix"]["shard"]
-    assert indices == list(range(8))
+    assert indices == list(range(12))
     spec = importlib.util.spec_from_file_location("ci_selector", SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

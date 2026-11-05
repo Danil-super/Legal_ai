@@ -72,7 +72,7 @@ def test_explicit_python_files_configuration_is_respected(project):
     assert select_files(project, 0, 1) == ["core/tests/test_first.py"]
 
 
-@pytest.mark.parametrize("count", [3, 6])
+@pytest.mark.parametrize("count", [3, 6, 12])
 def test_entry_executes_pytest_for_the_complete_shard_without_selective_filters(monkeypatch, count):
     calls = []
     monkeypatch.setattr("ops.ci.run_integration_shard.os.execv",
@@ -83,7 +83,7 @@ def test_entry_executes_pytest_for_the_complete_shard_without_selective_filters(
     assert calls[0][1][4:] == select_files(Path(__file__).resolve().parents[1], 1, count)
 
 
-@pytest.mark.parametrize("count", [3, 6])
+@pytest.mark.parametrize("count", [3, 6, 12])
 def test_real_suite_roots_are_all_in_the_combined_partition(count):
     root = Path(__file__).resolve().parents[1]
     files = [name for index in range(count) for name in select_files(root, index, count)]
