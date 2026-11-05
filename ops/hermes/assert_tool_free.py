@@ -12,7 +12,7 @@ import sys
 from typing import Any
 
 EXPECTED_HERMES_VERSION = "0.20.6"
-EXPECTED_CALL_TIMEOUT_SECONDS = 55
+EXPECTED_CALL_TIMEOUT_SECONDS = 90
 
 
 def assert_call_budget(config: dict[str, Any]) -> dict[str, int]:

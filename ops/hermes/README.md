@@ -18,12 +18,12 @@ loads the actual pinned Hermes builtin/plugin registries and the final model-too
 non-zero unless both the resolved toolset list and tool schema are empty.
 
 The same preflight verifies the pinned provider/model timeout resolvers: both legal profiles
-use `agent.api_max_retries: 1`, and custom provider request/stale timeouts of 55 seconds.
-This owner-approved bounded trial and its matching startup guard are documented in
-[ADR-0088](../../docs/adr/0088-bounded-hermes-provider-wait-trial.md).
-The orchestrator uses SSE with total stage walls of 65 seconds for each of research and
-review, inside one shared 115-second analysis deadline (including Legal Core context/submission).
-The worker's HTTP operation timeout remains 120 seconds, wall deadline 125 seconds and lease
+use `agent.api_max_retries: 1` (one attempt), and provider request/stale settings of 90 seconds.
+[ADR-0117](../../docs/adr/0117-hermes-high-provider-wait.md) supersedes the earlier bounded trial
+in [ADR-0088](../../docs/adr/0088-bounded-hermes-provider-wait-trial.md).
+Each research/review client retains a 115-second total wall; intake clients use 65 seconds.
+The complete case/report pipeline shares one 150-second wall, including Core context/submission.
+The worker's HTTP operation timeout is 160 seconds, request wall 165 seconds and fenced lease
 180 seconds. Request timeouts apply to HTTP operations, not the total turn. The configured stale
 value is a base, not the effective worker threshold:
 pinned streaming can raise it for large contexts or a reasoning-model floor even with explicit
@@ -131,7 +131,7 @@ At minimum verify all of the following on the actual deployment host:
 1. `docker image inspect` shows the local pinned image tag built by the helper script.
 2. Both Hermes container logs contain a successful zero-tool preflight result with empty
    `enabledToolsets` and `toolSchemas`, and `callBudget.apiAttemptsPerCycle: 1`,
-   `requestOperationTimeoutSeconds: 55` and `configuredStaleTimeoutSeconds: 55`. These are
+   `requestOperationTimeoutSeconds: 90` and `configuredStaleTimeoutSeconds: 90`. These are
    resolved configuration values, not an effective stale threshold, total turn deadline or
    single upstream call guarantee.
 3. Neither Hermes container has a published host port.

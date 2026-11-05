@@ -621,8 +621,8 @@ def test_hermes_legal_profile_uses_the_explicit_custom_provider_contract() -> No
     assert "  model: ${HERMES_MODEL}" not in profile
     assert "agent:\n  api_max_retries: 1" in profile
     assert (
-        "    request_timeout_seconds: 55\n"
-        "    stale_timeout_seconds: 55"
+        "    request_timeout_seconds: 90\n"
+        "    stale_timeout_seconds: 90"
     ) in profile
     assert "max_tokens:" not in profile
     assert "reasoning_effort:" not in profile

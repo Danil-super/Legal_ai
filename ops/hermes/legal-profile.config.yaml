@@ -20,9 +20,9 @@ agent:
 
 providers:
   custom:
-    # Owner-approved bounded trial; outer stage65 / analysis115 fences are unchanged.
-    request_timeout_seconds: 55
-    stale_timeout_seconds: 55
+    # One attempt may wait for high reasoning; caller walls still bound every operation.
+    request_timeout_seconds: 90
+    stale_timeout_seconds: 90
 
 platform_toolsets:
   api_server: []
