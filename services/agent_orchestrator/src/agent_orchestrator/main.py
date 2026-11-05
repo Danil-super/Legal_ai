@@ -300,8 +300,8 @@ def create_app(
             ) from exc
         except LegalCoreProtocolError as exc:
             raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"code": "ANALYSIS_PROVIDER_UNAVAILABLE"},
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"code": "ANALYSIS_PROVIDER_INVALID"},
             ) from exc
         except (HermesProtocolError, ValueError, TypeError) as exc:
             raise HTTPException(

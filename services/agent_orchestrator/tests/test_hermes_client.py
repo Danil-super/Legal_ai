@@ -158,3 +158,21 @@ def test_nonstream_explicit_incomplete_finish_is_not_a_success(finish):
             with pytest.raises(HermesProtocolError):
                 await client.complete_json(system="fixed system", user="fixed fiction")
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status", [302, 400, 401, 403, 422])
+def test_permanent_http_rejection_is_not_transient_unavailability(status):
+    async def scenario():
+        def handler(request):
+            return httpx.Response(status, text="SYNTHETIC_PRIVATE_PROVIDER_DETAIL")
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            hermes = HermesClient(HermesEndpoint("http://hermes:8642", "synthetic-key"),
+                                  client=client)
+            with pytest.raises(HermesProtocolError) as caught:
+                await hermes.complete_json(system="synthetic system", user="synthetic user")
+            assert "SYNTHETIC_PRIVATE_PROVIDER_DETAIL" not in str(caught.value)
+            assert "hermes:8642" not in str(caught.value)
+            assert caught.value.__suppress_context__
+
+    asyncio.run(scenario())

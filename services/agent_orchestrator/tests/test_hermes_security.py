@@ -97,7 +97,7 @@ def test_total_timeout_closes_a_slow_response_stream() -> None:
 
 def test_redirect_is_not_followed_even_with_a_permissive_injected_client() -> None:
     response = httpx.Response(307, headers={"location": "http://other.invalid/collect"})
-    with pytest.raises(HermesUnavailable):
+    with pytest.raises(HermesProtocolError):
         asyncio.run(complete(response, redirects=True))
 
 

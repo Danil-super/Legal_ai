@@ -182,3 +182,39 @@ def test_retained_other_results_do_not_restart_agent_even_with_draft_flag(monkey
                                      worker.WorkerSettings("http://agent", "x" * 32))
 
     asyncio.run(scenario())
+
+
+def test_http_protocol_failure_is_not_retriable_service_unavailability(monkeypatch):
+    import httpx
+    from legal_core import analysis_job_worker as worker
+
+    finished = []
+    job = ClaimedJob(uuid4(), uuid4(), uuid4(), uuid4(), 1, uuid4())
+
+    async def execute(*args):
+        raise httpx.RemoteProtocolError("synthetic private protocol detail")
+
+    async def finish(_sessions, item, error):
+        finished.append(error)
+
+    monkeypatch.setattr(worker, "execute_job", execute)
+    monkeypatch.setattr(worker, "finish_job", finish)
+    asyncio.run(worker.process_job(None, job, None, SimpleNamespace()))
+    assert finished == ["ANALYSIS_PROVIDER_INVALID"]
+
+
+def test_worker_cancellation_does_not_schedule_a_normal_retry(monkeypatch):
+    from legal_core import analysis_job_worker as worker
+
+    job = ClaimedJob(uuid4(), uuid4(), uuid4(), uuid4(), 1, uuid4())
+
+    async def execute(*args):
+        raise asyncio.CancelledError
+
+    async def forbidden_finish(*args):
+        pytest.fail("cancelled consumer retains only the existing crash-recovery lease")
+
+    monkeypatch.setattr(worker, "execute_job", execute)
+    monkeypatch.setattr(worker, "finish_job", forbidden_finish)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(worker.process_job(None, job, None, SimpleNamespace()))

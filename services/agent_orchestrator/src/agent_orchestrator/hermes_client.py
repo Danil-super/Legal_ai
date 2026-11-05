@@ -297,6 +297,13 @@ class HermesClient:
                                     "Hermes response exceeded the envelope limit"
                                 )
                             body.extend(chunk)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in {408, 429} or exc.response.status_code >= 500:
+                    raise HermesUnavailable(reason=_unavailable_reason(exc)) from None
+                # Permanent auth/validation failures and redirects must not trigger retry.
+                raise HermesProtocolError("Hermes request was rejected") from None
+            except (httpx.ProtocolError, httpx.DecodingError):
+                raise HermesProtocolError("Hermes HTTP protocol failed") from None
             except (httpx.HTTPError, TimeoutError) as exc:
                 raise HermesUnavailable(reason=_unavailable_reason(exc)) from None
 
