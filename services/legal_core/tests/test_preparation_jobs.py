@@ -42,8 +42,9 @@ def test_v2_success_includes_a_typed_intermediate_or_ready_result(make_result):
 
 
 @pytest.mark.parametrize("make_result", [_needs_facts, _limited, _human_review, _ready])
-def test_core_to_gateway_reader_offers_a_pdf_only_for_verified_ready(make_result):
+def test_core_to_gateway_reader_attaches_a_pdf_only_for_verified_ready(make_result):
     from telegram_gateway.analysis_jobs_runtime import JobSnapshot, job_message
+    from telegram_gateway.completed_report import ready_report
     result = make_result()
     wire = PreparationJobResponse.model_validate({
         "resultVersion": 2, "jobId": str(uuid4()), "caseId": result["source"]["caseId"],
@@ -53,7 +54,8 @@ def test_core_to_gateway_reader_offers_a_pdf_only_for_verified_ready(make_result
     text, keyboard = job_message(snapshot)
     pdf_buttons = [button for row in keyboard.inline_keyboard for button in row
                    if button.callback_data.startswith("analysis:pdf:")]
-    assert bool(pdf_buttons) is (result["status"] == "READY")
+    assert not pdf_buttons  # A ready report is the attachment, not another download button.
+    assert (ready_report(snapshot) is not None) is (result["status"] == "READY")
     assert text
 
 

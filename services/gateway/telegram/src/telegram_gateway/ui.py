@@ -100,6 +100,7 @@ HELP_MESSAGE = (
     "/help — показать эту справку\n\n"
     "/whoami — показать Telegram ID\n"
     "/cancel — сохранить и выйти из заполнения\n"
+    "/cases — мои кейсы и отчёты\n"
     "/describe_case — быстро описать обезличенную ситуацию\n"
     "/cancel_quick — отменить быстрое описание\n\n"
     "/admin — панель владельца сервиса\n\n"
@@ -119,6 +120,7 @@ MAIN_MENU_CALLBACKS = {
     "case:start",
     "quick:start",
     "case:drafts",
+    "history:list:0",
     "privacy",
     "about",
     "account:id",
@@ -150,6 +152,7 @@ def main_menu_keyboard(
     if role == "CLINIC_LAWYER":
         lawyer_rows: list[list[InlineKeyboardButton]] = [
             [InlineKeyboardButton("📝 Создать кейс", callback_data="quick:start")],
+            [InlineKeyboardButton("📂 Мои кейсы", callback_data="history:list:0")],
             [InlineKeyboardButton("📂 Мои черновики", callback_data="case:drafts")],
             [
                 InlineKeyboardButton(
@@ -176,6 +179,7 @@ def main_menu_keyboard(
                 callback_data="quick:start",
             )
         ],
+        [InlineKeyboardButton("📂 Мои кейсы", callback_data="history:list:0")],
         [InlineKeyboardButton("📂 Мои черновики", callback_data="case:drafts")],
     ]
     if role in {"CLINIC_OWNER", "CLINIC_ADMIN"}:

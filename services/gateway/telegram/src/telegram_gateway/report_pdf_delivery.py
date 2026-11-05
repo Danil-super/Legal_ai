@@ -31,7 +31,7 @@ async def queue_report_pdf(
         context.application.bot_data["legal_editor_file_deliveries"] = queue
     keyboard = InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("← К результату / карточке", callback_data=return_callback)],
+            [InlineKeyboardButton("← К кейсу", callback_data=return_callback)],
             *back_keyboard().inline_keyboard,
         ]
     )
@@ -40,17 +40,12 @@ async def queue_report_pdf(
 
     async def deliver() -> None:
         report_id = await resolve_report()
-        await bot.send_message(
-            chat_id=actor_id,
-            text="📥 Готовлю PDF. Остальные меню доступны во время загрузки.",
-            reply_markup=keyboard,
-        )
         # This endpoint reauthorizes the report against the current actor/tenant as well.
         pdf = await client.download_pdf(report_id, actor_id)
         await bot.send_document(
             chat_id=actor_id,
-            document=InputFile(BytesIO(pdf), filename=f"report-{report_id}.pdf"),
-            caption="Канонический PDF-отчёт Legal Core.",
+            document=InputFile(BytesIO(pdf), filename="otchet.pdf"),
+            caption="📄 Документ по кейсу.",
             reply_markup=keyboard,
         )
 

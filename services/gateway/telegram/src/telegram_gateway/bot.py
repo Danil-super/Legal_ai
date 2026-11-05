@@ -414,7 +414,9 @@ async def _route_input_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     """
     query = update.callback_query
     callback = query.data if query is not None else None
-    if isinstance(callback, str) and callback.startswith(("analysis:pdf:", "esc:pdf:")):
+    if isinstance(callback, str) and callback.startswith((
+        "analysis:pdf:", "esc:pdf:", "history:pdf:",
+    )):
         # Read-only background file delivery must not cancel the active text-input mode.
         return
     message = update.effective_message
@@ -3152,7 +3154,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE | Non
         keyboard = back_keyboard()
     try:
         message = query.message
-        if message is not None and getattr(message, "caption", None) is None:
+        if message is not None and getattr(message, "document", None) is not None:
+            await _reply(update, caption, reply_markup=keyboard)
+        elif message is not None and getattr(message, "caption", None) is None:
             await query.edit_message_text(text=caption, reply_markup=keyboard)
         else:
             await query.edit_message_caption(caption=caption, reply_markup=keyboard)
