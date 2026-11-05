@@ -26,6 +26,11 @@ def test_lexical_batch_executes_one_guarded_statement(monkeypatch):
         assert "AS MATERIALIZED" in str(statement)
         assert "production_legal_fragments" in str(statement)
         assert str(statement).count("to_tsvector('russian', fragment_text)") == 1
+        # The query expression must be evaluated once per planned query, not per fragment.
+        assert str(statement).count("plainto_tsquery('russian', query)") == 1
+        assert "query_rows AS MATERIALIZED" in str(statement)
+        assert params["foundation_scopes"] == [False, False, False]
+        assert params["foundation_only"] is False
         assert params["queries"] == ["платные услуги", "возврат", "не найдено"]
         assert params["as_of_date"] == date(2026, 10, 12)
 
