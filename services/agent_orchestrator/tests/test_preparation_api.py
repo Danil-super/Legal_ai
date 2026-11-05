@@ -81,8 +81,10 @@ def test_v2_does_not_bypass_auth_lease_protocol_or_existing_deadline(failure, mo
             await asyncio.Event().wait()
         reasoning.reason = blocked
     response = client.post(f"/v1/cases/{CASE_ID}/analyze", headers=request_headers)
-    expected = {"auth": 403, "lease": 409, "protocol": 503, "timeout": 503}[failure]
+    expected = {"auth": 403, "lease": 409, "protocol": 502, "timeout": 503}[failure]
     assert response.status_code == expected
+    if failure == "protocol":
+        assert response.json() == {"detail": {"code": "ANALYSIS_PROVIDER_INVALID"}}
     assert "UNTRUSTED" not in response.text
     assert "report" not in response.json()
 
@@ -95,8 +97,8 @@ def test_opt_in_route_never_silently_downgrades_to_a_legacy_result():
         return _submission_response()
     core.submit_reasoning = wrong_version
     response = client.post(f"/v1/cases/{CASE_ID}/analyze", headers=headers())
-    assert response.status_code == 503
-    assert response.json() == {"detail": {"code": "ANALYSIS_PROVIDER_UNAVAILABLE"}}
+    assert response.status_code == 502
+    assert response.json() == {"detail": {"code": "ANALYSIS_PROVIDER_INVALID"}}
     assert reasoning.calls == 1
 
 
