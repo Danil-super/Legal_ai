@@ -48,22 +48,39 @@ def test_sol_high_is_model_scoped_and_keeps_secrets_unresolved() -> None:
     assert config["platform_toolsets"]["api_server"] == []
 
 
-def test_approved_provider_wait_fits_unchanged_outer_analysis_fences() -> None:
+def test_high_provider_wait_fits_profile_and_case_fences_without_extra_attempts() -> None:
     from agent_orchestrator.main import (
         ANALYSIS_WALL_TIMEOUT_SECONDS,
+        CASE_PIPELINE_WALL_TIMEOUT_SECONDS,
         HERMES_STAGE_TIMEOUT_SECONDS,
     )
 
     template = (ROOT / "ops/hermes/legal-profile.config.yaml").read_text()
     config = yaml.safe_load(renderer.render_profile(template, "gpt-6.1-sol"))
     custom = config["providers"]["custom"]
-    assert custom["request_timeout_seconds"] == 55
-    assert custom["stale_timeout_seconds"] == 55
+    assert custom["request_timeout_seconds"] == 90
+    assert custom["stale_timeout_seconds"] == 90
     assert HERMES_STAGE_TIMEOUT_SECONDS == 65
     assert ANALYSIS_WALL_TIMEOUT_SECONDS == 115
-    assert custom["request_timeout_seconds"] < HERMES_STAGE_TIMEOUT_SECONDS
-    assert 2 * custom["request_timeout_seconds"] < ANALYSIS_WALL_TIMEOUT_SECONDS
+    assert custom["request_timeout_seconds"] < ANALYSIS_WALL_TIMEOUT_SECONDS
+    assert ANALYSIS_WALL_TIMEOUT_SECONDS < CASE_PIPELINE_WALL_TIMEOUT_SECONDS == 150
+    # Intake retains its shorter caller wall and stream cancellation independently.
+    assert custom["request_timeout_seconds"] > HERMES_STAGE_TIMEOUT_SECONDS
     assert config["agent"]["api_max_retries"] == 1
     assert config["agent"]["reasoning_overrides"] == {"gpt-6.1-sol": "high"}
     assert config["memory"]["memory_enabled"] is False
     assert config["model"]["api_key"] == "${OPENAI_API_KEY}"
+
+
+def test_both_profiles_restart_when_the_mounted_profile_or_budget_guard_changes():
+    import hashlib
+
+    compose = yaml.safe_load((ROOT / "ops/hermes/docker-compose.hermes.yml").read_text())
+    files = {
+        "org.dental-legal-ai.hermes-profile-sha256": "ops/hermes/legal-profile.config.yaml",
+        "org.dental-legal-ai.hermes-budget-guard-sha256": "ops/hermes/assert_tool_free.py",
+    }
+    for service in ("hermes-researcher", "hermes-reviewer"):
+        labels = compose["services"][service]["labels"]
+        for label, filename in files.items():
+            assert labels[label] == hashlib.sha256((ROOT / filename).read_bytes()).hexdigest()

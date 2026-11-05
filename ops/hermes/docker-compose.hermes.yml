@@ -11,6 +11,8 @@ services:
     # Keep both labels equal to the launcher's SHA256; CI checks the actual bytes.
     labels:
       org.dental-legal-ai.hermes-launcher-sha256: 1ee2c42292ec67051702003253f70e35f641b9f7fffa0c5f9b2491fc1354658b
+      org.dental-legal-ai.hermes-profile-sha256: c660544a0de00f4e64ee4d9318621fdd66552a2f766f0b60c6880518604c370b
+      org.dental-legal-ai.hermes-budget-guard-sha256: df79121a78af0c592779a4a1b5453e289b5201b6d261991b55f2b958e57f50c6
     image: dental-legal-hermes:5fc308a70719a83cccdbba4c0e39c23f5a8239d5
     pull_policy: never
     user: "10000:10000"
@@ -57,6 +59,8 @@ services:
     profiles: [analysis]
     labels:
       org.dental-legal-ai.hermes-launcher-sha256: 1ee2c42292ec67051702003253f70e35f641b9f7fffa0c5f9b2491fc1354658b
+      org.dental-legal-ai.hermes-profile-sha256: c660544a0de00f4e64ee4d9318621fdd66552a2f766f0b60c6880518604c370b
+      org.dental-legal-ai.hermes-budget-guard-sha256: df79121a78af0c592779a4a1b5453e289b5201b6d261991b55f2b958e57f50c6
     image: dental-legal-hermes:5fc308a70719a83cccdbba4c0e39c23f5a8239d5
     pull_policy: never
     user: "10000:10000"

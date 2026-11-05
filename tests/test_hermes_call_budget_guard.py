@@ -19,7 +19,7 @@ def config(model="synthetic-model"):
     return {"model": {"provider": "custom", "default": model}, "agent": {"api_max_retries": 1}}
 
 
-def runtime_timeouts(monkeypatch, request=55, stale=55):
+def runtime_timeouts(monkeypatch, request=90, stale=90):
     module = ModuleType("hermes_cli.timeouts")
 
     def request_timeout(provider, model):
@@ -39,14 +39,14 @@ def test_guard_accepts_only_the_resolved_pinned_call_budget(monkeypatch):
     runtime_timeouts(monkeypatch)
     assert guard.assert_call_budget(config()) == {
         "apiAttemptsPerCycle": 1,
-        "requestOperationTimeoutSeconds": 55,
-        "configuredStaleTimeoutSeconds": 55,
+        "requestOperationTimeoutSeconds": 90,
+        "configuredStaleTimeoutSeconds": 90,
     }
 
 
 @pytest.mark.parametrize(("request_limit", "stale"), [
-    (None, 55), (1800, 55), (55, None), (55, 300), (True, 55),
-    (55, float("nan")), (55, 55.01), (55, True), (29, 29), (29, 55), (55, 29),
+    (None, 90), (1800, 90), (90, None), (90, 300), (True, 90),
+    (90, float("nan")), (90, 90.01), (90, True), (29, 29), (29, 90), (90, 29), (55, 55),
 ])
 def test_guard_rejects_missing_or_divergent_resolved_timeouts(monkeypatch, request_limit, stale):
     runtime_timeouts(monkeypatch, request=request_limit, stale=stale)
