@@ -1,13 +1,14 @@
 """Compact history navigation and Telegram callback-size boundaries."""
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 from telegram.ext import ApplicationHandlerStop
-from telegram_gateway.case_history_runtime import _pdf_callback, history_callback
+from telegram_gateway.case_history_runtime import _date, _pdf_callback, history_callback
 from telegram_gateway.clarification_intent import decode_clarification_callback
 
 
@@ -45,3 +46,7 @@ def test_historical_pdf_pointer_roundtrips_two_ids_within_telegram_limit():
     assert len(callback.encode()) <= 64
     pair = callback.split(":")[2]
     assert decode_clarification_callback("case:clarify:" + pair) == (case, report)
+
+
+def test_history_dates_follow_moscow_day_instead_of_the_server_utc_day():
+    assert _date(datetime.fromisoformat("2026-11-05T22:30:00+00:00")) == "06.11.2026"

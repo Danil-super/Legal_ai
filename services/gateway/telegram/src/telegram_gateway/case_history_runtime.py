@@ -4,6 +4,7 @@
 import re
 from datetime import datetime
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from legal_core.case_history_contracts import PAGE_SIZE, CaseHistoryDetail, CaseHistoryPage
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -33,7 +34,7 @@ _STATUSES = {
 
 
 def _date(value: datetime) -> str:
-    return value.strftime("%d.%m.%Y")
+    return value.astimezone(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%Y")
 
 
 def _pdf_callback(case_id: UUID, report_id: UUID, offset: int) -> str:
