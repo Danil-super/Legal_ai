@@ -6,7 +6,12 @@ from datetime import datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from legal_core.case_history_contracts import PAGE_SIZE, CaseHistoryDetail, CaseHistoryPage
+from legal_core.case_history_contracts import (
+    PAGE_SIZE,
+    CaseHistoryDeletion,
+    CaseHistoryDetail,
+    CaseHistoryPage,
+)
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     ApplicationHandlerStop,
@@ -54,14 +59,21 @@ async def _detail(context: ContextTypes.DEFAULT_TYPE, actor: int,
 
 
 async def _list(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                actor: int, offset: int) -> None:
+                actor: int, offset: int, *, notice: str = "") -> None:
     page = CaseHistoryPage.model_validate(await bot._legal_core(context)._json_request(
         "GET", f"/v1/case-history?offset={offset}", telegram_user_id=actor,
     ))
+    if not page.items and offset:
+        # A last-row deletion or an old pagination button must return to a real page.
+        offset = 0
+        page = CaseHistoryPage.model_validate(await bot._legal_core(context)._json_request(
+            "GET", "/v1/case-history?offset=0", telegram_user_id=actor,
+        ))
     rows = [[InlineKeyboardButton(
         f"{case.public_number} · {_STATUSES[case.status]} · {_date(case.created_at)}",
         callback_data=f"history:view:{case.id}:0",
-    )] for case in page.items]
+    ), InlineKeyboardButton("🗑 Удалить", callback_data=f"history:delete:{case.id}:{offset}")]
+        for case in page.items]
     nav = []
     if offset:
         nav.append(InlineKeyboardButton(
@@ -79,7 +91,24 @@ async def _list(update: Update, context: ContextTypes.DEFAULT_TYPE,
     )
     if not page.items:
         rows.insert(0, [InlineKeyboardButton("📝 Создать кейс", callback_data="quick:start")])
-    await bot._reply(update, text, reply_markup=InlineKeyboardMarkup(rows))
+    await bot._reply(update, (notice + "\n\n" if notice else "") + text,
+                     reply_markup=InlineKeyboardMarkup(rows))
+
+
+async def _confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                          actor: int, case_id: UUID, offset: int) -> None:
+    detail = await _detail(context, actor, case_id, 0)
+    await bot._reply(
+        update, f"🗑 Удалить кейс {detail.case.public_number}?\n\n"
+        "Кейс, его отчёты и приложения станут недоступны, в том числе юристу. "
+        "Отменить удаление нельзя.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "🗑 Да, удалить", callback_data=f"history:remove:{case_id}:{offset}",
+            )],
+            [InlineKeyboardButton("← Отмена", callback_data=f"history:list:{offset}")],
+        ]),
+    )
 
 
 async def _view(update: Update, context: ContextTypes.DEFAULT_TYPE,
@@ -138,6 +167,17 @@ async def history_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await _list(update, context, actor, offset)
         elif action == "view":
             await _view(update, context, actor, UUID(parts[2]), offset)
+        elif action == "delete":
+            await _confirm_delete(update, context, actor, UUID(parts[2]), offset)
+        elif action == "remove":
+            case_id = UUID(parts[2])
+            raw = await bot._legal_core(context)._json_request(
+                "DELETE", f"/v1/case-history/{case_id}", telegram_user_id=actor,
+            )
+            receipt = CaseHistoryDeletion.model_validate(raw)
+            if receipt.case_id != case_id:
+                raise ValueError("deleted case mismatch")
+            await _list(update, context, actor, offset, notice="Кейс удалён.")
         else:
             case_id, report_id = decode_clarification_callback("case:clarify:" + parts[2])
 
@@ -150,17 +190,31 @@ async def history_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
             await queue_report_pdf(context, actor_id=actor, resolve_report=resolve_report,
                                    return_callback=f"history:view:{case_id}:{offset}")
-    except (LegalCoreApiError, ValueError, IndexError):
-        await bot._reply(update, "Кейс или отчёт недоступен. Откройте список заново.",
-                         reply_markup=InlineKeyboardMarkup([
-                             [InlineKeyboardButton("📂 Мои кейсы", callback_data="history:list:0")],
-                         ]))
+    except LegalCoreApiError as exc:
+        if callback.startswith("history:remove:") and exc.status_code >= 500:
+            await bot._reply(update,
+                "Не удалось проверить удаление. Обновите список или повторите удаление — "
+                "повтор безопасен.", reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("Повторить удаление", callback_data=callback)],
+                    [InlineKeyboardButton("📂 Мои кейсы", callback_data="history:list:0")],
+                ]))
+            raise ApplicationHandlerStop from exc
+        await _unavailable(update)
+    except (ValueError, IndexError):
+        await _unavailable(update)
     raise ApplicationHandlerStop
+
+
+async def _unavailable(update: Update) -> None:
+    await bot._reply(update, "Кейс или отчёт недоступен. Откройте список заново.",
+                     reply_markup=InlineKeyboardMarkup([
+                         [InlineKeyboardButton("📂 Мои кейсы", callback_data="history:list:0")],
+                     ]))
 
 
 def install(application: bot.TelegramApplication) -> None:
     application.add_handler(CommandHandler("cases", history_command), group=-1)
     application.add_handler(CallbackQueryHandler(history_callback, pattern=re.compile(
-        r"^history:(?:list:[0-9]{1,6}|view:[0-9a-f-]{36}:[0-9]{1,6}|"
+        r"^history:(?:list:[0-9]{1,6}|(?:view|delete|remove):[0-9a-f-]{36}:[0-9]{1,6}|"
         r"pdf:[A-Za-z0-9_-]{43}:[0-9]{1,6})$",
     )), group=-1)
