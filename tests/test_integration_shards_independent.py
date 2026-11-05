@@ -57,7 +57,9 @@ def test_independent_required_aggregate_shell_gate_accepts_only_success(outcome)
         'timeout 180s python ops/ci/run_integration_shard.py --index "$SHARD_INDEX" --count 8'
     )
     assert not shard.get("continue-on-error", False)
-    assert shard["runs-on"] == "ubuntu-latest"
+    # Keep the OS compatible with the pinned Python; ubuntu-latest migrated
+    # to 26.04 before Python 3.13.7 builds were available for that image.
+    assert shard["runs-on"] == "ubuntu-24.04"
     assert "postgres" in shard["services"]
     assert shard["env"]["POSTGRES_INTEGRATION"] == "1"
     assert shard["env"]["MINIO_INTEGRATION"] == "1"
