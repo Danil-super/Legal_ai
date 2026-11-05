@@ -19,6 +19,7 @@ pytestmark = pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1",
 
 @pytest.mark.parametrize("outcome,reclaimed", [
     ("success", False), ("success", True), ("unavailable", False), ("timeout", False),
+    ("invalid", False),
 ])
 def test_crash_after_human_review_receipt_resumes_optional_agent_with_live_headers(
     routed_case, outcome, reclaimed,
@@ -49,7 +50,9 @@ def test_crash_after_human_review_receipt_resumes_optional_agent_with_live_heade
         assert read(routed_case, headers=dict(request.headers)).status_code == 200
         if outcome == "timeout":
             raise httpx.ReadTimeout("synthetic optional phase timeout")
-        return httpx.Response(200 if outcome == "success" else 503, json=early)
+        body = ({"detail": {"code": "ANALYSIS_SERVICE_UNAVAILABLE"}}
+                if outcome == "unavailable" else early)
+        return httpx.Response(200 if outcome == "success" else 503, json=body)
 
     async def operation(sessions):
         async with httpx.AsyncClient(transport=httpx.MockTransport(agent)) as client:
@@ -62,6 +65,8 @@ def test_crash_after_human_review_receipt_resumes_optional_agent_with_live_heade
                                          "WHERE id=:id"), {"id": job.id}).one()
         # Routing succeeded, but the separate optional-plan error must survive.
         expected_error = None if outcome == "success" else "ANALYSIS_SERVICE_UNAVAILABLE"
+        if outcome == "invalid":
+            expected_error = "ANALYSIS_PROVIDER_INVALID"
         assert tuple(stored) == ("SUCCEEDED", expected_error, None)
         assert connection.scalar(text("SELECT response_json FROM idempotency_records "
                                       "WHERE resource_type='CASE_PREPARATION'")) == receipt
