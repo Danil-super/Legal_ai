@@ -913,6 +913,8 @@ def create_case_router(
         if actor.role not in {"CLINIC_OWNER", "CLINIC_LAWYER"}:
             raise ApiError(status_code=403, code="LAWYER_REQUIRED", message="Lawyer role required")
         escalation = await _discussion_escalation(session, actor, escalation_id)
+        # Serialize with deletion/retention before locking immutable escalation history.
+        case = await _tenant_case(session, actor, escalation.case_id, for_update=True)
         await session.scalar(
             select(CaseEscalation)
             .where(
@@ -921,6 +923,7 @@ def create_case_router(
             )
             .with_for_update()
         )
+        _require_case_content_available(case)
         return escalation
 
     @router.post("/case-escalations/{escalation_id}/claim", response_model=EscalationDetailResponse)
@@ -1157,12 +1160,14 @@ def create_case_router(
         session: Session,
     ) -> EscalationDiscussionMessageResponse:
         actor = await resolve_actor(session, telegram_user_id)
-        await _discussion_escalation(session, actor, escalation_id)
+        escalation = await _discussion_escalation(session, actor, escalation_id)
+        case = await _tenant_case(session, actor, escalation.case_id, for_update=True)
         await session.scalar(
             select(CaseEscalation)
             .where(CaseEscalation.id == escalation_id, CaseEscalation.clinic_id == actor.clinic_id)
             .with_for_update()
         )
+        _require_case_content_available(case)
         state, _ = await _escalation_state(session, actor, escalation_id)
         if state == "RESOLVED":
             raise ApiError(
