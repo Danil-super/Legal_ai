@@ -279,7 +279,7 @@ async def fence_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     callback = update.callback_query.data if update.callback_query is not None else None
     text = bot._message_text(update) if update.callback_query is None else ""
     if isinstance(callback, str) and callback.startswith(
-        ("understanding:", "case:draft:", "analysis:pdf:", "esc:pdf:")
+        ("understanding:", "case:draft:", "analysis:pdf:", "esc:pdf:", "history:pdf:")
     ):
         return
     if not isinstance(callback, str) and not text.startswith("/"):
