@@ -134,6 +134,8 @@ class JobSnapshot:
     error_code: str | None
     result: dict[str, Any] | None
     result_version: int = 1
+    lawyer_draft_available: bool | None = None
+    lawyer_draft_error_code: str | None = None
 
     @classmethod
     def parse(cls, payload: dict[str, Any]) -> JobSnapshot:
@@ -147,6 +149,8 @@ class JobSnapshot:
                 prepared.result.model_dump(mode="json", by_alias=True)
                 if prepared.result is not None else None,
                 result_version=2,
+                lawyer_draft_available=prepared.lawyer_draft_available,
+                lawyer_draft_error_code=prepared.lawyer_draft_error_code,
             )
         try:
             job_id, case_id = UUID(str(payload["jobId"])), UUID(str(payload["caseId"]))
@@ -223,8 +227,9 @@ class AnalysisJobsClient:
     async def notifications(self) -> dict[str, Any]:
         return await self.request("GET", "/v1/internal/analysis-job-notifications")
 
-    async def ack(self, job_id: UUID, actor: int) -> None:
-        await self.request("POST", f"/v1/analysis-jobs/{job_id}/notification-ack", actor=actor)
+    async def ack(self, job_id: UUID, actor: int, *, message_id: int | None = None) -> None:
+        await self.request("POST", f"/v1/analysis-jobs/{job_id}/notification-ack", actor=actor,
+                           payload={"messageId": message_id} if message_id is not None else None)
 
 
 def _client(context: ContextTypes.DEFAULT_TYPE) -> AnalysisJobsClient:
@@ -307,7 +312,30 @@ def _preparation_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
             "Юридические рекомендации не сформированы."
         )
     else:
-        text = "Кейс направлен юристу. Дальнейшие рекомендации подготовим после его проверки."
+        if job.lawyer_draft_available:
+            text = ("План ИИ подготовлен: правовая оценка, нормы и действия. "
+                    "Юристу нужно его проверить.")
+        elif job.lawyer_draft_error_code == "ANALYSIS_DATE_UNCERTAIN":
+            text = ("План ИИ пока не готов: не указана точная дата события. "
+                    "Она нужна для выбора действовавших норм. "
+                    "Уточните дату в заполненной копии кейса. "
+                    "Исходный кейс уже передан юристу и сохранён.")
+            rows.append([InlineKeyboardButton(
+                "📅 Уточнить дату для плана",
+                callback_data=encode_preparation_callback(job.case_id, result.source.operation_id),
+            )])
+        elif job.lawyer_draft_available is False:
+            reason = {
+                "LEGAL_EVIDENCE_UNAVAILABLE": "нет утверждённых норм на дату события",
+                "LAWYER_DRAFT_CONTEXT_INVALID": "в описании обнаружены персональные данные",
+                "LAWYER_DRAFT_NO_SUPPORTED_CLAIMS": "не удалось подтвердить выводы по источникам",
+            }.get(job.lawyer_draft_error_code or "", "анализ не удалось завершить")
+            text = f"План ИИ пока не готов: {reason}. Кейс сохранён и направлен юристу."
+            rows.append([InlineKeyboardButton(
+                "Повторить подготовку плана", callback_data=f"case:analyze:{job.case_id}",
+            )])
+        else:
+            text = "Кейс направлен юристу. Дальнейшие рекомендации подготовим после его проверки."
         rows.insert(0, [InlineKeyboardButton(
             "⚖️ Карточка юриста", callback_data=f"case:escalation:{result.escalation_id}",
         )])
@@ -419,8 +447,7 @@ async def enqueue_analysis(
                 raise ValueError("analysis response case mismatch")
             await _edit_status(context, actor, placeholder.message_id, job)
             _track_activity(context, actor, job)
-        # Do not ACK here: duplicate submission may refer to a different persisted placeholder.
-        # The notifier will idempotently update that original message before acknowledging it.
+        # Only the notifier ACKs, bound to the latest persisted request message.
     except (LegalCoreApiError, ValueError) as exc:
         from telegram_gateway.analysis_runtime import analysis_error_message
 
@@ -580,7 +607,7 @@ async def notify_completed_analyses(context: ContextTypes.DEFAULT_TYPE) -> None:
                             raise
                         # Deleted placeholder: durable result is available via the original CTA.
                         logger.info("analysis notification placeholder unavailable")
-                    await client.ack(job_id, actor)
+                    await client.ack(job_id, actor, message_id=message_id)
             except RetryAfter as exc:
                 seconds = (
                     exc.retry_after.total_seconds()

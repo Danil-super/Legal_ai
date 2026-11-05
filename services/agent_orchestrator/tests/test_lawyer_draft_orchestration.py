@@ -71,6 +71,10 @@ def scenario(monkeypatch):
             assert request.headers["X-Analysis-Job-Token"] == str(TOKEN)
             assert request.headers["X-Agent-Internal-Key"] == INTERNAL_KEY
             assert request.headers["X-Telegram-User-Id"] == "123"
+            if state["fault"] == "date" and path.endswith("lookup"):
+                return httpx.Response(422, json={"error": {
+                    "code": "ANALYSIS_DATE_UNCERTAIN", "message": "SYNTHETIC_PRIVATE_DETAIL",
+                }})
             if state["fault"] == path.rsplit("/", 1)[-1]:
                 return httpx.Response(409, json={"error": {
                     "code": "SYNTHETIC_PRIVATE_CODE", "message": "SYNTHETIC_PRIVATE_DETAIL",
@@ -159,9 +163,20 @@ def test_optional_draft_failures_preserve_original_human_review(scenario, fault,
 
 def test_abstention_never_submits_a_fake_plan(scenario):
     scenario[1]["model"] = proposal([])
-    assert analyze(scenario).json() == scenario[3]
+    response = analyze(scenario)
+    assert response.json() == scenario[3]
+    assert response.headers["X-Lawyer-Draft-Error"] == "LAWYER_DRAFT_NO_SUPPORTED_CLAIMS"
     assert scenario[1]["retained"] is None
     assert not any(host == "reviewer.test" for host, *_ in scenario[2])
+
+
+def test_uncertain_date_survives_private_transport_without_leaking_details(scenario):
+    scenario[1]["fault"] = "date"
+    response = analyze(scenario)
+    assert response.status_code == 200 and response.json() == scenario[3]
+    assert response.headers["X-Lawyer-Draft-Error"] == "ANALYSIS_DATE_UNCERTAIN"
+    assert "SYNTHETIC_PRIVATE" not in str(response.headers) + response.text
+    assert not any(host in {"researcher.test", "reviewer.test"} for host, *_ in scenario[2])
 
 
 @pytest.mark.parametrize("flag", [None, "false", "0", "off", "invalid"])

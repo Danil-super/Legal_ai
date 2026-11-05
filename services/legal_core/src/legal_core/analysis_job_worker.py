@@ -73,7 +73,7 @@ async def execute_job(
     job: ClaimedJob,
     client: httpx.AsyncClient,
     settings: WorkerSettings,
-) -> None:
+) -> str | None:
     async with sessions() as session:
         actor = await resolve_actor(session, job.telegram_user_id)
         if actor.clinic_id != job.clinic_id or actor.membership_id != job.actor_membership_id:
@@ -88,11 +88,11 @@ async def execute_job(
             if retained is not None and not _resume_optional_lawyer_draft(
                 stored.result_version, retained,
             ):
-                return  # Keep completed reports/clarifications and the default path model-free.
+                return None  # Keep completed reports/clarifications model-free.
         current = await require_job_lease(session, actor, job.case_id, job.id, job.lease_token)
         result_version = current.result_version
         if retained is not None and not _resume_optional_lawyer_draft(result_version, retained):
-            return  # Recheck opt-in/version after the actual lease lock wait.
+            return None  # Recheck opt-in/version after the actual lease lock wait.
     require_analysis_running()
     headers = {
         "X-Agent-Internal-Key": settings.internal_key,
@@ -120,6 +120,13 @@ async def execute_job(
         except (ValueError, AttributeError):
             pass
         raise ApiError(status_code=response.status_code, code=code, message="Analysis failed")
+    draft_error = response.headers.get("X-Lawyer-Draft-Error")
+    if draft_error is not None:
+        return draft_error if draft_error in {
+            "ANALYSIS_DATE_UNCERTAIN", "LEGAL_EVIDENCE_UNAVAILABLE",
+            "LAWYER_DRAFT_CONTEXT_INVALID", "LAWYER_DRAFT_NO_SUPPORTED_CLAIMS",
+        } else "LAWYER_DRAFT_UNAVAILABLE"
+    return None
 
 
 async def finish_job(
@@ -149,7 +156,14 @@ async def finish_job(
             # A corrupt/expired retained result is terminal, not an endless RUNNING lease.
             result, error = None, exc.code
         job.state = "SUCCEEDED" if result is not None else "FAILED"
-        job.error_code = None if result is not None else error or "ANALYSIS_RESULT_MISSING"
+        optional_failure = (
+            isinstance(result, PreparationResult)
+            and _resume_optional_lawyer_draft(job.result_version, result)
+            and error is not None
+        )
+        job.error_code = error if optional_failure else (
+            None if result is not None else error or "ANALYSIS_RESULT_MISSING"
+        )
         job.lease_token = None
         job.lease_until = None
         job.updated_at = datetime.now(UTC)
@@ -165,7 +179,7 @@ async def process_job(
     started = time.monotonic()
     error = None
     try:
-        await execute_job(sessions, job, client, settings)
+        error = await execute_job(sessions, job, client, settings)
     except ApiError as exc:
         error = exc.code
     except (httpx.HTTPError, TimeoutError):

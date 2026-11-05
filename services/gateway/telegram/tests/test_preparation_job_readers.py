@@ -96,7 +96,8 @@ class Core:
             {"jobId": str(JOB), "telegramUserId": 777, "messageId": 456},
         ]}
 
-    async def ack(self, job, actor):
+    async def ack(self, job, actor, *, message_id=None):
+        assert message_id == 456
         self.acked.append((job, actor))
 
 

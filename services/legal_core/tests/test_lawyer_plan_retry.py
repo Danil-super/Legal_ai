@@ -46,7 +46,27 @@ def test_retry_only_requeues_missing_plan_and_keeps_the_same_durable_intent(
                              {"id": job.id}) is None
             row = db.execute(text("SELECT attempts,message_id FROM analysis_jobs WHERE id=:id"),
                              {"id": job.id}).one()
-            assert row.attempts == 0 and row.message_id == 45
+            assert row.attempts == 0 and row.message_id == 100
+
+
+def test_notification_ack_is_bound_to_the_latest_request_message(routed_case):
+    client, actor, _, _, _, job, *_ = routed_case
+    engine = routed_case[9]
+    with engine.begin() as db:
+        db.execute(text("UPDATE analysis_jobs SET state='SUCCEEDED',lease_token=NULL,"
+                        "lease_until=NULL,message_id=100,notified_at=NULL WHERE id=:id"),
+                   {"id": job.id})
+    path = f"/v1/analysis-jobs/{job.id}/notification-ack"
+    stale = client.post(path, headers=actor_headers(actor), json={"messageId": 45})
+    assert stale.status_code == 204, stale.text
+    with engine.connect() as db:
+        assert db.scalar(text("SELECT notified_at FROM analysis_jobs WHERE id=:id"),
+                         {"id": job.id}) is None
+    delivered = client.post(path, headers=actor_headers(actor), json={"messageId": 100})
+    assert delivered.status_code == 204
+    with engine.connect() as db:
+        assert db.scalar(text("SELECT notified_at FROM analysis_jobs WHERE id=:id"),
+                         {"id": job.id}) is not None
 
 
 def test_delayed_notification_ack_cannot_mark_a_requeued_job_delivered(routed_case):

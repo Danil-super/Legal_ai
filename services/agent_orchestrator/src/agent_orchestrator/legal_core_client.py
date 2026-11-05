@@ -186,6 +186,7 @@ class LegalCoreClient:
         job_id: UUID, job_token: UUID, suffix: str, body: dict[str, Any],
     ) -> dict[str, Any] | None:
         failure_status = None
+        failure_code = "LAWYER_DRAFT_REFUSED"
         try:
             if job_id != idempotency_key or job_id is None or job_token is None:
                 raise ValueError("a paired running job lease is required")
@@ -198,10 +199,13 @@ class LegalCoreClient:
             )
         except LegalCoreError as error:
             failure_status = error.status_code
+            if error.code in {"ANALYSIS_DATE_UNCERTAIN", "LEGAL_EVIDENCE_UNAVAILABLE",
+                              "LAWYER_DRAFT_CONTEXT_INVALID"}:
+                failure_code = error.code
         except (LegalCoreProtocolError, ValueError, TypeError, AttributeError):
             pass
         if failure_status is not None:
-            raise LegalCoreError("LAWYER_DRAFT_REFUSED", "Private draft request refused",
+            raise LegalCoreError(failure_code, "Private draft request refused",
                                  status_code=failure_status)
         raise LegalCoreProtocolError("private draft request contract mismatch")
 

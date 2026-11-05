@@ -10,7 +10,7 @@ from legal_core.analysis_job_worker import WorkerSettings, execute_job, process_
 from legal_core.analysis_jobs import claim_job
 from legal_core.case_api import ApiError
 from test_lawyer_draft_context import isolated_database as isolated_database
-from test_lawyer_draft_context import read, routed_case as routed_case, run
+from test_lawyer_draft_context import actor_headers, read, routed_case as routed_case, run
 from test_verified_copy_analysis_e2e import INTERNAL_KEY
 
 pytestmark = pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1",
@@ -60,13 +60,20 @@ def test_crash_after_human_review_receipt_resumes_optional_agent_with_live_heade
     with owner.connect() as connection:
         stored = connection.execute(text("SELECT state,error_code,lease_token FROM analysis_jobs "
                                          "WHERE id=:id"), {"id": job.id}).one()
-        assert tuple(stored) == ("SUCCEEDED", None, None)
+        # Routing succeeded, but the separate optional-plan error must survive.
+        expected_error = None if outcome == "success" else "ANALYSIS_SERVICE_UNAVAILABLE"
+        assert tuple(stored) == ("SUCCEEDED", expected_error, None)
         assert connection.scalar(text("SELECT response_json FROM idempotency_records "
                                       "WHERE resource_type='CASE_PREPARATION'")) == receipt
         assert connection.scalar(text("SELECT count(*) FROM escalation_notifications")) == (
             notifications
         )
         assert connection.scalar(text("SELECT count(*) FROM case_reports")) == 0
+    status = routed_case[0].get(f"/v1/analysis-jobs/{job.id}", headers=actor_headers(actor))
+    assert status.status_code == 200, status.text
+    assert status.json()["result"] == early and status.json()["errorCode"] is None
+    assert status.json()["lawyerDraftAvailable"] is False
+    assert status.json()["lawyerDraftErrorCode"] == "LAWYER_DRAFT_UNAVAILABLE"
 
 
 def test_retained_human_review_does_not_restart_agent_when_feature_is_off(

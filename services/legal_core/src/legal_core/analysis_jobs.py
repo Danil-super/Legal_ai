@@ -10,7 +10,7 @@ import hmac
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header
@@ -28,7 +28,11 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
-from legal_core.analysis_contracts import AnalysisSubmissionResponse, PreparationResult
+from legal_core.analysis_contracts import (
+    AnalysisSubmissionResponse,
+    LawyerDraftErrorCode,
+    PreparationResult,
+)
 from legal_core.analysis_contracts import PreparationJobResponse as PreparationJobResponse
 from legal_core.analysis_safe_stop import require_analysis_running
 from legal_core.case_api import (
@@ -215,11 +219,34 @@ async def _response(session: AsyncSession, job: AnalysisJob) -> AnalysisJobRecei
     if job.result_version == 2:
         assert result is None or isinstance(result, PreparationResult)
         missing = result is None and job.state == "SUCCEEDED"
+        draft_available, draft_error = None, None
+        if (result is not None and isinstance(result.root, HumanReviewResult)
+                and job.state in {"SUCCEEDED", "FAILED"} and lawyer_plans_enabled()):
+            draft_available = await has_lawyer_plan(
+                session, clinic_id=job.clinic_id, case_id=job.case_id,
+            )
+            if not draft_available:
+                draft_error = job.error_code if job.error_code in {
+                    "ANALYSIS_DATE_UNCERTAIN", "LEGAL_EVIDENCE_UNAVAILABLE",
+                    "LAWYER_DRAFT_CONTEXT_INVALID", "LAWYER_DRAFT_NO_SUPPORTED_CLAIMS",
+                } else "LAWYER_DRAFT_UNAVAILABLE"
+                # Older attempts swallowed the reason. Recover only a deterministic
+                # date gate from the current confirmed facts, without model calls/writes.
+                from legal_core.analysis_api import _analysis_date
+                from legal_core.case_api import _current_fact_rows, _domain_facts
+
+                try:
+                    _analysis_date(_domain_facts(await _current_fact_rows(session, job.case_id)))
+                except ApiError as error:
+                    if error.code == "ANALYSIS_DATE_UNCERTAIN":
+                        draft_error = "ANALYSIS_DATE_UNCERTAIN"
         return PreparationJobResponse(
             resultVersion=2, jobId=job.id, caseId=job.case_id,
             state="SUCCEEDED" if result else "FAILED" if missing else job.state,
             errorCode=None if result else "ANALYSIS_RESULT_MISSING" if missing else job.error_code,
             result=result,
+            lawyerDraftAvailable=draft_available,
+            lawyerDraftErrorCode=cast(LawyerDraftErrorCode | None, draft_error),
         )
     assert result is None or isinstance(result, AnalysisSubmissionResponse)
     return AnalysisJobResponse(
@@ -344,6 +371,7 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
                     latest.attempts = 0  # A new explicit retry gets the existing automatic budget.
                     latest.error_code = latest.lease_token = latest.lease_until = None
                     latest.notified_at = None
+                    latest.message_id = payload.message_id
                     latest.updated_at = datetime.now(UTC)
                     session.add(_audit(
                         actor=actor, action="LAWYER_DRAFT_REQUEUED", resource_type="CASE",
@@ -364,6 +392,12 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
             if result_version == 2 and latest.result_version != 2:
                 raise ApiError(status_code=409, code="ANALYSIS_RESULT_VERSION_CONFLICT",
                                message="Existing analysis uses an incompatible result format")
+            if latest.state in {"QUEUED", "RUNNING"}:
+                latest.message_id = payload.message_id
+                latest.notified_at = None
+                response = await _response(session, latest)
+                await session.commit()
+                return response
             return await _response(session, latest)
         from legal_core.analysis_api import _require_analysis_eligible_case
 
@@ -400,11 +434,14 @@ def create_analysis_jobs_router(sessions: async_sessionmaker[AsyncSession]) -> A
 
     @router.post("/analysis-jobs/{job_id}/notification-ack", status_code=204)
     async def ack(
-        job_id: UUID, telegram_user_id: TelegramUserId, session: AsyncSession = session_dep
+        job_id: UUID, telegram_user_id: TelegramUserId, session: AsyncSession = session_dep,
+        payload: AnalysisJobRequest | None = None,
     ) -> None:
         actor = await resolve_actor(session, telegram_user_id)
         job = await owned_job(session, actor, job_id, for_update=True)
-        if job.state in {"SUCCEEDED", "FAILED"}:
+        if job.state in {"SUCCEEDED", "FAILED"} and (
+            payload is None or payload.message_id == job.message_id
+        ):
             job.notified_at = datetime.now(UTC)
             await session.commit()
 

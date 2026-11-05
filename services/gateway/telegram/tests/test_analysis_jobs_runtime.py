@@ -46,7 +46,8 @@ class Server:
             else [{"jobId": str(JOB), "telegramUserId": 777, "messageId": 123}]
         }
 
-    async def ack(self, job, actor):
+    async def ack(self, job, actor, *, message_id=None):
+        assert message_id == 123
         self.acked.append((job, actor))
 
 

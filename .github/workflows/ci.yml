@@ -14,7 +14,7 @@ jobs:
     uses: ./.github/workflows/security.yml
 
   quality:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -211,7 +211,7 @@ jobs:
           test "$PRODUCTION_ANALYSIS_COMPOSE_OUTCOME" = success
 
   postgres-integration-shard:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -312,7 +312,7 @@ jobs:
         run: timeout 180s python ops/ci/run_integration_shard.py --index "$SHARD_INDEX" --count 8
 
   postgres-integration:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     needs: [postgres-integration-shard]
     if: always()
@@ -328,7 +328,7 @@ jobs:
     # Security is enabled. Dependency vulnerability scanning remains mandatory in `quality`.
     # Enable this guarded job only after the repository has that service: CODEQL_ENABLED=true.
     if: vars.CODEQL_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -357,7 +357,7 @@ jobs:
       needs.postgres-integration.result == 'success' &&
       needs.security.result == 'success' &&
       (needs.codeql.result == 'success' || needs.codeql.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     concurrency:
       group: dental-legal-ai-production
