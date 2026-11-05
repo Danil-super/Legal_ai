@@ -32,7 +32,12 @@ def test_ready_plan_opens_the_actual_ai_plan():
 
     text, markup = job_message(JobSnapshot.parse(payload(lawyerDraftAvailable=True)))
     assert "план" in text.lower() and "подготовлен" in text.lower()
-    assert any("План ИИ" in button.text for row in markup.inline_keyboard for button in row)
+    assert any(button.callback_data.startswith("case:escalation:")
+               for row in markup.inline_keyboard for button in row)
+    # The escalation card owns actor-aware plan controls: an admin may not read
+    # an unapproved plan, whereas its lawyer creator can.
+    assert not any(button.callback_data.startswith("lawplan:")
+                   for row in markup.inline_keyboard for button in row)
 
 
 @pytest.mark.parametrize("changes", [

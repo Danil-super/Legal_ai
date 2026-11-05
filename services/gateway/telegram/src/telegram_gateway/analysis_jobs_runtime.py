@@ -315,9 +315,6 @@ def _preparation_message(job: JobSnapshot) -> tuple[str, InlineKeyboardMarkup]:
         if job.lawyer_draft_available:
             text = ("План ИИ подготовлен: правовая оценка, нормы и действия. "
                     "Юристу нужно его проверить.")
-            rows.append([InlineKeyboardButton(
-                "📋 План ИИ", callback_data=f"lawplan:open:{result.escalation_id}",
-            )])
         elif job.lawyer_draft_error_code == "ANALYSIS_DATE_UNCERTAIN":
             text = ("План ИИ пока не готов: не указана точная дата события. "
                     "Она нужна для выбора действовавших норм. "
