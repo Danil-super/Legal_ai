@@ -251,7 +251,7 @@ def test_private_context_cannot_rebind_the_routed_escalation(scenario, fault):
 
 
 def test_short_parent_budget_preserves_the_durable_receipt(scenario, monkeypatch):
-    monkeypatch.setattr("agent_orchestrator.main.ANALYSIS_WALL_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setattr("agent_orchestrator.main.CASE_PIPELINE_WALL_TIMEOUT_SECONDS", 0.5)
     assert analyze(scenario).json() == scenario[3]
     assert len(scenario[2]) == 1
 
@@ -263,6 +263,6 @@ def test_overall_deadline_after_routing_still_returns_the_committed_receipt(scen
         await asyncio.Event().wait()
 
     monkeypatch.setattr("agent_orchestrator.main.maybe_generate_lawyer_draft", delayed_optional)
-    monkeypatch.setattr("agent_orchestrator.main.ANALYSIS_WALL_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr("agent_orchestrator.main.CASE_PIPELINE_WALL_TIMEOUT_SECONDS", 0.02)
     response = analyze(scenario)
     assert response.status_code == 200 and response.json() == scenario[3]

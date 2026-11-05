@@ -27,11 +27,12 @@ def _stream(body):
                           headers={"content-type": "text/event-stream"})
 
 
-def _exercise(monkeypatch, research_delay, review_delay):
+def _exercise(monkeypatch, research_delay, review_delay, *, case_wall=2):
     # Keep the actual nested timeout/streaming/cancellation code, with a short
     # 1s former per-call cap and a 2s unchanged overall wall for the regression.
     monkeypatch.setattr(main, "HERMES_STAGE_TIMEOUT_SECONDS", 1)
     monkeypatch.setattr(main, "ANALYSIS_WALL_TIMEOUT_SECONDS", 2)
+    monkeypatch.setattr(main, "CASE_PIPELINE_WALL_TIMEOUT_SECONDS", case_wall, raising=False)
     stages, cancelled = [], []
 
     async def respond(request):
@@ -81,6 +82,13 @@ def test_reviewer_receives_remaining_wall_not_a_fresh_whole_budget(monkeypatch):
     assert cancelled == ["reviewer.test"] and core.submit_calls == 0
 
 
+def test_case_pipeline_has_room_for_both_unchanged_profile_caps(monkeypatch):
+    response, core, stages, cancelled = _exercise(monkeypatch, 1.1, 1.1, case_wall=3)
+    assert response.status_code == 200, response.text
+    assert core.submit_calls == 1
+    assert stages == ["researcher.test", "reviewer.test"] and not cancelled
+
+
 @pytest.mark.parametrize("component", ["understanding", "answer_understanding"])
 def test_intake_still_uses_separate_shorter_client(component):
     dependencies = main.build_dependencies(_settings())
@@ -89,3 +97,16 @@ def test_intake_still_uses_separate_shorter_client(component):
     assert intake is not dependencies.reasoning._researcher
     assert dependencies.reasoning._researcher.endpoint.timeout_seconds == 115
     assert dependencies.reasoning._reviewer.endpoint.timeout_seconds == 115
+
+
+def test_case_budget_keeps_transport_and_fenced_lease_margins():
+    from legal_core.analysis_job_worker import (
+        ANALYSIS_HTTP_TIMEOUT_SECONDS,
+        ANALYSIS_REQUEST_WALL_TIMEOUT_SECONDS,
+    )
+
+    assert main.CASE_PIPELINE_WALL_TIMEOUT_SECONDS == 150
+    assert (main.CASE_PIPELINE_WALL_TIMEOUT_SECONDS < ANALYSIS_HTTP_TIMEOUT_SECONDS
+            < ANALYSIS_REQUEST_WALL_TIMEOUT_SECONDS <= 165)
+    # The installed database claim function grants 180 s, independent of HTTP keepalives.
+    assert 180 - ANALYSIS_REQUEST_WALL_TIMEOUT_SECONDS >= 15

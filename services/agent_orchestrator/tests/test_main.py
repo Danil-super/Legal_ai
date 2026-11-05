@@ -300,7 +300,7 @@ def test_whole_analysis_deadline_cancels_each_stage_and_logs_no_private_detail(
     monkeypatch, caplog, stage,
 ):
     from agent_orchestrator import main
-    monkeypatch.setattr(main, "ANALYSIS_WALL_TIMEOUT_SECONDS", 0.02, raising=False)
+    monkeypatch.setattr(main, "CASE_PIPELINE_WALL_TIMEOUT_SECONDS", 0.02, raising=False)
     client, legal_core, reasoning = _client()
     cancelled = []
 
@@ -338,7 +338,7 @@ def test_whole_analysis_deadline_cancels_each_stage_and_logs_no_private_detail(
 
 def test_analysis_wall_budget_is_shared_not_reset_between_stages(monkeypatch):
     from agent_orchestrator import main
-    monkeypatch.setattr(main, "ANALYSIS_WALL_TIMEOUT_SECONDS", 0.03, raising=False)
+    monkeypatch.setattr(main, "CASE_PIPELINE_WALL_TIMEOUT_SECONDS", 0.03, raising=False)
     client, legal_core, reasoning = _client()
     cancelled = []
 
@@ -368,7 +368,7 @@ def test_analysis_wall_budget_is_shared_not_reset_between_stages(monkeypatch):
 def test_whole_deadline_closes_in_progress_hermes_http_stream(monkeypatch):
     from agent_orchestrator import main
     from agent_orchestrator.hermes_client import HermesClient, HermesEndpoint
-    monkeypatch.setattr(main, "ANALYSIS_WALL_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr(main, "CASE_PIPELINE_WALL_TIMEOUT_SECONDS", 0.02)
     client, legal_core, reasoning = _client()
 
     class WaitingStream(httpx.AsyncByteStream):
