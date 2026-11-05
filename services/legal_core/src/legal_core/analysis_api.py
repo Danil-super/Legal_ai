@@ -36,6 +36,7 @@ from legal_core.case_material_context import (
     CaseMaterialContextState, load_case_material_context, require_case_material_context_current,
 )
 from legal_core.analysis_safe_stop import require_analysis_running
+from legal_core.analysis_source_freshness import require_analysis_sources_current
 from legal_core.api_contracts import LegalFragmentResponse, ReportResponse
 from legal_core.case_api import (
     ActorContext,
@@ -154,11 +155,12 @@ async def _recheck_submission_lease(
 
 async def _commit_analysis_result(
     session: AsyncSession, state: AnalysisState, *, actor: ActorContext,
-    job_id: UUID | None, job_token: UUID | None,
+    telegram_user_id: int, job_id: UUID | None, job_token: UUID | None,
 ) -> None:
     # Flush risk/report/receipt writes (including their actual FK waits) before
     # the last wall-clock/source check. No new writes or waits may follow it.
     await session.flush()
+    await require_analysis_sources_current(session, actor=actor, state=state)
     await require_reference_analogy_trace_current(
         session, case=state.case, facts=state.facts,
         expected_trace=state.reference_example_trace_sha256,
@@ -166,6 +168,9 @@ async def _commit_analysis_result(
     await require_case_material_context_current(
         session, clinic_id=state.case.clinic_id, case_id=state.case.id,
         state=state.case_material_context,
+    )
+    await recheck_submission_access(
+        session, actor=actor, telegram_user_id=telegram_user_id, case=state.case,
     )
     await _recheck_submission_lease(
         session, actor=actor, case_id=state.case.id, job_id=job_id, job_token=job_token,
@@ -654,6 +659,9 @@ def create_analysis_router(
             request_hash=request_hash, result=prepared,
         )
         await session.flush()
+        await recheck_submission_access(
+            session, actor=actor, telegram_user_id=telegram_user_id, case=case,
+        )
         await _recheck_submission_lease(
             session, actor=actor, case_id=case.id,
             job_id=x_analysis_job_id, job_token=x_analysis_job_token,
@@ -814,7 +822,7 @@ def create_analysis_router(
                     idempotency_key=idempotency_key, request_hash=request_hash, result=preparation,
                 )
                 await _commit_analysis_result(
-                    session, state, actor=actor,
+                    session, state, actor=actor, telegram_user_id=telegram_user_id,
                     job_id=x_analysis_job_id, job_token=x_analysis_job_token,
                 )
                 return preparation
@@ -899,7 +907,7 @@ def create_analysis_router(
                 idempotency_key=idempotency_key, request_hash=request_hash, result=ready,
             )
             await _commit_analysis_result(
-                session, state, actor=actor,
+                session, state, actor=actor, telegram_user_id=telegram_user_id,
                 job_id=x_analysis_job_id, job_token=x_analysis_job_token,
             )
             return ready
@@ -957,7 +965,7 @@ def create_analysis_router(
             )
         )
         await _commit_analysis_result(
-            session, state, actor=actor,
+            session, state, actor=actor, telegram_user_id=telegram_user_id,
             job_id=x_analysis_job_id, job_token=x_analysis_job_token,
         )
         return response_payload
