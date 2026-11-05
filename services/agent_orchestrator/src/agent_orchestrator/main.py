@@ -52,9 +52,11 @@ InternalKeyHeader = Annotated[
 TelegramUserIdHeader = Annotated[int, Header(alias="X-Telegram-User-Id", gt=0)]
 IdempotencyKeyHeader = Annotated[UUID, Header(alias="Idempotency-Key")]
 logger = logging.getLogger(__name__)
-# One shared budget leaves margins inside the worker's unchanged HTTP 120 s,
-# wall 125 s and fenced lease 180 s. HTTP operation timeouts are not total walls.
+# Keep profile/intake limits separate from the complete two-pass report pipeline.
+# The case wall leaves margins inside worker HTTP 160 s, wall 165 s and lease 180 s.
+# HTTP operation timeouts are not total walls.
 ANALYSIS_WALL_TIMEOUT_SECONDS = 115
+CASE_PIPELINE_WALL_TIMEOUT_SECONDS = 150
 HERMES_STAGE_TIMEOUT_SECONDS = 65
 
 
@@ -214,7 +216,7 @@ def create_app(
             )
         retained_result: PreparationResult | None = None
         try:
-            async with asyncio.timeout(ANALYSIS_WALL_TIMEOUT_SECONDS) as deadline:
+            async with asyncio.timeout(CASE_PIPELINE_WALL_TIMEOUT_SECONDS) as deadline:
                 job_headers: JobLeaseHeaders = (
                     {"job_id": x_analysis_job_id, "job_token": x_analysis_job_token}
                     if x_analysis_job_id is not None else {}

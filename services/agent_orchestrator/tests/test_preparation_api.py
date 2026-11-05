@@ -75,7 +75,7 @@ def test_v2_does_not_bypass_auth_lease_protocol_or_existing_deadline(failure, mo
             raise LegalCoreProtocolError("UNTRUSTED_SYNTHETIC_DETAILS")
         core.submit_reasoning = invalid
     else:
-        monkeypatch.setattr("agent_orchestrator.main.ANALYSIS_WALL_TIMEOUT_SECONDS", 0.02)
+        monkeypatch.setattr("agent_orchestrator.main.CASE_PIPELINE_WALL_TIMEOUT_SECONDS", 0.02)
 
         async def blocked(projection):
             await asyncio.Event().wait()

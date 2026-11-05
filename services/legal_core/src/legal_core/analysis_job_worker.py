@@ -30,6 +30,8 @@ from legal_core.case_preparation_contracts import HumanReviewResult
 from legal_core.model_admission import ModelAdmission
 
 logger = logging.getLogger(__name__)
+ANALYSIS_HTTP_TIMEOUT_SECONDS = 160
+ANALYSIS_REQUEST_WALL_TIMEOUT_SECONDS = 165
 
 
 def _resume_optional_lawyer_draft(
@@ -108,7 +110,7 @@ async def execute_job(
             f"{settings.url}/v1/cases/{job.case_id}/analyze",
             headers=headers,
         ),
-        timeout=125,
+        timeout=ANALYSIS_REQUEST_WALL_TIMEOUT_SECONDS,
     )
     if response.is_error:
         code = "ANALYSIS_SERVICE_UNAVAILABLE"
@@ -225,7 +227,8 @@ async def run_analysis_worker(
 ) -> None:
     admission = admission or ModelAdmission()
     async with httpx.AsyncClient(
-        timeout=120, trust_env=False, follow_redirects=False, limits=httpx.Limits(max_connections=2)
+        timeout=ANALYSIS_HTTP_TIMEOUT_SECONDS, trust_env=False, follow_redirects=False,
+        limits=httpx.Limits(max_connections=2),
     ) as client:
 
         async def consumer() -> None:
