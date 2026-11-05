@@ -40,6 +40,11 @@ stop with a route to case history rather than creating a new message.
 Successful button recovery confirms the saved operation and offers explicit case
 or discussion navigation. It does not activate an input mode or promise that the
 next text will enter a discussion, so a newly started intake remains intact.
+All earlier PTB navigation guards exempt only the validated `esc:retrymsg`
+callback grammar. A generic `esc:*` navigation remains a normal navigation and
+cancels pending intake work. Full-dispatch tests cover pending understanding and
+answer interpretation, preserving the selected intent, operation and draft while
+the old message is recovered; direct handler tests alone do not prove this.
 
 Tests cover the original RED duplicate, real PostgreSQL concurrent requests,
 payload mismatch, current access/retention, malformed keys, and Gateway → actual

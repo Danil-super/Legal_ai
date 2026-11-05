@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
@@ -16,6 +17,10 @@ from telegram_gateway.ui import back_keyboard
 
 PENDING_KEY = "escalation_message_operation"
 RETRY_PATTERN = r"^esc:retrymsg:[0-9a-f]{32}:[mc]:[0-9]{1,10}$"
+
+
+def is_recovery_callback(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(RETRY_PATTERN, value) is not None
 
 
 def message_operation(actor: int, escalation: UUID, resolving: bool, source: int) -> UUID:
