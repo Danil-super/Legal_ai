@@ -28,3 +28,8 @@ class CaseHistoryDetail(ContractModel):
     reports: list[SavedReport] = Field(max_length=PAGE_SIZE)
     next_offset: int | None = Field(default=None, alias="nextOffset", ge=0)
     escalation_id: UUID | None = Field(default=None, alias="escalationId")
+
+
+class CaseHistoryDeletion(ContractModel):
+    case_id: UUID = Field(alias="caseId")
+    status: Literal["DELETION_SCHEDULED"] = "DELETION_SCHEDULED"
