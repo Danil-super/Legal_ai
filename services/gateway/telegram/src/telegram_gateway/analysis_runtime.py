@@ -613,39 +613,13 @@ async def post_escalation_discussion_message(
     raw_text = message.text if message is not None else None
     if actor_id is None or not isinstance(raw_text, str):
         raise ApplicationHandlerStop
-    try:
-        escalation_id = UUID(raw_id)
-        resolving = user_data.get("escalation_resolution_pending") == raw_id
-        if resolving:
-            await gateway_bot._legal_core(context).resolve_escalation(
-                escalation_id, actor_id, body=raw_text,
-            )
-            user_data.pop(ESCALATION_DISCUSSION_KEY, None)
-            user_data.pop("escalation_resolution_pending", None)
-        else:
-            await gateway_bot._legal_core(context).post_escalation_discussion_message(
-                escalation_id, actor_id, body=raw_text,
-            )
-    except LegalCoreApiError as exc:
-        logger.warning("case escalation discussion post failed: %s", exc.code)
-        if exc.code == "DIRECT_IDENTIFIER_NOT_ALLOWED":
-            detail = "Не сохраняю сообщение: удалите ФИО, контакты и номера документов пациента."
-        elif exc.code in {"ESCALATION_NOT_FOUND", "ESCALATION_RESOLVED"}:
-            user_data.pop(ESCALATION_DISCUSSION_KEY, None)
-            user_data.pop("escalation_resolution_pending", None)
-            detail = "Этот кейс больше недоступен для обсуждения."
-        else:
-            detail = "Не удалось сохранить сообщение. Попробуйте ещё раз позже."
-        await gateway_bot._reply(update, f"⚠️ {detail}")
-        raise ApplicationHandlerStop from exc
+    from telegram_gateway.escalation_message_runtime import pending_operation, submit_message
 
-    await gateway_bot._reply(
-        update,
-        ("✅ Обращение завершено. Итог сохранён в истории." if resolving else
-         "✅ Сообщение добавлено. Можно написать следующий обезличенный вопрос или ответ."),
-        reply_markup=back_keyboard() if resolving else _active_discussion_keyboard(escalation_id),
-    )
-    raise ApplicationHandlerStop
+    escalation_id = UUID(raw_id)
+    resolving = user_data.get("escalation_resolution_pending") == raw_id
+    operation, source = pending_operation(update, context, escalation_id, raw_text, resolving)
+    await submit_message(update, context, escalation=escalation_id, body=raw_text,
+                         resolving=resolving, operation=operation, source=source)
 
 
 async def analyze_case_callback(
@@ -759,6 +733,9 @@ def build_application_with_analysis(token: str) -> gateway_bot.TelegramApplicati
         group=-1,
     )
     application.add_handler(CommandHandler("escalations", show_escalation_queue_command), group=-1)
+    from telegram_gateway.escalation_message_runtime import RETRY_PATTERN, retry_message
+
+    application.add_handler(CallbackQueryHandler(retry_message, pattern=RETRY_PATTERN), group=-1)
     application.add_handler(CallbackQueryHandler(workspace_action, pattern=r"^esc:"), group=-1)
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, post_escalation_discussion_message),

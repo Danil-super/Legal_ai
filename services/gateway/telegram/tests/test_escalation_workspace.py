@@ -121,7 +121,7 @@ def test_resolution_requires_explicit_conclusion_and_is_not_posted_as_normal_rep
         def __init__(self):
             self.conclusions = []
 
-        async def resolve_escalation(self, escalation, actor, *, body):
+        async def resolve_escalation(self, escalation, actor, *, body, operation_id=None):
             self.conclusions.append(body)
             return {"status": "RESOLVED"}
 

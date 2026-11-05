@@ -54,7 +54,7 @@ class Core:
         self.assigned = True
         return await self.get_escalation(escalation, actor)
 
-    async def resolve_escalation(self, escalation, actor, *, body):
+    async def resolve_escalation(self, escalation, actor, *, body, operation_id=None):
         assert self.assigned and self.status == "IN_PROGRESS"
         self.conclusions.append(body)
         self.status = "RESOLVED"
@@ -66,7 +66,9 @@ class Core:
     async def get_escalation_discussion(self, escalation, actor, **kwargs):
         return {"items": [], "nextBefore": None}
 
-    async def post_escalation_discussion_message(self, escalation, actor, *, body):
+    async def post_escalation_discussion_message(
+        self, escalation, actor, *, body, operation_id=None,
+    ):
         self.posts.append(body)
         return {"body": body}
 

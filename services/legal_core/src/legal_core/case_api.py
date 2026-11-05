@@ -1052,9 +1052,18 @@ def create_case_router(
         payload: EscalationDiscussionMessageRequest,
         telegram_user_id: TelegramUserId,
         session: Session,
+        operation_id: Annotated[UUID | None, Header(alias="Idempotency-Key")] = None,
     ) -> EscalationDetailResponse:
+        from legal_core.escalation_message_receipts import (
+            recheck_actor,
+            replay_message,
+            retain_message,
+        )
+
         actor = await resolve_actor(session, telegram_user_id)
         escalation = await lock_lawyer_escalation(session, actor, escalation_id)
+        actor = await recheck_actor(session, actor=actor, telegram_user_id=telegram_user_id,
+                                    escalation_id=escalation_id, action="resolve")
         state, assignee = await _escalation_state(session, actor, escalation_id)
         if assignee != actor.membership_id:
             raise ApiError(
@@ -1062,6 +1071,10 @@ def create_case_router(
                 code="ASSIGNEE_REQUIRED",
                 message="Only the assigned lawyer may resolve",
             )
+        replay = await replay_message(session, actor=actor, escalation_id=escalation_id,
+                                      action="resolve", key=operation_id, body=payload.body)
+        if replay is not None:
+            return await _escalation_detail(session, actor, escalation)
         if state == "RESOLVED":
             raise ApiError(status_code=409, code="ESCALATION_RESOLVED", message="Already resolved")
         if pseudonymize_text(payload.body).changed:
@@ -1070,6 +1083,10 @@ def create_case_router(
                 code="DIRECT_IDENTIFIER_NOT_ALLOWED",
                 message="Conclusion must not contain direct identifiers",
             )
+        conclusion = CaseEscalationMessage(
+            clinic_id=actor.clinic_id, escalation_id=escalation_id,
+            author_membership_id=actor.membership_id, body=payload.body,
+        )
         session.add_all(
             [
                 CaseEscalationWorkflowEvent(
@@ -1078,12 +1095,7 @@ def create_case_router(
                     actor_membership_id=actor.membership_id,
                     action="RESOLVED",
                 ),
-                CaseEscalationMessage(
-                    clinic_id=actor.clinic_id,
-                    escalation_id=escalation_id,
-                    author_membership_id=actor.membership_id,
-                    body=payload.body,
-                ),
+                conclusion,
                 _audit(
                     actor=actor,
                     action="ESCALATION_RESOLVED",
@@ -1094,6 +1106,7 @@ def create_case_router(
             ]
         )
         await session.flush()
+        retain_message(session, actor=actor, message=conclusion, action="resolve", key=operation_id)
         result = await _escalation_detail(session, actor, escalation)
         await session.commit()
         return result
@@ -1177,7 +1190,14 @@ def create_case_router(
         payload: EscalationDiscussionMessageRequest,
         telegram_user_id: TelegramUserId,
         session: Session,
+        operation_id: Annotated[UUID | None, Header(alias="Idempotency-Key")] = None,
     ) -> EscalationDiscussionMessageResponse:
+        from legal_core.escalation_message_receipts import (
+            recheck_actor,
+            replay_message,
+            retain_message,
+        )
+
         actor = await resolve_actor(session, telegram_user_id)
         escalation = await _discussion_escalation(session, actor, escalation_id)
         case = await _tenant_case(session, actor, escalation.case_id, for_update=True)
@@ -1187,6 +1207,14 @@ def create_case_router(
             .with_for_update()
         )
         _require_case_content_available(case)
+        actor = await recheck_actor(session, actor=actor, telegram_user_id=telegram_user_id,
+                                    escalation_id=escalation_id, action="discussion")
+        replay = await replay_message(session, actor=actor, escalation_id=escalation_id,
+                                      action="discussion", key=operation_id, body=payload.body)
+        if replay is not None:
+            return EscalationDiscussionMessageResponse(
+                id=replay.id, authorRole=actor.role, body=replay.body, createdAt=replay.created_at,
+            )
         state, _ = await _escalation_state(session, actor, escalation_id)
         if state == "RESOLVED":
             raise ApiError(
@@ -1206,6 +1234,7 @@ def create_case_router(
         )
         session.add(message)
         await session.flush()
+        retain_message(session, actor=actor, message=message, action="discussion", key=operation_id)
         session.add(
             _audit(
                 actor=actor,
