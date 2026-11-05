@@ -759,6 +759,7 @@ def create_case_router(
         await session.execute(select(func.pg_advisory_xact_lock(payload.telegram_user_id)))
         member_user = await session.scalar(
             select(User).where(User.telegram_user_id == payload.telegram_user_id).with_for_update()
+            .execution_options(populate_existing=True)
         )
         if member_user is None:
             member_user = User(telegram_user_id=payload.telegram_user_id)
@@ -770,10 +771,27 @@ def create_case_router(
                 code="TARGET_USER_INACTIVE",
                 message="Target Telegram user is inactive",
             )
+        # The target User lock serializes both membership writers. Recheck the
+        # resolver's active identity set after acquiring it, including other clinics.
+        foreign_membership = await session.scalar(
+            select(ClinicUser.id).where(
+                ClinicUser.user_id == member_user.id,
+                ClinicUser.status == "ACTIVE",
+                ClinicUser.role.in_(CLINIC_ACTOR_ROLES),
+                ClinicUser.clinic_id != actor.clinic_id,
+            )
+        )
+        if foreign_membership is not None:
+            raise ApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="TARGET_MEMBERSHIP_CONFLICT",
+                message="Target Telegram user already has active access to another clinic",
+            )
         membership = await session.scalar(
             select(ClinicUser)
             .where(ClinicUser.clinic_id == actor.clinic_id, ClinicUser.user_id == member_user.id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         if membership is None:
             membership = ClinicUser(
@@ -1481,6 +1499,7 @@ def create_case_router(
         await session.execute(select(func.pg_advisory_xact_lock(payload.telegram_user_id)))
         target_user = await session.scalar(
             select(User).where(User.telegram_user_id == payload.telegram_user_id).with_for_update()
+            .execution_options(populate_existing=True)
         )
         if target_user is None:
             target_user = User(telegram_user_id=payload.telegram_user_id)
@@ -1500,9 +1519,10 @@ def create_case_router(
                     .where(
                         ClinicUser.user_id == target_user.id,
                         ClinicUser.status == "ACTIVE",
-                        ClinicUser.role == "CLINIC_ADMIN",
+                        ClinicUser.role.in_(CLINIC_ACTOR_ROLES),
                     )
                     .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
             ).all()
         )
@@ -1510,7 +1530,7 @@ def create_case_router(
             raise ApiError(
                 status_code=status.HTTP_409_CONFLICT,
                 code="TARGET_ADMIN_AMBIGUOUS",
-                message="Target Telegram user has multiple active clinic administrator memberships",
+                message="Target Telegram user has multiple active clinic memberships",
             )
         if memberships:
             membership = memberships[0]
@@ -1518,7 +1538,7 @@ def create_case_router(
                 select(Clinic.name).where(Clinic.id == membership.clinic_id)
             )
             if clinic_name is None:
-                raise RuntimeError("active clinic administrator membership has no clinic")
+                raise RuntimeError("active clinic membership has no clinic")
         else:
             clinic = Clinic(name=NEW_CLINIC_NAME)
             session.add(clinic)
