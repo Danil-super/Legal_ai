@@ -57,3 +57,11 @@ pagination, own/foreign/same-clinic creator isolation, expiry, and PDF retrieval
 The installed version must also attach an existing owner-only synthetic report through
 the real Telegram API and read history under owner and lawyer identities before the
 feature is declared delivered.
+
+## Production packaging follow-up
+
+The first rollout exposed a missing selectively copied shared history DTO in the
+Telegram image. Production was rolled back to the last healthy revision. The image
+now copies the DTO and constructs both application configurations during the build.
+CI additionally executes this construction as the image's non-root user with no
+network and a read-only filesystem, so lazy handler imports are tested before release.
