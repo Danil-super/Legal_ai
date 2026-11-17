@@ -118,6 +118,8 @@ including UNKNOWN; do not propose their replacement through these templates.
 def _literal_factual_value(source: str, question: AnswerQuestion) -> object | None:
     """Recognize only a whole exact short answer to the bound current question."""
     literal = source.strip()
+    if question.wizard_state == "SERVICES" and ";" in literal:
+        return [value.strip() for value in literal.split(";") if value.strip()]
     if question.target_field == "safetyScreening" and question.screening_field != "amount":
         return {"да": "YES", "нет": "NO"}.get(literal.casefold())
     request = question.clarification_request
@@ -238,6 +240,12 @@ class AnswerUnderstanding:
                         return AnswerInterpretation(status="PROPOSED", value=value,
                             sourceSpans=[SourceSpan(start=0, end=len(source))])
             literal = _literal_factual_value(source, question)
+            if question.wizard_state == "SERVICES" and literal is not None:
+                try:
+                    literal = validate_answer_value(question, literal, source, validation_data,
+                                                    as_of_date=as_of_date)
+                except ValueError:
+                    literal = None
             retained_material_targets = (
                 any(item.kind == "INITIAL_DESCRIPTION" for item in retained_sources or [])
                 and any(item.clarification_request is not None
@@ -268,17 +276,30 @@ class AnswerUnderstanding:
                                                    for item in retained_sources]
                 user_context["allowedQuestions"] = [item.model_dump(mode="json", by_alias=True)
                                                     for item in allowed_questions or []]
-            raw = await _complete(
-                self._researcher,
-                system=(_RETAINED_SYSTEM if retained_sources is not None else _SYSTEM)
-                + json.dumps(schema, ensure_ascii=False, sort_keys=True),
-                user=json.dumps(user_context, ensure_ascii=False, allow_nan=False),
-            )
+            try:
+                raw = await _complete(
+                    self._researcher,
+                    system=(_RETAINED_SYSTEM if retained_sources is not None else _SYSTEM)
+                    + json.dumps(schema, ensure_ascii=False, sort_keys=True),
+                    user=json.dumps(user_context, ensure_ascii=False, allow_nan=False),
+                )
+            except HermesUnavailable:
+                if question.wizard_state != "SERVICES" or literal is None:
+                    raise
+                raw = {"status": "UNRESOLVED", "value": None, "sourceSpans": [],
+                       "reasonCode": "AMBIGUOUS"}
             try:
                 proposed = AnswerInterpretation.model_validate(raw)
                 # Reparse plain values, including forged nested model instances.
                 proposed = AnswerInterpretation.model_validate(proposed.model_dump(by_alias=True))
                 proposed.validate_source(source)
+                if (proposed.status == "UNRESOLVED" and question.wizard_state == "SERVICES"
+                        and literal is not None):
+                    proposed = AnswerInterpretation.model_validate({
+                        **proposed.model_dump(by_alias=True), "status": "PROPOSED",
+                        "value": literal, "reasonCode": None,
+                        "sourceSpans": [{"start": 0, "end": len(source)}],
+                    })
                 if proposed.factual_proposal is not None and retained_sources is None:
                     raise ValueError("additional facts require retained source context")
                 if proposed.status == "PROPOSED":
