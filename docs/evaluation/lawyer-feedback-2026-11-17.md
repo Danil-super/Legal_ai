@@ -77,3 +77,37 @@ privacy timing also leaves insufficient room for Core within the former
 150-second total case wall. The separate bounded-budget correction must be
 verified in the full workflow before release. Private complete answers, source
 identities and failed-attempt evidence are retained outside the repository.
+
+## Follow-up read-only checkpoint
+
+The second checkpoint used candidate 1bf630e, the same current approved corpus,
+three allowed examples per case and unchanged native models/high. All selected
+refund contexts now contained consumer-law articles 24, 29 and 31; the privacy
+context contained Civil Code articles 151, 152.1, 1068 and 403. The initial
+interpretations retained all seven explicitly reported safety fields and the
+known event dates; the billing-only case did not become a clinical dispute.
+
+| Fictional case | Initial interpretation | Two reasoning passes | Observed content |
+| --- | ---: | ---: | --- |
+| Caries refund | 44.462 s | 108.666 s | Four assessments and five actions cover defect/warranty/burden, amount, deadlines, document/examination checks and conditional remedies. |
+| Image/privacy | 54.924 s | 123.884 s | Five assessments and nine actions cover image/data/confidentiality, moral harm, contractor role, evidence, removal and conditional settlement. Some sentences require grammatical editing. |
+| Additional service | 54.266 s | 96.949 s | Three assessments but only one registration action: practical-plan coverage FAILED. |
+
+A stronger generic completeness instruction in candidate 16af70b did not fix the
+billing gap (45.747 s initial, 97.319 s reasoning, still one action). This failure
+is retained. Candidate 711798c clarifies that unknown consent permits a
+source-supported conditional document check and that a billing dispute alone
+must not require clinical-service facts. Its next live output took 43.454 s for
+initial interpretation and 73.901 s for both reasoning passes, with three
+assessments and four actions: record the request; compare signed scope, price,
+consent and payment; choose cancellation/partial cancellation or documented
+objections conditionally; distinguish unpaid cancellation from a paid refund and
+its applicable deadline. It returned no clarification requests, and Core allowed
+the source-bound claims.
+
+These are observed content checks, not a legal certification or a latency SLA.
+Both model passes received the same three approved compact examples (matching
+input hashes); no model weights were trained. Selection retains existing
+workspace grants: approval of the 67 examples does not grant every employee
+access. These probes performed no case writes, report persistence, Telegram
+button interaction or delivery. The separate workflow/release gate remains open.

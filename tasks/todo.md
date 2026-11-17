@@ -14,6 +14,13 @@
 All items require observed evidence; no readiness or legal-quality guarantee is
 inferred from the earlier audit, source code alone or a transport-level success.
 
+Local follow-up: the complete services-dispatch failure is reproduced and fixed;
+FINANCE, numbering and approved-reference morphology are implemented and tested.
+Live content probes now cover all three reported topics, with earlier financial
+plan failures retained in `docs/evaluation/lawyer-feedback-2026-11-17.md`.
+Release CI, installed revision, real report persistence and lawyer acceptance are
+separate gates; these checkboxes do not imply production readiness.
+
 ## Lawyer-provided references and legal assessment — 2 November 2026
 
 - [x] Read-only production inventory: all 67 current references are available,
