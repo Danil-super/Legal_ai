@@ -23,6 +23,10 @@ treatment or its outcome is itself disputed, not for billing alone or past treat
 in an image/privacy dispute. A financial topic alone implies no performed medical service.
 Use zero-based Unicode character offsets [start,end) for each proposed field, without copying
 source text into additional fields. Each anchor must be a nonblank literal part of source.
+Each sourceSpans field must contain one to three intervals. When one field, such as
+safetyScreening, contains several facts, combine their evidence into wider contiguous
+intervals covering all of those facts; do not add a separate interval for every signal
+if that would exceed three. Do not omit supported facts just to fit the interval count.
 Omit absent, ambiguous or conflicting facts; absence is not NO or UNKNOWN. Explicit negative
 reports ARE facts: preserve their polarity using only the matching permitted choice. For
 example, 'госпитализации не было' supports hospitalizationReported:NO, not any other safety
@@ -87,6 +91,8 @@ def _proposal_schema() -> dict[str, Any]:
     # Only the version is required in a draft. Requiring every signal would make
     # the model invent negatives/unknowns for information absent from the source.
     screening["required"] = ["schemaVersion"]
+    # This existing Core validator limit is otherwise absent from Pydantic's schema.
+    schema["properties"]["sourceSpans"]["additionalProperties"].update(minItems=1, maxItems=3)
     schema.setdefault("$defs", {}).update(screening.pop("$defs", {}))
     schema["properties"]["safetyScreening"]["anyOf"] = [screening, {"type": "null"}]
     return schema
