@@ -299,7 +299,7 @@ def test_untrusted_answer_stays_in_user_message_and_never_changes_prompt():
 
 
 def test_service_label_must_be_inside_its_actual_nonblank_anchor():
-    source = "установка коронки; осмотр"
+    source = "услуги: установка коронки и осмотр"
     with pytest.raises(HermesProtocolError):
         run_model(source, proposed(source, ["установка коронки"]) | {
             "sourceSpans": [{"start": source.index("осмотр"), "end": len(source)}],
