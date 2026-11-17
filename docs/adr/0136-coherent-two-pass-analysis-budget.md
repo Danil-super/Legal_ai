@@ -35,9 +35,14 @@ retention and actual-current-clock lease checks still decide whether a result
 may commit. There is no heartbeat, lease refresh or new automatic retry.
 
 Upgrade the claim function before starting the longer-running application.
-For rollback, restore the shorter-budget application before downgrading the
-claim function. Downgrade returns new claims to 180 seconds and leaves existing
-leases unchanged. PostgreSQL documents preservation of function ownership and
+For rollback, stop or drain every longer-budget Core worker and Agent first.
+Using the new image and its known migration tree, explicitly downgrade to
+`b64f1a8c2d53` before starting the old application. Override the normal Core
+startup command for this maintenance operation: `services/legal_core/Dockerfile`
+runs `alembic upgrade head`, and an old image cannot resolve revision
+`c75a2b9d3e64`. Do not run a 260-second producer with new 180-second leases.
+Downgrade returns new claims to 180 seconds and leaves existing leases unchanged.
+PostgreSQL documents preservation of function ownership and
 permissions for [CREATE OR REPLACE FUNCTION](https://www.postgresql.org/docs/16/sql-createfunction.html);
 the migration tests verify the actual identity/security metadata and issued TTLs.
 
