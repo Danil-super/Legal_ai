@@ -40,3 +40,20 @@ fact dependency and approved legal citation. No action-count quota, automatic
 promotion of free text, additional model pass or weaker verifier is introduced.
 The next live probe produced concrete document/payment checks and conditional
 resolution actions; detailed failures and timings remain in the evaluation record.
+
+## Privacy publication evidence
+
+Independent inspection of the final fictional privacy answer found image, data,
+compensation and contractor issues, but none of its nine actions preserved the
+publication evidence before removal. Inspecting content is not preserving a
+record of what was published, its address, known timing and access conditions.
+
+Add that concrete conditional action to the existing research instructions only
+for a publication dispute supported by supplied facts and approved evidence.
+Preservation must not delay stopping dissemination, become an invented standalone
+legal obligation, require indefinite storage/republication, or send raw patient
+images/personal data to the bot. Existing source/fact verification and human
+review remain unchanged, without an action-count quota or another model pass.
+The prompt contract covers ordinary and lawyer-review plans and unchanged
+citation IDs/no minimum claim count. A new live privacy answer must still be
+inspected; these instruction tests do not prove its content or legal correctness.
