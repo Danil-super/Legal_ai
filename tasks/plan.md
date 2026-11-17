@@ -1,5 +1,37 @@
 # Implementation Plan: Dental Legal AI MVP
 
+## Lawyer feedback: intake and substantive analysis — 17 November 2026
+
+Implement against current main, preserving the existing source approvals, risk v4,
+tenant boundaries, model/high settings and mandatory human review. The owner asks
+for faster, useful reasoning, not another questionnaire or automatic legal approval.
+
+1. Reproduce a semicolon-separated service answer through the composed Telegram
+   dispatcher, including model unavailability; persist valid answers and advance.
+   Invalid input must explain the reason and leave the question usable.
+2. Add FINANCE (payment, price and refunds) to the existing category contract,
+   proposal readers/writers and menu. A financial topic alone does not imply a
+   medical service, injury or HIGH risk. Preserve older drafts.
+3. Cover the three fictional regression scenarios: 5,000-RUB caries refund,
+   publication of an image without consent, and an additional paid service.
+   Retrieve substantive remedies/evidence rules as well as procedural rules;
+   check image rights, moral harm and worker/contractor responsibility separately.
+4. Ask the same two model passes to compare the patient's grounds, known evidence,
+   unresolved facts and conditional outcomes, then propose concrete next actions.
+   Missing normative evidence must remain explicit, never supplied from memory.
+5. Remove duplicate list markers at presentation time only. Saved verified text,
+   hashes, citations, approval state and lawyer revisions must remain unchanged.
+6. Trace approved reference selection through both model inputs and final source
+   binding. Explain comparison with up to three relevant approved examples;
+   do not claim model fine-tuning or treat a reference answer as current law.
+
+Acceptance: regression tests must reproduce each fixed failure, followed by the
+project quality gates and disposable database integration. Live model evaluation
+must inspect the actual three answers for useful legal analysis and cited source
+coverage; mocked model success or a generated PDF does not establish legal quality.
+Record failures and remaining gaps. Deployment and source approval are not implied
+by a local passing test.
+
 ## AI-first resolution — approved specification, proposed plan26October2026
 
 Module: `ai-first-resolution`; contract: SPEC-ai-first-resolution.md; map:

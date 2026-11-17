@@ -1,5 +1,18 @@
 # Dental Legal AI task list
 
+## Lawyer feedback — 17 November 2026
+
+- [ ] LF1: reproduce and fix the services-list loop with full-dispatch tests.
+- [ ] LF2: support FINANCE consistently in factual contracts and both intake paths.
+- [ ] LF3: cover substantive refund, image, moral-harm and additional-service search.
+- [ ] LF4: strengthen source-bound issue/evidence/outcome reasoning; avoid repeated facts.
+- [ ] LF5: render one list number in PDF and Telegram without mutating saved content.
+- [ ] LF6: verify relevant approved reference analogies in both passes and explain limits.
+- [ ] LF7: full quality/integration gates, independent review and three live-model cases.
+
+All items require observed evidence; no readiness or legal-quality guarantee is
+inferred from the earlier audit, source code alone or a transport-level success.
+
 ## Lawyer-provided references and legal assessment — 2 November 2026
 
 - [x] Read-only production inventory: all 67 current references are available,
