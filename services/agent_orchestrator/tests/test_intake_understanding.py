@@ -212,3 +212,37 @@ def test_injected_instructions_stay_only_in_the_untrusted_source_message():
     assert result.source_spans == {}
     assert json.loads(calls[0]["messages"][1]["content"]) == {"source": source}
     assert "SYNTHETIC_INJECTION" not in calls[0]["messages"][0]["content"]
+
+
+def test_provider_schema_exposes_existing_per_field_anchor_bounds():
+    calls = []
+    run_model(SOURCE, proposal(), calls)
+    system = calls[0]["messages"][0]["content"]
+    schema = json.loads(system.split("JSON Schema:\n", 1)[1])
+    anchors = schema["properties"]["sourceSpans"]["additionalProperties"]
+    assert (anchors.get("minItems"), anchors.get("maxItems")) == (1, 3)
+
+
+@pytest.mark.parametrize("anchor_count", [0, 1, 3, 4])
+def test_streamed_intake_keeps_the_same_anchor_validation(anchor_count):
+    from test_hermes_stream import chunk, frame
+
+    payload = proposal()
+    payload["sourceSpans"]["clinicActions"] = span("пригласила на осмотр") * anchor_count
+    body = (frame(chunk(json.dumps(payload))) + frame(chunk(finish="stop")) + frame("[DONE]"))
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(
+            200, content=body, headers={"content-type": "text/event-stream"},
+        ))) as http:
+            model = HermesClient(HermesEndpoint(
+                "http://synthetic-researcher.invalid", "synthetic-key", stream_response=True,
+            ), client=http)
+            return await IntakeUnderstanding(researcher=model).understand(SOURCE)
+
+    if anchor_count in {0, 4}:
+        with pytest.raises(HermesProtocolError):
+            asyncio.run(run())
+    else:
+        result = asyncio.run(run())
+        assert result.model_dump(mode="json", by_alias=True, exclude_none=True) == payload
