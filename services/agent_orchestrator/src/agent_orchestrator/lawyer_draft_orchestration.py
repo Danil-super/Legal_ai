@@ -18,9 +18,6 @@ from legal_core.case_preparation_contracts import HumanReviewResult
 from legal_core.lawyer_draft_contracts import LawyerDraftContextRequest
 
 logger = logging.getLogger(__name__)
-# Fits inside Agent's 115 s overall wall, Core worker's 120/125 s HTTP/wall
-# limits and the existing 180 s job lease. No extension/heartbeat is needed.
-DRAFT_WALL_TIMEOUT_SECONDS = 110
 RETURN_MARGIN_SECONDS = 1
 
 
@@ -33,9 +30,8 @@ async def maybe_generate_lawyer_draft(
             or not isinstance(original.root, HumanReviewResult)
             or job_id is None or job_token is None or job_id != idempotency_key):
         return None
-    budget = min(DRAFT_WALL_TIMEOUT_SECONDS,
-                 parent_deadline - asyncio.get_running_loop().time() - RETURN_MARGIN_SECONDS)
-    if budget <= 0:
+    deadline = parent_deadline - RETURN_MARGIN_SECONDS
+    if deadline <= asyncio.get_running_loop().time():
         return "LAWYER_DRAFT_UNAVAILABLE"
     result = original.root
     binding = LawyerDraftContextRequest(
@@ -44,7 +40,7 @@ async def maybe_generate_lawyer_draft(
         expectedRiskPolicyVersion=result.risk_policy_version,
     )
     try:
-        async with asyncio.timeout(budget):
+        async with asyncio.timeout_at(deadline):
             lease = {"job_id": job_id, "job_token": job_token}
             retained = await core.lookup_lawyer_work_product(
                 case_id=result.source.case_id, telegram_user_id=telegram_user_id,
