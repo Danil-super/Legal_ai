@@ -2,24 +2,29 @@
 
 ## Lawyer feedback — 17 November 2026
 
-- [ ] LF1: reproduce and fix the services-list loop with full-dispatch tests.
-- [ ] LF2: support FINANCE consistently in factual contracts and both intake paths.
-- [ ] LF3: cover substantive refund, image, moral-harm and additional-service search.
-- [ ] LF4: strengthen source-bound issue/evidence/outcome reasoning; avoid repeated facts.
-- [x] LF5 (local): one list number in PDF, Telegram and lawyer plans; stored content
+- [x] LF1: reproduce and fix the services-list loop with full-dispatch tests.
+- [x] LF2: support FINANCE consistently in factual contracts and both intake paths.
+- [x] LF3: cover substantive refund, image, moral-harm and additional-service search.
+- [x] LF4: strengthen source-bound issue/evidence/outcome reasoning; avoid repeated facts.
+- [x] LF5 (released): one list number in PDF, Telegram and lawyer plans; stored content
   and approval bindings unchanged. Rendering suites: 82 and 49 tests passed.
-- [ ] LF6: verify relevant approved reference analogies in both passes and explain limits.
-- [ ] LF7: full quality/integration gates, independent review and three live-model cases.
+- [x] LF6: verify relevant approved reference analogies in both passes and explain limits.
+- [x] LF7: full quality/integration gates, independent review and three live-model cases.
 
 All items require observed evidence; no readiness or legal-quality guarantee is
 inferred from the earlier audit, source code alone or a transport-level success.
 
-Local follow-up: the complete services-dispatch failure is reproduced and fixed;
-FINANCE, numbering and approved-reference morphology are implemented and tested.
-Live content probes now cover all three reported topics, with earlier financial
-plan failures retained in `docs/evaluation/lawyer-feedback-2026-11-17.md`.
-Release CI, installed revision, real report persistence and lawyer acceptance are
-separate gates; these checkboxes do not imply production readiness.
+Released e4a23d2: full CI/deploy 44132619451 passed; all eight active services healthy.
+Actual saved-draft → workflow → live models → Core → READY/PDF/history checks:
+DL-2026-000041 (102.628 s) and DL-2026-000042 (90.579 s), measured after confirmation.
+Both stored reference traces matched the exact selected three-example context.
+Final privacy preservation content was independently checked on runtime-equivalent
+source eaea90e (124.269 s). Unit suite: 4455 passed, 1245 explicit integration-disabled
+skips; focused PostgreSQL/MinIO acceptance: 39 passed; full CI covers all shards.
+Failed attempts and the one umask-dependent test failure/fix are retained.
+No fine-tuning or legal certification is claimed; live manual Telegram tapping,
+all-67 model-case evaluation and final human legal acceptance remain outside these
+observed technical checks. Minor model wording may need editorial correction.
 
 ## Lawyer-provided references and legal assessment — 2 November 2026
 
