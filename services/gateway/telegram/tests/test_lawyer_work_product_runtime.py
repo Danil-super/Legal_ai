@@ -84,6 +84,19 @@ def test_plan_shows_retained_legal_assessment_before_recommended_actions():
     assert text.index("Предварительная правовая оценка") < text.index("Рекомендуемые действия")
 
 
+def test_plan_numbers_saved_actions_once_without_changing_the_approval_binding():
+    wire = plan_wire()
+    wire["content"]["actions"] = ["1. Сверить синтетический договор.", "2) Проверить переписку."]
+    wire["contentSha256"] = InternalWorkProduct.model_validate(wire["content"]).content_sha256
+    view = LawyerWorkProductView.model_validate(wire)
+    original = view.model_dump(mode="json", by_alias=True)
+    text = "\n".join(render_plan(view, "DL-TEST-1"))
+    assert "1. Сверить синтетический договор." in text
+    assert "2. Проверить переписку." in text
+    assert "1. 1." not in text and "2. 2)" not in text
+    assert view.model_dump(mode="json", by_alias=True) == original
+
+
 def test_review_receipt_cannot_silently_change_the_legal_assessment():
     from telegram_gateway.lawyer_work_product_runtime import _checked_result
 

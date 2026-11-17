@@ -10,6 +10,7 @@ from typing import Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from legal_core.lawyer_work_product_contracts import LawyerWorkProductReview, LawyerWorkProductView
+from legal_core.report_presentation import numbered_item
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     ApplicationHandlerStop,
@@ -94,7 +95,7 @@ def render_plan(view: LawyerWorkProductView, public_number: str) -> tuple[str, .
             "• " + item for item in content.legal_assessment
         ))
     blocks.append("Рекомендуемые действия\n" + "\n".join(
-        f"{index}. {action}" for index, action in enumerate(content.actions, 1)
+        numbered_item(index, action) for index, action in enumerate(content.actions, 1)
     ))
     if view.citations:
         citations = []
