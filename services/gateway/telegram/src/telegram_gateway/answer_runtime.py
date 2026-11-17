@@ -7,6 +7,7 @@ from uuid import UUID
 
 from legal_core.intake_answer_contracts import derive_answer_question
 from legal_core.intake_answer_wire import AnswerStatusResponse
+from legal_core.pseudonymization import pseudonymize_text
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     ApplicationHandlerStop,
@@ -23,7 +24,7 @@ from telegram_gateway.answer_review import review_blocks
 from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.dialogue_staging import ENABLED, stage
 from telegram_gateway.escalation_workspace import _chunks
-from telegram_gateway.guided_case_intake_v2 import next_missing_state
+from telegram_gateway.guided_case_intake_v2 import next_missing_state, parse_answer
 from telegram_gateway.intake_cleanup import (
     finish,
     finish_waiting,
@@ -313,6 +314,29 @@ async def route_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         remote = await _draft(core, actor, draft_id)
         if not isinstance(wizard, dict):
             raise ValueError("current question missing")
+        local_state = wizard[bot.DRAFT_STATE_KEY]
+        formatted_services = (
+            local_state == remote["wizardState"] == "SERVICES" and ";" in text
+            and remote["revision"] == wizard.get(bot.DRAFT_REVISION_KEY)
+        )
+        if formatted_services:
+            try:
+                parse_answer("affectedServices", text)
+                if pseudonymize_text(text).changed:
+                    raise ValueError("Уберите ФИО, контакты и другие персональные данные "
+                                     "из ответа.")
+            except ValueError as exc:
+                await bot._reply_draft_controls(update, wizard, str(exc),
+                                                reply_markup=bot._v2_keyboard([]))
+                raise ApplicationHandlerStop from None
+        if (formatted_services and status is not None and status.state == "UNRESOLVED"
+                and status.interpretation is not None
+                and not status.interpretation.has_provisional_facts):
+            await client.proposal_draft(status, remote)
+            await _cancel(client, status.operation_id)
+            stop(update, context, _SELECTED)
+            data.pop(_SELECTED, None)
+            status = None
         if status is not None:
             await bot._reply(update, "Предыдущий ответ ещё ожидает проверки. "
                              "Новый ответ пока не сохранён. Чтобы заменить его, "
@@ -322,7 +346,6 @@ async def route_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if remote["revision"] != wizard.get(bot.DRAFT_REVISION_KEY):
             await _open(update, context, remote)
             raise ApplicationHandlerStop
-        local_state = wizard[bot.DRAFT_STATE_KEY]
         if remote["wizardState"] != local_state:
             if next_missing_state(remote["draftData"]) != local_state:
                 raise ValueError("stale question")
