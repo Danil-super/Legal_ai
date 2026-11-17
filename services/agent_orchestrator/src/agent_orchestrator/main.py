@@ -53,10 +53,10 @@ TelegramUserIdHeader = Annotated[int, Header(alias="X-Telegram-User-Id", gt=0)]
 IdempotencyKeyHeader = Annotated[UUID, Header(alias="Idempotency-Key")]
 logger = logging.getLogger(__name__)
 # Keep profile/intake limits separate from the complete two-pass report pipeline.
-# The case wall leaves margins inside worker HTTP 160 s, wall 165 s and lease 180 s.
+# Two 115 s model clients plus Core work fit worker HTTP 270 s, wall 275 s and lease 300 s.
 # HTTP operation timeouts are not total walls.
 ANALYSIS_WALL_TIMEOUT_SECONDS = 115
-CASE_PIPELINE_WALL_TIMEOUT_SECONDS = 150
+CASE_PIPELINE_WALL_TIMEOUT_SECONDS = 260
 HERMES_STAGE_TIMEOUT_SECONDS = 65
 
 

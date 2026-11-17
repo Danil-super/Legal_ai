@@ -30,8 +30,8 @@ from legal_core.case_preparation_contracts import HumanReviewResult
 from legal_core.model_admission import ModelAdmission
 
 logger = logging.getLogger(__name__)
-ANALYSIS_HTTP_TIMEOUT_SECONDS = 160
-ANALYSIS_REQUEST_WALL_TIMEOUT_SECONDS = 165
+ANALYSIS_HTTP_TIMEOUT_SECONDS = 270
+ANALYSIS_REQUEST_WALL_TIMEOUT_SECONDS = 275
 MAX_NORMAL_ANALYSIS_ATTEMPTS = 2
 _RETRYABLE_ANALYSIS_ERRORS = frozenset({
     "ANALYSIS_PROVIDER_UNAVAILABLE", "ANALYSIS_SERVICE_UNAVAILABLE",

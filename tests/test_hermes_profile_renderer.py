@@ -63,7 +63,7 @@ def test_high_provider_wait_fits_profile_and_case_fences_without_extra_attempts(
     assert HERMES_STAGE_TIMEOUT_SECONDS == 65
     assert ANALYSIS_WALL_TIMEOUT_SECONDS == 115
     assert custom["request_timeout_seconds"] < ANALYSIS_WALL_TIMEOUT_SECONDS
-    assert ANALYSIS_WALL_TIMEOUT_SECONDS < CASE_PIPELINE_WALL_TIMEOUT_SECONDS == 150
+    assert CASE_PIPELINE_WALL_TIMEOUT_SECONDS == 2 * ANALYSIS_WALL_TIMEOUT_SECONDS + 30 == 260
     # Intake retains its shorter caller wall and stream cancellation independently.
     assert custom["request_timeout_seconds"] > HERMES_STAGE_TIMEOUT_SECONDS
     assert config["agent"]["api_max_retries"] == 1
