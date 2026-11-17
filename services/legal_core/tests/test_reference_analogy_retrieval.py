@@ -170,3 +170,39 @@ def test_total_budget_skips_whole_examples_and_keeps_smaller_complete_examples(w
     assert sum(len(item.scenario_text) for item in result.examples) <= 12000
     assert {len(item.scenario_text) for item in result.examples} == {len(SCENARIO),
                                                                   len(SCENARIO) + 6400}
+
+
+@pytest.mark.parametrize("scenario,summary", [
+    ("Синтетический пример: выпадение пломбы.", "Пломба выпала"),
+    ("Синтетический пример: лечение кариеса.", "Кариес"),
+    ("Синтетический пример: опубликована фотография.", "Публикация фотографий"),
+])
+def test_relevance_handles_russian_word_forms_without_changing_reviewed_text(
+    workspace, scenario, summary,
+):
+    actor, _, _, _, create, _ = workspace
+    identifier = create(scenario)
+    result = select(actor, summary=summary)
+    assert len(result.examples) == 1
+    assert result.examples[0].source.reference_case_id == identifier
+    assert result.examples[0].scenario_text == scenario
+
+
+def test_relevance_prefers_more_shared_russian_lexemes_and_excludes_unrelated_examples(workspace):
+    actor, _, _, _, create, _ = workspace
+    expected = create("Синтетический пример: выпадение пломбы, лечение кариеса.")
+    less_specific = create("Синтетический пример: пломба выпала, нужна замена.")
+    unrelated = create("Синтетический трудовой пример: сотрудник оформляет отпуск.")
+    result = select(actor, summary="Пломба выпала после лечения кариеса")
+    assert result.examples[0].source.reference_case_id == expected
+    assert {item.source.reference_case_id for item in result.examples} == {expected, less_specific}
+    assert unrelated not in {item.source.reference_case_id for item in result.examples}
+
+
+@pytest.mark.parametrize("summary", ["Клиникой пациентами", "как для при"])
+def test_common_word_inflections_and_russian_stopwords_do_not_fill_with_examples(
+    workspace, summary,
+):
+    actor, _, _, _, create, _ = workspace
+    create()
+    assert select(actor, summary=summary).examples == []
