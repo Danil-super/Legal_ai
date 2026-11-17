@@ -38,6 +38,22 @@ def test_job_worker_settings_are_disabled_by_default_and_validate_partial_config
         WorkerSettings.load({"AGENT_ORCHESTRATOR_URL": "http://agent-orchestrator:8001"})
 
 
+def test_worker_constructs_the_bounded_http_client_for_both_consumers(monkeypatch):
+    from legal_core import analysis_job_worker as worker
+
+    observed = []
+
+    async def stop(_sessions, client, _settings):
+        observed.append(client.timeout)
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(worker, "worker_once", stop)
+    asyncio.run(worker.run_analysis_worker(None, worker.WorkerSettings("http://agent", "x" * 32)))
+    assert len(observed) == 2
+    assert all(timeout.connect == timeout.read == timeout.write == timeout.pool == 270
+               for timeout in observed)
+
+
 def test_restart_does_not_claim_backlog_until_orchestrator_is_ready(monkeypatch):
     import httpx
     from legal_core import analysis_job_worker as worker

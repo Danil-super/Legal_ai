@@ -208,10 +208,13 @@ def test_owner_approval_cannot_be_silently_erased_by_migration_downgrade(workspa
         json=payload,
     )
     assert result.status_code == 200, result.text
+    with engine.connect() as c:
+        starting_revision = c.scalar(text("SELECT version_num FROM alembic_version"))
+    assert starting_revision is not None
     with pytest.raises(RuntimeError, match="retained owner reference attestations"):
         command.downgrade(Config(str(ROOT / "alembic.ini")), "a53e0f7b1c42")
     with engine.connect() as c:
-        assert c.scalar(text("SELECT version_num FROM alembic_version")) == "b64f1a8c2d53"
+        assert c.scalar(text("SELECT version_num FROM alembic_version")) == starting_revision
         assert (
             c.scalar(
                 text(

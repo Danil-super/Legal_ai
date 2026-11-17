@@ -1,6 +1,7 @@
 """Actual Agent HTTP and Core/Hermes transports; no live models or permissions."""
 
 import json
+from types import SimpleNamespace
 from uuid import UUID
 
 import httpx
@@ -197,7 +198,10 @@ def test_numeric_deploy_flag_uses_the_same_enabled_path(scenario, monkeypatch):
 
 def test_optional_wall_timeout_returns_receipt_before_parent_deadline(scenario, monkeypatch):
     monkeypatch.setattr(
-        "agent_orchestrator.lawyer_draft_orchestration.DRAFT_WALL_TIMEOUT_SECONDS", 0.01,
+        "agent_orchestrator.main.CASE_PIPELINE_WALL_TIMEOUT_SECONDS", 0.05,
+    )
+    monkeypatch.setattr(
+        "agent_orchestrator.lawyer_draft_orchestration.RETURN_MARGIN_SECONDS", 0.01,
     )
     scenario[1]["slow"] = True
     response = analyze(scenario)
@@ -254,6 +258,44 @@ def test_short_parent_budget_preserves_the_durable_receipt(scenario, monkeypatch
     monkeypatch.setattr("agent_orchestrator.main.CASE_PIPELINE_WALL_TIMEOUT_SECONDS", 0.5)
     assert analyze(scenario).json() == scenario[3]
     assert len(scenario[2]) == 1
+
+
+@pytest.mark.parametrize("remaining", [260, 150, 90])
+def test_optional_deadline_uses_the_parent_remaining_time(scenario, monkeypatch, remaining):
+    import asyncio
+
+    from agent_orchestrator import lawyer_draft_orchestration as optional
+    from legal_core.analysis_contracts import PreparationResult
+
+    real_timeout, real_timeout_at = asyncio.timeout, asyncio.timeout_at
+    entered = []
+
+    def record_timeout(delay):
+        entered.append(asyncio.get_running_loop().time() + delay)
+        return real_timeout(delay)
+
+    def record_timeout_at(deadline):
+        entered.append(deadline)
+        return real_timeout_at(deadline)
+
+    monkeypatch.setattr(optional.asyncio, "timeout", record_timeout)
+    monkeypatch.setattr(optional.asyncio, "timeout_at", record_timeout_at)
+
+    async def lookup(**_kwargs):
+        return object()
+
+    async def operation():
+        deadline = asyncio.get_running_loop().time() + remaining
+        result = await optional.maybe_generate_lawyer_draft(
+            PreparationResult.model_validate(scenario[3]),
+            core=SimpleNamespace(lookup_lawyer_work_product=lookup), reasoning=None,
+            telegram_user_id=123, idempotency_key=IDEMPOTENCY_KEY, job_id=IDEMPOTENCY_KEY,
+            job_token=TOKEN, parent_deadline=deadline,
+        )
+        assert result is None and len(entered) == 1
+        assert entered[0] == pytest.approx(deadline - optional.RETURN_MARGIN_SECONDS, abs=0.01)
+
+    asyncio.run(operation())
 
 
 def test_overall_deadline_after_routing_still_returns_the_committed_receipt(scenario, monkeypatch):

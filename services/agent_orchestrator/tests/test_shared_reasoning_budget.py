@@ -105,8 +105,9 @@ def test_case_budget_keeps_transport_and_fenced_lease_margins():
         ANALYSIS_REQUEST_WALL_TIMEOUT_SECONDS,
     )
 
-    assert main.CASE_PIPELINE_WALL_TIMEOUT_SECONDS == 150
-    assert (main.CASE_PIPELINE_WALL_TIMEOUT_SECONDS < ANALYSIS_HTTP_TIMEOUT_SECONDS
-            < ANALYSIS_REQUEST_WALL_TIMEOUT_SECONDS <= 165)
-    # The installed database claim function grants 180 s, independent of HTTP keepalives.
-    assert 180 - ANALYSIS_REQUEST_WALL_TIMEOUT_SECONDS >= 15
+    assert main.CASE_PIPELINE_WALL_TIMEOUT_SECONDS == 2 * main.ANALYSIS_WALL_TIMEOUT_SECONDS + 30
+    assert main.CASE_PIPELINE_WALL_TIMEOUT_SECONDS == 260
+    assert ANALYSIS_HTTP_TIMEOUT_SECONDS == main.CASE_PIPELINE_WALL_TIMEOUT_SECONDS + 10 == 270
+    assert ANALYSIS_REQUEST_WALL_TIMEOUT_SECONDS == ANALYSIS_HTTP_TIMEOUT_SECONDS + 5 == 275
+    # The actual SQL claim TTL is independently exercised by test_analysis_job_budget.
+    assert 300 - ANALYSIS_REQUEST_WALL_TIMEOUT_SECONDS == 25

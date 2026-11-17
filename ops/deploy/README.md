@@ -63,6 +63,14 @@ application deployment; this prevents every ordinary bot change from recompiling
 still reachable from `main`. Do not roll back across a non-backward-compatible Alembic migration;
 restore from a tested backup instead.
 
+The analysis-budget migration `c75a2b9d3e64` also requires a coordinated rollback:
+stop/drain the longer-budget Core and Agent processes, explicitly downgrade using
+the **new** image with its normal startup command overridden, then start the old
+stack. An old Core image always runs `alembic upgrade head` and cannot resolve this
+new revision. Do not use the ordinary old-SHA rollback workflow before this
+maintenance step. See [ADR 0136](../../docs/adr/0136-coherent-two-pass-analysis-budget.md)
+for the required order; existing issued leases are not rewritten.
+
 Normal deployments also compare the request with the last successful revision
 before checkout or building. A delayed request for a strict ancestor is a successful
 no-op; the newer stack and success state are left untouched. Same-SHA requests
