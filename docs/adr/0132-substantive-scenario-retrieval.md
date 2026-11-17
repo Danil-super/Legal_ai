@@ -38,3 +38,14 @@ query rationale only; none is imported or approved by this change:
 - Workers and controlled civil-contract work: [Supreme Court Plenum No. 1](https://www.vsrf.ru/documents/all/8089).
 - Defects, warranty and remedies: [Rospotrebnadzor law text](https://zpp.rospotrebnadzor.ru/npa/federal/pitanie/192115).
 - Additional paid services: [Rospotrebnadzor guidance](https://zpp.rospotrebnadzor.ru/news/regional/576589).
+
+A subsequent read-only live-corpus probe found that the broad worker-harm query
+ranked labour/moral-harm material before Civil Code article 1068. Use the article's
+full heading as the fixed candidate query. A PostgreSQL regression puts four
+synthetic labour distractors ahead of the intended fragment under the old phrase,
+then requires the planned query's first result to be the civil-liability fragment.
+The query count, round-robin budget and approval/date gates are unchanged. This
+test validates the ranking mechanism; live-corpus ranking remains a separate
+acceptance check. The heading was checked in the
+[Rospatent-hosted Civil Code](https://rospatent.gov.ru/content/uploadfiles/docs/GK-2_.pdf);
+that copy is not imported or approved by this change.

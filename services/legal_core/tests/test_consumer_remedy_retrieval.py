@@ -168,7 +168,8 @@ def test_substantive_topics_survive_actual_fts_noise_and_current_approval_gates(
     targets = (
         "Охрана изображения гражданина: учебный материал о согласии.",
         "Компенсация морального вреда: учебный материал об оценке требования.",
-        "Возмещение вреда, причинённого работником: учебный материал об ответственности.",
+        "Ответственность юридического лица или гражданина за вред, причиненный его "
+        "работником: учебный материал об ответственности.",
         "Ответственность за действия третьих лиц: учебный материал о проверке договора.",
         "Гарантийный срок: учебный материал об условиях гарантии.",
         "Учебный материал: проверяется, когда недостатки возникли.",
@@ -182,6 +183,9 @@ def test_substantive_topics_survive_actual_fts_noise_and_current_approval_gates(
     specs += [(targets[0], False, "2026-01-01", "2027-01-01"),
               (targets[0], True, "2026-01-01", "2026-10-01"),
               (targets[0], True, "2026-12-01", "2027-01-01")]
+    specs += [("Синтетическая трудовая помеха: вред причиненный работником. "
+               f"Учебный трудовой раздел {index}.", True, "2026-10-08", "2027-01-01")
+              for index in range(4)]
     specs += [(noise + f" Номер учебного фрагмента {index}.", True,
                "2026-01-01", "2027-01-01") for index in range(5)]
     versions = []
@@ -207,22 +211,33 @@ def test_substantive_topics_survive_actual_fts_noise_and_current_approval_gates(
                     FactKey.CLINIC_ACTIONS: ["OFFERED_REFUND", "OFFERED_CORRECTION"],
                     FactKey.HEALTH_CONSEQUENCE_SIGNALS: ["HOSPITALIZATION"],
                 })
-                return await retrieve_planned_evidence(ApprovedLegalCorpusRepository(session),
-                    queries=plan_legal_queries(data), as_of_date=as_of)
+                repository = ApprovedLegalCorpusRepository(session)
+                queries = plan_legal_queries(data)
+                worker_query = next(query for query in queries if "работником" in query)
+                worker_hits = await repository.search_many(
+                    ("вред причиненный работником", worker_query), as_of_date=as_of,
+                    limit=5, semantic=(False, False),
+                )
+                return (await retrieve_planned_evidence(repository, queries=queries,
+                                                        as_of_date=as_of), worker_hits)
         finally:
             await engine.dispose()
 
-    current = asyncio.run(retrieve(date(2026, 11, 17)))
+    current, (broad_worker_hits, planned_worker_hits) = asyncio.run(retrieve(date(2026, 11, 17)))
+    assert broad_worker_hits[-1].version_id == versions[2]
+    assert len(broad_worker_hits) == 5
+    assert planned_worker_hits[0].version_id == versions[2]
     current_versions = {item.version_id for item in current}
     assert set(versions[:8]) <= current_versions
     assert not set(versions[8:11]) & current_versions  # pending, expired, future
     assert len(current) <= 20
-    historical_versions = {item.version_id for item in asyncio.run(retrieve(date(2026, 9, 20)))}
+    historical, _ = asyncio.run(retrieve(date(2026, 9, 20)))
+    historical_versions = {item.version_id for item in historical}
     assert versions[9] in historical_versions
     assert not set(versions[:8]) & historical_versions
     owner = create_engine(owner_database_url())
     try:
         with owner.connect() as db:
-            assert db.scalar(text("SELECT count(*) FROM legal_approval_events")) == 15
+            assert db.scalar(text("SELECT count(*) FROM legal_approval_events")) == 19
     finally:
         owner.dispose()

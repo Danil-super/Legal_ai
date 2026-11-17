@@ -259,7 +259,8 @@ def test_guided_privacy_selects_image_harm_and_third_party_responsibility_separa
         FactKey.EVENT_SUMMARY: "SYNTHETIC_PRIVATE_CANARY uploaded photograph",
     })
     assert {"охрана изображения гражданина", "компенсация морального вреда",
-            "вред причиненный работником", "ответственность за действия третьих лиц",
+            "Ответственность юридического лица или гражданина за вред, "
+            "причиненный его работником", "ответственность за действия третьих лиц",
             "врачебная тайна", "персональные данные"} <= set(queries)
     assert all(is_semantic_safe_query(query) for query in queries)
     assert all("SYNTHETIC_PRIVATE_CANARY" not in query for query in queries)
