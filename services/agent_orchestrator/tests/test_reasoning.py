@@ -651,3 +651,10 @@ def test_clarifications_do_not_bypass_legal_evidence_scope() -> None:
         assert reviewer.calls == 0
 
     asyncio.run(scenario())
+
+
+def test_billing_plan_explicitly_covers_document_check_and_conditional_resolution() -> None:
+    prompt = _research_prompt(_projection())
+    assert "сверка подписанного объёма, цены и согласия" in prompt
+    assert "отмена начисления/возврат или мотивированные возражения" in prompt
+    assert "не делай вид, что согласие или оплата уже установлены" in prompt

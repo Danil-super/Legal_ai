@@ -29,7 +29,8 @@ example, 'госпитализации не было' supports hospitalizationRe
 answer. Explicit unknowns may be suggested as UNKNOWN. 'Сведений нет' is not proof that an
 event did not happen. A denial of one consequence or demand does not deny all consequences
 or demands. A shared negative applies to EACH explicitly named item, not unmentioned items:
-'об ухудшении и госпитализации не сообщалось' supports BOTH corresponding reported signals:NO;
+'ухудшение состояния и госпитализация не упоминались' supports BOTH
+corresponding reported signals:NO;
 'угроз обращения в суд или орган нет' supports authorityReferralMentioned:NO. These statements
 concern reports, not proof that no medical event occurred.
 eventDate is the patient's communication/complaint date;
