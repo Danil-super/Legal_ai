@@ -76,8 +76,8 @@ class DraftSuggestions(PreparationModel):
         "AUTHORITY_OR_COURT_DOCUMENT", "OTHER", "UNKNOWN",
     ] | None = Field(default=None, alias="incomingKind")
     situation_areas: list[Literal[
-        "TREATMENT", "SERVICE", "MEDICAL_RECORDS", "PERSONAL_DATA", "OTHER",
-    ]] | None = Field(default=None, alias="situationAreas", min_length=1, max_length=5)
+        "TREATMENT", "SERVICE", "MEDICAL_RECORDS", "PERSONAL_DATA", "FINANCE", "OTHER",
+    ]] | None = Field(default=None, alias="situationAreas", min_length=1, max_length=6)
     affected_services: list[ServiceName] | None = Field(
         default=None, alias="affectedServices", min_length=1, max_length=5,
     )

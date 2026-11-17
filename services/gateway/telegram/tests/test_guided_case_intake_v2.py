@@ -16,6 +16,7 @@ from telegram_gateway.guided_case_intake_v2 import (
     V2_SERVICES,
     active_states,
     apply_clarification_answer,
+    choice_items,
     clarification_choices,
     clarification_question,
     invalidate_service_clarification_answers,
@@ -50,6 +51,20 @@ def test_treatment_requires_service_but_other_topics_do_not() -> None:
 
     data["situationAreas"] = ["PERSONAL_DATA"]
     assert next_missing_state(data) == V2_SAFETY
+
+
+def test_financial_topic_is_visible_and_does_not_invent_medical_service_slots() -> None:
+    assert dict(choice_items("situationAreas"))["FINANCE"] == "Оплата, стоимость и возврат денег"
+    data = _base_data()
+    data["situationAreas"] = parse_answer("situationAreas", "FINANCE")
+    data.pop("affectedServices")
+    assert V2_SERVICES not in active_states(data)
+    assert "Оплата, стоимость и возврат денег" in "\n".join(review_blocks(data))
+    mapped = [FactInput.model_validate(item) for item in facts_from_v2_data(data)]
+    domain = {item.fact_key: _input_value(item.value_type, item.value) for item in mapped}
+    assert missing_facts_for(domain) == []
+    data["situationAreas"] = parse_answer("situationAreas", "TREATMENT,FINANCE")
+    assert next_missing_state(data) == V2_SERVICES
 
 
 def test_unknown_event_date_does_not_hide_later_urgent_facts() -> None:

@@ -30,6 +30,12 @@ class ReportPresentation:
     source_caveats: tuple[str, ...]
 
 
+def numbered_item(index: int, text: str) -> str:
+    # Remove a model's list marker only in presentation; retained wording stays immutable.
+    body = re.sub(r"^\s*[1-9][0-9]?[.)]\s+", "", text, count=1)
+    return f"{index}. {body}"
+
+
 _FACT_LABELS = {
     "INTAKE_VERSION": "Вариант анкеты",
     "INCOMING_COMMUNICATION": "Вид обращения",
@@ -393,7 +399,7 @@ def present_report(report: Mapping[str, Any]) -> ReportPresentation:
         if ready and recommendations.get("status") == "AVAILABLE"
         else []
     )
-    plan = [f"{index}. {item}" for index, item in enumerate(actions, 1)]
+    plan = [numbered_item(index, item) for index, item in enumerate(actions, 1)]
     if not plan:
         plan = ["Подтверждённый юридический план в отчёте недоступен."]
     elif actions == ["Передайте карточку ответственному сотруднику для внутренней проверки."]:
@@ -421,7 +427,7 @@ def present_report(report: Mapping[str, Any]) -> ReportPresentation:
                 and all(item in numbers for item in citations)
             ):
                 legal.append(
-                    f"{index}. {conclusion['text']} Основания: "
+                    numbered_item(index, conclusion["text"]) + " Основания: "
                     + ", ".join(f"[{numbers[item]}]" for item in citations)
                     + "."
                 )

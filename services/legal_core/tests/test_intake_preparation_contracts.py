@@ -58,6 +58,19 @@ def test_explicit_unknown_can_be_proposed_but_not_a_default_negative():
         "sourceSpans": {"conflictStage": [{"start": 0, "end": 10}]},
     })
     assert result.conflict_stage == "UNKNOWN"
+
+
+def test_finance_is_a_grounded_topic_including_a_combination_of_all_six_topics():
+    source = "Синтетическое обращение об оплате дополнительной услуги."
+    for areas in (["FINANCE"], [
+        "TREATMENT", "SERVICE", "MEDICAL_RECORDS", "PERSONAL_DATA", "FINANCE", "OTHER",
+    ]):
+        result = DraftSuggestions.model_validate({
+            "situationAreas": areas,
+            "sourceSpans": {"situationAreas": [{"start": 0, "end": len(source)}]},
+        })
+        result.validate_source(source)
+        assert result.situation_areas == areas
     assert result.health_signals is None
     assert result.safety_screening is None
 

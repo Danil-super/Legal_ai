@@ -32,7 +32,9 @@ _LITERAL_RUBLES = re.compile(
 )
 _VALUE_GUIDANCE = """Factual choices by question: incomingKind MESSAGE_OR_REQUEST, COMPLAINT,
 FORMAL_DOCUMENT, AUTHORITY_OR_COURT_DOCUMENT, OTHER, UNKNOWN; situationAreas a nonempty list
-of TREATMENT, SERVICE, MEDICAL_RECORDS, PERSONAL_DATA, OTHER; affectedServices 1-5 literal names;
+of TREATMENT, SERVICE, MEDICAL_RECORDS, PERSONAL_DATA, FINANCE, OTHER;
+FINANCE covers payment, price, additional charges and refunds, without implying treatment.
+affectedServices 1-5 literal names;
 eventDate {date:YYYY-MM-DD|null,precision:EXACT|APPROXIMATE|UNKNOWN}; conflictStage FIRST,
 ONGOING, UNKNOWN; clinicActions list of NOTHING_YET, INVITED_FOR_EXAMINATION,
 CONTINUING_TREATMENT, HELD_MEDICAL_COMMISSION, OFFERED_CORRECTION, OFFERED_REFUND,

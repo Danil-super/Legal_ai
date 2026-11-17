@@ -63,6 +63,16 @@ def test_one_existing_profile_call_returns_only_unconfirmed_grounded_proposals()
     assert "JSON Schema" in calls[0]["messages"][0]["content"]
 
 
+def test_initial_model_can_propose_a_grounded_financial_topic():
+    source = "Клиника требует оплатить дополнительную услугу без согласования цены."
+    payload = {"situationAreas": ["FINANCE"],
+               "sourceSpans": {"situationAreas": [{"start": 0, "end": len(source)}]}}
+    calls = []
+    result = run_model(source, payload, calls)
+    assert result.situation_areas == ["FINANCE"] and result.affected_services is None
+    assert "FINANCE" in calls[0]["messages"][0]["content"]
+
+
 @pytest.mark.parametrize("source", [None, True, 42, "", "x" * 9, " " * 20, "x" * 1501,
                                        "Контакт patient@example.invalid для ответа",
                                        "Номер +7 000 000-00-00 для ответа",

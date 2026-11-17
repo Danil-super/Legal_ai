@@ -84,6 +84,7 @@ _CHOICES: dict[str, dict[str, str]] = {
         "SERVICE": "сервис и взаимодействие с клиникой",
         "MEDICAL_RECORDS": "медицинские документы",
         "PERSONAL_DATA": "персональные данные или изображения",
+        "FINANCE": "Оплата, стоимость и возврат денег",
         "OTHER": "другая тема",
     },
     "conflictStage": {

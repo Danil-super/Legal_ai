@@ -30,9 +30,19 @@ _REWORK_QUERIES: Final = (
 )
 _CONSUMER_REMEDY_QUERIES: Final = (
     "права потребителя недостатки оказанной услуги",
-    "возврат уплаченной суммы",
+    "Расчеты \u0441 потребителем в случае приобретения им товара ненадлежащего качества",
     *_REWORK_QUERIES,
+    "Права потребителя при обнаружении недостатков выполненной работы (оказанной услуги)",
+    "Статья 31. Сроки удовлетворения отдельных требований потребителя",
 )
+_PRIVACY_REMEDY_QUERIES: Final = (
+    "охрана изображения гражданина",
+    "Статья 151. Компенсация морального вреда",
+    "Ответственность юридического лица или гражданина за вред, "
+    "причиненный \u0435\u0433\u043e работником",
+    "ответственность за действия третьих лиц",
+)
+_FINANCE_QUERIES: Final = ("дополнительные услуги", "оплата услуг")
 _INCIDENT_QUERIES: Final = {
     "QUALITY_COMPLAINT": ("недостатки оказанной услуги", "гарантийный срок"),
     "INFORMED_CONSENT": ("информированное добровольное согласие",),
@@ -44,6 +54,8 @@ _SEMANTIC_SAFE_QUERIES: Final = frozenset(
         *_BASE_QUERIES,
         *_REWORK_QUERIES,
         *_CONSUMER_REMEDY_QUERIES,
+        *_PRIVACY_REMEDY_QUERIES,
+        *_FINANCE_QUERIES,
         *(query for queries in _INCIDENT_QUERIES.values() for query in queries),
         "требования потребителя претензия медицинские услуги",
         "возмещение вреда здоровью медицинские услуги",
@@ -75,6 +87,9 @@ def plan_legal_queries(facts: Mapping[FactKey, object]) -> tuple[str, ...]:
         areas = _tokens(facts.get(FactKey.SITUATION_AREAS))
         if "PERSONAL_DATA" in areas:
             queries.extend(_INCIDENT_QUERIES["PERSONAL_DATA"])
+            queries.extend(_PRIVACY_REMEDY_QUERIES)
+        if "FINANCE" in areas:
+            queries.extend(_FINANCE_QUERIES)
         if "MEDICAL_RECORDS" in areas:
             queries.append("медицинская документация пациент копии")
 
@@ -85,7 +100,7 @@ def plan_legal_queries(facts: Mapping[FactKey, object]) -> tuple[str, ...]:
             queries.extend(_REWORK_QUERIES)
 
         screening = confirmed_screening(facts)
-        if (areas & {"TREATMENT", "SERVICE"} and screening is not None
+        if (areas & {"TREATMENT", "SERVICE", "FINANCE"} and screening is not None
                 and screening.money_requested == "YES"):
             # A reported monetary request selects possible remedies before the
             # clinic has offered one. It does not establish a defect/refund right.

@@ -93,6 +93,13 @@ async def _select_reference_analogies_for_membership(
     wanted = _terms(" ".join(values))
     if not wanted:
         return empty
+    wanted_lexemes, common_lexemes = (await session.execute(select(
+        func.tsvector_to_array(func.to_tsvector("russian", " ".join(sorted(wanted)))),
+        func.tsvector_to_array(func.to_tsvector("russian", " ".join(sorted(_COMMON)))),
+    ))).one()
+    wanted = set(wanted_lexemes) - set(common_lexemes)
+    if not wanted:
+        return empty
     case, version, review = (ReferenceEvaluationCase, ReferenceEvaluationCaseVersion,
                              ReferenceEvaluationReviewEvent)
     rows = (await session.execute(select(
@@ -100,6 +107,8 @@ async def _select_reference_analogies_for_membership(
         version.id.label("versionId"), version.version, version.scenario_text.label("scenarioText"),
         version.scenario_sha256.label("scenarioSha256"),
         version.as_of_date.label("evaluationAsOfDate"), review.id.label("approvalEventId"),
+        func.tsvector_to_array(func.to_tsvector("russian", version.scenario_text))
+        .label("searchTerms"),
     ).join(version, and_(version.reference_case_id == case.id,
                          version.clinic_id == case.clinic_id,
                          version.version == case.current_version)).join(review, and_(
@@ -120,7 +129,7 @@ async def _select_reference_analogies_for_membership(
     for row in rows:
         supplied = dict(row)
         scenario = supplied.pop("scenarioText")
-        score = len(wanted & _terms(scenario))
+        score = len(wanted & set(supplied.pop("searchTerms")))
         if not score:
             continue
         try:
