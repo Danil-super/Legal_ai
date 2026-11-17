@@ -111,3 +111,38 @@ input hashes); no model weights were trained. Selection retains existing
 workspace grants: approval of the 67 examples does not grant every employee
 access. These probes performed no case writes, report persistence, Telegram
 button interaction or delivery. The separate workflow/release gate remains open.
+
+## Released workflow and focused follow-up
+
+Main 9fe0300 passed release CI/deployment and the actual saved-draft → v2 workflow
+→ live worker/model passes → Core → persisted READY report/PDF → own history
+path. Fictional case DL-2026-000040 completed in 114.827 seconds from enqueue;
+the downloaded PDF matched its stored SHA256 and contained no double numbering.
+This used the working Core API, not manual Telegram button interaction.
+
+Fresh source-equivalent model probes covered caries (109.979 s), image/privacy
+(133.761 s) and billing (78.957 s). Two interrupted diagnostic probes are retained:
+the diagnostic SSH tunnel timed out during deployment; their incomplete streams
+were rejected and did not produce reports. Renewed connections completed both.
+All 67 reference evaluations remained approved; the owner and active lawyer each
+could select three examples, while the revoked lawyer remained unauthorized.
+
+Independent reading still found a privacy plan without explicit preservation
+before hiding/removal. The focused follow-up requests a source-supported internal
+record of publication content/address/known time/access, with restricted access,
+no delay of cessation, no unlimited retention or republication, and no raw data
+sent to the bot. The genuine follow-up at eaea90e completed both reasoning passes
+in 124.269 seconds: six assessments and nine actions, including that preservation
+step. All 15 citation sets agreed across selected evidence, semantic review and
+Core verification; no clarification was requested. Unchanged initial extraction
+was explicitly not rerun in that focused probe. Minor grammatical omissions still
+require editorial attention; no legal certification is claimed.
+
+The saved PDF exposed a separate display bug: extraction paths such as
+article:29/excerpt:34 were shown as unrecognized locations. The presenter now
+ignores only the terminal numeric extraction index and shows the actual article
+or point; document:text is labeled as document text, never an invented article.
+Four extracted-PDF/Telegram cases failed before the fix and passed afterwards;
+unknown/malformed paths retain the existing fallback. Stored reports, source
+paths, evidence hashes and approval bindings are unchanged. Existing saved PDF
+bytes remain immutable; the new labels apply when a new PDF is generated.
