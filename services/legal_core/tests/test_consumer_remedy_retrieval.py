@@ -26,7 +26,7 @@ from test_verified_copy_analysis_e2e import EDITOR_KEY
 from test_verified_copy_analysis_e2e import isolated_database as isolated_database
 
 CONSUMER_QUERY = "права потребителя недостатки оказанной услуги"
-REFUND_QUERY = "возврат уплаченной суммы"
+REFUND_QUERY = "Расчеты с потребителем в случае приобретения им товара ненадлежащего качества"
 
 
 def facts(money="YES", amount=1_000_000, **change):
@@ -167,12 +167,13 @@ def test_substantive_topics_survive_actual_fts_noise_and_current_approval_gates(
 ):
     targets = (
         "Охрана изображения гражданина: учебный материал о согласии.",
-        "Компенсация морального вреда: учебный материал об оценке требования.",
+        "Статья 151. Компенсация морального вреда: учебный материал об оценке требования.",
         "Ответственность юридического лица или гражданина за вред, причиненный его "
         "работником: учебный материал об ответственности.",
         "Ответственность за действия третьих лиц: учебный материал о проверке договора.",
-        "Гарантийный срок: учебный материал об условиях гарантии.",
-        "Учебный материал: проверяется, когда недостатки возникли.",
+        "Расчеты с потребителем в случае приобретения им товара ненадлежащего качества: "
+        "учебный материал о расчете цены.",
+        "Статья 31. Сроки удовлетворения отдельных требований потребителя: учебный материал.",
         "Дополнительные услуги: учебный материал о согласовании стоимости.",
         "Оплата оказанных услуг: учебный материал о согласованном договоре.",
     )
@@ -186,6 +187,8 @@ def test_substantive_topics_survive_actual_fts_noise_and_current_approval_gates(
     specs += [("Синтетическая трудовая помеха: вред причиненный работником. "
                f"Учебный трудовой раздел {index}.", True, "2026-10-08", "2027-01-01")
               for index in range(4)]
+    specs += [("Синтетическая помеха о порочащих сведениях: компенсация морального вреда. "
+               "Компенсация морального вреда.", True, "2026-10-08", "2027-01-01")]
     specs += [(noise + f" Номер учебного фрагмента {index}.", True,
                "2026-01-01", "2027-01-01") for index in range(5)]
     versions = []
@@ -218,12 +221,20 @@ def test_substantive_topics_survive_actual_fts_noise_and_current_approval_gates(
                     ("вред причиненный работником", worker_query), as_of_date=as_of,
                     limit=5, semantic=(False, False),
                 )
+                moral_query = next(query for query in queries if "морального вреда" in query)
+                moral_hits = await repository.search_many(
+                    ("компенсация морального вреда", moral_query), as_of_date=as_of,
+                    limit=5, semantic=(False, False),
+                )
                 return (await retrieve_planned_evidence(repository, queries=queries,
-                                                        as_of_date=as_of), worker_hits)
+                                                        as_of_date=as_of), worker_hits, moral_hits)
         finally:
             await engine.dispose()
 
-    current, (broad_worker_hits, planned_worker_hits) = asyncio.run(retrieve(date(2026, 11, 17)))
+    current, (broad_worker_hits, planned_worker_hits), (broad_moral_hits, planned_moral_hits) = (
+        asyncio.run(retrieve(date(2026, 11, 17))))
+    assert broad_moral_hits[0].version_id == versions[15]
+    assert planned_moral_hits[0].version_id == versions[1]
     assert broad_worker_hits[-1].version_id == versions[2]
     assert len(broad_worker_hits) == 5
     assert planned_worker_hits[0].version_id == versions[2]
@@ -231,13 +242,79 @@ def test_substantive_topics_survive_actual_fts_noise_and_current_approval_gates(
     assert set(versions[:8]) <= current_versions
     assert not set(versions[8:11]) & current_versions  # pending, expired, future
     assert len(current) <= 20
-    historical, _ = asyncio.run(retrieve(date(2026, 9, 20)))
+    historical, _, _ = asyncio.run(retrieve(date(2026, 9, 20)))
     historical_versions = {item.version_id for item in historical}
     assert versions[9] in historical_versions
     assert not set(versions[:8]) & historical_versions
     owner = create_engine(owner_database_url())
     try:
         with owner.connect() as db:
-            assert db.scalar(text("SELECT count(*) FROM legal_approval_events")) == 19
+            assert db.scalar(text("SELECT count(*) FROM legal_approval_events")) == 20
     finally:
         owner.dispose()
+
+
+@pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1",
+                    reason="requires disposable PostgreSQL")
+def test_refund_context_keeps_service_rights_price_calculation_and_deadline_in_first_round(
+    isolated_database, tmp_path,
+):
+    targets = (
+        "Права потребителя при обнаружении недостатков выполненной работы (оказанной услуги). "
+        "Синтетический учебный фрагмент о гарантии, возникновении недостатка и выборе требования.",
+        "Расчеты с потребителем в случае приобретения им товара ненадлежащего качества. "
+        "Синтетический учебный фрагмент о расчете цены.",
+        "Статья 31. Сроки удовлетворения отдельных требований потребителя. "
+        "Синтетический учебный фрагмент о проверке применимого срока.",
+    )
+    noise = ("Синтетическая поисковая помеха: платные медицинские услуги; права пациента "
+             "медицинская помощь; ответственность исполнитель медицинские услуги; права "
+             "потребителя недостатки оказанной услуги; возврат уплаченной суммы; гарантийный "
+             "срок; недостатки возникли.")
+    _seed_user(103_900_000_003, system_role="LEGAL_EDITOR")
+    versions = []
+    with application_client() as client:
+        for value in [*targets,
+                      "Статья 22. Сроки удовлетворения отдельных требований потребителя. "
+                      "Сроки удовлетворения отдельных требований потребителя. "
+                      "Синтетический учебный фрагмент о продаже товара.",
+                      *(noise + f" Учебный раздел {index}." for index in range(5))]:
+            version = _ingest(_write_manifest(tmp_path, fragment_text=value,
+                                               effective_from="2026-10-08",
+                                               effective_to="2027-01-01"))
+            versions.append(version)
+            response = client.post(f"/v1/legal/review-queue/{version}/approval-events",
+                headers={**actor_headers(103_900_000_003, uuid4()),
+                         "X-Legal-Editor-Gateway-Key": EDITOR_KEY},
+                json=_version_payload(version))
+            assert response.status_code == 200, response.text
+
+    async def retrieve():
+        engine = create_async_engine(database_url())
+        try:
+            async with async_sessionmaker(engine)() as session:
+                queries = plan_legal_queries(facts(**{
+                    FactKey.SITUATION_AREAS: ["TREATMENT", "SERVICE", "PERSONAL_DATA",
+                                              "MEDICAL_RECORDS", "FINANCE", "OTHER"],
+                    FactKey.CLINIC_ACTIONS: ["OFFERED_REFUND", "OFFERED_CORRECTION"],
+                    FactKey.HEALTH_CONSEQUENCE_SIGNALS: ["HOSPITALIZATION"],
+                }))
+                assert len(queries) == len(set(queries)) <= 20
+                repository = ApprovedLegalCorpusRepository(session)
+                batches = await repository.search_many(queries, as_of_date=date(2026, 11, 17),
+                    limit=5, semantic=[is_semantic_safe_query(query) for query in queries])
+                broad_deadlines = await repository.search_many(
+                    ("Сроки удовлетворения отдельных требований потребителя",),
+                    as_of_date=date(2026, 11, 17), limit=5, semantic=(False,),
+                )
+                assert broad_deadlines[0][0].version_id == versions[3]
+                first_round = {batch[0].version_id for batch in batches if batch}
+                assert set(versions[:3]) <= first_round
+                return await retrieve_planned_evidence(repository, queries=queries,
+                                                       as_of_date=date(2026, 11, 17))
+        finally:
+            await engine.dispose()
+
+    selected = asyncio.run(retrieve())
+    assert set(versions[:3]) <= {item.version_id for item in selected}
+    assert len(selected) <= 20

@@ -244,11 +244,13 @@ def test_general_queries_cannot_exclude_later_scenario_queries() -> None:
     asyncio.run(scenario())
 
 
-def test_guided_refund_selects_defect_origin_and_warranty_before_drafting_a_remedy():
+def test_guided_refund_selects_service_rights_price_calculation_and_deadline_sources():
     from test_consumer_remedy_retrieval import facts
 
     queries = plan_legal_queries(facts(amount=500_000))
-    assert {"гарантийный срок", "недостатки возникли"} <= set(queries)
+    assert {"Права потребителя при обнаружении недостатков выполненной работы (оказанной услуги)",
+            "Расчеты с потребителем в случае приобретения им товара ненадлежащего качества",
+            "Статья 31. Сроки удовлетворения отдельных требований потребителя"} <= set(queries)
     assert all(is_semantic_safe_query(query) for query in queries)
 
 
@@ -258,7 +260,7 @@ def test_guided_privacy_selects_image_harm_and_third_party_responsibility_separa
         FactKey.SITUATION_AREAS: ["PERSONAL_DATA"],
         FactKey.EVENT_SUMMARY: "SYNTHETIC_PRIVATE_CANARY uploaded photograph",
     })
-    assert {"охрана изображения гражданина", "компенсация морального вреда",
+    assert {"охрана изображения гражданина", "Статья 151. Компенсация морального вреда",
             "Ответственность юридического лица или гражданина за вред, "
             "причиненный его работником", "ответственность за действия третьих лиц",
             "врачебная тайна", "персональные данные"} <= set(queries)
