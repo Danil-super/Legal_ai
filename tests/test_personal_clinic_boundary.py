@@ -23,7 +23,7 @@ CLINIC_BASELINE = {
         # personal entry points and grants remain inert.
         # Separately reviewed clinical menu-copy correction (2026-11-17 ADR);
         # personal entry points, identity, grants and flags remain unchanged.
-        "751fd1a19f421c381edd2a4632a7c08562132d1f",
+        "08049eab6b29fd50a40d108542be6b446245db20",
     "services/gateway/telegram/src/telegram_gateway/case_experience_runtime.py":
         # Owner-approved opt-in clinical plan review (2026-10-27 lawyer-work-product UI ADR);
         # both clinical flags default off, personal entry points remain inert.

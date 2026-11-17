@@ -102,11 +102,16 @@ def test_clinic_library_menu_routes_and_returns_without_starting_case(
 def test_all_seven_approved_group_buttons_reach_editor_without_approval_controls(
     production_composition, monkeypatch, group,
 ):
-    payload = {"page": 1, "pageSize": 10, "totalItems": 0, "items": [],
+    clinical = group == "clinical"
+    item = {"title": "Synthetic reviewed material", "materialId": str(DRAFT),
+            **({"preparationId": str(DRAFT), "kind": "CLINICAL_REFERENCE"} if clinical
+               else {"versionId": str(DRAFT)})}
+    payload = {"page": 1, "pageSize": 10, "totalItems": 1, "items": [item],
                "selectedGroup": group, "groups": [], "referenceReviewableCount": 0,
-               "progress": {"complete": True, "normativeVersions": 1,
-                            "approvedNormativeVersions": 1, "referenceMaterials": 0,
-                            "reviewedReferenceMaterials": 0, "missingParts": 0,
+               "progress": {"complete": True, "normativeVersions": int(not clinical),
+                            "approvedNormativeVersions": int(not clinical),
+                            "referenceMaterials": int(clinical),
+                            "reviewedReferenceMaterials": int(clinical), "missingParts": 0,
                             "unpreparedOriginals": 0, "unlinkedVersions": 0}}
     client = SimpleNamespace(get_editor_groups=AsyncMock(return_value=payload), aclose=AsyncMock())
     monkeypatch.setattr(legal_library, "LegalLibraryClient", lambda: client)
@@ -118,6 +123,8 @@ def test_all_seven_approved_group_buttons_reach_editor_without_approval_controls
             buttons = [b.callback_data for row in sent[-1]["reply_markup"].inline_keyboard
                        for b in row]
             assert "menu" in buttons
+            expected = f"editor:preparation:{DRAFT}" if clinical else f"editor:detail:{DRAFT}:1"
+            assert expected in buttons
             assert not any(c.startswith(("editor:batch:", "editor:refbatch:")) for c in buttons)
             await dispatch("menu")
     asyncio.run(scenario())
