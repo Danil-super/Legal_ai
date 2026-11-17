@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from legal_core.contracts import CanonicalReport
+from legal_core.report_presentation import numbered_item
 
 
 def legal_conclusion_lines(report_json: Mapping[str, Any]) -> list[str]:
@@ -35,6 +36,6 @@ def legal_conclusion_lines(report_json: Mapping[str, Any]) -> list[str]:
         )
         # Do not truncate or regenerate legal wording: a qualifier may be at its end.
         # The existing analysis message splitter handles Telegram's UTF-16 limit.
-        lines.extend([f"{index}. {conclusion.text}", f"Основание: {citations}."])
+        lines.extend([numbered_item(index, conclusion.text), f"Основание: {citations}."])
     lines.append("Это внутренняя оценка; окончательное решение принимает ответственный специалист.")
     return lines

@@ -234,6 +234,27 @@ def test_pdf_preserves_saved_paragraph_breaks_and_escapes_external_markup(tmp_pa
     assert re.search(r"Первая синтетическая строка\.\n\s*Вторая строка <b>текст</b>\.", text)
 
 
+@pytest.mark.parametrize("prefix", ["1. ", "2) "])
+def test_saved_list_markers_are_not_numbered_twice(prefix: str, tmp_path: Path) -> None:
+    report = presentation_report()
+    report.recommendations.items = [prefix + "Сверить синтетический договор."]
+    report.legal_conclusions[0].text = prefix + "Синтетический проверенный вывод."
+    original = report.model_dump(mode="json", by_alias=True)
+    for text in (pdf_text(report, tmp_path), telegram_summary_from_report(original)):
+        assert "1. Сверить синтетический договор." in text
+        assert "1. Синтетический проверенный вывод." in text
+        assert "1. " + prefix not in text
+    assert report.model_dump(mode="json", by_alias=True) == original
+
+
+def test_article_numbers_and_dates_are_not_treated_as_list_markers() -> None:
+    report = presentation_report()
+    report.recommendations.items = ["152.1 — номер в синтетическом примере.", "18.11.2026 — дата."]
+    blocks = present_report(report.model_dump(mode="json", by_alias=True)).blocks
+    plan = next(block for block in blocks if block.title == "План действий")
+    assert plan.lines == ("1. 152.1 — номер в синтетическом примере.", "2. 18.11.2026 — дата.")
+
+
 def test_dated_source_keeps_extraction_limitations_without_current_copy_warning(
     tmp_path: Path,
 ) -> None:
