@@ -55,3 +55,25 @@ For each content check record **supported**, **missing**, **contradicted** or
 and usefulness, not wording similarity. A structural PASS cannot replace this
 inspection. Final legal acceptance belongs to the reviewing lawyer; do not label
 an unreviewed result legally certified or promise error-free operation.
+
+## First read-only live checkpoint
+
+Candidate d16a785 used the current production-approved corpus, three approved
+examples in each case, the existing native models/high, and the normal two model
+passes. The model inputs contained identical example hashes in both passes. Core's
+claim verifier allowed all three resulting batches. No case or approval was
+written and Telegram delivery was not exercised.
+
+| Fictional case | Initial interpretation | Two reasoning passes | Content gap found |
+| --- | ---: | ---: | --- |
+| Caries refund | 41.380 s | 90.801 s | Better grounds, warranty, evidence and alternatives, but articles 24/31 were absent from selected evidence. |
+| Image/privacy | 46.691 s | 146.861 s | Image and contractor issues addressed; general moral-harm grounds were absent and the model correctly abstained. |
+| Additional service | 53.701 s | 97.939 s | Grounds distinguished unpaid billing from refund, but key document checks were left in assessment rather than concrete actions. |
+
+The initial caries interpretation preserved both dates and paid-service basis;
+some explicitly grouped negative reports were omitted in these probes. These
+are deficiencies to fix and retest, not a final legal-quality acceptance. The
+privacy timing also leaves insufficient room for Core within the former
+150-second total case wall. The separate bounded-budget correction must be
+verified in the full workflow before release. Private complete answers, source
+identities and failed-attempt evidence are retained outside the repository.

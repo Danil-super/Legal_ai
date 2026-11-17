@@ -28,7 +28,11 @@ reports ARE facts: preserve their polarity using only the matching permitted cho
 example, 'госпитализации не было' supports hospitalizationReported:NO, not any other safety
 answer. Explicit unknowns may be suggested as UNKNOWN. 'Сведений нет' is not proof that an
 event did not happen. A denial of one consequence or demand does not deny all consequences
-or demands. eventDate is the patient's communication/complaint date;
+or demands. A shared negative applies to EACH explicitly named item, not unmentioned items:
+'об ухудшении и госпитализации не сообщалось' supports BOTH corresponding reported signals:NO;
+'угроз обращения в суд или орган нет' supports authorityReferralMentioned:NO. These statements
+concern reports, not proof that no medical event occurred.
+eventDate is the patient's communication/complaint date;
 SERVICE_PROVIDED_DATE is the date of that particular service. Preserve both independently
 when both are supplied. Do not put the service date into eventDate merely because it appears
 first. Do not assign the beginning of a course to the disputed episode or apply
