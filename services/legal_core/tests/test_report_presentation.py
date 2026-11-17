@@ -382,3 +382,31 @@ def test_case_file_sources_have_their_own_readable_section_without_private_metad
                                capture_output=True, text=True).stdout
     assert "Приложенные документы" in extracted and "Материал 1" in extracted
     assert "a" * 64 not in extracted
+
+
+@pytest.mark.parametrize(("path", "label"), [
+    ("article:29/excerpt:34", "статья 29"),
+    ("article:152.1/excerpt:152", "статья 152.1"),
+    ("point:48/excerpt:51", "пункт 48"),
+    ("document:text/excerpt:7", "Текст документа"),
+])
+def test_extracted_source_locations_survive_pdf_and_telegram_without_changing_saved_report(
+    path: str, label: str, tmp_path: Path,
+) -> None:
+    report = presentation_report()
+    report.legal_basis.sources[0].structural_path = path
+    saved = report.model_dump(mode="json", by_alias=True)
+    for text in (pdf_text(report, tmp_path), telegram_summary_from_report(saved)):
+        assert label in text
+        assert "Раздел источника не распознан" not in text
+        assert "excerpt:" not in text
+    assert report.model_dump(mode="json", by_alias=True) == saved
+
+
+@pytest.mark.parametrize("path", [
+    "article:29/excerpt:unknown", "article:29/unknown:4", "excerpt:34",
+])
+def test_unrecognized_metadata_does_not_invent_a_legal_location(path: str) -> None:
+    from legal_core.report_presentation import readable_source_path
+
+    assert readable_source_path(path) == "Раздел источника не распознан"

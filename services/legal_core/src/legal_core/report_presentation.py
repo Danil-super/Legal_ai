@@ -173,6 +173,10 @@ def _date_text(value: object) -> str | None:
 def readable_source_path(value: object) -> str:
     if not isinstance(value, str) or not value:
         return "Раздел источника не указан"
+    # Excerpt indexes locate extracted text; they are not statutory subdivisions.
+    value = re.sub(r"^(.+)/excerpt:[0-9]+$", r"\1", value)
+    if value == "document:text":
+        return "Текст документа"
     labels = {
         "article": "статья",
         "part": "часть",
