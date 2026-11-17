@@ -6,7 +6,8 @@
 - [ ] LF2: support FINANCE consistently in factual contracts and both intake paths.
 - [ ] LF3: cover substantive refund, image, moral-harm and additional-service search.
 - [ ] LF4: strengthen source-bound issue/evidence/outcome reasoning; avoid repeated facts.
-- [ ] LF5: render one list number in PDF and Telegram without mutating saved content.
+- [x] LF5 (local): one list number in PDF, Telegram and lawyer plans; stored content
+  and approval bindings unchanged. Rendering suites: 82 and 49 tests passed.
 - [ ] LF6: verify relevant approved reference analogies in both passes and explain limits.
 - [ ] LF7: full quality/integration gates, independent review and three live-model cases.
 

@@ -1,0 +1,30 @@
+# Analyze the dispute, evidence and conditional outcomes
+
+Status: implementation, 2026-11-17; live answer evaluation required.
+
+The lawyer found an uneven result: an ordinary refund report focused on intake
+and time limits, while an image case omitted distinct substantive issues.
+Broader retrieval alone does not establish that the model uses those sources.
+
+Strengthen the existing research instructions: address each material demand,
+its supported grounds, evidence on each side, burdens of proof, missing facts,
+conditional outcomes and the concrete checks that change the chosen action.
+Distinguish an allegation from an established defect, causation or loss. Relevant
+image/data, compensation and worker/contractor questions must be considered
+separately when supported by the supplied sources. Registration and deadlines
+remain useful actions but cannot substitute for analyzing the dispute.
+
+Replace the generic target of two or three legal claims with coverage of the
+material issues within the unchanged schema limits. Keep concise sentences,
+all necessary qualifications and the existing strict claim/citation contracts.
+Do not add a third model, tools, a new provider, fine-tuning or an extra retry.
+The independent reviewer and final Core approval/date/fact gates remain intact.
+Reference examples help compare reasoning and evidence; they establish neither
+new facts nor legal authority, and do not override the current approved sources.
+
+Verification includes existing reasoning, source-boundary and claim-retention
+tests, then the three fictional scenarios in the feedback evaluation rubric.
+Successful parsing or model instructions alone do not prove legal quality.
+Actual answers must be inspected with their retrieved sources; failed, incomplete
+and slow attempts remain in the evidence. Human legal acceptance is separate
+from automated structural verification and deployment readiness.
