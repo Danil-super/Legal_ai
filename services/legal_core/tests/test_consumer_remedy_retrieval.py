@@ -158,3 +158,71 @@ def test_generic_consumer_fragment_survives_medical_noise_with_approval_and_date
             assert db.scalar(text("SELECT count(*) FROM legal_approval_events")) == 7
     finally:
         owner.dispose()
+
+
+@pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1",
+                    reason="requires disposable PostgreSQL")
+def test_substantive_topics_survive_actual_fts_noise_and_current_approval_gates(
+    isolated_database, tmp_path,
+):
+    targets = (
+        "Охрана изображения гражданина: учебный материал о согласии.",
+        "Компенсация морального вреда: учебный материал об оценке требования.",
+        "Возмещение вреда, причинённого работником: учебный материал об ответственности.",
+        "Ответственность за действия третьих лиц: учебный материал о проверке договора.",
+        "Гарантийный срок: учебный материал об условиях гарантии.",
+        "Учебный материал: проверяется, когда недостатки возникли.",
+        "Дополнительные услуги: учебный материал о согласовании стоимости.",
+        "Оплата оказанных услуг: учебный материал о согласованном договоре.",
+    )
+    noise = ("Учебный фрагмент: платные медицинские услуги. Права пациента при оказании "
+             "медицинской помощи. Ответственность исполнителя медицинских услуг.")
+    _seed_user(103_900_000_002, system_role="LEGAL_EDITOR")
+    specs = [(value, True, "2026-10-08", "2027-01-01") for value in targets]
+    specs += [(targets[0], False, "2026-01-01", "2027-01-01"),
+              (targets[0], True, "2026-01-01", "2026-10-01"),
+              (targets[0], True, "2026-12-01", "2027-01-01")]
+    specs += [(noise + f" Номер учебного фрагмента {index}.", True,
+               "2026-01-01", "2027-01-01") for index in range(5)]
+    versions = []
+    with application_client() as client:
+        for value, approved, start, end in specs:
+            version = _ingest(_write_manifest(tmp_path, fragment_text=value,
+                                               effective_from=start, effective_to=end))
+            versions.append(version)
+            if approved:
+                response = client.post(f"/v1/legal/review-queue/{version}/approval-events",
+                    headers={**actor_headers(103_900_000_002, uuid4()),
+                             "X-Legal-Editor-Gateway-Key": EDITOR_KEY},
+                    json=_version_payload(version))
+                assert response.status_code == 200, response.text
+
+    async def retrieve(as_of):
+        engine = create_async_engine(database_url())
+        try:
+            async with async_sessionmaker(engine)() as session:
+                data = facts(**{
+                    FactKey.SITUATION_AREAS: ["TREATMENT", "SERVICE", "PERSONAL_DATA",
+                                              "MEDICAL_RECORDS", "FINANCE", "OTHER"],
+                    FactKey.CLINIC_ACTIONS: ["OFFERED_REFUND", "OFFERED_CORRECTION"],
+                    FactKey.HEALTH_CONSEQUENCE_SIGNALS: ["HOSPITALIZATION"],
+                })
+                return await retrieve_planned_evidence(ApprovedLegalCorpusRepository(session),
+                    queries=plan_legal_queries(data), as_of_date=as_of)
+        finally:
+            await engine.dispose()
+
+    current = asyncio.run(retrieve(date(2026, 11, 17)))
+    current_versions = {item.version_id for item in current}
+    assert set(versions[:8]) <= current_versions
+    assert not set(versions[8:11]) & current_versions  # pending, expired, future
+    assert len(current) <= 20
+    historical_versions = {item.version_id for item in asyncio.run(retrieve(date(2026, 9, 20)))}
+    assert versions[9] in historical_versions
+    assert not set(versions[:8]) & historical_versions
+    owner = create_engine(owner_database_url())
+    try:
+        with owner.connect() as db:
+            assert db.scalar(text("SELECT count(*) FROM legal_approval_events")) == 15
+    finally:
+        owner.dispose()

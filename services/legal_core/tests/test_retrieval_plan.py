@@ -109,7 +109,7 @@ def test_guided_v2_unknowns_and_all_known_categories_keep_plan_bounded() -> None
          FactKey.HEALTH_CONSEQUENCE_SIGNALS: ["COMPLICATION_OR_WORSENING",
                                                "HOSPITALIZATION", "OTHER_CLINIC"]}
     )
-    assert len(dense) == len(set(dense)) == 10
+    assert len(dense) == len(set(dense)) == 14
     assert all(is_semantic_safe_query(query) for query in dense)
     assert "ответственность медицинская организация проверка" not in dense
 
@@ -242,3 +242,65 @@ def test_general_queries_cannot_exclude_later_scenario_queries() -> None:
         ]
 
     asyncio.run(scenario())
+
+
+def test_guided_refund_selects_defect_origin_and_warranty_before_drafting_a_remedy():
+    from test_consumer_remedy_retrieval import facts
+
+    queries = plan_legal_queries(facts(amount=500_000))
+    assert {"гарантийный срок", "недостатки возникли"} <= set(queries)
+    assert all(is_semantic_safe_query(query) for query in queries)
+
+
+def test_guided_privacy_selects_image_harm_and_third_party_responsibility_separately():
+    queries = plan_legal_queries({
+        FactKey.INTAKE_VERSION: "GUIDED_V2",
+        FactKey.SITUATION_AREAS: ["PERSONAL_DATA"],
+        FactKey.EVENT_SUMMARY: "SYNTHETIC_PRIVATE_CANARY uploaded photograph",
+    })
+    assert {"охрана изображения гражданина", "компенсация морального вреда",
+            "вред причиненный работником", "ответственность за действия третьих лиц",
+            "врачебная тайна", "персональные данные"} <= set(queries)
+    assert all(is_semantic_safe_query(query) for query in queries)
+    assert all("SYNTHETIC_PRIVATE_CANARY" not in query for query in queries)
+
+
+def test_guided_finance_selects_payment_and_additional_service_consent_without_treatment():
+    from test_consumer_remedy_retrieval import CONSUMER_QUERY, facts
+
+    data = facts(money="UNKNOWN", **{FactKey.SITUATION_AREAS: ["FINANCE"]})
+    queries = plan_legal_queries(data)
+    assert {"дополнительные услуги", "оплата услуг"} <= set(queries)
+    assert CONSUMER_QUERY not in queries
+    data = facts(amount=500_000, **{FactKey.SITUATION_AREAS: ["FINANCE"]})
+    assert CONSUMER_QUERY in plan_legal_queries(data)
+
+
+def test_dense_guided_topics_reach_the_evidence_budget_in_the_first_round():
+    from test_consumer_remedy_retrieval import facts
+
+    data = facts(**{
+        FactKey.SITUATION_AREAS: ["TREATMENT", "SERVICE", "PERSONAL_DATA", "MEDICAL_RECORDS",
+                                  "FINANCE", "OTHER"],
+        FactKey.CLINIC_ACTIONS: ["OFFERED_REFUND", "OFFERED_CORRECTION"],
+        FactKey.HEALTH_CONSEQUENCE_SIGNALS: ["HOSPITALIZATION"],
+    })
+    queries = plan_legal_queries(data)
+    assert "охрана изображения гражданина" in queries
+    assert "дополнительные услуги" in queries
+    assert len(queries) == len(set(queries)) <= 20
+
+    class Repository:
+        async def search_many(self, supplied, *, as_of_date, limit, semantic):
+            assert tuple(supplied) == queries
+            assert as_of_date == date(2026, 11, 17) and limit == 5
+            assert all(semantic)
+            return [[SimpleNamespace(fragment_id=UUID(int=index * 10 + rank))
+                     for rank in range(1, 6)] for index in range(len(queries))]
+
+    selected = asyncio.run(retrieve_planned_evidence(
+        Repository(), queries=queries, as_of_date=date(2026, 11, 17),  # type: ignore[arg-type]
+    ))
+    selected_ids = {item.fragment_id for item in selected}
+    assert len(selected) <= 20
+    assert {UUID(int=index * 10 + 1) for index in range(len(queries))} <= selected_ids
