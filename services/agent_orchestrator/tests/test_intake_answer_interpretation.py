@@ -88,6 +88,14 @@ def test_one_existing_profile_interprets_only_current_question(state, source, va
     assert "JSON Schema" in calls[0]["messages"][0]["content"]
 
 
+def test_follow_up_model_can_classify_a_financial_topic_without_inventing_treatment():
+    source = "Спор об оплате дополнительной услуги и несогласованной цене."
+    calls = []
+    result = run_model(source, proposed(source, ["FINANCE"]), state="SITUATION", calls=calls)
+    assert result.status == "PROPOSED" and result.value == ["FINANCE"]
+    assert "FINANCE" in calls[0]["messages"][0]["content"]
+
+
 @pytest.mark.parametrize("value,source", [("UNKNOWN", "Не знаю"), ("NO", "Нет")])
 def test_explicit_unknown_and_negative_are_attempts_not_abstention(value, source):
     result = run_model(source, proposed(source, value), state="SAFETY")
