@@ -167,6 +167,7 @@ def test_inventory_fails_closed_on_shape_or_extra_content(change: str) -> None:
 def test_private_inventory_rejects_unsafe_permissions_and_symlink(tmp_path: Path) -> None:
     path = tmp_path / "inventory.json"
     path.write_text(json.dumps(_inventory()), encoding="utf-8")
+    path.chmod(0o644)
     with pytest.raises(ValueError, match="private regular file"):
         load_private_request(path)
     path.chmod(0o600)

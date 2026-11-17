@@ -665,3 +665,28 @@ def test_unknown_consent_allows_a_source_bound_check_without_assuming_treatment(
     assert "Неизвестное согласие не запрещает условный ACTION по его проверке" in prompt
     assert "Спор о счёте сам по себе не означает спор о качестве лечения" in prompt
     assert "AFFECTED_SERVICES нужен лишь при реальной зависимости от услуги" in prompt
+
+
+@pytest.mark.parametrize("lawyer_review_draft", [False, True])
+def test_publication_plan_requests_source_bound_preservation_before_removal(lawyer_review_draft):
+    projection = _projection(
+        summary="Учебный спор: изображение пациента опубликовано без согласия.",
+    )
+    prompt = _research_prompt(projection, lawyer_review_draft=lawyer_review_draft)
+    instructions, raw_schema = prompt.split(SCHEMA_MARKER, maxsplit=1)
+    instructions = " ".join(instructions.split())
+    assert "Если facts описывают спор о публикации" in instructions
+    assert "при поддержке evidence" in instructions
+    assert "до скрытия или удаления зафиксировать" in instructions
+    assert "что было опубликовано, адрес публикации" in instructions
+    assert "известные дату/время и условия доступа" in instructions
+    assert "Проверка содержания не заменяет сохранение этих сведений" in instructions
+    assert "Не откладывай прекращение распространения" in instructions
+    assert "самостоятельной обязательной процедурой" in instructions
+    assert "бессрочное" in instructions
+    assert "повторную публикацию" in instructions
+    assert "отправку исходных изображений и персональных данных в бот" in instructions
+    schema = json.loads(raw_schema)
+    assert schema["properties"]["claims"].get("minItems", 0) == 0
+    evidence = schema["$defs"]["ClaimProposal"]["properties"]["evidenceFragmentIds"]
+    assert evidence["items"]["enum"] == [str(FRAGMENT_ID)]
