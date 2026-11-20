@@ -2068,7 +2068,7 @@ def create_case_router(
         screening = facts.get(FactKey.FACTUAL_SAFETY_SCREENING)
         if (
             source_draft is not None
-            and payload.receipt_version == 2
+            and facts.get(FactKey.INTAKE_VERSION) == "GUIDED_V2"
             and isinstance(screening, dict)
             and routine_service_scope(
                 areas=facts.get(FactKey.SITUATION_AREAS),

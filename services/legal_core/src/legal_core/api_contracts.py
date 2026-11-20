@@ -847,15 +847,13 @@ class TelegramWorkflowSubmissionRequest(ContractModel):
 
     @model_validator(mode="after")
     def preparation_requires_guided_facts(self) -> "TelegramWorkflowSubmissionRequest":
-        if self.expected_draft_revision is not None and self.receipt_version != 2:
-            raise ValueError("binding a draft revision requires a v2 preparation receipt")
-        if self.receipt_version == 2 and (
+        if (self.receipt_version == 2 or self.expected_draft_revision is not None) and (
             self.intake_schema_version != "dental-case-intake.v2" or not any(
                 fact.fact_key == FactKey.INTAKE_VERSION and fact.value == {"value": "GUIDED_V2"}
                 for fact in self.facts
             )
         ):
-            raise ValueError("preparation receipt requires guided v2 intake")
+            raise ValueError("preparation receipt or draft binding requires guided v2 intake")
         return self
 
     @field_validator("facts")

@@ -3017,16 +3017,20 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                                            missing_material=True)
                     return WizardState.MATERIALS
             facts = facts_from_v2_data(data)
+            draft_binding = (
+                {"expected_draft_revision": int(data[DRAFT_REVISION_KEY])}
+                if data.get(SERVICE_SCOPE_KEY) is True else {}
+            )
             if preparation:
                 workflow = await client.submit_workflow(
                     workflow_id, facts, actor_id,
                     intake_schema_version=V2_INTAKE_SCHEMA_VERSION, receipt_version=2,
-                    **({"expected_draft_revision": int(data[DRAFT_REVISION_KEY])}
-                       if data.get(SERVICE_SCOPE_KEY) is True else {}),
+                    **draft_binding,
                 )
             else:
                 workflow = await client.submit_workflow(
                     workflow_id, facts, actor_id, intake_schema_version=V2_INTAKE_SCHEMA_VERSION,
+                    **draft_binding,
                 )
         else:
             facts = facts_from_draft(_draft_from_data(data))

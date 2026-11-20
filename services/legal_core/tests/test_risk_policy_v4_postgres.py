@@ -70,7 +70,10 @@ def activate_v4(*, continue_to_v5=False):
     return asyncio.run(run())
 
 
-def test_v5_scoped_service_submission_and_critical_alert_follow_distinct_routes(monkeypatch):
+@pytest.mark.parametrize("receipt_version", [None, 2])
+def test_v5_scoped_service_submission_and_critical_alert_follow_distinct_routes(
+    monkeypatch, receipt_version,
+):
     activate_v4(continue_to_v5=True)
     monkeypatch.setenv("LEGAL_ANALYSIS_SAFE_STOP", "1")
     actor = 91_000_000_000 + uuid4().int % 1_000_000_000
@@ -112,7 +115,8 @@ def test_v5_scoped_service_submission_and_critical_alert_follow_distinct_routes(
                 headers=actor_headers(actor),
                 json={
                     "intakeSchemaVersion": "dental-case-intake.v2", "locale": "ru-RU",
-                    "receiptVersion": 2, "facts": facts_from_v2_data(data),
+                    "facts": facts_from_v2_data(data),
+                    **({"receiptVersion": 2} if receipt_version == 2 else {}),
                     **({"expectedDraftRevision": revision} if revision is not None else {}),
                 },
             )
@@ -132,8 +136,8 @@ def test_v5_scoped_service_submission_and_critical_alert_follow_distinct_routes(
             payload = {
                 "intakeSchemaVersion": "dental-case-intake.v2",
                 "locale": "ru-RU",
-                "receiptVersion": 2,
                 "facts": facts_from_v2_data(data),
+                **({"receiptVersion": 2} if receipt_version == 2 else {}),
             }
             submission = client.post(
                 f"/v1/telegram-case-workflows/{workflow}/submissions",
