@@ -38,6 +38,9 @@ def routine_service_scope(
 
 
 def routine_service_money_pending(data: Mapping[str, object]) -> bool:
+    # A pre-v5 draft only entered SAFETY after recording the health step.
+    if "healthSignals" in data:
+        return False
     try:
         screening = validate_partial_screening(
             data.get("safetyScreening", {"schemaVersion": SCREENING_VERSION}),
@@ -48,6 +51,28 @@ def routine_service_money_pending(data: Mapping[str, object]) -> bool:
         areas=data.get("situationAreas"), incoming=data.get("incomingKind"),
         health=data.get("healthSignals"), screening={**screening, "moneyRequested": "NO"},
     )
+
+
+def routine_service_draft(data: Mapping[str, object]) -> dict[str, object] | None:
+    """Project a routine draft's unreported facts without changing its editable state."""
+    try:
+        screening = validate_partial_screening(data.get("safetyScreening"))
+    except ValueError:
+        return None
+    if not routine_service_scope(
+        areas=data.get("situationAreas"), incoming=data.get("incomingKind"),
+        health=data.get("healthSignals"), screening=screening,
+    ):
+        return None
+    return {
+        **data,
+        "healthSignals": data.get("healthSignals", ["UNKNOWN"]),
+        "safetyScreening": {
+            **dict.fromkeys(SCREENING_FIELDS, "UNKNOWN"),
+            "amount": "NOT_REQUESTED",
+            **screening,
+        },
+    }
 
 
 def validate_partial_screening(value: object) -> dict[str, object]:

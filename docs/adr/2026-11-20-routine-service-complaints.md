@@ -16,7 +16,9 @@ negative and cannot satisfy a legal claim's required facts.
 The Telegram draft response exposes the capability only when Core reads a
 valid approved v5. The gateway projects omitted fields as UNKNOWN for the final
 review and submission. Editable draft data retains the original partial facts.
-Core binds confirmation to the draft revision under a row lock. Other intake
+Core checks the draft revision and its scope-determining facts under a row
+lock. The request's transport revision is excluded from the idempotency hash
+so an already confirmed case can replay on either side of activation. Other intake
 can use a batch of at most three screening questions. The operator can
 explicitly deny the listed events together.
 Urgent routing remains deterministic and uses the positive signals before any

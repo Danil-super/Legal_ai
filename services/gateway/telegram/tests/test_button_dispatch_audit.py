@@ -11,9 +11,10 @@ from telegram_gateway import clinic_document_library_runtime as clinic_library
 from telegram_gateway import legal_library_runtime as legal_library
 from telegram_gateway.guided_case_intake_v2 import choice_items
 from telegram_gateway.ui import BOT_DESCRIPTION, SCREENS, START_MESSAGE
+from test_answer_runtime import AnswerCore
 from test_answer_staged_recovery import amount_draft
 from test_dialog_isolation import ACTOR, DRAFT
-from test_intake_single_summary import simplified_harness
+from test_intake_single_summary import await_state, simplified_harness
 
 
 @pytest.fixture
@@ -184,9 +185,10 @@ def test_scoped_service_draft_resumes_at_summary_without_safety_questions():
     asyncio.run(scenario())
 
 
-def test_scoped_service_without_money_facts_asks_only_about_patient_demand():
+@pytest.mark.parametrize("typed", [False, True])
+def test_scoped_service_without_money_facts_asks_only_about_patient_demand(typed):
     async def scenario():
-        async with simplified_harness() as (_app, core, sent, dispatch):
+        async with simplified_harness() as (app, core, sent, dispatch):
             data = amount_draft()
             data["clinicActions"] = ["REBOOKED_AFTER_WAIT"]
             data.pop("safetyScreening")
@@ -197,7 +199,15 @@ def test_scoped_service_without_money_facts_asks_only_about_patient_demand():
             await dispatch(f"case:draft:{DRAFT}")
             assert "case:safety:moneyRequested:NO" in str(sent[-1])
             assert "case:safety:healthDeteriorationReported" not in str(sent[-1])
-            await dispatch("case:safety:moneyRequested:NO")
+            if typed:
+                await dispatch("text:Нет")
+                question = core.operations[core.starts[-1]]["input"]["wizardState"]
+                assert question == "SAFETY"
+                core.draft["routineServiceScopeEnabled"] = True
+                AnswerCore.propose(core, "NO")
+                await await_state(app, "SUMMARY")
+            else:
+                await dispatch("case:safety:moneyRequested:NO")
             assert "case:v2:summary:confirm" in str(sent[-1])
 
     asyncio.run(scenario())

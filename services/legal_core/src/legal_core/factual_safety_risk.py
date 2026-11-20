@@ -9,10 +9,30 @@ from legal_core.factual_safety_intake import (
     SCREENING_FIELDS,
     FactualSafetyScreening,
     RequestedMoney,
+    routine_service_draft,
     routine_service_scope,
 )
 
 SCREENING_SIGNALS = SCREENING_FIELDS
+
+
+def routine_submission_matches(
+    facts: Mapping[FactKey, object], draft: Mapping[str, object],
+) -> bool:
+    projected = routine_service_draft(draft)
+    return projected is not None and all(
+        facts.get(key) == projected.get(field) for key, field in (
+            (FactKey.SITUATION_AREAS, "situationAreas"),
+            (FactKey.INCOMING_COMMUNICATION, "incomingKind"),
+            (FactKey.INCOMING_SOURCE_STATUS, "incomingSourceStatus"),
+            (FactKey.EVENT_SUMMARY, "eventSummary"),
+            (FactKey.EVENT_DATE, "eventDate"),
+            (FactKey.CONFLICT_STAGE, "conflictStage"),
+            (FactKey.CLINIC_ACTIONS, "clinicActions"),
+            (FactKey.FACTUAL_SAFETY_SCREENING, "safetyScreening"),
+            (FactKey.HEALTH_CONSEQUENCE_SIGNALS, "healthSignals"),
+        )
+    )
 
 
 def confirmed_screening(facts: Mapping[FactKey, object]) -> FactualSafetyScreening | None:

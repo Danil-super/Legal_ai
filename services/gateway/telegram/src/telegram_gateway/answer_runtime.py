@@ -351,7 +351,7 @@ async def route_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await _open(update, context, remote)
             raise ApplicationHandlerStop
         if remote["wizardState"] != local_state:
-            if next_missing_state(remote["draftData"]) != local_state:
+            if next_missing_state(bot._saved_draft_selection(draft_id, remote)) != local_state:
                 raise ValueError("stale question")
             remote = validated_draft(await core.save_intake_draft(
                 draft_id, actor, expected_revision=remote["revision"], wizard_state=local_state,

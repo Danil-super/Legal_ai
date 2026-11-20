@@ -7,8 +7,8 @@ from legal_core.factual_safety_intake import (
     SCREENING_FIELDS,
     SCREENING_VERSION,
     FactualSafetyScreening,
+    routine_service_draft,
     routine_service_money_pending,
-    routine_service_scope,
     validate_partial_screening,
 )
 from pydantic import ValidationError
@@ -47,24 +47,7 @@ def scoped_service_draft(data: dict[str, Any]) -> dict[str, Any]:
     """Project skipped fields as explicitly unknown at review and submission time."""
     if data.get(SERVICE_SCOPE_KEY) is not True:
         return data
-    try:
-        screening = validate_partial_screening(data.get("safetyScreening"))
-    except ValueError:
-        return data
-    if not routine_service_scope(
-        areas=data.get("situationAreas"), incoming=data.get("incomingKind"),
-        health=data.get("healthSignals"), screening=screening,
-    ):
-        return data
-    return {
-        **data,
-        "healthSignals": data.get("healthSignals", ["UNKNOWN"]),
-        "safetyScreening": {
-            **dict.fromkeys(SCREENING_FIELDS, "UNKNOWN"),
-            "amount": "NOT_REQUESTED",
-            **screening,
-        },
-    }
+    return routine_service_draft(data) or data
 
 
 def screening_complete(data: dict[str, Any]) -> bool:

@@ -106,33 +106,48 @@ def test_v5_scoped_service_submission_and_critical_alert_follow_distinct_routes(
             json={"expectedRevision": 1, "wizardState": "SUMMARY", "draftData": changed},
         )
         assert saved.status_code == 200, saved.text
-        stale = client.post(
-            f"/v1/telegram-case-workflows/{draft_id}/submissions",
-            headers=actor_headers(actor),
-            json={
-                "intakeSchemaVersion": "dental-case-intake.v2", "locale": "ru-RU",
-                "receiptVersion": 2, "expectedDraftRevision": 1,
-                "facts": facts_from_v2_data(data),
-            },
-        )
-        assert stale.status_code == 409, stale.text
-        assert stale.json()["error"]["code"] == "INTAKE_DRAFT_REVISION_CONFLICT"
+        for revision in (1, 2, None):
+            stale = client.post(
+                f"/v1/telegram-case-workflows/{draft_id}/submissions",
+                headers=actor_headers(actor),
+                json={
+                    "intakeSchemaVersion": "dental-case-intake.v2", "locale": "ru-RU",
+                    "receiptVersion": 2, "facts": facts_from_v2_data(data),
+                    **({"expectedDraftRevision": revision} if revision is not None else {}),
+                },
+            )
+            assert stale.status_code == 409, stale.text
+            assert stale.json()["error"]["code"] == "INTAKE_DRAFT_REVISION_CONFLICT"
         for urgent in (False, True):
             if urgent:
                 data["safetyScreening"]["hospitalizationReported"] = "YES"
+            else:
+                saved = client.put(
+                    f"/v1/telegram-intake-drafts/{draft_id}",
+                    headers=actor_headers(actor, uuid4()),
+                    json={"expectedRevision": 2, "wizardState": "SUMMARY", "draftData": data},
+                )
+                assert saved.status_code == 200, saved.text
+            workflow = uuid4() if urgent else draft_id
+            payload = {
+                "intakeSchemaVersion": "dental-case-intake.v2",
+                "locale": "ru-RU",
+                "receiptVersion": 2,
+                "facts": facts_from_v2_data(data),
+            }
             submission = client.post(
-                f"/v1/telegram-case-workflows/{uuid4()}/submissions",
+                f"/v1/telegram-case-workflows/{workflow}/submissions",
                 headers=actor_headers(actor),
-                json={
-                    "intakeSchemaVersion": "dental-case-intake.v2",
-                    "locale": "ru-RU",
-                    "receiptVersion": 2,
-                    "facts": facts_from_v2_data(data),
-                },
+                json=payload if urgent else payload | {"expectedDraftRevision": 3},
             )
             assert submission.status_code == 201, submission.text
             case = submission.json()["case"]
             assert bool(case["earlyEscalationId"]) == urgent
+            replay = client.post(
+                f"/v1/telegram-case-workflows/{workflow}/submissions",
+                headers=actor_headers(actor), json=payload,
+            )
+            assert replay.status_code == 200 and replay.json() == submission.json()
 
     engine = create_engine(owner_database_url())
     try:
