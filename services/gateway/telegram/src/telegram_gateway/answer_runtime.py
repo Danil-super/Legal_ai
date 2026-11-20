@@ -24,6 +24,7 @@ from telegram_gateway.answer_review import review_blocks
 from telegram_gateway.case_wizard import LegalCoreApiError
 from telegram_gateway.dialogue_staging import ENABLED, stage
 from telegram_gateway.escalation_workspace import _chunks
+from telegram_gateway.factual_safety_intake import SERVICE_SCOPE_KEY
 from telegram_gateway.guided_case_intake_v2 import next_missing_state, parse_answer
 from telegram_gateway.intake_cleanup import (
     finish,
@@ -145,7 +146,7 @@ async def _open(update: Update, context: ContextTypes.DEFAULT_TYPE, draft: dict[
             ), draft_id)
             data = bot._saved_draft_selection(draft_id, draft)
             if scope_enabled:
-                data[bot.SERVICE_SCOPE_KEY] = True
+                data[SERVICE_SCOPE_KEY] = True
     bot._user_data(context)[bot.WIZARD_DATA_KEY] = data
     state = bot.WizardState[data[bot.DRAFT_STATE_KEY]]
     await bot._prompt_v2_draft(update, state, data, preparation=True)

@@ -12,7 +12,7 @@ from datetime import UTC, date, datetime
 from enum import IntEnum
 from io import BytesIO
 from pathlib import Path, PurePosixPath
-from typing import Any, TypeAlias, cast
+from typing import Any, TypeAlias, TypedDict, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -138,6 +138,10 @@ _DRAFT_DELETE_CALLBACK_RE = re.compile(
     r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
 )
 _DRAFT_DELETE_CONFIRM_PREFIX = "case:draft:delete:confirm:"
+
+
+class _DraftBinding(TypedDict, total=False):
+    expected_draft_revision: int
 
 
 class WizardState(IntEnum):
@@ -3017,7 +3021,7 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                                            missing_material=True)
                     return WizardState.MATERIALS
             facts = facts_from_v2_data(data)
-            draft_binding = (
+            draft_binding: _DraftBinding = (
                 {"expected_draft_revision": int(data[DRAFT_REVISION_KEY])}
                 if data.get(SERVICE_SCOPE_KEY) is True else {}
             )
