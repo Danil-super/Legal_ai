@@ -70,7 +70,11 @@ from legal_core.models import (
 )
 from legal_core.pseudonymization import pseudonymize_text
 from legal_core.reports import build_intake_report, render_report_pdf
-from legal_core.risk_persistence import ensure_early_triage, has_approved_urgent_signal
+from legal_core.risk_persistence import (
+    approved_service_scope_enabled,
+    ensure_early_triage,
+    has_approved_urgent_signal,
+)
 from legal_core.subscription_provisioning import provision_entitlement_in_session
 
 TelegramUserId = Annotated[int, Header(alias="X-Telegram-User-Id", gt=0)]
@@ -157,6 +161,15 @@ def _draft_response(draft: TelegramIntakeDraft) -> TelegramIntakeDraftResponse:
         draftData=draft.draft_json,
         purgeAfter=draft.purge_after,
     )
+
+
+async def _active_draft_response(
+    session: AsyncSession, draft: TelegramIntakeDraft,
+) -> TelegramIntakeDraftResponse:
+    result = _draft_response(draft)
+    if draft.draft_json.get("intakeVersion") == 2:
+        result.routine_service_scope_enabled = await approved_service_scope_enabled(session)
+    return result
 
 
 async def _actor_draft(
@@ -1340,7 +1353,7 @@ def create_case_router(
     ) -> TelegramIntakeDraftResponse:
         actor = await resolve_actor(session, telegram_user_id)
         draft = await _actor_draft(session, actor, draft_id)
-        return _draft_response(draft)
+        return await _active_draft_response(session, draft)
 
     @router.put("/telegram-intake-drafts/{draft_id}", response_model=TelegramIntakeDraftResponse)
     async def update_telegram_intake_draft(
@@ -1963,10 +1976,15 @@ def create_case_router(
         session: Session,
     ) -> TelegramWorkflowReceipt:
         from legal_core.case_preparation import recheck_submission_access
+        from legal_core.factual_safety_intake import routine_service_scope
+        from legal_core.factual_safety_risk import routine_submission_matches
 
         actor = await resolve_actor(session, telegram_user_id)
         _require_case_intake_actor(actor)
-        request_json = payload.model_dump(mode="json", by_alias=True)
+        # The transport fence does not change the identity of an already confirmed case.
+        request_json = payload.model_dump(
+            mode="json", by_alias=True, exclude={"expected_draft_revision"},
+        )
         request_hash = _canonical_hash(request_json)
 
         # A transaction-scoped PostgreSQL advisory lock serializes simultaneous retries
@@ -2039,6 +2057,34 @@ def create_case_router(
                 status_code=status.HTTP_409_CONFLICT,
                 code="INTAKE_DRAFT_CLOSED",
                 message="A closed intake draft cannot create a new case",
+            )
+        if payload.expected_draft_revision is not None and (
+            source_draft is None or source_draft.revision != payload.expected_draft_revision
+        ):
+            raise ApiError(
+                status_code=409, code="INTAKE_DRAFT_REVISION_CONFLICT",
+                message="The confirmed intake draft has a newer or unavailable revision",
+            )
+        screening = facts.get(FactKey.FACTUAL_SAFETY_SCREENING)
+        if (
+            source_draft is not None
+            and facts.get(FactKey.INTAKE_VERSION) == "GUIDED_V2"
+            and isinstance(screening, dict)
+            and routine_service_scope(
+                areas=facts.get(FactKey.SITUATION_AREAS),
+                incoming=facts.get(FactKey.INCOMING_COMMUNICATION),
+                health=facts.get(FactKey.HEALTH_CONSEQUENCE_SIGNALS),
+                screening=screening,
+            )
+            and await approved_service_scope_enabled(session)
+            and (
+                payload.expected_draft_revision is None
+                or not routine_submission_matches(facts, source_draft.draft_json)
+            )
+        ):
+            raise ApiError(
+                status_code=409, code="INTAKE_DRAFT_REVISION_CONFLICT",
+                message="The routine service facts do not match the confirmed draft",
             )
         correction_source = (
             source_draft.draft_json.get("correctionSource") if source_draft is not None else None

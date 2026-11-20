@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from legal_core.models import RiskPolicyVersion
-from legal_core.factual_safety_intake import SCREENING_VERSION
+from legal_core.factual_safety_intake import ROUTINE_SERVICE_SCOPE_VERSION, SCREENING_VERSION
 from legal_core.risk_engine import RiskPolicy
 
 
@@ -38,7 +38,8 @@ class ApprovedRiskPolicyRepository:
 
         payload = row.policy_json
         v4 = payload.get("schemaVersion") == "risk-policy.v4"
-        guided = payload.get("schemaVersion") in {"risk-policy.v3", "risk-policy.v4"}
+        v5 = payload.get("schemaVersion") == "risk-policy.v5"
+        guided = v4 or v5 or payload.get("schemaVersion") == "risk-policy.v3"
         factual = guided and "factualSafetyIntakeVersion" in payload
         if row.version == 3 and not guided:
             raise ValueError("version 3 requires the explicit guided-v2 risk contract")
@@ -46,10 +47,13 @@ class ApprovedRiskPolicyRepository:
             raise ValueError("version 4 requires the explicit v4 risk contract")
         if v4 and (row.version != 4 or not factual):
             raise ValueError("v4 requires its exact version and factual safety capability")
+        if v5 != (row.version == 5) or (v5 and not factual):
+            raise ValueError("v5 requires its exact version and factual safety capability")
         early = payload.get("schemaVersion") in {
             "risk-policy.v2",
             "risk-policy.v3",
             "risk-policy.v4",
+            "risk-policy.v5",
         }
         expected = {"schemaVersion", "highDemandThresholdKopecks"}
         if early:
@@ -60,6 +64,10 @@ class ApprovedRiskPolicyRepository:
             expected.add("factualSafetyIntakeVersion")
             if payload["factualSafetyIntakeVersion"] != SCREENING_VERSION:
                 raise ValueError("approved factual screening capability has an unknown version")
+        if v5:
+            expected.add("routineServiceScopeVersion")
+            if payload.get("routineServiceScopeVersion") != ROUTINE_SERVICE_SCOPE_VERSION:
+                raise ValueError("v5 requires the approved routine service scope version")
         if set(payload) != expected:
             raise ValueError("approved risk policy has an unsupported v1 shape")
         if payload.get("schemaVersion") not in {
@@ -67,6 +75,7 @@ class ApprovedRiskPolicyRepository:
             "risk-policy.v2",
             "risk-policy.v3",
             "risk-policy.v4",
+            "risk-policy.v5",
         }:
             raise ValueError("approved risk policy has an unsupported schema version")
         threshold = payload["highDemandThresholdKopecks"]
@@ -77,7 +86,7 @@ class ApprovedRiskPolicyRepository:
         if guided:
             if (
                 row.version < 3
-                or threshold != (1_000_000 if v4 else 5_000_000)
+                or threshold != (1_000_000 if v4 or v5 else 5_000_000)
                 or payload["guidedV2ExplicitSignalsEnabled"] is not True
             ):
                 raise ValueError("v3 policy requires its explicit capability and fixed threshold")
@@ -95,5 +104,6 @@ class ApprovedRiskPolicyRepository:
                 high_demand_threshold_kopecks=threshold,
                 guided_v2_explicit_signals_enabled=guided,
                 factual_safety_intake_enabled=factual,
+                routine_service_scope_enabled=v5,
             ),
         )

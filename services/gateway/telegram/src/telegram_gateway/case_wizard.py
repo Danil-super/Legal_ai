@@ -279,6 +279,9 @@ def facts_from_v2_data(data: dict[str, Any]) -> list[dict[str, Any]]:
     deadline, or regulator facts from a user's plain-language description.
     """
 
+    from telegram_gateway.factual_safety_intake import scoped_service_draft
+
+    data = scoped_service_draft(data)
     if data.get("intakeVersion") != 2:
         raise ValueError("unsupported v2 draft")
     required = (
@@ -401,20 +404,23 @@ def telegram_summary_from_report(report: dict[str, Any]) -> str:
 
     # Keep all six blocks and the safety notices when the complete saved report needs PDF.
     parts = ["\n".join(presentation.header), "Длинный отчёт: содержание полностью в PDF."]
-    for index, block in enumerate(presentation.blocks):
-        if index == 2:
+    for block in presentation.blocks:
+        if block.title == "Риск и следующий шаг":
             # Preserve the next-step line even when there are many risk reasons or gaps.
             steps = [line for line in block.lines if line.startswith("Следующий шаг:")]
             reasons = [line for line in block.lines if line not in steps]
             content = _short_report_text("\n".join(reasons), 500) + "\n" + "\n".join(steps)
-        elif index == 5 and len(block.lines) > 1:
+        elif block.title == "Черновик ответа пациенту" and len(block.lines) > 1:
             content = block.lines[0] + "\n" + TELEGRAM_DRAFT_IN_PDF
-        elif index in {3, 4}:
+        elif block.title in {"План действий", "Проверенные выводы и нормативные основания"}:
             # A shortened legal claim/action could lose its condition or source citation.
             content = block.title + " полностью в PDF."
         else:
             content = _short_report_text("\n".join(block.lines), 350)
-        if index == 4 and presentation.source_caveats:
+        if (
+            block.title == "Проверенные выводы и нормативные основания"
+            and presentation.source_caveats
+        ):
             caveats = "\n".join(presentation.source_caveats)
             content += "\n" + _short_report_text(caveats, 600)
             if _telegram_units(caveats) > 600:
@@ -971,6 +977,7 @@ class LegalCoreClient:
         *,
         intake_schema_version: str = INTAKE_SCHEMA_VERSION,
         receipt_version: Literal[2] | None = None,
+        expected_draft_revision: int | None = None,
     ) -> dict[str, Any]:
         if intake_schema_version not in {INTAKE_SCHEMA_VERSION, V2_INTAKE_SCHEMA_VERSION}:
             raise ValueError("unsupported intake schema version")
@@ -988,6 +995,8 @@ class LegalCoreClient:
                 "locale": "ru-RU",
                 "facts": facts,
                 **({"receiptVersion": 2} if receipt_version == 2 else {}),
+                **({"expectedDraftRevision": expected_draft_revision}
+                   if expected_draft_revision is not None else {}),
             },
         )
         validated = _validated_workflow_receipt(receipt, workflow_id)

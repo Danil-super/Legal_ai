@@ -88,7 +88,8 @@ class DraftSuggestions(PreparationModel):
     clinic_actions: list[Literal[
         "NOTHING_YET", "INVITED_FOR_EXAMINATION", "CONTINUING_TREATMENT",
         "HELD_MEDICAL_COMMISSION", "OFFERED_CORRECTION", "OFFERED_REFUND",
-        "REMOVED_MATERIAL", "TERMINATED_CONTRACT", "SIGNED_AGREEMENT", "OTHER",
+        "REMOVED_MATERIAL", "TERMINATED_CONTRACT", "SIGNED_AGREEMENT",
+        "REBOOKED_AFTER_WAIT", "OTHER",
     ]] | None = Field(default=None, alias="clinicActions", min_length=1, max_length=10)
     health_signals: list[Literal[
         "NO_KNOWN_INFORMATION", "COMPLICATION_OR_WORSENING", "OTHER_CLINIC",

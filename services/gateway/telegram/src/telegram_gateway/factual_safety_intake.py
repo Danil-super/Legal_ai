@@ -7,17 +7,24 @@ from legal_core.factual_safety_intake import (
     SCREENING_FIELDS,
     SCREENING_VERSION,
     FactualSafetyScreening,
+    routine_service_draft,
+    routine_service_money_pending,
     validate_partial_screening,
 )
 from pydantic import ValidationError
 
 from telegram_gateway.case_wizard import parse_ruble_amount_to_kopecks
 
+SERVICE_SCOPE_KEY = "_routine_service_scope_enabled"
+
 QUESTIONS = {
     "healthDeteriorationReported": "Сообщал ли пациент об ухудшении состояния или осложнении?",
     "hospitalizationReported": "Сообщал ли пациент о госпитализации в связи с этой ситуацией?",
     "representativeContact": "Обращался ли к клинике юрист или другой представитель пациента?",
-    "writtenRequirementsReceived": "Получала ли клиника письменные требования пациента?",
+    "writtenRequirementsReceived": (
+        "Пациент письменно попросил клинику о конкретном действии, "
+        "например выдать документы или вернуть деньги?"
+    ),
     "authorityOrCourtDocumentReceived": "Получала ли клиника по этой ситуации документ суда "
     "или контролирующего органа?",
     "authorityReferralMentioned": "Говорил ли пациент об обращении в суд или контролирующий орган?",
@@ -34,6 +41,13 @@ LABELS = {
     "authorityReferralMentioned": "Упоминание обращения в суд/орган",
     "moneyRequested": "Денежная просьба",
 }
+
+
+def scoped_service_draft(data: dict[str, Any]) -> dict[str, Any]:
+    """Project skipped fields as explicitly unknown at review and submission time."""
+    if data.get(SERVICE_SCOPE_KEY) is not True:
+        return data
+    return routine_service_draft(data) or data
 
 
 def screening_complete(data: dict[str, Any]) -> bool:
@@ -99,18 +113,26 @@ def explicitly_skip_other_questions(data: dict[str, Any]) -> None:
     data["safetyScreening"] = screening
 
 
-def screening_question(data: dict[str, Any]) -> tuple[str, str] | None:
+def screening_questions(data: dict[str, Any]) -> list[tuple[str, str]]:
+    if routine_service_money_pending(data):
+        return [("moneyRequested", QUESTIONS["moneyRequested"])]
     value = data.get("safetyScreening", {"schemaVersion": SCREENING_VERSION})
     try:
         screening = validate_partial_screening(value)
     except ValueError:
-        return SCREENING_FIELDS[0], QUESTIONS[SCREENING_FIELDS[0]]
-    for field in SCREENING_FIELDS:
-        if field not in screening:
-            return field, QUESTIONS[field]
+        return [(SCREENING_FIELDS[0], QUESTIONS[SCREENING_FIELDS[0]])]
+    remaining = [(field, QUESTIONS[field]) for field in SCREENING_FIELDS if field not in screening]
+    if remaining:
+        limit = 3 if data.get(SERVICE_SCOPE_KEY) is True and not known_urgent_report(data) else 1
+        return remaining[:limit]
     if screening.get("moneyRequested") == "YES" and "amount" not in screening:
-        return "amount", QUESTIONS["amount"]
-    return None if screening_complete(data) else ("moneyRequested", QUESTIONS["moneyRequested"])
+        return [("amount", QUESTIONS["amount"])]
+    return [] if screening_complete(data) else [("moneyRequested", QUESTIONS["moneyRequested"])]
+
+
+def screening_question(data: dict[str, Any]) -> tuple[str, str] | None:
+    questions = screening_questions(data)
+    return questions[0] if questions else None
 
 
 def answer_screening(data: dict[str, Any], field: str, answer: str) -> None:

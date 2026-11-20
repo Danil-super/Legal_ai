@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import Field, ValidationError, model_validator
@@ -10,6 +11,7 @@ from legal_core.contracts import ContractModel
 
 Signal = Literal["YES", "NO", "UNKNOWN"]
 SCREENING_VERSION = "factual-safety-intake.v1"
+ROUTINE_SERVICE_SCOPE_VERSION = "routine-service-scope.v1"
 
 SCREENING_FIELDS = (
     "healthDeteriorationReported",
@@ -20,6 +22,57 @@ SCREENING_FIELDS = (
     "authorityReferralMentioned",
     "moneyRequested",
 )
+
+
+def routine_service_scope(
+    *, areas: object, incoming: object, health: object, screening: Mapping[str, object],
+) -> bool:
+    """Bound a reported service-only issue without turning missing signals into negatives."""
+    return (
+        areas == ["SERVICE"]
+        and incoming in ("COMPLAINT", "MESSAGE_OR_REQUEST")
+        and health in (None, ["NO_KNOWN_INFORMATION"], ["UNKNOWN"])
+        and screening.get("moneyRequested") == "NO"
+        and all(screening.get(field) in (None, "NO", "UNKNOWN") for field in SCREENING_FIELDS)
+    )
+
+
+def routine_service_money_pending(data: Mapping[str, object]) -> bool:
+    # A pre-v5 draft only entered SAFETY after recording the health step.
+    if "healthSignals" in data:
+        return False
+    try:
+        screening = validate_partial_screening(
+            data.get("safetyScreening", {"schemaVersion": SCREENING_VERSION}),
+        )
+    except ValueError:
+        return False
+    return "moneyRequested" not in screening and routine_service_scope(
+        areas=data.get("situationAreas"), incoming=data.get("incomingKind"),
+        health=data.get("healthSignals"), screening={**screening, "moneyRequested": "NO"},
+    )
+
+
+def routine_service_draft(data: Mapping[str, object]) -> dict[str, object] | None:
+    """Project a routine draft's unreported facts without changing its editable state."""
+    try:
+        screening = validate_partial_screening(data.get("safetyScreening"))
+    except ValueError:
+        return None
+    if not routine_service_scope(
+        areas=data.get("situationAreas"), incoming=data.get("incomingKind"),
+        health=data.get("healthSignals"), screening=screening,
+    ):
+        return None
+    return {
+        **data,
+        "healthSignals": data.get("healthSignals", ["UNKNOWN"]),
+        "safetyScreening": {
+            **dict.fromkeys(SCREENING_FIELDS, "UNKNOWN"),
+            "amount": "NOT_REQUESTED",
+            **screening,
+        },
+    }
 
 
 def validate_partial_screening(value: object) -> dict[str, object]:

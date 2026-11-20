@@ -51,6 +51,34 @@ def test_high_and_critical_risk_drafts_require_human_legal_review() -> None:
         assert draft.text is None
 
 
+def test_agreed_rescheduling_gets_a_specific_operational_draft_without_patient_details():
+    facts = {
+        FactKey.SITUATION_AREAS: ["SERVICE"],
+        FactKey.CLINIC_ACTIONS: ["REBOOKED_AFTER_WAIT"],
+        FactKey.EVENT_SUMMARY: "Вымышленное обращение о 35 минутах ожидания.",
+    }
+    draft = build_safe_patient_draft(facts, _risk(RiskLevel.LOW, external_draft_allowed=True))
+
+    assert draft.status == "AVAILABLE"
+    assert draft.human_approval_required is True
+    assert "новой записи" in draft.text and "Извините" in draft.text
+    assert "35" not in draft.text
+    facts[FactKey.CLINIC_ACTIONS] = ["OTHER"]
+    other_draft = build_safe_patient_draft(facts, _risk(RiskLevel.LOW, external_draft_allowed=True))
+    assert "новой записи" not in other_draft.text
+
+
+def test_payment_complaint_gets_a_draft_about_the_charge():
+    draft = build_safe_patient_draft(
+        {FactKey.SITUATION_AREAS: ["FINANCE"]},
+        _risk(RiskLevel.LOW, external_draft_allowed=True),
+    )
+    assert draft.status == "AVAILABLE"
+    assert "сверим выставленный счёт" in draft.text
+    assert "осмотр" not in draft.text
+    assert draft.human_approval_required
+
+
 def test_defense_in_depth_blocks_formal_claim_even_if_risk_configuration_drifts() -> None:
     draft = build_safe_patient_draft(
         {FactKey.FORMAL_CLAIM: {"boolean": True}},

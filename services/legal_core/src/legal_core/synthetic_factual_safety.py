@@ -50,3 +50,21 @@ def assert_factual_safety_regressions(policy: RiskPolicy) -> None:
         is not RiskLevel.UNAVAILABLE
     ):
         raise ValueError("factual contradictory reports gate failed")
+
+    if policy.routine_service_scope_enabled:
+        service_screening = dict.fromkeys(SCREENING_SIGNALS, "UNKNOWN") | {
+            "schemaVersion": SCREENING_VERSION, "amount": "NOT_REQUESTED", "moneyRequested": "NO",
+        }
+        routine = base | {
+            FactKey.SITUATION_AREAS: ["SERVICE"],
+            FactKey.HEALTH_CONSEQUENCE_SIGNALS: ["UNKNOWN"],
+            FactKey.FACTUAL_SAFETY_SCREENING: service_screening,
+        }
+        if evaluate_risk(routine, policy=policy, evidence_verified=True).level is not RiskLevel.LOW:
+            raise ValueError("routine service scope gate failed")
+        routine[FactKey.SITUATION_AREAS] = ["SERVICE", "TREATMENT"]
+        if (
+            evaluate_risk(routine, policy=policy, evidence_verified=True).level
+            is not RiskLevel.UNAVAILABLE
+        ):
+            raise ValueError("routine service scope applied to mixed treatment facts")

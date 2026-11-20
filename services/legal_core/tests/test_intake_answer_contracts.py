@@ -57,6 +57,18 @@ def test_screening_selects_first_absent_not_explicit_unknown():
     assert derive_answer_question(data, "SAFETY") is None
 
 
+def test_existing_service_safety_question_keeps_identity_after_money_first_transition():
+    data = {
+        "intakeVersion": 2,
+        "incomingKind": "COMPLAINT",
+        "situationAreas": ["SERVICE"],
+        "healthSignals": ["NO_KNOWN_INFORMATION"],
+    }
+    assert derive_answer_question(data, "SAFETY").screening_field == "healthDeteriorationReported"
+    del data["healthSignals"]
+    assert derive_answer_question(data, "SAFETY").screening_field == "moneyRequested"
+
+
 @pytest.mark.parametrize("signal", ["NO", "UNKNOWN"])
 def test_missing_dependent_amount_reopens_money_question_like_manual_intake(signal):
     data = {"intakeVersion": 2, "safetyScreening": {

@@ -9,9 +9,30 @@ from legal_core.factual_safety_intake import (
     SCREENING_FIELDS,
     FactualSafetyScreening,
     RequestedMoney,
+    routine_service_draft,
+    routine_service_scope,
 )
 
 SCREENING_SIGNALS = SCREENING_FIELDS
+
+
+def routine_submission_matches(
+    facts: Mapping[FactKey, object], draft: Mapping[str, object],
+) -> bool:
+    projected = routine_service_draft(draft)
+    return projected is not None and all(
+        facts.get(key) == projected.get(field) for key, field in (
+            (FactKey.SITUATION_AREAS, "situationAreas"),
+            (FactKey.INCOMING_COMMUNICATION, "incomingKind"),
+            (FactKey.INCOMING_SOURCE_STATUS, "incomingSourceStatus"),
+            (FactKey.EVENT_SUMMARY, "eventSummary"),
+            (FactKey.EVENT_DATE, "eventDate"),
+            (FactKey.CONFLICT_STAGE, "conflictStage"),
+            (FactKey.CLINIC_ACTIONS, "clinicActions"),
+            (FactKey.FACTUAL_SAFETY_SCREENING, "safetyScreening"),
+            (FactKey.HEALTH_CONSEQUENCE_SIGNALS, "healthSignals"),
+        )
+    )
 
 
 def confirmed_screening(facts: Mapping[FactKey, object]) -> FactualSafetyScreening | None:
@@ -24,6 +45,8 @@ def confirmed_screening(facts: Mapping[FactKey, object]) -> FactualSafetyScreeni
 def screening_blocker(
     facts: Mapping[FactKey, object],
     screening: FactualSafetyScreening | None,
+    *,
+    routine_service_scope_enabled: bool = False,
 ) -> str | None:
     if screening is None:
         return "FACTUAL_SAFETY_SCREENING_UNKNOWN"
@@ -76,6 +99,20 @@ def screening_blocker(
         and facts[FactKey.DEMAND_AMOUNT] != screening.amount.model_dump(by_alias=True)
     ):
         return "FACTUAL_SAFETY_SCREENING_CONFLICT"
+    if (
+        routine_service_scope_enabled
+        and not any(positives.values())
+        and not facts.get(FactKey.PATIENT_DEMAND)
+        and not facts.get(FactKey.CLINIC_DOCUMENTS)
+        and facts.get(FactKey.REGULATOR_THREAT) not in (True, "YES")
+        and routine_service_scope(
+            areas=facts.get(FactKey.SITUATION_AREAS),
+            incoming=facts.get(FactKey.INCOMING_COMMUNICATION),
+            health=health,
+            screening=data,
+        )
+    ):
+        return None
     for field in SCREENING_SIGNALS:
         if data[field] == "UNKNOWN":
             return f"FACTUAL_SAFETY_{field.upper()}_UNKNOWN"

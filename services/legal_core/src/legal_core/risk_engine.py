@@ -34,6 +34,7 @@ class RiskPolicy:
     high_demand_threshold_kopecks: int
     guided_v2_explicit_signals_enabled: bool = False
     factual_safety_intake_enabled: bool = False
+    routine_service_scope_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not self.version or len(self.version) > 80:
@@ -50,11 +51,20 @@ class RiskPolicy:
             _, _, version_number = self.version.rpartition(".v")
             if not version_number.isdigit() or int(version_number) < 3:
                 raise ValueError("guided v2 risk capability requires policy version >= 3")
-            threshold = 1_000_000 if int(version_number) == 4 else 5_000_000
+            threshold = 1_000_000 if version_number in {"4", "5"} else 5_000_000
             if self.high_demand_threshold_kopecks != threshold:
                 raise ValueError("guided risk threshold does not match its policy version")
-            if int(version_number) == 4 and not self.factual_safety_intake_enabled:
-                raise ValueError("v4 requires the reviewed factual safety capability")
+            if version_number in {"4", "5"} and not self.factual_safety_intake_enabled:
+                raise ValueError("v4 and v5 require the reviewed factual safety capability")
+        if type(self.routine_service_scope_enabled) is not bool or (
+            self.routine_service_scope_enabled and (
+                not self.factual_safety_intake_enabled or not self.version.endswith(".v5")
+            )
+        ) or (
+            self.guided_v2_explicit_signals_enabled and self.version.endswith(".v5")
+            and not self.routine_service_scope_enabled
+        ):
+            raise ValueError("v5 requires the explicit routine service scope capability")
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,7 +350,9 @@ def evaluate_risk(
                 RiskLevel.UNAVAILABLE, ("HEALTH_CONSEQUENCE_SIGNALS_UNKNOWN",), policy, facts
             )
         screening = confirmed_screening(facts)
-        blocker = screening_blocker(facts, screening)
+        blocker = screening_blocker(
+            facts, screening, routine_service_scope_enabled=policy.routine_service_scope_enabled,
+        )
         if blocker:
             return _assessment(RiskLevel.UNAVAILABLE, (blocker,), policy, facts)
     elif _guided_enabled(facts, policy):

@@ -12,7 +12,7 @@ from datetime import UTC, date, datetime
 from enum import IntEnum
 from io import BytesIO
 from pathlib import Path, PurePosixPath
-from typing import Any, TypeAlias, cast
+from typing import Any, TypeAlias, TypedDict, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -53,12 +53,14 @@ from telegram_gateway.case_wizard import (
 )
 from telegram_gateway.clinic_team_ui import clinic_team_text
 from telegram_gateway.factual_safety_intake import (
+    SERVICE_SCOPE_KEY,
     answer_screening,
     explicitly_skip_other_questions,
     known_urgent_report,
     previous_screening_question,
     screening_complete,
     screening_question,
+    screening_questions,
 )
 from telegram_gateway.guided_case_intake_v2 import (
     V2_EVENT,
@@ -136,6 +138,10 @@ _DRAFT_DELETE_CALLBACK_RE = re.compile(
     r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
 )
 _DRAFT_DELETE_CONFIRM_PREFIX = "case:draft:delete:confirm:"
+
+
+class _DraftBinding(TypedDict, total=False):
+    expected_draft_revision: int
 
 
 class WizardState(IntEnum):
@@ -850,6 +856,7 @@ def _saved_draft_selection(
     return {
         **payload, "workflow_id": str(draft_id), DRAFT_ID_KEY: str(draft_id),
         DRAFT_REVISION_KEY: revision, DRAFT_STATE_KEY: state.name,
+        **({SERVICE_SCOPE_KEY: True} if draft.get("routineServiceScopeEnabled") is True else {}),
     }
 
 
@@ -967,18 +974,23 @@ async def _prompt_v2_draft(
             if analysis_offer and type(prompt_id) is int and data.get(DRAFT_ID_KEY):
                 data[MATERIAL_ANALYSIS_OFFER] = (str(data[DRAFT_ID_KEY]), prompt_id)
     elif state is WizardState.SAFETY:
-        question = screening_question(data)
-        if question is None:
+        batch = screening_questions(data)
+        if not batch:
             await _prompt_v2_draft(update, WizardState.SUMMARY, data)
             return
-        field, prompt = question
-        rows = [[("Не знаю", f"case:safety:{field}:UNKNOWN")]]
+        field, prompt = batch[0]
+        prefix = "1. " if len(batch) > 1 else ""
+        rows = [[(prefix + "Не знаю", f"case:safety:{field}:UNKNOWN")]]
         if field != "amount":
-            rows.insert(0, [("Да", f"case:safety:{field}:YES"),
-                            ("Нет", f"case:safety:{field}:NO")])
+            rows.insert(0, [(prefix + "Да", f"case:safety:{field}:YES"),
+                            (prefix + "Нет", f"case:safety:{field}:NO")])
         if known_urgent_report(data):
             rows.append([("Подтвердить известное без других уточнений",
                           "case:safety:known:confirm")])
+        if len(batch) > 1:
+            prompt = "\n".join(f"{i}. {text}" for i, (_, text) in enumerate(batch, 1))
+            prompt += "\nЕсли все ответы «нет», выберите «Ничего из перечисленного»."
+            rows.append([("Ничего из перечисленного", "case:safety:batch:none")])
         await reply(
             prompt + "\nЕсли сведений нет, выберите «Не знаю».",
             reply_markup=_v2_keyboard(rows),
@@ -1175,6 +1187,12 @@ async def choose_factual_safety(update: Update, context: ContextTypes.DEFAULT_TY
     if callback == "case:safety:known:confirm" and known_urgent_report(data):
         explicitly_skip_other_questions(data)
         return await _advance_v2_draft(update, data)
+    if callback == "case:safety:batch:none":
+        batch = screening_questions(data)
+        if len(batch) > 1:
+            for field, _ in batch:
+                answer_screening(data, field, "NO")
+            return await _advance_v2_draft(update, data)
     parts = callback.split(":") if isinstance(callback, str) else []
     if (
         len(parts) != 4 or parts[:2] != ["case", "safety"]
@@ -1696,6 +1714,7 @@ def _draft_payload(data: dict[str, Any]) -> dict[str, Any]:
             "workflow_id", DRAFT_ID_KEY, DRAFT_REVISION_KEY, DRAFT_STATE_KEY,
             "_v2_prompt_message_id",
             MATERIAL_ANALYSIS_OFFER,
+            SERVICE_SCOPE_KEY,
         }
     }
 
@@ -1749,6 +1768,10 @@ async def _persist_selected_transition(
         state = WizardState[str(data[DRAFT_STATE_KEY])]
         await _prompt_resumed_draft(update, state, data)
         return state
+    if latest.get(SERVICE_SCOPE_KEY) is True:
+        data[SERVICE_SCOPE_KEY] = True
+    else:
+        data.pop(SERVICE_SCOPE_KEY, None)
     query = update.callback_query
     if query is not None:
         message = query.message
@@ -2284,6 +2307,8 @@ async def resume_intake_draft(
     # DONE/accepted single answers persist the next state, so the persisted open
     # optional checkpoint remains authoritative regardless of value completeness.
     pending_context = state in {WizardState.CLINIC_ACTIONS, WizardState.CHRONOLOGY}
+    if draft.get("routineServiceScopeEnabled") is True:
+        data[SERVICE_SCOPE_KEY] = True
     if data.get("intakeVersion") == 2 and not pending_materials and not pending_context and (
         preparation or state in {
             WizardState.SUMMARY, WizardState.V2_CONFIRM, WizardState.ANALYSIS_CLARIFICATION,
@@ -2995,15 +3020,21 @@ async def confirm_case(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                     await _prompt_v2_draft(update, WizardState.MATERIALS, data,
                                            missing_material=True)
                     return WizardState.MATERIALS
-            facts = facts_from_v2_data(_draft_payload(data))
+            facts = facts_from_v2_data(data)
+            draft_binding: _DraftBinding = (
+                {"expected_draft_revision": int(data[DRAFT_REVISION_KEY])}
+                if data.get(SERVICE_SCOPE_KEY) is True else {}
+            )
             if preparation:
                 workflow = await client.submit_workflow(
                     workflow_id, facts, actor_id,
                     intake_schema_version=V2_INTAKE_SCHEMA_VERSION, receipt_version=2,
+                    **draft_binding,
                 )
             else:
                 workflow = await client.submit_workflow(
                     workflow_id, facts, actor_id, intake_schema_version=V2_INTAKE_SCHEMA_VERSION,
+                    **draft_binding,
                 )
         else:
             facts = facts_from_draft(_draft_from_data(data))

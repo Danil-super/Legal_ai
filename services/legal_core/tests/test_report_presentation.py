@@ -105,6 +105,21 @@ def pdf_text(report: CanonicalReport, tmp_path: Path) -> str:
     ).stdout
 
 
+def test_payment_position_and_its_source_precede_the_action_plan(tmp_path: Path) -> None:
+    report = presentation_report()
+    report.legal_conclusions[0].text = (
+        "Оплата дополнительных 1 800 рублей по имеющимся материалам не подтверждена."
+    )
+    report.recommendations.items = ["Сверить, согласованы ли услуга и её цена."]
+    text = pdf_text(report, tmp_path)
+
+    assert (
+        text.index("Оплата дополнительных 1 800 рублей")
+        < text.index("статья 10")
+        < text.index("Сверить, согласованы ли услуга и её цена")
+    )
+
+
 @pytest.mark.parametrize("level", ["LOW", "MEDIUM", "HIGH", "CRITICAL"])
 @pytest.mark.parametrize("guided", [False, True])
 def test_pdf_and_telegram_share_readable_blocks_without_internal_metadata(

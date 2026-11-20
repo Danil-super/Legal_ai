@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from legal_core.database import create_engine, create_session_factory
-from legal_core.factual_safety_intake import SCREENING_VERSION
+from legal_core.factual_safety_intake import ROUTINE_SERVICE_SCOPE_VERSION, SCREENING_VERSION
 from legal_core.models import RiskPolicyEvent, RiskPolicyVersion, User
 from legal_core.risk_engine import RiskPolicy
 from legal_core.synthetic_factual_safety import assert_factual_safety_regressions
@@ -41,6 +41,7 @@ class RiskPolicyApproval(BaseModel):
     direct_v1_supersession_reviewed: bool = Field(default=False, strict=True)
     factual_safety_intake_enabled: bool = Field(default=False, strict=True)
     factual_safety_intake_reviewed: bool = Field(default=False, strict=True)
+    routine_service_scope_reviewed: bool = Field(default=False, strict=True)
 
     @model_validator(mode="after")
     def require_explicit_review(self) -> RiskPolicyApproval:
@@ -48,24 +49,26 @@ class RiskPolicyApproval(BaseModel):
             self.factual_safety_intake_enabled and not self.guided_v2_explicit_signals_enabled
         ):
             raise ValueError("factual screening requires its reviewed guided-v2 candidate")
-        if self.version in {3, 4} and not self.guided_v2_explicit_signals_enabled:
+        if self.version in {3, 4, 5} and not self.guided_v2_explicit_signals_enabled:
             raise ValueError(
                 f"version {self.version} requires the explicit guided-v2 risk contract"
             )
-        if self.version == 4 and not self.factual_safety_intake_enabled:
-            raise ValueError("v4 requires the reviewed factual safety capability")
+        if self.version in {4, 5} and not self.factual_safety_intake_enabled:
+            raise ValueError("v4 and v5 require the reviewed factual safety capability")
+        if (self.version == 5) != self.routine_service_scope_reviewed:
+            raise ValueError("v5 requires explicit review of the service-only scope")
         if self.early_triage_enabled and self.version < 2:
             raise ValueError("early triage requires a new policy version >= 2")
         if self.guided_v2_explicit_signals_enabled and not (
-            self.version in {3, 4}
+            self.version in {3, 4, 5}
             and self.high_demand_threshold_kopecks
-            == (1_000_000 if self.version == 4 else 5_000_000)
+            == (1_000_000 if self.version in {4, 5} else 5_000_000)
             and self.early_triage_enabled
             and self.supersede_approved
-            and self.direct_v1_supersession_reviewed
+            and self.direct_v1_supersession_reviewed == (self.version in {3, 4})
         ):
             raise ValueError(
-                "guided policy requires the reviewed direct v1 transition and fixed threshold"
+                "guided policy requires the reviewed transition and fixed threshold"
             )
         if self.direct_v1_supersession_reviewed and not self.guided_v2_explicit_signals_enabled:
             raise ValueError("direct v1 supersession attestation applies only to guided policies")
@@ -90,6 +93,8 @@ def policy_payload(approval: RiskPolicyApproval) -> dict[str, object]:
         }
         if approval.factual_safety_intake_enabled:
             payload["factualSafetyIntakeVersion"] = SCREENING_VERSION
+        if approval.routine_service_scope_reviewed:
+            payload["routineServiceScopeVersion"] = ROUTINE_SERVICE_SCOPE_VERSION
         return payload
     if approval.early_triage_enabled:
         return {
@@ -125,6 +130,7 @@ async def approve_risk_policy(
             high_demand_threshold_kopecks=candidate_policy.high_demand_threshold_kopecks,
             guided_v2_explicit_signals_enabled=True,
             factual_safety_intake_enabled=approval.factual_safety_intake_enabled,
+            routine_service_scope_enabled=approval.routine_service_scope_reviewed,
         )
         assert_v3_synthetic_risk_regressions(candidate_policy)
         if approval.factual_safety_intake_enabled:
@@ -188,8 +194,8 @@ async def approve_risk_policy(
             .with_for_update()
         )
         if approval.guided_v2_explicit_signals_enabled:
-            await _require_direct_v1_predecessor(
-                session, another_approved, target_version=approval.version
+            await _require_guided_predecessor(
+                session, another_approved, target_version=approval.version,
             )
         if another_approved is not None:
             if not approval.supersede_approved or another_approved.version >= policy.version:
@@ -225,25 +231,34 @@ async def approve_risk_policy(
         return policy.id
 
 
-async def _require_direct_v1_predecessor(
+async def _require_guided_predecessor(
     session: AsyncSession,
     predecessor: RiskPolicyVersion | None,
     *,
     target_version: int = 3,
 ) -> None:
-    expected_payload = {
-        "schemaVersion": "risk-policy.v1",
-        "highDemandThresholdKopecks": 5_000_000,
-    }
+    expected_version = 4 if target_version == 5 else 1
+    expected_payload: dict[str, object] = (
+        {
+            "schemaVersion": "risk-policy.v4",
+            "highDemandThresholdKopecks": 1_000_000,
+            "earlyTriageEnabled": True,
+            "guidedV2ExplicitSignalsEnabled": True,
+            "factualSafetyIntakeVersion": SCREENING_VERSION,
+        } if expected_version == 4 else {
+            "schemaVersion": "risk-policy.v1",
+            "highDemandThresholdKopecks": 5_000_000,
+        }
+    )
     expected_digest = policy_content_sha256(expected_payload)
     if (
         predecessor is None
-        or predecessor.version != 1
+        or predecessor.version != expected_version
         or predecessor.policy_json != expected_payload
         or predecessor.content_sha256 != expected_digest
     ):
         raise ValueError(
-            f"v{target_version} requires the exact approved v1 predecessor at 50,000 RUB"
+            f"v{target_version} requires the exact approved v{expected_version} predecessor"
         )
     event = await session.scalar(
         select(RiskPolicyEvent.id).where(
@@ -254,7 +269,9 @@ async def _require_direct_v1_predecessor(
         )
     )
     if event is None:
-        raise ValueError("v1 predecessor requires a matching immutable approval event")
+        raise ValueError(
+            f"v{expected_version} predecessor requires a matching immutable approval event"
+        )
 
 
 def rubles_to_kopecks(value: str) -> int:
@@ -287,6 +304,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--direct-v1-supersession-reviewed", action="store_true")
     parser.add_argument("--factual-safety-intake-enabled", action="store_true")
     parser.add_argument("--factual-safety-intake-reviewed", action="store_true")
+    parser.add_argument("--routine-service-scope-reviewed", action="store_true")
     return parser
 
 
@@ -305,6 +323,7 @@ async def _run_cli() -> None:
         direct_v1_supersession_reviewed=args.direct_v1_supersession_reviewed,
         factual_safety_intake_enabled=args.factual_safety_intake_enabled,
         factual_safety_intake_reviewed=args.factual_safety_intake_reviewed,
+        routine_service_scope_reviewed=args.routine_service_scope_reviewed,
     )
     engine = create_engine()
     factory = create_session_factory(engine)

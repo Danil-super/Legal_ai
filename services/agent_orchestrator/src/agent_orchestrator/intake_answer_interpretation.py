@@ -38,7 +38,11 @@ affectedServices 1-5 literal names;
 eventDate {date:YYYY-MM-DD|null,precision:EXACT|APPROXIMATE|UNKNOWN}; conflictStage FIRST,
 ONGOING, UNKNOWN; clinicActions list of NOTHING_YET, INVITED_FOR_EXAMINATION,
 CONTINUING_TREATMENT, HELD_MEDICAL_COMMISSION, OFFERED_CORRECTION, OFFERED_REFUND,
-REMOVED_MATERIAL, TERMINATED_CONTRACT, SIGNED_AGREEMENT, OTHER; healthSignals list of
+REMOVED_MATERIAL, TERMINATED_CONTRACT, SIGNED_AGREEMENT, REBOOKED_AFTER_WAIT, OTHER;
+REBOOKED_AFTER_WAIT requires reported waiting and agreement with the patient on a new
+appointment. writtenRequirementsReceived:YES requires a concrete written demand from the patient,
+not a complaint or a refusal to pay. moneyRequested refers to money the patient asks the clinic
+to pay, not an amount the clinic charges. healthSignals list of
 NO_KNOWN_INFORMATION, COMPLICATION_OR_WORSENING, OTHER_CLINIC, HOSPITALIZATION,
 OTHER_CONSEQUENCE, UNKNOWN. NOTHING_YET, NO_KNOWN_INFORMATION and UNKNOWN are exclusive.
 For safetyScreening questions other than amount, value is exactly the scalar string
