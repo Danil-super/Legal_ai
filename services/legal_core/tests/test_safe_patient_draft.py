@@ -68,6 +68,17 @@ def test_agreed_rescheduling_gets_a_specific_operational_draft_without_patient_d
     assert "новой записи" not in other_draft.text
 
 
+def test_payment_complaint_gets_a_draft_about_the_charge():
+    draft = build_safe_patient_draft(
+        {FactKey.SITUATION_AREAS: ["FINANCE"]},
+        _risk(RiskLevel.LOW, external_draft_allowed=True),
+    )
+    assert draft.status == "AVAILABLE"
+    assert "сверим выставленный счёт" in draft.text
+    assert "осмотр" not in draft.text
+    assert draft.human_approval_required
+
+
 def test_defense_in_depth_blocks_formal_claim_even_if_risk_configuration_drifts() -> None:
     draft = build_safe_patient_draft(
         {FactKey.FORMAL_CLAIM: {"boolean": True}},

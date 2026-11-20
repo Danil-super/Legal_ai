@@ -17,6 +17,10 @@ def v4_policy():
     return RiskPolicy("dental-risk.v4", 1_000_000, True, factual_safety_intake_enabled=True)
 
 
+def v5_policy():
+    return RiskPolicy("dental-risk.v5", 1_000_000, True, True, routine_service_scope_enabled=True)
+
+
 def v4_approval(**overrides):
     return RiskPolicyApproval(
         **{
@@ -49,14 +53,14 @@ def v4_payload():
 
 @pytest.mark.parametrize("amount", [999_900, 999_999, 1_000_000, 1_000_001, 1_000_100])
 @pytest.mark.parametrize("representation", ["screening", "legacy"])
-def test_v4_inclusive_amount_routes_both_confirmed_representations(amount, representation):
+@pytest.mark.parametrize("policy", [v4_policy(), v5_policy()])
+def test_inclusive_10k_amount_routes_both_confirmed_representations(amount, representation, policy):
     data = facts(moneyRequested="YES", amount={"amountKopecks": amount, "currency": "RUB"})
     if representation == "legacy":
         data = _complete_safe_facts() | {
             FactKey.PATIENT_DEMAND: ["COMPENSATION_DEMAND"],
             FactKey.DEMAND_AMOUNT: {"amountKopecks": amount, "currency": "RUB"},
         }
-    policy = v4_policy()
     early = evaluate_early_triage(data, policy=policy)
     result = evaluate_risk(data, policy=policy, evidence_verified=True)
     if amount >= 1_000_000:
@@ -93,7 +97,7 @@ def test_v5_allows_scoped_service_complaint_with_unreported_safety_fields():
     data[FactKey.SITUATION_AREAS] = ["SERVICE"]
     data[FactKey.HEALTH_CONSEQUENCE_SIGNALS] = ["UNKNOWN"]
     old = evaluate_risk(data, policy=v4_policy(), evidence_verified=True)
-    v5 = RiskPolicy("dental-risk.v5", 1_000_000, True, True, routine_service_scope_enabled=True)
+    v5 = v5_policy()
 
     assert old.level is RiskLevel.UNAVAILABLE
     assert evaluate_early_triage(data, policy=v5) is None
@@ -127,7 +131,7 @@ def test_v5_allows_scoped_service_complaint_with_unreported_safety_fields():
 def test_v5_still_routes_an_explicit_risk_signal_even_for_service(override, expected, reason):
     data = facts(**override)
     data[FactKey.SITUATION_AREAS] = ["SERVICE"]
-    v5 = RiskPolicy("dental-risk.v5", 1_000_000, True, True, routine_service_scope_enabled=True)
+    v5 = v5_policy()
     result = evaluate_early_triage(data, policy=v5)
 
     assert result is not None

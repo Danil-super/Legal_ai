@@ -30,7 +30,8 @@ new appointment agreed by the patient and clinic. The Core can then choose a fix
 situation-specific operational message in a verified eligible LOW report. It
 contains an apology for waiting and confirms the agreement. Date, time, private
 text and legal concessions cannot enter that draft. The human review and
-existing patient-draft safety gates apply.
+existing patient-draft safety gates apply. An eligible billing-only case
+gets an operational message about comparing the bill with the agreed services.
 
 For v5, the existing approval command checks the exact approved v4 payload,
 its immutable review event, the new explicit attestation and synthetic risk
