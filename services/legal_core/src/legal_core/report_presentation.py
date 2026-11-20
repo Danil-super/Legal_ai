@@ -81,6 +81,7 @@ _ACTIONS = {
     "REMOVED_MATERIAL": "удалили материал",
     "TERMINATED_CONTRACT": "прекратили договор",
     "SIGNED_AGREEMENT": "подписали соглашение",
+    "REBOOKED_AFTER_WAIT": "после ожидания согласовали новую запись",
     "OTHER": "другое действие",
 }
 _DEMANDS = {
@@ -499,8 +500,8 @@ def present_report(report: Mapping[str, Any]) -> ReportPresentation:
                 ("Что уже сделала клиника", clinic),
                 *([("Приложенные документы", attachments)] if attachments else []),
                 ("Риск и следующий шаг", risk_lines),
-                ("План действий", plan),
                 ("Проверенные выводы и нормативные основания", legal),
+                ("План действий", plan),
                 ("Черновик ответа пациенту", draft_lines),
             )
         ),

@@ -13,9 +13,9 @@ from legal_core.case_api import (
     DRAFT_RETENTION,
     ActorContext,
     ApiError,
+    _active_draft_response,
     _audit,
     _canonical_hash,
-    _draft_response,
 )
 from legal_core.case_preparation_contracts import PreparationModel
 from legal_core.intake_answer_operations import checked_proposal, input_hash, stored_answer
@@ -141,7 +141,7 @@ async def stage(
         replay = await replay_revision(session, actor, draft, record, request, kind, metadata)
         if replay is not None:
             return StageDraftResponse(operationId=record.id, stagedRevision=replay,
-                                      draft=_draft_response(draft))
+                                      draft=await _active_draft_response(session, draft))
         if (request.expected_revision != draft.revision
                 or request.expected_input_sha256 != metadata["inputSha256"]
                 or request.expected_proposal_sha256 != metadata["proposalSha256"]):
@@ -183,7 +183,7 @@ async def stage(
             },
         ))
         result = StageDraftResponse(operationId=record.id, stagedRevision=draft.revision,
-                                    draft=_draft_response(draft))
+                                    draft=await _active_draft_response(session, draft))
         await session.commit()
         return result
 

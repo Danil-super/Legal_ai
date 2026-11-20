@@ -24,6 +24,7 @@ from legal_core.analysis_clarifications import (
     ServiceProvidedDate,
     intake_clarification_requests,
 )
+from legal_core.factual_safety_intake import routine_service_money_pending
 from legal_core.intake_service_scope import (
     invalidate_service_clarification_answers as invalidate_service_scope,
 )
@@ -31,7 +32,9 @@ from legal_core.pseudonymization import pseudonymize_text
 
 from telegram_gateway.case_wizard import confirmed_clarification_answers, parse_date_answer
 from telegram_gateway.factual_safety_intake import (
+    SERVICE_SCOPE_KEY,
     known_urgent_report,
+    scoped_service_draft,
     screening_complete,
     screening_summary,
 )
@@ -102,6 +105,7 @@ _CHOICES: dict[str, dict[str, str]] = {
         "REMOVED_MATERIAL": "удалили материал",
         "TERMINATED_CONTRACT": "прекратили договор",
         "SIGNED_AGREEMENT": "подписали соглашение",
+        "REBOOKED_AFTER_WAIT": "после ожидания согласовали новую запись",
         "OTHER": "другое действие",
     },
     "healthSignals": {
@@ -205,6 +209,13 @@ def _stored_clarification_requests(data: dict[str, Any]) -> list[ClarificationRe
 
 def clarification_requests(data: dict[str, Any]) -> list[ClarificationRequest]:
     """Collect material facts before consent, or preserve a retained recovery batch."""
+    actions = data.get("clinicActions")
+    if (
+        not data.get("analysisClarificationRequests")
+        and isinstance(actions, list) and "REBOOKED_AFTER_WAIT" in actions
+        and scoped_service_draft(data) is not data
+    ):
+        return []
     if ("analysisClarificationRequests" in data and not _stored_clarification_requests(data)
             and data["analysisClarificationRequests"] != []):
         return []
@@ -489,7 +500,9 @@ def _input_complete(data: dict[str, Any], state: str) -> bool:
     if state == V2_CLINIC_ACTIONS:
         return "clinicActions" not in data or _valid_multi(data["clinicActions"], "clinicActions")
     if state == V2_HEALTH:
-        return _valid_multi(data.get("healthSignals"), "healthSignals")
+        return _valid_multi(data.get("healthSignals"), "healthSignals") or (
+            data.get(SERVICE_SCOPE_KEY) is True and routine_service_money_pending(data)
+        )
     if state == V2_MATERIALS:
         # This is upload transport state, not a missing fact about the incident.
         # A successful upload writes ATTACHED; absence does not require a question.
@@ -506,6 +519,7 @@ def _input_complete(data: dict[str, Any], state: str) -> bool:
 def next_missing_state(data: dict[str, Any]) -> str:
     """Return one concrete question; complete input opens the deterministic summary."""
 
+    data = scoped_service_draft(data)
     for state in active_states(data):
         if state in {V2_SUMMARY, V2_CONFIRM}:
             break
@@ -563,14 +577,18 @@ def review_blocks(data: dict[str, Any], *, final: bool = False) -> list[str]:
     blocks.append("Когда: " + _date_label(data.get("eventDate")))
     blocks.append("Ход ситуации: " + _label(data.get("conflictStage"), "conflictStage"))
     blocks.append("Что сделала клиника: " + _label(data.get("clinicActions"), "clinicActions"))
-    blocks.append(
-        "Последствия для здоровья: " + _label(data.get("healthSignals"), "healthSignals")
-    )
+    if scoped_service_draft(data) is data:
+        blocks.append(
+            "Последствия для здоровья: " + _label(data.get("healthSignals"), "healthSignals")
+        )
+        screening = screening_summary(data)
+    else:
+        screening = ["По этому обращению пациент не просил о возврате или компенсации."]
     blocks.append(
         "Материалы клиники: "
         + _label(data.get("caseMaterialsStatus", "NOT_ATTACHED"), "caseMaterialsStatus")
     )
-    blocks.extend(screening_summary(data))
+    blocks.extend(screening)
     blocks.extend(clarification_review_blocks(data))
     if data.get("eventDate") == {"date": None, "precision": "UNKNOWN"}:
         blocks.append(

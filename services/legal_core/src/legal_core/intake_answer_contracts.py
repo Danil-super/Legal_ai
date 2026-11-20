@@ -19,6 +19,7 @@ from legal_core.case_preparation_contracts import PreparationModel, Sha256
 from legal_core.factual_safety_intake import (
     SCREENING_FIELDS,
     SCREENING_VERSION,
+    routine_service_money_pending,
     validate_partial_screening,
 )
 from legal_core.intake_preparation_contracts import SourceSpan
@@ -179,7 +180,10 @@ def derive_answer_question(
         screening = validate_partial_screening(draft_data.get(
             "safetyScreening", {"schemaVersion": SCREENING_VERSION},
         ))
-        field = next((item for item in SCREENING_FIELDS if item not in screening), None)
+        field = (
+            "moneyRequested" if routine_service_money_pending(draft_data)
+            else next((item for item in SCREENING_FIELDS if item not in screening), None)
+        )
         if field is None and screening.get("moneyRequested") == "YES" and "amount" not in screening:
             field = "amount"
         if field is None and "amount" not in screening:

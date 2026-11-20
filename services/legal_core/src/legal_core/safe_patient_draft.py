@@ -22,6 +22,11 @@ _SAFE_TEXT = (
     "До завершения проверки мы не будем делать выводы о причинах возникшей ситуации. "
     "После проверки сообщим вам дальнейший организационный порядок."
 )
+_RESCHEDULED_TEXT = (
+    "Здравствуйте! Извините, что вам пришлось ждать приёма. "
+    "Подтверждаем, что мы договорились о новой записи. "
+    "Если нужно уточнить время, пожалуйста, напишите нам."
+)
 
 
 def _blocked(reason_code: str) -> DraftResponse:
@@ -65,8 +70,14 @@ def build_safe_patient_draft(
     ):
         return _blocked("PATIENT_DRAFT_SAFETY_SIGNAL")
 
+    actions = facts.get(FactKey.CLINIC_ACTIONS)
+    rescheduled = (
+        facts.get(FactKey.SITUATION_AREAS) == ["SERVICE"]
+        and isinstance(actions, list)
+        and "REBOOKED_AFTER_WAIT" in actions
+    )
     return DraftResponse(
         status="AVAILABLE",
-        text=_SAFE_TEXT,
+        text=_RESCHEDULED_TEXT if rescheduled else _SAFE_TEXT,
         policyVersion=SAFE_OPERATIONAL_DRAFT_VERSION,
     )

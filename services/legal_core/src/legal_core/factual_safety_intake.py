@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import Field, ValidationError, model_validator
@@ -10,6 +11,7 @@ from legal_core.contracts import ContractModel
 
 Signal = Literal["YES", "NO", "UNKNOWN"]
 SCREENING_VERSION = "factual-safety-intake.v1"
+ROUTINE_SERVICE_SCOPE_VERSION = "routine-service-scope.v1"
 
 SCREENING_FIELDS = (
     "healthDeteriorationReported",
@@ -20,6 +22,32 @@ SCREENING_FIELDS = (
     "authorityReferralMentioned",
     "moneyRequested",
 )
+
+
+def routine_service_scope(
+    *, areas: object, incoming: object, health: object, screening: Mapping[str, object],
+) -> bool:
+    """Bound a reported service-only issue without turning missing signals into negatives."""
+    return (
+        areas == ["SERVICE"]
+        and incoming in ("COMPLAINT", "MESSAGE_OR_REQUEST")
+        and health in (None, ["NO_KNOWN_INFORMATION"], ["UNKNOWN"])
+        and screening.get("moneyRequested") == "NO"
+        and all(screening.get(field) in (None, "NO", "UNKNOWN") for field in SCREENING_FIELDS)
+    )
+
+
+def routine_service_money_pending(data: Mapping[str, object]) -> bool:
+    try:
+        screening = validate_partial_screening(
+            data.get("safetyScreening", {"schemaVersion": SCREENING_VERSION}),
+        )
+    except ValueError:
+        return False
+    return "moneyRequested" not in screening and routine_service_scope(
+        areas=data.get("situationAreas"), incoming=data.get("incomingKind"),
+        health=data.get("healthSignals"), screening={**screening, "moneyRequested": "NO"},
+    )
 
 
 def validate_partial_screening(value: object) -> dict[str, object]:

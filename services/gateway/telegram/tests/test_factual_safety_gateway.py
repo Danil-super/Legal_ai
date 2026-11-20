@@ -13,13 +13,14 @@ from pydantic import ValidationError
 from telegram_gateway import bot
 from telegram_gateway.case_wizard import facts_from_v2_data
 from telegram_gateway.factual_safety_intake import (
+    SERVICE_SCOPE_KEY,
     answer_screening,
     known_urgent_report,
     previous_screening_question,
     screening_question,
     screening_summary,
 )
-from telegram_gateway.guided_case_intake_v2 import V2_SAFETY, next_missing_state
+from telegram_gateway.guided_case_intake_v2 import V2_SAFETY, V2_SUMMARY, next_missing_state
 from test_case_wizard import FakeMessage, FakeQuery, FakeReportPipeline, prepare_selected_draft
 from test_guided_case_intake_v2 import _base_data
 
@@ -49,6 +50,43 @@ def test_seven_independent_answers_do_not_manufacture_legacy_negatives():
         item["factKey"] not in {FactKey.HARM_CLAIMED, FactKey.FORMAL_CLAIM} for item in facts
     )
     assert data["healthSignals"] == ["NO_KNOWN_INFORMATION"]
+
+
+def test_scoped_service_complaint_opens_summary_without_turning_unknown_into_no():
+    data = _base_data() | {
+        "incomingKind": "COMPLAINT",
+        "situationAreas": ["SERVICE"],
+        "clinicActions": ["REBOOKED_AFTER_WAIT"],
+        "safetyScreening": {"schemaVersion": "factual-safety-intake.v1", "moneyRequested": "NO"},
+    }
+    data.pop("healthSignals")
+    data.pop("affectedServices", None)
+    assert next_missing_state(data) != V2_SUMMARY
+    data[SERVICE_SCOPE_KEY] = True
+
+    assert next_missing_state(data) == V2_SUMMARY
+    facts = {fact["factKey"]: fact["value"] for fact in facts_from_v2_data(data)}
+    assert facts["HEALTH_CONSEQUENCE_SIGNALS"] == {"values": ["UNKNOWN"]}
+    assert facts["FACTUAL_SAFETY_SCREENING"]["representativeContact"] == "UNKNOWN"
+    assert facts["FACTUAL_SAFETY_SCREENING"]["moneyRequested"] == "NO"
+    assert "healthSignals" not in data
+    assert "representativeContact" not in data["safetyScreening"]
+
+
+@pytest.mark.parametrize("signal", ["hospitalizationReported", "representativeContact",
+                                    "authorityOrCourtDocumentReceived"])
+def test_reported_safety_marker_never_uses_scoped_service_shortcut(signal):
+    data = _base_data() | {
+        SERVICE_SCOPE_KEY: True,
+        "incomingKind": "COMPLAINT",
+        "situationAreas": ["SERVICE"],
+        "safetyScreening": {
+            "schemaVersion": "factual-safety-intake.v1", "moneyRequested": "NO", signal: "YES",
+        },
+    }
+
+    assert known_urgent_report(data)
+    assert next_missing_state(data) == V2_SAFETY
 
 
 def test_unknown_answers_stay_unknown_and_requested_money_uses_exact_kopecks():

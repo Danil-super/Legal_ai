@@ -302,6 +302,9 @@ class TelegramIntakeDraftListResponse(ContractModel):
 class TelegramIntakeDraftResponse(TelegramIntakeDraftSummary):
     draft_data: dict[str, Any] = Field(alias="draftData")
     purge_after: datetime = Field(alias="purgeAfter")
+    routine_service_scope_enabled: bool = Field(
+        default=False, alias="routineServiceScopeEnabled", exclude_if=lambda value: not value,
+    )
 
 
 class PlatformSubscriptionGrantRequest(ContractModel):
@@ -829,6 +832,10 @@ class TelegramWorkflowSubmissionRequest(ContractModel):
     receipt_version: Literal[2] | None = Field(
         default=None, alias="receiptVersion", exclude_if=lambda value: value is None,
     )
+    expected_draft_revision: int | None = Field(
+        default=None, alias="expectedDraftRevision", strict=True, ge=1,
+        exclude_if=lambda value: value is None,
+    )
     facts: list[FactInput] = Field(min_length=1, max_length=20)
 
     @field_validator("receipt_version", mode="before")
@@ -840,6 +847,8 @@ class TelegramWorkflowSubmissionRequest(ContractModel):
 
     @model_validator(mode="after")
     def preparation_requires_guided_facts(self) -> "TelegramWorkflowSubmissionRequest":
+        if self.expected_draft_revision is not None and self.receipt_version != 2:
+            raise ValueError("binding a draft revision requires a v2 preparation receipt")
         if self.receipt_version == 2 and (
             self.intake_schema_version != "dental-case-intake.v2" or not any(
                 fact.fact_key == FactKey.INTAKE_VERSION and fact.value == {"value": "GUIDED_V2"}

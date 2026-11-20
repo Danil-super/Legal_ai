@@ -132,16 +132,20 @@ async def _open(update: Update, context: ContextTypes.DEFAULT_TYPE, draft: dict[
     if actor is None:
         raise ValueError("actor missing")
     draft_id = UUID(draft["id"])
+    scope_enabled = draft.get("routineServiceScopeEnabled") is True
+    data = bot._saved_draft_selection(draft_id, draft)
     if accepted_revision is not None and draft["revision"] == accepted_revision:
         # Only a just-accepted snapshot advances automatically. Old receipt replay
         # never changes a later explicit back/edit navigation checkpoint.
-        following = next_missing_state(draft["draftData"])
+        following = next_missing_state(data)
         if following != draft["wizardState"]:
             draft = validated_draft(await bot._legal_core(context).save_intake_draft(
                 draft_id, actor, expected_revision=draft["revision"], wizard_state=following,
                 draft_data=draft["draftData"],
             ), draft_id)
-    data = bot._saved_draft_selection(draft_id, draft)
+            data = bot._saved_draft_selection(draft_id, draft)
+            if scope_enabled:
+                data[bot.SERVICE_SCOPE_KEY] = True
     bot._user_data(context)[bot.WIZARD_DATA_KEY] = data
     state = bot.WizardState[data[bot.DRAFT_STATE_KEY]]
     await bot._prompt_v2_draft(update, state, data, preparation=True)

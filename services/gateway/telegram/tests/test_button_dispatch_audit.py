@@ -3,7 +3,7 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import test_case_experience as experience
@@ -137,6 +137,100 @@ def test_current_menu_copy_explains_live_flow_and_allowed_deidentified_files():
     assert "файлы, фио" not in SCREENS["privacy"].lower()
     assert "pdf" in SCREENS["privacy"].lower()
     assert "недостающ" in SCREENS["workflow"].lower()
+
+
+def test_scoped_service_draft_resumes_at_summary_without_safety_questions():
+    async def scenario():
+        async with simplified_harness() as (_app, core, sent, dispatch):
+            data = amount_draft()
+            data.update(
+                situationAreas=["SERVICE"], incomingKind="COMPLAINT",
+                clinicActions=["REBOOKED_AFTER_WAIT"],
+                safetyScreening={
+                    "schemaVersion": "factual-safety-intake.v1", "moneyRequested": "NO",
+                },
+            )
+            data.pop("healthSignals")
+            data.pop("affectedServices", None)
+            core.draft.update(
+                wizardState="SAFETY", draftData=data, routineServiceScopeEnabled=True,
+            )
+            await dispatch(f"case:draft:{DRAFT}")
+            assert not any("case:safety:" in str(message) for message in sent)
+            assert any("case:v2:summary:confirm" in str(message) for message in sent)
+            assert core.draft["draftData"]["safetyScreening"] == {
+                "schemaVersion": "factual-safety-intake.v1", "moneyRequested": "NO",
+            }
+            core.submit_workflow = AsyncMock(return_value={
+                "state": "SUCCEEDED", "workflowId": str(DRAFT), "receiptVersion": 2,
+                "case": {
+                    "id": str(DRAFT), "publicNumber": "DL-TEST-SERVICE",
+                    "status": "ANALYSIS_BLOCKED", "intakeSchemaVersion": "dental-case-intake.v2",
+                    "createdAt": "2026-11-20T10:00:00Z",
+                },
+            })
+            core.archive_intake_draft = AsyncMock()
+            with patch(
+                "telegram_gateway.dialogue_submission.enqueue_analysis", new_callable=AsyncMock,
+            ) as enqueue:
+                await dispatch("case:v2:summary:confirm")
+            enqueue.assert_awaited_once()
+            core.submit_workflow.assert_awaited_once()
+            assert core.submit_workflow.await_args.kwargs["expected_draft_revision"] == 1
+            submitted = {fact["factKey"]: fact["value"]
+                         for fact in core.submit_workflow.await_args.args[1]}
+            assert submitted["FACTUAL_SAFETY_SCREENING"]["hospitalizationReported"] == "UNKNOWN"
+
+    asyncio.run(scenario())
+
+
+def test_scoped_service_without_money_facts_asks_only_about_patient_demand():
+    async def scenario():
+        async with simplified_harness() as (_app, core, sent, dispatch):
+            data = amount_draft()
+            data["clinicActions"] = ["REBOOKED_AFTER_WAIT"]
+            data.pop("safetyScreening")
+            data.pop("healthSignals")
+            core.draft.update(
+                wizardState="HEALTH", draftData=data, routineServiceScopeEnabled=True,
+            )
+            await dispatch(f"case:draft:{DRAFT}")
+            assert "case:safety:moneyRequested:NO" in str(sent[-1])
+            assert "case:safety:healthDeteriorationReported" not in str(sent[-1])
+            await dispatch("case:safety:moneyRequested:NO")
+            assert "case:v2:summary:confirm" in str(sent[-1])
+
+    asyncio.run(scenario())
+
+
+def test_short_safety_batch_only_saves_answers_to_the_questions_it_showed():
+    async def scenario():
+        async with simplified_harness() as (_app, core, sent, dispatch):
+            data = amount_draft()
+            data["situationAreas"] = ["FINANCE"]
+            data["safetyScreening"] = {
+                "schemaVersion": "factual-safety-intake.v1",
+                "moneyRequested": "NO",
+                "amount": "NOT_REQUESTED",
+            }
+            core.draft.update(
+                wizardState="SAFETY", draftData=data, routineServiceScopeEnabled=True,
+            )
+            await dispatch(f"case:draft:{DRAFT}")
+            assert any("case:safety:batch:none" in str(message) for message in sent)
+            await dispatch("case:safety:batch:none")
+
+            assert core.draft["draftData"]["safetyScreening"] == {
+                "schemaVersion": "factual-safety-intake.v1",
+                "moneyRequested": "NO",
+                "amount": "NOT_REQUESTED",
+                "healthDeteriorationReported": "NO",
+                "hospitalizationReported": "NO",
+                "representativeContact": "NO",
+            }
+            assert core.draft["wizardState"] == "SAFETY"
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("field,state,value", [

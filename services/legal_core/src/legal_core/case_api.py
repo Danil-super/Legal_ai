@@ -159,6 +159,17 @@ def _draft_response(draft: TelegramIntakeDraft) -> TelegramIntakeDraftResponse:
     )
 
 
+async def _active_draft_response(
+    session: AsyncSession, draft: TelegramIntakeDraft,
+) -> TelegramIntakeDraftResponse:
+    from legal_core.risk_persistence import approved_service_scope_enabled
+
+    result = _draft_response(draft)
+    if draft.draft_json.get("intakeVersion") == 2:
+        result.routine_service_scope_enabled = await approved_service_scope_enabled(session)
+    return result
+
+
 async def _actor_draft(
     session: AsyncSession, actor: ActorContext, draft_id: UUID
 ) -> TelegramIntakeDraft:
@@ -1340,7 +1351,7 @@ def create_case_router(
     ) -> TelegramIntakeDraftResponse:
         actor = await resolve_actor(session, telegram_user_id)
         draft = await _actor_draft(session, actor, draft_id)
-        return _draft_response(draft)
+        return await _active_draft_response(session, draft)
 
     @router.put("/telegram-intake-drafts/{draft_id}", response_model=TelegramIntakeDraftResponse)
     async def update_telegram_intake_draft(
@@ -2039,6 +2050,13 @@ def create_case_router(
                 status_code=status.HTTP_409_CONFLICT,
                 code="INTAKE_DRAFT_CLOSED",
                 message="A closed intake draft cannot create a new case",
+            )
+        if payload.expected_draft_revision is not None and (
+            source_draft is None or source_draft.revision != payload.expected_draft_revision
+        ):
+            raise ApiError(
+                status_code=409, code="INTAKE_DRAFT_REVISION_CONFLICT",
+                message="The confirmed intake draft has a newer or unavailable revision",
             )
         correction_source = (
             source_draft.draft_json.get("correctionSource") if source_draft is not None else None

@@ -81,6 +81,60 @@ def test_v4_critical_is_not_restricted_to_monetary_cases(signal):
     )
 
 
+def test_v5_allows_scoped_service_complaint_with_unreported_safety_fields():
+    data = facts(
+        healthDeteriorationReported="UNKNOWN",
+        hospitalizationReported="UNKNOWN",
+        representativeContact="UNKNOWN",
+        writtenRequirementsReceived="UNKNOWN",
+        authorityOrCourtDocumentReceived="UNKNOWN",
+    )
+    data[FactKey.INCOMING_COMMUNICATION] = "COMPLAINT"
+    data[FactKey.SITUATION_AREAS] = ["SERVICE"]
+    data[FactKey.HEALTH_CONSEQUENCE_SIGNALS] = ["UNKNOWN"]
+    old = evaluate_risk(data, policy=v4_policy(), evidence_verified=True)
+    v5 = RiskPolicy("dental-risk.v5", 1_000_000, True, True, routine_service_scope_enabled=True)
+
+    assert old.level is RiskLevel.UNAVAILABLE
+    assert evaluate_early_triage(data, policy=v5) is None
+    assert evaluate_risk(data, policy=v5, evidence_verified=True).level is RiskLevel.LOW
+    assert data[FactKey.FACTUAL_SAFETY_SCREENING]["hospitalizationReported"] == "UNKNOWN"
+    assert evaluate_risk(data, policy=v5, evidence_verified=False).level is RiskLevel.UNAVAILABLE
+
+    data[FactKey.SITUATION_AREAS] = ["SERVICE", "TREATMENT"]
+    assert evaluate_risk(data, policy=v5, evidence_verified=True).level is RiskLevel.UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    ("override", "expected", "reason"),
+    [
+        ({"writtenRequirementsReceived": "YES"}, "HIGH", "WRITTEN_REQUIREMENTS_REPORTED"),
+        ({"healthDeteriorationReported": "YES"}, "HIGH", "HEALTH_DETERIORATION_REPORTED"),
+        ({"representativeContact": "YES"}, "HIGH", "LAWYER_OR_REPRESENTATIVE_CONTACT"),
+        ({"hospitalizationReported": "YES"}, "CRITICAL", "HOSPITALIZATION_REPORTED"),
+        (
+            {"authorityOrCourtDocumentReceived": "YES"},
+            "CRITICAL",
+            "AUTHORITY_OR_COURT_DOCUMENT_REPORTED",
+        ),
+        (
+            {"moneyRequested": "YES", "amount": {"amountKopecks": 1_000_000, "currency": "RUB"}},
+            "HIGH",
+            "HIGH_DEMAND_AMOUNT",
+        ),
+    ],
+)
+def test_v5_still_routes_an_explicit_risk_signal_even_for_service(override, expected, reason):
+    data = facts(**override)
+    data[FactKey.SITUATION_AREAS] = ["SERVICE"]
+    v5 = RiskPolicy("dental-risk.v5", 1_000_000, True, True, routine_service_scope_enabled=True)
+    result = evaluate_early_triage(data, policy=v5)
+
+    assert result is not None
+    assert result.level == expected
+    assert reason in result.reason_codes
+
+
 def test_v4_unknown_amount_is_not_inferred_from_narrative():
     data = facts(moneyRequested="YES", amount="UNKNOWN")
     data[FactKey.EVENT_SUMMARY] = "Synthetic patient requests 10000 rubles."

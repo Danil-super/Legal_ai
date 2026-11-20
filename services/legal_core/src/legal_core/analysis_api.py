@@ -274,7 +274,10 @@ async def _load_analysis_state(session: AsyncSession, actor: Any, case_id: UUID)
         and policy.domain.factual_safety_intake_enabled
         and evaluate_early_triage(facts, policy=policy.domain) is None
     ):
-        reason = screening_blocker(facts, confirmed_screening(facts))
+        reason = screening_blocker(
+            facts, confirmed_screening(facts),
+            routine_service_scope_enabled=policy.domain.routine_service_scope_enabled,
+        )
         if reason is not None:
             raise ApiError(status_code=422, code=reason,
                            message="A factual clarification is required before analysis")

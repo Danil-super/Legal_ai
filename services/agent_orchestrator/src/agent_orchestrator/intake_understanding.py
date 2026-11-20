@@ -21,6 +21,10 @@ Only propose existing permitted fields explicitly supported by the actual source
 Use FINANCE for payment, price, additional charges and refunds. Add TREATMENT only when
 treatment or its outcome is itself disputed, not for billing alone or past treatment mentioned
 in an image/privacy dispute. A financial topic alone implies no performed medical service.
+Use SERVICE alone for a complaint only about waiting or scheduling when treatment, health,
+payment and other topics are not in dispute. A patient who complained to an administrator
+supports incomingKind:COMPLAINT. Use clinicActions:REBOOKED_AFTER_WAIT only when the patient
+reported waiting and then agreed to a new appointment; anchor both facts.
 Use zero-based Unicode character offsets [start,end) for each proposed field, without copying
 source text into additional fields. Each anchor must be a nonblank literal part of source.
 Each sourceSpans field must contain one to three intervals. When one field, such as
@@ -67,6 +71,12 @@ from its schema. The signals describe reported deterioration, hospitalization, r
 contact, written requirements, a court/authority document, referral to authorities and monetary
 demands. Each is YES, NO or explicit UNKNOWN; unmentioned members stay omitted. Each proposed
 field, including the partial safety object, needs sourceSpans covering its actual evidence.
+writtenRequirementsReceived:YES requires a reported written demand for a concrete action from
+the patient. A message complaining about a delay, refusing a charge, or describing a problem
+does not by itself support YES even when it was written. Leave the signal omitted when unclear.
+moneyRequested refers to the patient asking the clinic to pay or refund, not a clinic invoice,
+price, surcharge or amount the clinic asks the patient to pay. Anchor a demand in the patient's
+request and amount, rather than an isolated number.
 If moneyRequested is explicitly NO, amount is NOT_REQUESTED. Denying a refund alone does not
 deny every monetary demand. For YES with an explicit RUB sum, amount is an object with positive
 integer amountKopecks (rubles multiplied by100) and currency:RUB. An explicitly unknown sum

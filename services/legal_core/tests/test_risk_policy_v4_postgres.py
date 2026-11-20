@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def activate_v4():
+def activate_v4(*, continue_to_v5=False):
     reviewer, v1, _ = prepare_policy(activate=False)
 
     async def run():
@@ -46,11 +46,106 @@ def activate_v4():
                 assert rows[1].policy_json == v4_payload()
                 events = (await session.scalars(select(RiskPolicyEvent))).all()
                 assert len(events) == 3
-            return v4
+            if not continue_to_v5:
+                return v4
+            v5_approval = v4_approval(
+                reviewer_telegram_user_id=reviewer, version=5,
+                direct_v1_supersession_reviewed=False, routine_service_scope_reviewed=True,
+            )
+            v5 = await approve_risk_policy(factory, v5_approval)
+            assert await approve_risk_policy(factory, v5_approval) == v5
+            async with factory() as session:
+                policies = (await session.scalars(
+                    select(RiskPolicyVersion).order_by(RiskPolicyVersion.version),
+                )).all()
+                assert [(row.version, row.status) for row in policies] == [
+                    (1, "RETIRED"), (4, "RETIRED"), (5, "APPROVED"),
+                ]
+                assert policies[1].policy_json == v4_payload()
+                assert len((await session.scalars(select(RiskPolicyEvent))).all()) == 5
+            return v5
         finally:
             await engine.dispose()
 
     return asyncio.run(run())
+
+
+def test_v5_scoped_service_submission_and_critical_alert_follow_distinct_routes(monkeypatch):
+    activate_v4(continue_to_v5=True)
+    monkeypatch.setenv("LEGAL_ANALYSIS_SAFE_STOP", "1")
+    actor = 91_000_000_000 + uuid4().int % 1_000_000_000
+    clinic, _ = seed_admin(actor)
+    active_lawyers = seed_lawyers(clinic, actor)
+    data = guided_data() | {
+        "incomingKind": "COMPLAINT",
+        "situationAreas": ["SERVICE"],
+        "clinicActions": ["REBOOKED_AFTER_WAIT"],
+        "healthSignals": ["UNKNOWN"],
+        "safetyScreening": screening(
+            healthDeteriorationReported="UNKNOWN", hospitalizationReported="UNKNOWN",
+            representativeContact="UNKNOWN", authorityOrCourtDocumentReceived="UNKNOWN",
+            writtenRequirementsReceived="UNKNOWN",
+        ),
+    }
+    data.pop("affectedServices", None)
+    with application_client() as client:
+        draft = client.post(
+            "/v1/telegram-intake-drafts",
+            headers=actor_headers(actor, uuid4()),
+            json={"intakeSchemaVersion": "dental-case-intake.v2"},
+        )
+        assert draft.status_code == 201, draft.text
+        fetched = client.get(
+            f"/v1/telegram-intake-drafts/{draft.json()['id']}", headers=actor_headers(actor),
+        )
+        assert fetched.status_code == 200 and fetched.json()["routineServiceScopeEnabled"] is True
+        draft_id = draft.json()["id"]
+        changed = dict(data, safetyScreening=screening(authorityOrCourtDocumentReceived="YES"))
+        saved = client.put(
+            f"/v1/telegram-intake-drafts/{draft_id}", headers=actor_headers(actor, uuid4()),
+            json={"expectedRevision": 1, "wizardState": "SUMMARY", "draftData": changed},
+        )
+        assert saved.status_code == 200, saved.text
+        stale = client.post(
+            f"/v1/telegram-case-workflows/{draft_id}/submissions",
+            headers=actor_headers(actor),
+            json={
+                "intakeSchemaVersion": "dental-case-intake.v2", "locale": "ru-RU",
+                "receiptVersion": 2, "expectedDraftRevision": 1,
+                "facts": facts_from_v2_data(data),
+            },
+        )
+        assert stale.status_code == 409, stale.text
+        assert stale.json()["error"]["code"] == "INTAKE_DRAFT_REVISION_CONFLICT"
+        for urgent in (False, True):
+            if urgent:
+                data["safetyScreening"]["hospitalizationReported"] = "YES"
+            submission = client.post(
+                f"/v1/telegram-case-workflows/{uuid4()}/submissions",
+                headers=actor_headers(actor),
+                json={
+                    "intakeSchemaVersion": "dental-case-intake.v2",
+                    "locale": "ru-RU",
+                    "receiptVersion": 2,
+                    "facts": facts_from_v2_data(data),
+                },
+            )
+            assert submission.status_code == 201, submission.text
+            case = submission.json()["case"]
+            assert bool(case["earlyEscalationId"]) == urgent
+
+    engine = create_engine(owner_database_url())
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT e.level, u.telegram_user_id, n.state FROM case_escalations e "
+                "JOIN escalation_notifications n ON n.escalation_id=e.id "
+                "JOIN clinic_users cu ON cu.id=n.recipient_membership_id "
+                "JOIN users u ON u.id=cu.user_id WHERE e.clinic_id=:clinic"
+            ), {"clinic": UUID(str(clinic))}).all()
+            assert set(rows) == {("CRITICAL", lawyer, "PENDING") for lawyer in active_lawyers}
+    finally:
+        engine.dispose()
 
 
 def test_v4_rejects_changed_predecessor_without_retiring_it_or_creating_v4():
