@@ -13,6 +13,10 @@ from test_literal_factual_answers import _no_model
 
 
 @pytest.mark.parametrize("source,values", [
+    ("Ортодонтическое лечение с использованием элайнеров",
+     ["Ортодонтическое лечение с использованием элайнеров"]),
+    ("Ортодонтическое лечение", ["Ортодонтическое лечение"]),
+    ("неизвестно", ["неизвестно"]),
     ("Лечение кариеса; профессиональная гигиена", ["Лечение кариеса", "профессиональная гигиена"]),
     ("  Осмотр;\nлечение кариеса; установка коронки; ",
      ["Осмотр", "лечение кариеса", "установка коронки"]),
@@ -36,6 +40,18 @@ def test_invalid_service_lists_are_not_silently_accepted_or_truncated(source):
     result = run_model(source, unresolved(), state="SERVICES", data=data, calls=calls)
     assert result.status == "UNRESOLVED" and result.value is None
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("source", [
+    "Пациент отказался от ортодонтического лечения",
+    "Ортодонтическое лечение, но пациент передумал",
+    "https://example.invalid",
+])
+def test_non_label_service_reply_still_requires_interpretation(source):
+    calls = []
+    data = {key: value for key, value in DATA.items() if key != "affectedServices"}
+    result = run_model(source, unresolved(), state="SERVICES", data=data, calls=calls)
+    assert result.status == "UNRESOLVED" and len(calls) == 1
 
 
 def test_retained_fact_extraction_can_run_without_repeating_a_literal_service_list():

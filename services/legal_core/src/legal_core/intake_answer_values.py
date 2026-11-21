@@ -30,6 +30,29 @@ from legal_core.intake_service_scope import invalidate_service_clarification_ans
 from legal_core.pseudonymization import pseudonymize_text
 
 _LINK = re.compile(r"//|[a-z][a-z0-9+.-]*:|www\.|(?:[\w-]+\.)+[^\W\d_]{2,63}\b", re.I)
+_SERVICE_LABEL = re.compile(r"[А-ЯЁа-яёA-Za-z][А-ЯЁа-яёA-Za-z0-9 /()‑–-]{1,119}")  # noqa: RUF001
+_SERVICE_NAME = re.compile(
+    r"\b(?:лечени|осмотр|консультаци|диагностик|имплантаци|удалени|протезировани|"
+    r"чистк|гигиен|пломбир|реставраци|отбеливани|установк|элайнер|коронк|брекет|кап[аыу])\w*",
+    re.I,
+)
+_SERVICE_NARRATIVE = re.compile(
+    r"\b(?:пациент\w*|клиника|врач\w*|не|нет|отказ\w*|был[аои]?|проводил\w*|"
+    r"сделал\w*|платил\w*|согласил\w*|потребовал\w*|назначил\w*|котор\w*)\b", re.I,
+)
+
+
+def literal_service_labels(source: str) -> list[str] | None:
+    """A bounded label or an explicitly separated list, not a free-text case history."""
+    source = source.strip()
+    if ";" in source:
+        return [part.strip() for part in source.split(";") if part.strip()]
+    if source.casefold() in {"неизвестно", "не знаю"}:
+        return [source]  # keep the literal source anchor, do not turn unknown into a service
+    if (_SERVICE_LABEL.fullmatch(source) and _SERVICE_NAME.search(source)
+            and not _SERVICE_NARRATIVE.search(source)):
+        return [source]
+    return None
 
 
 def _question(question: AnswerQuestion) -> AnswerQuestion:

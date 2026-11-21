@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 """A literal service list advances through real PTB, Agent validation and Core PostgreSQL."""
 
 import asyncio
@@ -24,8 +25,14 @@ pytestmark = pytest.mark.skipif(os.getenv("POSTGRES_INTEGRATION") != "1",
 
 @pytest.mark.parametrize("availability", ["unresolved", "unavailable"])
 @pytest.mark.parametrize("already_stuck", [False, True], ids=["new-answer", "old-unresolved"])
+@pytest.mark.parametrize("reply,services", [
+    ("Лечение кариеса; профессиональная гигиена", ["Лечение кариеса", "профессиональная гигиена"]),
+    ("Ортодонтическое лечение с использованием элайнеров",
+     ["Ортодонтическое лечение с использованием элайнеров"]),
+    ("Ортодонтическое лечение", ["Ортодонтическое лечение"]),
+])
 def test_service_list_advances_without_a_repeated_question_even_if_model_cannot_interpret_it(
-    preparation_workflow, monkeypatch, availability, already_stuck,
+    preparation_workflow, monkeypatch, availability, already_stuck, reply, services,
 ):
     monkeypatch.setattr("telegram_gateway.intake_delivery.POLL_INTERVAL", 0.01)
     core, actor, _clinic, _membership, engine = preparation_workflow
@@ -90,7 +97,7 @@ def test_service_list_advances_without_a_repeated_question_even_if_model_cannot_
                 ))
                 await asyncio.wait_for(delivered(), timeout=8)
                 assert saved()["wizardState"] == "SERVICES"
-            await dispatch("text:Лечение кариеса; профессиональная гигиена", actor=actor)
+            await dispatch(f"text:{reply}", actor=actor)
             assert len(runner.claims) == 1 + int(already_stuck)
             _claimed_actor, claim = runner.claims[-1]
             captured = await asyncio.to_thread(_run, lambda sessions: read_answer_context(
@@ -110,9 +117,7 @@ def test_service_list_advances_without_a_repeated_question_even_if_model_cannot_
 
             await asyncio.wait_for(delivered(), timeout=8)
             final = saved()
-            assert final["draftData"]["affectedServices"] == [
-                "Лечение кариеса", "профессиональная гигиена",
-            ]
+            assert final["draftData"]["affectedServices"] == services
             assert final["wizardState"] == "EVENT_DATE"
             assert "Когда пациент обратился" in sent[-1]["text"]
             assert "Какие услуги" not in sent[-1]["text"]
