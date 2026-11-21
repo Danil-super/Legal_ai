@@ -140,6 +140,45 @@ def test_active_quick_entry_saves_only_narrative_before_fast_pending_response():
     asyncio.run(scenario())
 
 
+def test_length_and_identifying_text_get_distinct_feedback_before_draft_creation():
+    async def scenario():
+        async with active_harness() as (_app, core, sent, dispatch):
+            await dispatch("quick:start")
+            await dispatch("text:Коротко")
+            assert "10 до 1500 символов" in sent[-1]["text"]
+            assert "ФИО" not in sent[-1]["text"]
+            await dispatch("text:Пациент Тестов Тест Тестович обратился за консультацией.")
+            assert "Уберите ФИО" in sent[-1]["text"]
+            assert not core.saved and not core.starts
+            await dispatch("text:" + TEXT)
+            assert core.draft["draftData"]["eventSummary"] == TEXT
+    asyncio.run(scenario())
+
+
+def test_unknown_creation_acknowledgement_keeps_the_same_creation_intent_on_resend():
+    async def scenario():
+        async with active_harness() as (_app, core, sent, dispatch):
+            original = core._json_request
+            keys = []
+
+            async def request(method, path, **kwargs):
+                if method == "POST" and path == "/v1/telegram-intake-drafts":
+                    keys.append(kwargs["idempotency_key"])
+                    if len(keys) <= 2:
+                        raise LegalCoreApiError(503, "UNAVAILABLE", "unknown outcome")
+                return await original(method, path, **kwargs)
+
+            core._json_request = request
+            await dispatch("quick:start")
+            await dispatch("text:" + TEXT)
+            assert "сохранилось ли описание" in sent[-1]["text"]
+            assert "обезличивание" not in sent[-1]["text"]
+            await dispatch("text:" + TEXT)
+            assert len(keys) == 3 and len(set(keys)) == 1
+            assert len(core.saved) == 1 and len(core.starts) == 1
+    asyncio.run(scenario())
+
+
 def test_proposal_refresh_and_explicit_accept_resume_shared_missing_question():
     async def scenario():
         async with active_harness() as (app, core, sent, dispatch):

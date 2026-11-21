@@ -14,7 +14,7 @@ from legal_core.intake_answer_contracts import (
     AnswerQuestion,
     RetainedSourceSegment,
 )
-from legal_core.intake_answer_values import validate_answer_value
+from legal_core.intake_answer_values import literal_service_labels, validate_answer_value
 from legal_core.intake_factual_candidates import (
     apply_factual_answer,
     validate_retained_answer_sources,
@@ -124,8 +124,8 @@ including UNKNOWN; do not propose their replacement through these templates.
 def _literal_factual_value(source: str, question: AnswerQuestion) -> object | None:
     """Recognize only a whole exact short answer to the bound current question."""
     literal = source.strip()
-    if question.wizard_state == "SERVICES" and ";" in literal:
-        return [value.strip() for value in literal.split(";") if value.strip()]
+    if question.wizard_state == "SERVICES":
+        return literal_service_labels(literal)
     if question.target_field == "safetyScreening" and question.screening_field != "amount":
         return {"да": "YES", "нет": "NO"}.get(literal.casefold())
     request = question.clarification_request

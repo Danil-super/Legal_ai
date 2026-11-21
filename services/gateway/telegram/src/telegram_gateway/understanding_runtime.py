@@ -24,7 +24,7 @@ from telegram_gateway.intake_delivery import recovery_notice, stop, watch
 from telegram_gateway.understanding_client import UnderstandingClient, validated_draft
 from telegram_gateway.understanding_intent import bound_callback, parse_bound_callback
 from telegram_gateway.understanding_review import proposal_blocks
-from telegram_gateway.understanding_source import save_source
+from telegram_gateway.understanding_source import SourceSaveError, save_source
 
 _SELECTED = "understanding_intake"
 _EDIT = "understanding_edit_draft"
@@ -152,17 +152,33 @@ async def receive_description(update: Update, context: ContextTypes.DEFAULT_TYPE
         raise ApplicationHandlerStop
     try:
         summary = parse_answer("eventSummary", bot._message_text(update))
-        if not isinstance(summary, str):
-            raise ValueError("description required")
-        edit = data.get(_EDIT)
+    except ValueError as error:
+        await bot._reply(update, f"{error} Отправьте описание ещё раз.")
+        raise ApplicationHandlerStop from None
+    if not isinstance(summary, str):
+        raise ApplicationHandlerStop
+    edit = data.get(_EDIT)
+    source_message = data.setdefault(quick_intake_runtime._QUICK_SOURCE_MESSAGE_KEY,
+                                     message.message_id)
+    try:
         draft = await save_source(
             bot._legal_core(context), actor, chat.id, message.message_id, summary,
             edit_draft_id=UUID(edit) if isinstance(edit, str) else None,
+            create_message_id=source_message,
         )
-    except (ValueError, LegalCoreApiError):
-        await bot._reply(update, "Не удалось подтвердить сохранение описания. "
-                         "Проверьте обезличивание и откройте /menu → «Мои черновики». "
-                         "Сохранённый черновик не удалён.")
+    except LegalCoreApiError as error:
+        draft_id = error.draft_id if isinstance(error, SourceSaveError) else None
+        if error.code == "INTAKE_DRAFT_LIMIT_REACHED":
+            notice = "Достигнут лимит черновиков. Продолжите один из них в «Мои черновики»."
+        elif error.status_code == 409:
+            notice = "Черновик изменился. Откройте его, чтобы продолжить с актуальных данных."
+        elif error.status_code == 422:
+            notice = "Сервер не принял формат описания. Отправьте текст от 10 до 1500 символов."
+        else:
+            notice = "Не удалось проверить, сохранилось ли описание. Отправьте текст ещё раз."
+        await bot._reply(update, notice, reply_markup=(
+            quick_intake_runtime._continue_keyboard(draft_id) if draft_id is not None else None
+        ))
         raise ApplicationHandlerStop from None
     quick_intake_runtime._clear_quick(context)
     data.pop(_EDIT, None)

@@ -14,11 +14,12 @@ TEXT = "Синтетическая ситуация с длительным ож
 
 
 class SourceCore:
-    def __init__(self, lost=None):
+    def __init__(self, lost=None, *, lose_replays=False):
         self.draft = {"id": str(DRAFT), "revision": 1, "wizardState": "INCOMING",
                       "draftData": {"intakeVersion": 2}}
         self.requests, self.replays = [], {}
         self.lost = lost
+        self.lose_replays = lose_replays
         self.writes = 0
 
     async def get_intake_draft(self, draft_id, actor):
@@ -32,6 +33,8 @@ class SourceCore:
         key = (method, path, kwargs["idempotency_key"])
         if key in self.replays:
             assert kwargs["payload"] == self.replays[key][0]
+            if self.lose_replays and method == "PUT":
+                raise LegalCoreApiError(503, "LEGAL_CORE_UNAVAILABLE", "unknown outcome")
             return deepcopy(self.replays[key][1])
         if method == "PUT":
             body = kwargs["payload"]
@@ -62,6 +65,31 @@ def test_source_is_saved_once_across_unknown_response_and_replayed_original_even
         creates = [kwargs["idempotency_key"] for method, _, kwargs in core.requests
                    if method == "POST"]
         assert len(set(creates)) == 1
+    asyncio.run(scenario())
+
+
+def test_lost_save_and_retry_responses_are_reconciled_with_the_owned_draft():
+    async def scenario():
+        core = SourceCore("PUT", lose_replays=True)
+        saved = await save_source(core, 777, 777, 99, TEXT)
+        assert saved["id"] == str(DRAFT) and saved["draftData"]["eventSummary"] == TEXT
+        assert core.writes == 1
+    asyncio.run(scenario())
+
+
+def test_core_rejection_is_not_disguised_as_an_unknown_transport_outcome():
+    class RejectedCore(SourceCore):
+        async def _json_request(self, method, path, **kwargs):
+            if method == "PUT":
+                raise LegalCoreApiError(422, "VALIDATION_ERROR", "invalid data")
+            return await super()._json_request(method, path, **kwargs)
+
+    async def scenario():
+        core = RejectedCore()
+        with pytest.raises(LegalCoreApiError) as error:
+            await save_source(core, 777, 777, 99, TEXT)
+        assert error.value.status_code == 422
+        assert "eventSummary" not in core.draft["draftData"]
     asyncio.run(scenario())
 
 

@@ -67,7 +67,7 @@ def run_model(source, value, *, state="INCOMING", data=None, calls=None, error=N
 @pytest.mark.parametrize("state,source,value", [
     ("INCOMING", "Прислал письменную претензию", "FORMAL_DOCUMENT"),
     ("SITUATION", "Жалуется на лечение и обслуживание", ["TREATMENT", "SERVICE"]),
-    ("SERVICES", "установка коронки", ["установка коронки"]),
+    ("SERVICES", "Пациент уточнил: установка коронки", ["установка коронки"]),
     ("EVENT", "Пациент сообщил о сколе коронки после лечения.",
      "Пациент сообщил о сколе коронки после лечения."),
     ("EVENT_DATE", "Дата 15.10.2026", {"date": "2026-10-15", "precision": "EXACT"}),
@@ -233,7 +233,7 @@ def test_event_summary_is_exact_answer_not_model_rewrite_or_legal_advice():
 @pytest.mark.parametrize("service", ["https://example.invalid", "www.example.invalid",
                                       "пример.рф", "SYNTHETIC_INVENTED_SERVICE"])
 def test_service_names_are_literal_non_url_labels(service):
-    source = "установка коронки"
+    source = "Пациент уточнил: установка коронки"
     with pytest.raises(HermesProtocolError):
         run_model(source, proposed(source, [service]), state="SERVICES")
 

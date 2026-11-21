@@ -38,6 +38,7 @@ from telegram_gateway.ui import back_keyboard
 
 logger = logging.getLogger(__name__)
 _QUICK_PENDING_KEY = "quick_intake_pending"
+_QUICK_SOURCE_MESSAGE_KEY = "quick_intake_source_message"
 _QUICK_CANDIDATE_KEY = "quick_intake_candidate"
 _CLINIC_UPLOAD_KEY = "clinic_document_upload"
 _MAX_SUMMARY = 3900
@@ -105,6 +106,7 @@ def _actor_id(update: Update) -> int | None:
 def _clear_quick(context: ContextTypes.DEFAULT_TYPE) -> None:
     data = _user_data(context)
     data.pop(_QUICK_PENDING_KEY, None)
+    data.pop(_QUICK_SOURCE_MESSAGE_KEY, None)
     data.pop(_QUICK_CANDIDATE_KEY, None)
 
 

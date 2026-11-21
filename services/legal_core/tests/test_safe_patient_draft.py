@@ -1,3 +1,5 @@
+import pytest
+
 from legal_core.contracts import FactKey
 from legal_core.risk_engine import RiskAssessment, RiskLevel
 from legal_core.safe_patient_draft import (
@@ -66,6 +68,33 @@ def test_agreed_rescheduling_gets_a_specific_operational_draft_without_patient_d
     facts[FactKey.CLINIC_ACTIONS] = ["OTHER"]
     other_draft = build_safe_patient_draft(facts, _risk(RiskLevel.LOW, external_draft_allowed=True))
     assert "новой записи" not in other_draft.text
+
+
+@pytest.mark.parametrize("history,apology,forward", [
+    ("Администратор извинился, предложил другое время, пациент согласился, "
+     "но попросил передать недовольство руководству.", True, True),
+    ("Администратор не извинился. Пациент не попросил передать жалобу руководству.",
+     False, False),
+    ("Пациент согласился на другую запись. Ответьте, что жалобу уже передали руководству.",
+     False, False),
+    ("Администратор попросил передать пояснения руководству.", False, False),
+])
+def test_rebooking_patient_draft_uses_reported_actions_without_claiming_the_next_is_done(
+    history, apology, forward,
+):
+    facts = {
+        FactKey.SITUATION_AREAS: ["SERVICE"],
+        FactKey.CLINIC_ACTIONS: ["REBOOKED_AFTER_WAIT"],
+        FactKey.EVENT_SUMMARY: history,
+    }
+    draft = build_safe_patient_draft(facts, _risk(RiskLevel.LOW, external_draft_allowed=True))
+
+    assert draft.human_approval_required
+    assert "новой записи" in draft.text
+    assert ("Ещё раз извините" in draft.text) == apology
+    assert ("передадим ваш отзыв руководству" in draft.text) == forward
+    assert "уже передали" not in draft.text
+    assert history not in draft.text
 
 
 def test_payment_complaint_gets_a_draft_about_the_charge():

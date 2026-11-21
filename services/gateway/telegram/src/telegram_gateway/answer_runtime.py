@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from legal_core.intake_answer_contracts import derive_answer_question
+from legal_core.intake_answer_values import literal_service_labels
 from legal_core.intake_answer_wire import AnswerStatusResponse
 from legal_core.pseudonymization import pseudonymize_text
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -303,6 +304,7 @@ async def route_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not isinstance(identity, dict):
         return
     actor = bot._actor_id(update)
+    recovery_draft_id = None
     try:
         if actor is None:
             raise ValueError("actor missing")
@@ -317,11 +319,13 @@ async def route_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             data.pop(_MANUAL, None)
             return
         remote = await _draft(core, actor, draft_id)
+        recovery_draft_id = draft_id
         if not isinstance(wizard, dict):
             raise ValueError("current question missing")
         local_state = wizard[bot.DRAFT_STATE_KEY]
         formatted_services = (
-            local_state == remote["wizardState"] == "SERVICES" and ";" in text
+            local_state == remote["wizardState"] == "SERVICES"
+            and literal_service_labels(text) is not None
             and remote["revision"] == wizard.get(bot.DRAFT_REVISION_KEY)
         )
         if formatted_services:
@@ -374,8 +378,12 @@ async def route_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         remember_answer(update, context, status.operation_id, remote, wizard)
         await _show(update, context, status, remote)
     except (ValueError, KeyError, TypeError, LegalCoreApiError):
-        await bot._reply(update, "Ответ пока не подтверждён. Проверьте обезличивание и "
-                         "откройте текущий черновик; сохранённые ответы не потеряны.")
+        await bot._reply(update, "Не удалось проверить, сохранён ли ответ. "
+                         "Откройте текущий черновик, чтобы продолжить с сохранённых сведений.",
+                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                             "Открыть текущий черновик",
+                             callback_data=f"case:draft:{recovery_draft_id}",
+                         )]]) if recovery_draft_id is not None else None)
     raise ApplicationHandlerStop
 
 

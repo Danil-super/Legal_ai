@@ -33,3 +33,9 @@ invalid anchors and lists, precise retryable gateway errors, pending/ready guard
 and complete new/previously-stuck PTB → Agent → Core/PostgreSQL progression without
 premature cases or reports. Model replies are simulated; no live legal-quality or
 production delivery guarantee follows from these regressions.
+
+2026-11-21 extension: the prompt permits a single name as well as a list. Recognize
+short, unambiguous single labels (and explicit unknown answers) with the same
+shared source-bound path. Free narratives still go to interpretation; an active
+pending/ready operation or a stale draft revision is not replaced. The source and
+confirmation boundaries are unchanged.
