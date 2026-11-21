@@ -660,6 +660,16 @@ def test_billing_plan_explicitly_covers_document_check_and_conditional_resolutio
     assert "обсуждай возврат только при подтверждённой оплате" in prompt
     assert "Каждое последующее действие должно отдельно следовать из источника и фактов" in prompt
     assert "не делай вид, что согласие или оплата уже установлены" in prompt
+    assert "факт оказания услуги отдельно от права требовать её оплату" in prompt
+    assert "если не было надлежащего согласования и нет применимого исключения" in prompt
+    assert "отмените доначисление" in prompt
+    assert "сохраняйте начисление только при подтверждённом основании" in prompt
+
+
+def test_service_plan_follows_up_only_on_actions_not_already_taken() -> None:
+    prompt = _research_prompt(_projection())
+    assert "не предлагай заново действия, которые клиника уже выполнила" in prompt
+    assert "просьбу передать жалобу руководству" in prompt
 
 
 def test_unknown_consent_allows_a_source_bound_check_without_assuming_treatment() -> None:

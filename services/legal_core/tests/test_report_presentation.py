@@ -7,9 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from legal_core.contracts import CanonicalReport
+from legal_core.contracts import CanonicalReport, FactKey
 from legal_core.reports import render_report_pdf
 from legal_core.report_presentation import present_report
+from legal_core.risk_engine import RiskAssessment, RiskLevel
+from legal_core.safe_patient_draft import build_safe_patient_draft
 from telegram_gateway.analysis_runtime import telegram_analysis_summary
 from telegram_gateway.case_wizard import telegram_summary_from_report
 
@@ -110,14 +112,40 @@ def test_payment_position_and_its_source_precede_the_action_plan(tmp_path: Path)
     report.legal_conclusions[0].text = (
         "Оплата дополнительных 1 800 рублей по имеющимся материалам не подтверждена."
     )
-    report.recommendations.items = ["Сверить, согласованы ли услуга и её цена."]
-    text = pdf_text(report, tmp_path)
+    report.recommendations.items = [
+        "Сверить, согласованы ли услуга и её цена.",
+        "Если надлежащего согласования и применимого исключения нет, отменить доначисление.",
+    ]
+    text = " ".join(pdf_text(report, tmp_path).split())
 
     assert (
         text.index("Оплата дополнительных 1 800 рублей")
         < text.index("статья 10")
         < text.index("Сверить, согласованы ли услуга и её цена")
+        < text.index("отменить доначисление")
     )
+
+
+def test_personalized_service_reply_remains_a_draft_in_the_pdf(tmp_path: Path) -> None:
+    report = presentation_report(guided=True)
+    report.draft_response = build_safe_patient_draft({
+        FactKey.SITUATION_AREAS: ["SERVICE"],
+        FactKey.CLINIC_ACTIONS: ["REBOOKED_AFTER_WAIT"],
+        FactKey.EVENT_SUMMARY: (
+            "Пациент ждал 35 минут. Администратор извинился и предложил новое время. "
+            "Пациент согласился, но попросил передать недовольство руководству."
+        ),
+    }, RiskAssessment(
+        level=RiskLevel.LOW, reason_codes=("NO_ESCALATION_TRIGGER",),
+        policy_version="dental-risk.v5", fact_snapshot_sha256="e" * 64,
+        external_draft_allowed=True,
+    ))
+
+    text = " ".join(pdf_text(report, tmp_path).split())
+    assert "Ещё раз извините" in text and "новой записи" in text
+    assert "передадим ваш отзыв руководству" in text
+    assert "уже передали" not in text
+    assert report.draft_response.human_approval_required
 
 
 @pytest.mark.parametrize("level", ["LOW", "MEDIUM", "HIGH", "CRITICAL"])

@@ -8,6 +8,7 @@ that requires a human clinic employee to approve before sending.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 
 from legal_core.contracts import DraftResponse, FactKey
@@ -23,9 +24,19 @@ _SAFE_TEXT = (
     "После проверки сообщим вам дальнейший организационный порядок."
 )
 _RESCHEDULED_TEXT = (
-    "Здравствуйте! Извините, что вам пришлось ждать приёма. "
-    "Подтверждаем, что мы договорились о новой записи. "
-    "Если нужно уточнить время, пожалуйста, напишите нам."
+    "{apology}, что вам пришлось ждать приёма. "
+    "Спасибо, что согласились на другое время. Подтверждаем договорённость о новой записи."
+)
+_CLINIC_APOLOGIZED = re.compile(
+    r"\b(?:(?:администратор|сотрудник(?: клиники)?|клиника|мы)\s+(?:уже\s+)?"
+    r"(?:извинил(?:ся|ась|ись)|прин[её]с(?:ли|ла)?\s+(?:свои\s+)?извинения)"
+    r"|(?:ему|ей|пациент(?:у|ке))\s+(?:уже\s+)?принесли\s+извинения)\b",
+    re.I,
+)
+_PATIENT_REQUESTED_FORWARDING = re.compile(
+    r"\b(?:пациент(?:ка)?|он|она)\s+"
+    r"(?:согласил(?:ся|ась)(?:\s+на\s+[^,.!?]{1,45})?(?:,\s*но\s+|\s+и\s+))?"
+    r"попросил[аи]?\s+передать\s+[^.!?]{0,90}\bруководству\b", re.I,
 )
 _FINANCE_TEXT = (
     "Здравствуйте! Мы получили ваше обращение по стоимости услуги. "
@@ -48,6 +59,16 @@ def _positive(value: object) -> bool:
     if isinstance(value, dict):
         return value.get("boolean") is True or value.get("state") == "YES"
     return False
+
+
+def _rebooking_draft(summary: object) -> str:
+    # Match only fixed cues to select wording; never include free narrative in a reply.
+    text = " ".join(summary.split()) if isinstance(summary, str) else ""
+    apology = "Ещё раз извините" if _CLINIC_APOLOGIZED.search(text) else "Извините"
+    result = "Здравствуйте! " + _RESCHEDULED_TEXT.format(apology=apology)
+    if _PATIENT_REQUESTED_FORWARDING.search(text):
+        result += " Как вы и просили, передадим ваш отзыв руководству клиники."
+    return result
 
 
 def build_safe_patient_draft(
@@ -82,7 +103,7 @@ def build_safe_patient_draft(
         and isinstance(actions, list)
         and "REBOOKED_AFTER_WAIT" in actions
     ):
-        draft = _RESCHEDULED_TEXT
+        draft = _rebooking_draft(facts.get(FactKey.EVENT_SUMMARY))
     elif areas == ["FINANCE"]:
         draft = _FINANCE_TEXT
     else:
