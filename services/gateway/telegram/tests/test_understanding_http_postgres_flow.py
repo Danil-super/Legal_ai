@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 """Real PTB→Gateway HTTP→Core→PostgreSQL; Telegram/model delivery alone is synthetic."""
 
 import asyncio
@@ -36,6 +37,72 @@ class HeldSyntheticDispatch:
 
     async def submit(self, *, telegram_user_id, operation):
         self.claims.append((telegram_user_id, operation))
+
+
+def test_double_lost_description_response_reopens_exact_committed_postgres_draft(
+    preparation_workflow,
+):
+    core, actor, _, _, _ = preparation_workflow
+    runner = HeldSyntheticDispatch()
+    core.app.state.intake_preparation_runner = runner
+    lost_writes = []
+    service = "ортодонтическое лечение с использованием элайнеров"
+    description = f"Пациент недоволен результатом. Услуга: {service}. Обратился с жалобой."
+
+    def bridge(request):
+        actual = core.request(
+            request.method, str(request.url), headers=dict(request.headers),
+            content=request.content,
+        )
+        if (request.method == "PUT" and request.url.path.startswith("/v1/telegram-intake-drafts/")
+                and set(json.loads(request.content)["draftData"]) == {
+                    "intakeVersion", "eventSummary", "incomingSourceStatus",
+                }):
+            assert actual.status_code == 200, actual.text
+            lost_writes.append(actual.json())
+            raise httpx2.ReadTimeout("synthetic lost save receipt", request=request)
+        return httpx2.Response(actual.status_code, content=actual.content, headers={
+            "Content-Type": "application/json",
+        })
+
+    async def scenario():
+        async with (
+            active_harness() as (app, _fake_core, sent, dispatch),
+            httpx2.AsyncClient(
+                base_url="http://core.test", transport=httpx2.MockTransport(bridge),
+            ) as http,
+        ):
+            app.bot_data[bot.LEGAL_CORE_CLIENT_KEY] = LegalCoreClient(http)
+            await dispatch("quick:start", actor=actor)
+            await dispatch("text:" + description, actor=actor)
+            assert len(lost_writes) == 2 and lost_writes[0] == lost_writes[1]
+            assert len(runner.claims) == 1
+            claimed_actor, claim = runner.claims[0]
+            draft_id = claim.intent.draft_id
+            assert claimed_actor == actor
+            assert str(draft_id) == lost_writes[0]["id"]
+            assert lost_writes[0]["draftData"]["eventSummary"] == description
+            assert "Разбираю ситуацию" in sent[-1]["text"]
+            proposed = DraftSuggestions.model_validate({
+                "incomingKind": "COMPLAINT", "situationAreas": ["TREATMENT"],
+                "affectedServices": [service],
+                "sourceSpans": {
+                    key: [{"start": 0, "end": len(description)}]
+                    for key in ("incomingKind", "situationAreas", "affectedServices")
+                },
+            })
+            await asyncio.to_thread(_run, lambda sessions: complete_preparation(
+                sessions, telegram_user_id=actor, operation_id=claim.operation_id,
+                lease_token=claim.lease_token, suggestions=proposed,
+            ))
+            await dispatch(bound_callback("accept", claim.operation_id, draft_id), actor=actor)
+            await dispatch(f"case:draft:{draft_id}", actor=actor)
+            data = app.user_data[actor][bot.WIZARD_DATA_KEY]
+            assert data["affectedServices"] == [service]
+            assert data[bot.DRAFT_STATE_KEY] == "EVENT_DATE"
+            assert "Какие услуги" not in sent[-1]["text"]
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("entry", ["quick", "guided"])

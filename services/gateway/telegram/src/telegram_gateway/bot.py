@@ -401,6 +401,8 @@ def _clear_pending_inputs(context: ContextTypes.DEFAULT_TYPE | None) -> None:
         context.user_data.pop("escalation_discussion_id", None)
         context.user_data.pop("quick_intake_pending", None)
         context.user_data.pop("quick_intake_candidate", None)
+        context.user_data.pop("quick_intake_source_message", None)
+        context.user_data.pop("understanding_edit_draft", None)
         context.user_data.pop("clinic_document_upload", None)
         context.user_data.pop("clinic_document_effective_date_pending", None)
         context.user_data.pop("escalation_resolution_pending", None)
@@ -445,6 +447,8 @@ async def _route_input_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not isinstance(callback, str) or not callback.startswith("quick:"):
         data.pop("quick_intake_pending", None)
         data.pop("quick_intake_candidate", None)
+        data.pop("quick_intake_source_message", None)
+        data.pop("understanding_edit_draft", None)
     if not isinstance(callback, str) or not callback.startswith("clinicdoc:"):
         data.pop("clinic_document_upload", None)
     if not isinstance(callback, str) or not callback.startswith(("clinicdoc:", "cliniclib:date:")):
