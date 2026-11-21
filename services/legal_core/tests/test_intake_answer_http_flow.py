@@ -47,7 +47,8 @@ def clarification(question_id):
 CASES = [
     ("INCOMING", {}, "Это письменная претензия", "FORMAL_DOCUMENT"),
     ("SITUATION", {}, "Лечение и обслуживание", ["TREATMENT", "SERVICE"]),
-    ("SERVICES", {"situationAreas": ["TREATMENT"]}, "установка коронки", ["установка коронки"]),
+    ("SERVICES", {"situationAreas": ["TREATMENT"]}, "Пациент уточнил: установка коронки",
+     ["установка коронки"]),
     ("EVENT", {}, SUMMARY, SUMMARY),
     ("EVENT_DATE", {}, "Дата 15.10.2026", {"date": "2026-10-15", "precision": "EXACT"}),
     ("CHRONOLOGY", {}, "Это первое обращение", "FIRST"),
@@ -438,6 +439,7 @@ def test_rich_reply_uses_real_core_agent_http_and_stages_all_facts_with_one_mode
 
 
 @pytest.mark.parametrize("state,data,answer,value", [
+    ("SERVICES", {"situationAreas": ["TREATMENT"]}, "установка коронки", ["установка коронки"]),
     ("EVENT_DATE", {}, "15.10.2026", {"date": "2026-10-15", "precision": "EXACT"}),
     ("EVENT_DATE", {}, "2026-10-15", {"date": "2026-10-15", "precision": "EXACT"}),
     ("SAFETY", {}, "Нет", "NO"),
